@@ -43,15 +43,16 @@ func TestDecide(t *testing.T) {
 		in      string
 		allowed map[string]bool
 		want    string // expected prompt substring, "" = silent
+		kind    string
 		group   bool
 	}{
-		{"typing ignored", typing, allowed, "", false},
-		{"plain group msg ignored", groupPlain, allowed, "", false},
-		{"mention", groupMention, nil, "Rob: what is up", true},
-		{"reply to bot", groupReply, nil, "Are you still there", true},
-		{"reply to someone else", replyToOther, nil, "", false},
-		{"allowed DM", dm, allowed, "Test DM", false},
-		{"disallowed DM", dm, map[string]bool{"other": true}, "", false},
+		{"typing ignored", typing, allowed, "", "", false},
+		{"plain group msg ignored", groupPlain, allowed, "", "", false},
+		{"mention", groupMention, nil, "Rob: what is up", "mention", true},
+		{"reply to bot", groupReply, nil, "Are you still there", "reply", true},
+		{"reply to someone else", replyToOther, nil, "", "", false},
+		{"allowed DM", dm, allowed, "Test DM", "dm", false},
+		{"disallowed DM", dm, map[string]bool{"other": true}, "", "", false},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -64,6 +65,9 @@ func TestDecide(t *testing.T) {
 			}
 			if r == nil || !strings.Contains(r.Prompt, tc.want) {
 				t.Fatalf("got %+v, want prompt containing %q", r, tc.want)
+			}
+			if r.Kind != tc.kind {
+				t.Fatalf("kind = %q, want %q", r.Kind, tc.kind)
 			}
 			if tc.group && r.Target.GroupID != group || !tc.group && r.Target.User != rob {
 				t.Fatalf("wrong target %+v", r.Target)
@@ -171,3 +175,12 @@ func contextWithCancel() (context.Context, context.CancelFunc) {
 }
 
 var replyToOther = strings.NewReplacer(`"author":"`+self+`"`, `"author":"x"`, `"authorUuid":"`+self+`"`, `"authorUuid":"x"`).Replace(groupReply)
+
+func TestLogLine(t *testing.T) {
+	r := Decide(parse(t, strings.Replace(groupMention, "what is up", "what\\nis up", 1)), self, nil)
+	line := r.LogLine(time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC))
+	want := "2026-01-02T03:04:05Z mention from=Rob(" + rob + ") chat=" + group + ": what is up"
+	if line != want {
+		t.Fatalf("got %q\nwant %q", line, want)
+	}
+}

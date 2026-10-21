@@ -10,7 +10,7 @@ A small chat bot that connects to a running `signal-cli` daemon over its socket 
 - Optional x.ai web search and configurable reasoning effort
 - Short per-conversation memory, so follow-up questions work
 - Shows a typing indicator (refreshed every 10s) while it thinks; many chats are handled at once and a slow answer never blocks others
-- Reconnects automatically if signal-cli restarts
+- Logs each handled message (mention, reply or DM) to stdout; reconnects automatically if signal-cli restarts
 
 ## Quick start
 

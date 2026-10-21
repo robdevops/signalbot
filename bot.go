@@ -2,7 +2,9 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -30,6 +32,20 @@ type Request struct {
 	Target Target
 	Key    string // conversation key
 	Prompt string
+
+	Kind   string // "mention", "reply" or "dm"
+	Sender string
+	Text   string // message text with the bot mention stripped
+}
+
+// LogLine renders the request as a single line for stdout.
+func (r *Request) LogLine(now time.Time) string {
+	chat := "dm"
+	if r.Target.GroupID != "" {
+		chat = r.Target.GroupID
+	}
+	text := strings.Join(strings.Fields(r.Text), " ")
+	return fmt.Sprintf("%s %s from=%s chat=%s: %s", now.Format(time.RFC3339), r.Kind, r.Sender, chat, text)
 }
 
 // Decide applies the trigger rules. It returns nil if the bot should stay silent.
@@ -50,22 +66,24 @@ func Decide(env *Envelope, self string, allowed map[string]bool) *Request {
 		target    Target
 		key       string
 		triggered bool
+		kind      string
 	)
 	if dm.GroupInfo != nil && dm.GroupInfo.GroupID != "" {
 		target = Target{GroupID: dm.GroupInfo.GroupID}
 		key = "g:" + dm.GroupInfo.GroupID
 		for _, m := range dm.Mentions {
 			if m.UUID == self || (m.Number != "" && m.Number == self) {
-				triggered = true
+				triggered, kind = true, "mention"
 			}
 		}
-		if q := dm.Quote; q != nil && (q.AuthorUUID == self || q.Author == self) {
-			triggered = true
+		if q := dm.Quote; q != nil && (q.AuthorUUID == self || q.Author == self) && !triggered {
+			triggered, kind = true, "reply"
 		}
 	} else {
 		target = Target{User: sender}
 		key = "u:" + sender
 		triggered = allowed[env.SourceUUID] || allowed[env.Source] || allowed[env.SourceNumber]
+		kind = "dm"
 	}
 	if !triggered {
 		return nil
@@ -75,13 +93,18 @@ func Decide(env *Envelope, self string, allowed map[string]bool) *Request {
 	if text == "" {
 		return nil
 	}
+	raw := text
 	if q := dm.Quote; q != nil && q.Text != "" && (q.AuthorUUID == self || q.Author == self) {
 		text = "[In reply to your earlier message: \"" + q.Text + "\"]\n" + text
 	}
 	if target.GroupID != "" && env.SourceName != "" {
 		text = env.SourceName + ": " + text
 	}
-	return &Request{Target: target, Key: key, Prompt: text}
+	who := sender
+	if env.SourceName != "" {
+		who = env.SourceName + "(" + sender + ")"
+	}
+	return &Request{Target: target, Key: key, Prompt: text, Kind: kind, Sender: who, Text: raw}
 }
 
 // stripMentions removes the bot's own mention and expands other mentions to @name.
@@ -114,6 +137,7 @@ func (b *Bot) Handle(env *Envelope) {
 		if req == nil {
 			return
 		}
+		fmt.Fprintln(os.Stdout, req.LogLine(time.Now()))
 		stop := b.keepTyping(req.Target)
 		defer stop()
 		b.sem <- struct{}{}
