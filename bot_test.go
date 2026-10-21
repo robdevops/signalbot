@@ -81,6 +81,7 @@ func TestEndToEnd(t *testing.T) {
 			w.WriteHeader(401)
 			return
 		}
+		time.Sleep(250 * time.Millisecond)
 		w.Write([]byte(`{"output":[{"type":"reasoning"},{"type":"message","content":[{"type":"output_text","text":"hi there"}]}]}`))
 	}))
 	defer ai.Close()
@@ -92,6 +93,7 @@ func TestEndToEnd(t *testing.T) {
 	}
 	defer ln.Close()
 	sent := make(chan map[string]any, 10)
+	events := make(chan string, 50)
 	go func() {
 		c, err := ln.Accept()
 		if err != nil {
@@ -112,7 +114,10 @@ func TestEndToEnd(t *testing.T) {
 				for _, m := range []string{typing, groupPlain, groupMention, dm} {
 					c.Write([]byte(m + "\n"))
 				}
+			case "sendTyping":
+				events <- "typing"
 			case "send":
+				events <- "send"
 				sent <- req["params"].(map[string]any)
 			}
 		}
@@ -124,6 +129,7 @@ func TestEndToEnd(t *testing.T) {
 	x := NewXAI(cfg)
 	x.url = ai.URL
 	bot := NewBot(cfg, sig, x)
+	bot.typingEvery = 50 * time.Millisecond
 	ctx, cancel := contextWithCancel()
 	defer cancel()
 	go sig.Run(ctx, bot.Handle)
@@ -140,6 +146,23 @@ func TestEndToEnd(t *testing.T) {
 	case p := <-sent:
 		t.Fatalf("unexpected extra send (DM not allowed): %v", p)
 	case <-time.After(300 * time.Millisecond):
+	}
+	close(events)
+	var seq []string
+	for e := range events {
+		seq = append(seq, e)
+	}
+	typings := 0
+	for i, e := range seq {
+		if e == "typing" {
+			typings++
+			if i > 0 && seq[i-1] == "send" {
+				t.Fatalf("typing after send: %v", seq)
+			}
+		}
+	}
+	if len(seq) == 0 || seq[0] != "typing" || seq[len(seq)-1] != "send" || typings < 2 {
+		t.Fatalf("want typing x>=2 then one send, got %v", seq)
 	}
 }
 

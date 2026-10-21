@@ -17,10 +17,12 @@ type Bot struct {
 
 	mu      sync.Mutex
 	history map[string][]ChatMsg
+
+	typingEvery time.Duration
 }
 
 func NewBot(cfg *Config, sig *Signal, ai *XAI) *Bot {
-	return &Bot{cfg: cfg, sig: sig, ai: ai, sem: make(chan struct{}, cfg.MaxConcurrency), history: map[string][]ChatMsg{}}
+	return &Bot{cfg: cfg, sig: sig, ai: ai, sem: make(chan struct{}, cfg.MaxConcurrency), history: map[string][]ChatMsg{}, typingEvery: 10 * time.Second}
 }
 
 // Request is a message the bot has decided to answer.
@@ -112,16 +114,38 @@ func (b *Bot) Handle(env *Envelope) {
 		if req == nil {
 			return
 		}
+		stop := b.keepTyping(req.Target)
+		defer stop()
 		b.sem <- struct{}{}
 		defer func() { <-b.sem }()
-		b.respond(context.Background(), req)
+		b.respond(context.Background(), req, stop)
 	}()
 }
 
-func (b *Bot) respond(ctx context.Context, req *Request) {
-	b.sig.Typing(req.Target)
+// keepTyping sends a typing indicator now and every typingEvery until stop is called.
+func (b *Bot) keepTyping(t Target) (stop func()) {
+	done := make(chan struct{})
+	var once sync.Once
+	b.sig.Typing(t)
+	go func() {
+		tick := time.NewTicker(b.typingEvery)
+		defer tick.Stop()
+		for {
+			select {
+			case <-done:
+				return
+			case <-tick.C:
+				b.sig.Typing(t)
+			}
+		}
+	}()
+	return func() { once.Do(func() { close(done) }) }
+}
+
+func (b *Bot) respond(ctx context.Context, req *Request, stopTyping func()) {
 	msgs := append(b.getHistory(req.Key), ChatMsg{Role: "user", Content: req.Prompt})
 	reply, err := b.ai.Complete(ctx, msgs)
+	stopTyping()
 	if err != nil {
 		slog.Error("x.ai request failed", "err", err)
 		reply = "Sorry, I couldn't get an answer right now."

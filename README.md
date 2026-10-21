@@ -9,7 +9,7 @@ A small chat bot that connects to a running `signal-cli` daemon over its socket 
 - Replies to DMs from senders listed in `SIGNAL_ALLOWED_SENDERS`; ignores everything else
 - Optional x.ai web search and configurable reasoning effort
 - Short per-conversation memory, so follow-up questions work
-- Handles many chats at once; a slow answer never blocks other messages
+- Shows a typing indicator (refreshed every 10s) while it thinks; many chats are handled at once and a slow answer never blocks others
 - Reconnects automatically if signal-cli restarts
 
 ## Tech specs
