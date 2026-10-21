@@ -1,0 +1,170 @@
+package main
+
+import (
+	"context"
+	"log/slog"
+	"strings"
+	"sync"
+	"time"
+	"unicode/utf16"
+)
+
+type Bot struct {
+	cfg *Config
+	sig *Signal
+	ai  *XAI
+	sem chan struct{}
+
+	mu      sync.Mutex
+	history map[string][]ChatMsg
+}
+
+func NewBot(cfg *Config, sig *Signal, ai *XAI) *Bot {
+	return &Bot{cfg: cfg, sig: sig, ai: ai, sem: make(chan struct{}, cfg.MaxConcurrency), history: map[string][]ChatMsg{}}
+}
+
+// Request is a message the bot has decided to answer.
+type Request struct {
+	Target Target
+	Key    string // conversation key
+	Prompt string
+}
+
+// Decide applies the trigger rules. It returns nil if the bot should stay silent.
+func Decide(env *Envelope, self string, allowed map[string]bool) *Request {
+	dm := env.DataMessage
+	if dm == nil || self == "" {
+		return nil
+	}
+	sender := env.SourceUUID
+	if sender == "" {
+		sender = env.Source
+	}
+	if sender == self || env.SourceUUID == self || env.Source == self || env.SourceNumber == self {
+		return nil
+	}
+
+	var (
+		target    Target
+		key       string
+		triggered bool
+	)
+	if dm.GroupInfo != nil && dm.GroupInfo.GroupID != "" {
+		target = Target{GroupID: dm.GroupInfo.GroupID}
+		key = "g:" + dm.GroupInfo.GroupID
+		for _, m := range dm.Mentions {
+			if m.UUID == self || (m.Number != "" && m.Number == self) {
+				triggered = true
+			}
+		}
+		if q := dm.Quote; q != nil && (q.AuthorUUID == self || q.Author == self) {
+			triggered = true
+		}
+	} else {
+		target = Target{User: sender}
+		key = "u:" + sender
+		triggered = allowed[env.SourceUUID] || allowed[env.Source] || allowed[env.SourceNumber]
+	}
+	if !triggered {
+		return nil
+	}
+
+	text := stripMentions(dm.Message, dm.Mentions, self)
+	if text == "" {
+		return nil
+	}
+	if q := dm.Quote; q != nil && q.Text != "" && (q.AuthorUUID == self || q.Author == self) {
+		text = "[In reply to your earlier message: \"" + q.Text + "\"]\n" + text
+	}
+	if target.GroupID != "" && env.SourceName != "" {
+		text = env.SourceName + ": " + text
+	}
+	return &Request{Target: target, Key: key, Prompt: text}
+}
+
+// stripMentions removes the bot's own mention and expands other mentions to @name.
+// Mention offsets are UTF-16 code units.
+func stripMentions(msg string, ms []Mention, self string) string {
+	u := utf16.Encode([]rune(msg))
+	for i := len(ms) - 1; i >= 0; i-- {
+		m := ms[i]
+		if m.Start < 0 || m.Length < 0 || m.Start+m.Length > len(u) {
+			continue
+		}
+		var repl []uint16
+		if m.UUID != self && m.Number != self {
+			name := m.Name
+			if name == "" {
+				name = m.UUID
+			}
+			repl = utf16.Encode([]rune("@" + name))
+		}
+		u = append(u[:m.Start], append(repl, u[m.Start+m.Length:]...)...)
+	}
+	return strings.TrimSpace(string(utf16.Decode(u)))
+}
+
+// Handle is called by the reader; it never blocks on the model.
+func (b *Bot) Handle(env *Envelope) {
+	go func() {
+		self := b.sig.WaitSelf(10 * time.Second)
+		req := Decide(env, self, b.cfg.AllowedSenders)
+		if req == nil {
+			return
+		}
+		b.sem <- struct{}{}
+		defer func() { <-b.sem }()
+		b.respond(context.Background(), req)
+	}()
+}
+
+func (b *Bot) respond(ctx context.Context, req *Request) {
+	b.sig.Typing(req.Target)
+	msgs := append(b.getHistory(req.Key), ChatMsg{Role: "user", Content: req.Prompt})
+	reply, err := b.ai.Complete(ctx, msgs)
+	if err != nil {
+		slog.Error("x.ai request failed", "err", err)
+		reply = "Sorry, I couldn't get an answer right now."
+	} else {
+		b.addHistory(req.Key, ChatMsg{Role: "user", Content: req.Prompt}, ChatMsg{Role: "assistant", Content: reply})
+	}
+	for _, part := range splitMessage(reply, 4000) {
+		if err := b.sig.Send(req.Target, part); err != nil {
+			slog.Error("signal send failed", "err", err)
+			return
+		}
+	}
+}
+
+func (b *Bot) getHistory(key string) []ChatMsg {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return append([]ChatMsg(nil), b.history[key]...)
+}
+
+func (b *Bot) addHistory(key string, msgs ...ChatMsg) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	h := append(b.history[key], msgs...)
+	if max := b.cfg.HistoryTurns * 2; len(h) > max {
+		h = append([]ChatMsg(nil), h[len(h)-max:]...)
+	}
+	b.history[key] = h
+}
+
+func splitMessage(s string, max int) []string {
+	var out []string
+	for len([]rune(s)) > max {
+		r := []rune(s)
+		cut := max
+		if i := strings.LastIndex(string(r[:max]), "\n"); i > 0 {
+			cut = len([]rune(string(r[:max])[:i]))
+		}
+		out = append(out, strings.TrimSpace(string(r[:cut])))
+		s = strings.TrimSpace(string(r[cut:]))
+	}
+	if s != "" {
+		out = append(out, s)
+	}
+	return out
+}

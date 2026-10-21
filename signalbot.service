@@ -1,0 +1,20 @@
+[Unit]
+Description=Signal chat bot (x.ai)
+After=network-online.target signal-cli.service
+Wants=network-online.target
+
+[Service]
+ExecStart=/usr/local/bin/signalbot
+EnvironmentFile=/etc/signalbot/env
+Restart=always
+RestartSec=3
+DynamicUser=yes
+SupplementaryGroups=signal-cli
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+
+[Install]
+WantedBy=multi-user.target
