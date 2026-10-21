@@ -21,6 +21,23 @@ A small chat bot that connects to a running `signal-cli` daemon over its socket 
 - In-memory history only (`HISTORY_TURNS`, default 10); no database or disk state
 - Configuration from environment variables only; runs under systemd or Docker (distroless image)
 
+## Quick start
+
+1. Register or link a Signal account with signal-cli, then start the daemon:
+   ```
+   signal-cli -a +1234567890 daemon --socket /run/signal-cli/socket
+   ```
+2. Configure the bot:
+   ```
+   cp .env.example .env
+   # edit .env: set XAI_API_KEY and SIGNAL_ALLOWED_SENDERS
+   ```
+3. Run it:
+   ```
+   go build -o signalbot . && set -a && . ./.env && set +a && ./signalbot
+   ```
+4. Add the bot's account to a group and @mention it, reply to one of its messages, or DM it from an allowed sender.
+
 ## Configuration
 
 | Variable | Default | Description |
