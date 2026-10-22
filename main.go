@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"fmt"
-	"log"
 	"log/slog"
 	"os"
 	"os/signal"
@@ -43,33 +42,13 @@ func buildVersion() string {
 	return "dev-" + rev + dirty
 }
 
-// isTTY reports whether f is a terminal, i.e. we are running interactively
-// rather than under systemd or Docker (where the log collector adds its own
-// timestamp and ours would be noise).
-func isTTY(f *os.File) bool {
-	st, err := f.Stat()
-	return err == nil && st.Mode()&os.ModeCharDevice != 0
-}
-
-// setupLogging sends every log line to stdout in slog's default
-// "INFO msg key=value" format, which it writes through the log package. The
-// date and time are added only when interactive: journald and Docker add
-// their own.
-func setupLogging(interactive bool) {
-	log.SetOutput(os.Stdout)
-	if interactive {
-		log.SetFlags(log.LstdFlags)
-	} else {
-		log.SetFlags(0)
-	}
-}
-
 func main() {
 	if len(os.Args) > 1 && (os.Args[1] == "-version" || os.Args[1] == "--version") {
 		fmt.Println("signalbot", buildVersion())
 		return
 	}
-	setupLogging(isTTY(os.Stdout))
+	interactive := isTTY(os.Stdout)
+	setupLogging(os.Stdout, interactive, !interactive && stdoutIsJournal())
 	slog.Info("starting", "version", buildVersion())
 	cfg, err := LoadConfig()
 	if err != nil {

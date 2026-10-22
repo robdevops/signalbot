@@ -603,7 +603,7 @@ func TestLogLineOmitsBodyByDefault(t *testing.T) {
 	if strings.Contains(out, "what is up") {
 		t.Fatalf("message body logged by default: %q", out)
 	}
-	if !strings.Contains(out, "INFO mention from=Rob("+rob+")") {
+	if !strings.Contains(out, "mention from=Rob("+rob+")") {
 		t.Fatalf("who mentioned the bot must still be logged: %q", out)
 	}
 }
