@@ -5,7 +5,7 @@ Wants=network-online.target
 
 [Service]
 ExecStart=/usr/local/bin/signalbot
-EnvironmentFile=/etc/signalbot/env
+EnvironmentFile=/etc/signalbot.env
 Restart=on-failure
 RestartSec=10s
 # A fixed user rather than DynamicUser: the signal-cli socket's permissions
