@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -47,7 +48,11 @@ type XAI struct {
 }
 
 func NewXAI(cfg *Config) *XAI {
-	return &XAI{cfg: cfg, url: "https://api.x.ai/v1/responses", http: http.DefaultClient}
+	// Go's default transport (proxy settings, timeouts, HTTP/2), but refusing
+	// anything older than TLS 1.3.
+	t := http.DefaultTransport.(*http.Transport).Clone()
+	t.TLSClientConfig = &tls.Config{MinVersion: tls.VersionTLS13}
+	return &XAI{cfg: cfg, url: "https://api.x.ai/v1/responses", http: &http.Client{Transport: t}}
 }
 
 // Complete sends the conversation to the x.ai Responses API and returns the reply text.

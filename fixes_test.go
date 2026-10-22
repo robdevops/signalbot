@@ -4,6 +4,8 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -655,5 +657,33 @@ func TestReconnectsDoNotLeakGoroutines(t *testing.T) {
 	time.Sleep(100 * time.Millisecond)
 	if delta := runtime.NumGoroutine() - before; delta > 5 {
 		t.Fatalf("%d goroutines left behind by 50 dropped connections", delta)
+	}
+}
+
+// The x.ai client must refuse servers that cannot do TLS 1.3, while keeping
+// Go's default transport behaviour (proxy from the environment, HTTP/2).
+func TestXAIRequiresTLS13(t *testing.T) {
+	x := NewXAI(testCfg())
+	tr := x.http.Transport.(*http.Transport)
+	if tr.Proxy == nil || !tr.ForceAttemptHTTP2 {
+		t.Fatal("lost the default transport's proxy support or HTTP/2")
+	}
+	for _, tc := range []struct {
+		max  uint16
+		want bool
+	}{{tls.VersionTLS12, false}, {tls.VersionTLS13, true}} {
+		srv := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+		srv.TLS = &tls.Config{MaxVersion: tc.max}
+		srv.StartTLS()
+		tr.TLSClientConfig.RootCAs = x509.NewCertPool()
+		tr.TLSClientConfig.RootCAs.AddCert(srv.Certificate())
+		resp, err := x.http.Get(srv.URL)
+		if resp != nil {
+			resp.Body.Close()
+		}
+		srv.Close()
+		if ok := err == nil; ok != tc.want {
+			t.Fatalf("server capped at %x: connected=%v, want %v (err: %v)", tc.max, ok, tc.want, err)
+		}
 	}
 }
