@@ -42,7 +42,9 @@ func LoadConfig() (*Config, error) {
 		Search:         env("XAI_SEARCH", "true") == "true" || env("XAI_SEARCH", "") == "1",
 		AllowedSenders: map[string]bool{},
 		SystemPrompt: env("SYSTEM_PROMPT", "You are a helpful, concise assistant in a Signal chat. "+
-			"Reply in plain text (no markdown), keep answers short unless asked for detail."),
+			"Reply in plain text (no markdown), keep answers short unless asked for detail. "+
+			"A mention shown as [unnamed user] is someone whose name you don't know; don't invent one. "+
+			"In groups, write @ followed by a person's exact name to mention them."),
 		MaxConcurrency: envInt("MAX_CONCURRENCY", 32),
 		HistoryTurns:   envInt("HISTORY_TURNS", 10),
 	}

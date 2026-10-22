@@ -179,6 +179,8 @@ func (s *Signal) dispatch(line []byte, handle func(*Envelope)) {
 		s.mu.Unlock()
 		if ch != nil {
 			ch <- &m
+		} else {
+			logUnmatchedResponse(&m)
 		}
 	case m.Method == "receive":
 		var p rpcMsg
@@ -279,11 +281,37 @@ func (t Target) params(extra map[string]any) map[string]any {
 	return p
 }
 
-func (s *Signal) Send(t Target, msg string) error {
+// Send posts msg; mentions are signal-cli specs ("start:length:uuid") for @names in msg.
+func (s *Signal) Send(t Target, msg string, mentions []string) error {
+	extra := map[string]any{"message": msg}
+	if len(mentions) > 0 {
+		extra["mention"] = mentions
+	}
 	return s.write(map[string]any{"jsonrpc": "2.0", "id": s.nextID.Add(1), "method": "send",
-		"params": t.params(map[string]any{"message": msg})})
+		"params": t.params(extra)})
 }
 
 func (s *Signal) Typing(t Target) {
 	_ = s.write(map[string]any{"jsonrpc": "2.0", "id": s.nextID.Add(1), "method": "sendTyping", "params": t.params(nil)})
+}
+
+// logUnmatchedResponse reports the outcome of fire-and-forget requests (send, sendTyping).
+func logUnmatchedResponse(m *rpcMsg) {
+	if m.Error != nil {
+		slog.Error("signal-cli request failed", "id", string(m.ID), "code", m.Error.Code, "err", m.Error.Message)
+		return
+	}
+	var r struct {
+		Results []struct {
+			Type string `json:"type"`
+		} `json:"results"`
+	}
+	if json.Unmarshal(m.Result, &r) != nil {
+		return
+	}
+	for _, res := range r.Results {
+		if res.Type != "" && res.Type != "SUCCESS" {
+			slog.Warn("signal-cli send not delivered", "id", string(m.ID), "result", res.Type)
+		}
+	}
 }

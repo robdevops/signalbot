@@ -98,6 +98,9 @@ func (n *Names) lookup(ids ...string) rankedName {
 	return best
 }
 
+// unnamedUser stands in for a mention whose name we could not find.
+const unnamedUser = "[unnamed user]"
+
 func realMentionName(m Mention) string {
 	if m.Name != m.UUID && m.Name != m.Number {
 		return m.Name
@@ -106,7 +109,7 @@ func realMentionName(m Mention) string {
 }
 
 // Resolve returns the best name for a mention: given name, sender name, username,
-// then the name signal-cli put in the mention (unless it is just an id), else "someone".
+// then the name signal-cli put in the mention (unless it is just an id), else unnamedUser.
 func (n *Names) Resolve(m Mention) string {
 	var r rankedName
 	if n != nil {
@@ -120,7 +123,8 @@ func (n *Names) Resolve(m Mention) string {
 	case r.rank > 0:
 		return r.name
 	}
-	return "someone"
+	slog.Warn("unresolved mention", "uuid", m.UUID, "number", m.Number, "mention_name", m.Name)
+	return unnamedUser
 }
 
 // needsRefresh reports whether the contact list should be (re)loaded for this mention:
@@ -147,11 +151,12 @@ func (n *Names) Refresh(ctx context.Context, s *Signal) {
 		slog.Warn("listContacts failed", "err", err)
 		return
 	}
+	slog.Info("loaded contacts", "count", len(cs))
 	n.addContacts(cs)
 }
 
 func (s *Signal) ListContacts(ctx context.Context) ([]Contact, error) {
-	resp, err := s.call(ctx, "listContacts", nil)
+	resp, err := s.call(ctx, "listContacts", map[string]any{"allRecipients": true})
 	if err != nil {
 		return nil, err
 	}

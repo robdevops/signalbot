@@ -4,7 +4,7 @@ A small chat bot that connects to a running [signal-cli](https://github.com/Asam
 
 ## Features
 
-- Replies when it is @mentioned in a group; other mentioned people are shown to the model by real name
+- Replies when it is @mentioned in a group; people it mentions are shown to the model by real name, and @names in its replies become real Signal mentions
 - Replies when someone replies to one of its messages (the quoted text is passed as context)
 - Replies to DMs from senders listed in `SIGNAL_ALLOWED_SENDERS`; ignores everything else
 - Optional x.ai web search and configurable reasoning effort
