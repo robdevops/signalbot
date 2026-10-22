@@ -4,13 +4,13 @@ A small chat bot that connects to a running `signal-cli` daemon over its socket 
 
 ## Features
 
-- Replies when it is @mentioned in a group
+- Replies when it is @mentioned in a group; other mentioned people are shown to the model by real name
 - Replies when someone replies to one of its messages (the quoted text is passed as context)
 - Replies to DMs from senders listed in `SIGNAL_ALLOWED_SENDERS`; ignores everything else
 - Optional x.ai web search and configurable reasoning effort
 - Short per-conversation memory, so follow-up questions work
 - Shows a typing indicator (refreshed every 10s) while it thinks; many chats are handled at once and a slow answer never blocks others
-- Reconnects automatically if signal-cli restarts
+- Logs each handled message (mention, reply or DM) to stdout; reconnects automatically if signal-cli restarts
 
 ## Quick start
 
@@ -36,7 +36,8 @@ A small chat bot that connects to a running `signal-cli` daemon over its socket 
    ```
 4. Build and run:
    ```
-   go build -o signalbot .
+   go build -ldflags "-X main.version=$(git describe --tags --always --dirty)" -o signalbot .
+   ./signalbot --version
    set -a
    . ./.env
    set +a
@@ -53,7 +54,7 @@ A small chat bot that connects to a running `signal-cli` daemon over its socket 
    ```
 6. Or run in Docker:
    ```
-   docker build -t signalbot .
+   docker build --build-arg VERSION=$(git describe --tags --always --dirty) -t signalbot .
    docker run -d --restart=always --env-file .env -v /run/signal-cli:/run/signal-cli signalbot
    ```
 7. Add the bot's account to a group and @mention it, reply to one of its messages, or DM it from an allowed sender.

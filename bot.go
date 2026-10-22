@@ -2,7 +2,9 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -17,12 +19,13 @@ type Bot struct {
 
 	mu      sync.Mutex
 	history map[string][]ChatMsg
+	names   *Names
 
 	typingEvery time.Duration
 }
 
 func NewBot(cfg *Config, sig *Signal, ai *XAI) *Bot {
-	return &Bot{cfg: cfg, sig: sig, ai: ai, sem: make(chan struct{}, cfg.MaxConcurrency), history: map[string][]ChatMsg{}, typingEvery: 10 * time.Second}
+	return &Bot{cfg: cfg, sig: sig, ai: ai, sem: make(chan struct{}, cfg.MaxConcurrency), history: map[string][]ChatMsg{}, names: NewNames(), typingEvery: 10 * time.Second}
 }
 
 // Request is a message the bot has decided to answer.
@@ -30,10 +33,24 @@ type Request struct {
 	Target Target
 	Key    string // conversation key
 	Prompt string
+
+	Kind   string // "mention", "reply" or "dm"
+	Sender string
+	Text   string // message text with the bot mention stripped
+}
+
+// LogLine renders the request as a single line for stdout.
+func (r *Request) LogLine(now time.Time) string {
+	chat := "dm"
+	if r.Target.GroupID != "" {
+		chat = r.Target.GroupID
+	}
+	text := strings.Join(strings.Fields(r.Text), " ")
+	return fmt.Sprintf("%s %s from=%s chat=%s: %s", now.Format(time.RFC3339), r.Kind, r.Sender, chat, text)
 }
 
 // Decide applies the trigger rules. It returns nil if the bot should stay silent.
-func Decide(env *Envelope, self string, allowed map[string]bool) *Request {
+func Decide(env *Envelope, self string, allowed map[string]bool, names *Names) *Request {
 	dm := env.DataMessage
 	if dm == nil || self == "" {
 		return nil
@@ -50,43 +67,50 @@ func Decide(env *Envelope, self string, allowed map[string]bool) *Request {
 		target    Target
 		key       string
 		triggered bool
+		kind      string
 	)
 	if dm.GroupInfo != nil && dm.GroupInfo.GroupID != "" {
 		target = Target{GroupID: dm.GroupInfo.GroupID}
 		key = "g:" + dm.GroupInfo.GroupID
 		for _, m := range dm.Mentions {
 			if m.UUID == self || (m.Number != "" && m.Number == self) {
-				triggered = true
+				triggered, kind = true, "mention"
 			}
 		}
-		if q := dm.Quote; q != nil && (q.AuthorUUID == self || q.Author == self) {
-			triggered = true
+		if q := dm.Quote; q != nil && (q.AuthorUUID == self || q.Author == self) && !triggered {
+			triggered, kind = true, "reply"
 		}
 	} else {
 		target = Target{User: sender}
 		key = "u:" + sender
 		triggered = allowed[env.SourceUUID] || allowed[env.Source] || allowed[env.SourceNumber]
+		kind = "dm"
 	}
 	if !triggered {
 		return nil
 	}
 
-	text := stripMentions(dm.Message, dm.Mentions, self)
+	text := stripMentions(dm.Message, dm.Mentions, self, names)
 	if text == "" {
 		return nil
 	}
+	raw := text
 	if q := dm.Quote; q != nil && q.Text != "" && (q.AuthorUUID == self || q.Author == self) {
 		text = "[In reply to your earlier message: \"" + q.Text + "\"]\n" + text
 	}
 	if target.GroupID != "" && env.SourceName != "" {
 		text = env.SourceName + ": " + text
 	}
-	return &Request{Target: target, Key: key, Prompt: text}
+	who := sender
+	if env.SourceName != "" {
+		who = env.SourceName + "(" + sender + ")"
+	}
+	return &Request{Target: target, Key: key, Prompt: text, Kind: kind, Sender: who, Text: raw}
 }
 
 // stripMentions removes the bot's own mention and expands other mentions to @name.
 // Mention offsets are UTF-16 code units.
-func stripMentions(msg string, ms []Mention, self string) string {
+func stripMentions(msg string, ms []Mention, self string, names *Names) string {
 	u := utf16.Encode([]rune(msg))
 	for i := len(ms) - 1; i >= 0; i-- {
 		m := ms[i]
@@ -95,11 +119,7 @@ func stripMentions(msg string, ms []Mention, self string) string {
 		}
 		var repl []uint16
 		if m.UUID != self && m.Number != self {
-			name := m.Name
-			if name == "" {
-				name = m.UUID
-			}
-			repl = utf16.Encode([]rune("@" + name))
+			repl = utf16.Encode([]rune("@" + names.Resolve(m)))
 		}
 		u = append(u[:m.Start], append(repl, u[m.Start+m.Length:]...)...)
 	}
@@ -110,16 +130,35 @@ func stripMentions(msg string, ms []Mention, self string) string {
 func (b *Bot) Handle(env *Envelope) {
 	go func() {
 		self := b.sig.WaitSelf(10 * time.Second)
-		req := Decide(env, self, b.cfg.AllowedSenders)
+		b.names.Learn(env)
+		b.refreshIfUnknownMentions(env, self)
+		req := Decide(env, self, b.cfg.AllowedSenders, b.names)
 		if req == nil {
 			return
 		}
+		fmt.Fprintln(os.Stdout, req.LogLine(time.Now()))
 		stop := b.keepTyping(req.Target)
 		defer stop()
 		b.sem <- struct{}{}
 		defer func() { <-b.sem }()
 		b.respond(context.Background(), req, stop)
 	}()
+}
+
+// refreshIfUnknownMentions loads the contact list when a message mentions
+// someone (other than the bot) we have no name for.
+func (b *Bot) refreshIfUnknownMentions(env *Envelope, self string) {
+	if env.DataMessage == nil {
+		return
+	}
+	for _, m := range env.DataMessage.Mentions {
+		if m.UUID != self && m.Number != self && b.names.needsRefresh(m) {
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			b.names.Refresh(ctx, b.sig)
+			return
+		}
+	}
 }
 
 // keepTyping sends a typing indicator now and every typingEvery until stop is called.
