@@ -34,11 +34,11 @@ func TestBuildMentions(t *testing.T) {
 }
 
 func TestDecideCollectsNamesForGroupsOnly(t *testing.T) {
-	r := Decide(parse(t, groupMention), decideCtx{self: self})
-	if r.Names["Rob"] != rob {
+	r := decide(parse(t, groupMention), nil)
+	if r.Names["rob"] != rob {
 		t.Fatalf("sender name missing: %v", r.Names)
 	}
-	if d := Decide(parse(t, dm), decideCtx{self: self, allowed: map[string]bool{rob: true}}); d.Names != nil {
+	if d := decide(parse(t, dm), map[string]bool{rob: true}); d.Names != nil {
 		t.Fatalf("DMs should not collect names: %v", d.Names)
 	}
 }

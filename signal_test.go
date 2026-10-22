@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"log"
 	"strings"
 	"testing"
 )
@@ -9,9 +10,10 @@ import (
 func captureLogs(t *testing.T) *bytes.Buffer {
 	t.Helper()
 	var buf bytes.Buffer
-	old := logOut
-	logOut = &buf
-	t.Cleanup(func() { logOut = old })
+	w, flags := log.Writer(), log.Flags()
+	log.SetOutput(&buf)
+	log.SetFlags(0)
+	t.Cleanup(func() { log.SetOutput(w); log.SetFlags(flags) })
 	return &buf
 }
 
