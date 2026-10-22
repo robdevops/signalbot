@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
 	"io"
 	"net"
@@ -39,8 +40,8 @@ func TestContactDisplayName(t *testing.T) {
 func TestResolvePriority(t *testing.T) {
 	n := NewNames()
 	m := Mention{Name: rob, UUID: rob}
-	if got := n.Resolve(m); got != unnamedUser {
-		t.Fatalf("unknown id should not leak: %q", got)
+	if got := n.Resolve(m); got != "" {
+		t.Fatalf("unknown id should resolve to nothing, not leak: %q", got)
 	}
 	if got := n.Resolve(Mention{Name: "FromMention", UUID: rob}); got != "FromMention" {
 		t.Fatalf("mention name: %q", got)
@@ -66,10 +67,6 @@ func TestResolvePriority(t *testing.T) {
 	n.Learn(&Envelope{SourceUUID: rob, SourceName: "Robbie S"})
 	if got := n.Resolve(m); got != "Rob" {
 		t.Fatalf("live name must not displace givenName: %q", got)
-	}
-	var nilNames *Names
-	if got := nilNames.Resolve(m); got != unnamedUser {
-		t.Fatalf("nil: %q", got)
 	}
 }
 
@@ -114,7 +111,7 @@ func TestMentionNameResolvedFromContacts(t *testing.T) {
 			switch req["method"] {
 			case "listAccounts":
 				c.Write([]byte(`{"jsonrpc":"2.0","result":[{"number":null,"aci":"` + self + `"}],"id":` + string(id) + "}\n"))
-				c.Write([]byte(msg + "\n"))
+				c.Write([]byte(receive(msg)))
 			case "send":
 				sent <- req["params"].(map[string]any)
 			case "listContacts":
@@ -126,11 +123,11 @@ func TestMentionNameResolvedFromContacts(t *testing.T) {
 		}
 	}()
 
-	cfg := &Config{Socket: sock, APIKey: "k", Model: "m", AllowedSenders: map[string]bool{}, MaxConcurrency: 4, HistoryTurns: 2, MaxChats: 10}
+	cfg := &Config{Socket: sock, APIKey: "k", Model: "m", AllowedSenders: map[string]bool{}, MaxConcurrency: 4, HistoryTurns: 2}
 	sig := NewSignal(sock)
 	x := NewXAI(cfg)
 	x.url = ai.URL
-	bot := NewBot(cfg, sig, x)
+	bot := NewBot(context.Background(), cfg, sig, x)
 	ctx, cancel := contextWithCancel()
 	defer cancel()
 	go sig.Run(ctx, bot.Handle)

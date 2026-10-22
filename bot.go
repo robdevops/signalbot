@@ -1,12 +1,16 @@
 package main
 
 import (
+	"cmp"
 	"context"
 	"fmt"
+	"maps"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 	"unicode"
 	"unicode/utf16"
@@ -22,6 +26,11 @@ const (
 	maxNameRunes = 64
 	// maxQuoteRunes caps quoted text spliced into a prompt.
 	maxQuoteRunes = 500
+	// maxChats bounds the chats remembered: chat keys come from the network.
+	maxChats = 500
+	// dedupeWindow: the same text from the same sender in the same chat
+	// within this long is ignored.
+	dedupeWindow = 10 * time.Second
 )
 
 // safeName makes an untrusted display name safe to splice into a prompt or a
@@ -43,68 +52,47 @@ func clamp(s string, max int) string {
 }
 
 type Bot struct {
-	cfg *Config
-	sig *Signal
-	ai  *XAI
-	sem chan struct{}
-	ctx context.Context
-
-	life    sync.Mutex // orders closing against wg.Add
-	closing bool
-	wg      sync.WaitGroup
+	cfg     *Config
+	sig     *Signal
+	ai      *XAI
+	sem     chan struct{}
+	ctx     context.Context
+	closing atomic.Bool // set by Shutdown: no new reply starts
 
 	mu      sync.Mutex
 	history map[string][]ChatMsg
-	known   map[string]map[string]knownName // chat key -> name -> who to mention
-	used    map[string]time.Time            // chat key -> last use, for eviction
+	known   map[string]map[string]string // chat key -> name -> uuid shown to the model
 	names   *Names
 	dedupe  map[string]time.Time
-	sentTS  map[int64]time.Time // timestamps of messages we sent
 
 	typingEvery time.Duration
 }
 
-// knownName is a name the model has been shown, and who it refers to.
-type knownName struct {
-	uuid string
-	rank int
-}
-
-func NewBot(cfg *Config, sig *Signal, ai *XAI) *Bot {
-	b := &Bot{
-		cfg: cfg, sig: sig, ai: ai,
+func NewBot(ctx context.Context, cfg *Config, sig *Signal, ai *XAI) *Bot {
+	return &Bot{
+		cfg: cfg, sig: sig, ai: ai, ctx: ctx,
 		sem:         make(chan struct{}, cfg.MaxConcurrency),
-		ctx:         context.Background(),
 		history:     map[string][]ChatMsg{},
-		known:       map[string]map[string]knownName{},
-		used:        map[string]time.Time{},
+		known:       map[string]map[string]string{},
 		names:       NewNames(),
 		dedupe:      map[string]time.Time{},
-		sentTS:      map[int64]time.Time{},
 		typingEvery: 10 * time.Second,
 	}
-	if sig != nil {
-		sig.OnSent = b.recordSent
-	}
-	return b
 }
 
-// Close stops the bot accepting new messages. Replies already in flight
-// carry on; use Wait to let them finish.
-func (b *Bot) Close() {
-	b.life.Lock()
-	b.closing = true
-	b.life.Unlock()
-}
-
-// Wait blocks until in-flight replies finish, or until d elapses.
-func (b *Bot) Wait(d time.Duration) {
-	done := make(chan struct{})
-	go func() { b.wg.Wait(); close(done) }()
-	select {
-	case <-done:
-	case <-time.After(d):
-		logf("shutdown timed out with replies still in flight")
+// Shutdown stops new replies starting and waits up to d for those in flight.
+// Every reply holds a concurrency slot, so once Shutdown holds them all, none
+// is left.
+func (b *Bot) Shutdown(d time.Duration) {
+	b.closing.Store(true)
+	timeout := time.After(d)
+	for range cap(b.sem) {
+		select {
+		case b.sem <- struct{}{}:
+		case <-timeout:
+			logf("shutdown timed out with replies still in flight")
+			return
+		}
 	}
 }
 
@@ -119,9 +107,9 @@ type Request struct {
 	Name   string // display name, else the id: short form for the log
 	Text   string // message text with the bot mention stripped
 
-	// Names the model has been shown in this message, so "@Name" in its reply
-	// can become a real Signal mention. Groups only.
-	Names map[string]knownName
+	// Names the model has been shown in this message (name -> uuid), so
+	// "@Name" in its reply can become a real Signal mention. Groups only.
+	Names map[string]string
 }
 
 // logLine says who sent the request, plus the text (quoted) when withBody.
@@ -136,91 +124,58 @@ func (r *Request) logLine(withBody bool) string {
 // replyLogLine is the one-line summary of a model reply, e.g.
 // "reply Rob 3.3s, tokens in/out: 1203/312 (10% cached), $0.002".
 func replyLogLine(name string, took time.Duration, c Completion, cfg *Config) string {
-	cached := 0
-	if c.InputTokens > 0 {
-		cached = 100 * min(c.CachedTokens, c.InputTokens) / c.InputTokens
-	}
+	cached := 100 * min(c.CachedTokens, c.InputTokens) / max(c.InputTokens, 1)
 	return fmt.Sprintf("reply %s %.1fs, tokens in/out: %d/%d (%d%% cached), $%.3f",
 		name, took.Seconds(), c.InputTokens, c.OutputTokens, cached, c.Cost(cfg))
 }
 
-// triggers is the cheap, allocation-free half of the trigger rules. It runs
-// inline on the reader goroutine so that messages the bot will ignore cost
-// nothing: no goroutine, no lock, no RPC.
-func triggers(env *Envelope, self string, allowed map[string]bool) bool {
+// trigger is the cheap, allocation-free half of the trigger rules: it says why
+// the bot should answer ("mention", "reply" or "dm"), or "" to stay silent. It
+// runs inline on the reader goroutine so that messages the bot will ignore
+// cost nothing: no goroutine, no lock, no RPC.
+func trigger(env *Envelope, self string, allowed map[string]bool) string {
 	dm := env.DataMessage
-	if dm == nil || self == "" || strings.TrimSpace(dm.Message) == "" {
-		return false
+	if dm == nil || self == "" || strings.TrimSpace(dm.Message) == "" ||
+		env.SourceUUID == self || env.Source == self || env.SourceNumber == self {
+		return ""
 	}
-	if env.SourceUUID == self || env.Source == self || env.SourceNumber == self {
-		return false
-	}
-	if dm.GroupInfo != nil && dm.GroupInfo.GroupID != "" {
-		for _, m := range dm.Mentions {
-			if m.UUID == self || (m.Number != "" && m.Number == self) {
-				return true
-			}
+	if dm.GroupInfo == nil || dm.GroupInfo.GroupID == "" {
+		if allowed[env.SourceUUID] || allowed[env.Source] || allowed[env.SourceNumber] {
+			return "dm"
 		}
-		q := dm.Quote
-		return q != nil && (q.AuthorUUID == self || q.Author == self)
+		return ""
 	}
-	return allowed[env.SourceUUID] || allowed[env.Source] || allowed[env.SourceNumber]
+	for _, m := range dm.Mentions {
+		if m.UUID == self || m.Number == self {
+			return "mention"
+		}
+	}
+	if q := dm.Quote; q != nil && (q.AuthorUUID == self || q.Author == self) {
+		return "reply"
+	}
+	return ""
 }
 
-// decideCtx is everything Decide needs beyond the envelope.
-type decideCtx struct {
-	self    string
-	allowed map[string]bool
-	names   *Names
-	// sent reports whether we actually sent the message with this timestamp.
-	// Quote fields are composed by the sending client, so a quote attributed
-	// to us is only evidence when it matches something we really sent.
-	sent func(int64) bool
-}
-
-// Decide applies the trigger rules and builds the prompt. It returns nil if
-// the bot should stay silent.
-func Decide(env *Envelope, d decideCtx) *Request {
-	if !triggers(env, d.self, d.allowed) {
-		return nil
-	}
+// Decide builds the prompt for a message that triggered as kind. It returns
+// nil if nothing is left once the bot's own mention is stripped.
+func Decide(env *Envelope, kind, self string, names *Names) *Request {
 	dm := env.DataMessage
-	sender := env.SourceUUID
-	if sender == "" {
-		sender = env.Source
+	sender := cmp.Or(env.SourceUUID, env.Source)
+	target, key := Target{User: sender}, "u:"+sender
+	if kind != "dm" {
+		target, key = Target{GroupID: dm.GroupInfo.GroupID}, "g:"+dm.GroupInfo.GroupID
 	}
 
-	var target Target
-	var key, kind string
-	if dm.GroupInfo != nil && dm.GroupInfo.GroupID != "" {
-		target = Target{GroupID: dm.GroupInfo.GroupID}
-		key = "g:" + dm.GroupInfo.GroupID
-		kind = "reply"
-		for _, m := range dm.Mentions {
-			if m.UUID == d.self || (m.Number != "" && m.Number == d.self) {
-				kind = "mention"
-				break
-			}
-		}
-	} else {
-		target = Target{User: sender}
-		key = "u:" + sender
-		kind = "dm"
-	}
-
-	text := stripMentions(dm.Message, dm.Mentions, d.self, d.names)
+	text := stripMentions(dm.Message, dm.Mentions, self, names)
 	if text == "" {
 		return nil
 	}
 	raw := text
-	if q := dm.Quote; q != nil && q.Text != "" && (q.AuthorUUID == d.self || q.Author == d.self) {
-		label := "a message the sender claims you sent"
-		if d.sent != nil && d.sent(q.ID) {
-			label = "your earlier message"
-		}
-		// Quoted text is attacker-controlled: escape it so it cannot close the
-		// wrapper and pose as a new turn, and clamp it so it cannot flood.
-		text = "[In reply to " + label + ": " + strconv.Quote(clamp(q.Text, maxQuoteRunes)) + "]\n" + text
+	if q := dm.Quote; q != nil && q.Text != "" && (q.AuthorUUID == self || q.Author == self) {
+		// The sender composes the quote, so it may not be what the bot said.
+		// Escape it so it cannot close the wrapper and pose as a new turn, and
+		// clamp it so it cannot flood.
+		text = "[Replying to a message attributed to you: " + strconv.Quote(clamp(q.Text, maxQuoteRunes)) + "]\n" + text
 	}
 	name := safeName(env.SourceName)
 	if target.GroupID != "" && name != "" {
@@ -231,31 +186,18 @@ func Decide(env *Envelope, d decideCtx) *Request {
 		who = name + "(" + sender + ")"
 	}
 
-	short := name
-	if short == "" {
-		short = sender
-	}
-	req := &Request{Target: target, Key: key, Prompt: text, Kind: kind, Sender: who, Name: short, Text: raw}
+	req := &Request{Target: target, Key: key, Prompt: text, Kind: kind, Sender: who, Name: cmp.Or(name, sender), Text: raw}
 	if target.GroupID != "" {
-		req.Names = map[string]knownName{}
-		add := func(n string, rank int, uuid string) {
-			if n = safeName(n); n != "" && uuid != "" && uuid != d.self {
-				bindName(req.Names, n, knownName{uuid, rank})
+		req.Names = map[string]string{}
+		add := func(n, uuid string) {
+			if n = safeName(n); n != "" && uuid != "" && uuid != self {
+				bindName(req.Names, n, uuid)
 			}
 		}
-		if env.SourceUUID != "" {
-			add(env.SourceName, rankSeen, env.SourceUUID)
-			if n, rank := d.names.resolve(Mention{UUID: env.SourceUUID, Number: env.SourceNumber}); rank > 0 {
-				add(n, rank, env.SourceUUID)
-			}
-		}
+		add(env.SourceName, env.SourceUUID) // the name the model sees in the prompt
 		for _, m := range dm.Mentions {
-			if m.UUID == "" || m.UUID == d.self || m.Number == d.self {
-				continue
-			}
-			// stripMentions has already logged any miss for this mention.
-			if n, rank := d.names.resolve(m); rank > 0 {
-				add(n, rank, m.UUID)
+			if m.Number != self {
+				add(names.Resolve(m), m.UUID)
 			}
 		}
 	}
@@ -282,9 +224,10 @@ func stripMentions(msg string, ms []Mention, self string, names *Names) string {
 		}
 		var repl []uint16
 		if m.UUID != self && m.Number != self {
-			name := names.Resolve(m)
-			if name != unnamedUser {
-				name = "@" + name
+			name := "@" + names.Resolve(m)
+			if name == "@" {
+				logf("unresolved mention of %s", cmp.Or(m.UUID, m.Number))
+				name = unnamedUser
 			}
 			repl = utf16.Encode([]rune(name))
 		}
@@ -298,12 +241,12 @@ func stripMentions(msg string, ms []Mention, self string, names *Names) string {
 // let a remote sender create unbounded goroutines, tickers or RPCs: the
 // concurrency slot is taken before anything is spawned.
 func (b *Bot) Handle(env *Envelope) {
-	if env.DataMessage == nil {
+	if env.DataMessage == nil || b.closing.Load() {
 		return
 	}
 	// Cheap inline rejection. Before the account id is known (the first moment
 	// after connecting) we cannot judge, so we let it through to the slow path.
-	if self := b.sig.SelfID(); self != "" && !triggers(env, self, b.cfg.AllowedSenders) {
+	if self := b.sig.SelfID(); self != "" && trigger(env, self, b.cfg.AllowedSenders) == "" {
 		// Remember group members' names, so they resolve if mentioned later.
 		// It is cheap and bounded, and only group senders: they are members of
 		// a group the bot is in. DMs can come from anyone and are ignored.
@@ -318,18 +261,7 @@ func (b *Bot) Handle(env *Envelope) {
 		logf("at capacity (%d), dropping message", b.cfg.MaxConcurrency)
 		return
 	}
-	// Checked and counted under one lock, so no reply can start after Close
-	// has returned and Wait is draining.
-	b.life.Lock()
-	if b.closing {
-		b.life.Unlock()
-		<-b.sem
-		return
-	}
-	b.wg.Add(1)
-	b.life.Unlock()
 	go func() {
-		defer b.wg.Done()
 		defer func() { <-b.sem }()
 		b.handle(env)
 	}()
@@ -337,13 +269,20 @@ func (b *Bot) Handle(env *Envelope) {
 
 func (b *Bot) handle(env *Envelope) {
 	self := b.sig.WaitSelf(10 * time.Second)
-	if !triggers(env, self, b.cfg.AllowedSenders) {
+	kind := trigger(env, self, b.cfg.AllowedSenders)
+	if kind == "" {
 		return
 	}
 	b.names.Learn(env)
-	b.refreshIfUnknownMentions(env, self)
+	// Load the contact list if someone other than the bot is mentioned whose
+	// name we lack. Only messages the bot will answer get this far.
+	if slices.ContainsFunc(env.DataMessage.Mentions, func(m Mention) bool {
+		return m.UUID != self && m.Number != self && b.names.needsRefresh(m)
+	}) {
+		b.refreshContacts()
+	}
 
-	req := Decide(env, decideCtx{self: self, allowed: b.cfg.AllowedSenders, names: b.names, sent: b.wasSent})
+	req := Decide(env, kind, self, b.names)
 	if req == nil {
 		return
 	}
@@ -353,19 +292,13 @@ func (b *Bot) handle(env *Envelope) {
 	}
 	b.remember(req)
 	logf("%s", req.logLine(b.cfg.LogMessageBody))
-
-	stop := b.keepTyping(req.Target)
-	defer stop()
-	b.respond(b.ctx, req, stop)
+	b.respond(req)
 }
 
 // duplicate reports whether the same sender sent the same text to the same
 // chat within the dedupe window, and records this one.
 func (b *Bot) duplicate(req *Request) bool {
-	window := time.Duration(b.cfg.DedupeWindow) * time.Second
-	if window <= 0 {
-		return false
-	}
+	window := dedupeWindow
 	key := req.Sender + "\x00" + req.Key + "\x00" + req.Text
 	now := time.Now()
 	b.mu.Lock()
@@ -375,57 +308,24 @@ func (b *Bot) duplicate(req *Request) bool {
 			delete(b.dedupe, k)
 		}
 	}
-	if t, ok := b.dedupe[key]; ok && now.Sub(t) <= window {
+	if _, ok := b.dedupe[key]; ok {
 		return true
 	}
 	b.dedupe[key] = now
 	return false
 }
 
-func (b *Bot) recordSent(ts int64) {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	cutoff := time.Now().Add(-24 * time.Hour)
-	for k, t := range b.sentTS {
-		if t.Before(cutoff) || len(b.sentTS) > 1000 {
-			delete(b.sentTS, k)
-		}
-	}
-	b.sentTS[ts] = time.Now()
-}
-
-func (b *Bot) wasSent(ts int64) bool {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	_, ok := b.sentTS[ts]
-	return ok
-}
-
-// refreshIfUnknownMentions loads the contact list when a message mentions
-// someone (other than the bot) we have no name for. It runs only for messages
-// the bot has already decided to answer.
-func (b *Bot) refreshIfUnknownMentions(env *Envelope, self string) {
-	if env.DataMessage == nil {
-		return
-	}
-	for _, m := range env.DataMessage.Mentions {
-		if m.UUID != self && m.Number != self && b.names.needsRefresh(m) {
-			b.refreshContacts()
-			return
-		}
-	}
-}
-
-func (b *Bot) refreshContacts() {
+// refreshContacts loads the contact list unless that was done moments ago,
+// and reports whether it tried.
+func (b *Bot) refreshContacts() bool {
 	ctx, cancel := context.WithTimeout(b.ctx, 10*time.Second)
 	defer cancel()
-	b.names.Refresh(ctx, b.sig)
+	return b.names.Refresh(ctx, b.sig)
 }
 
 // keepTyping sends a typing indicator now and every typingEvery until stopped.
 func (b *Bot) keepTyping(t Target) (stop func()) {
 	done := make(chan struct{})
-	var once sync.Once
 	b.sig.Typing(t)
 	go func() {
 		tick := time.NewTicker(b.typingEvery)
@@ -439,15 +339,16 @@ func (b *Bot) keepTyping(t Target) (stop func()) {
 			}
 		}
 	}()
-	return func() { once.Do(func() { close(done) }) }
+	return func() { close(done) }
 }
 
-func (b *Bot) respond(ctx context.Context, req *Request, stopTyping func()) {
-	b.ensureSelfName(ctx)
+func (b *Bot) respond(req *Request) {
+	stopTyping := b.keepTyping(req.Target)
+	b.ensureSelfName()
 	msgs := append(b.getHistory(req.Key), ChatMsg{Role: "user", Content: req.Prompt})
 
 	start := time.Now()
-	res, err := b.ai.Complete(ctx, b.systemPrompt(), msgs)
+	res, err := b.ai.Complete(b.ctx, b.systemPrompt(), msgs)
 	stopTyping()
 	took := time.Since(start)
 	if err != nil {
@@ -488,15 +389,11 @@ func replyParts(reply, self string) []string {
 	return splitMessage(reply, signalMaxChars)
 }
 
-// stripSelfTags removes the bot's own @name from a reply. Left in, it would
-// render as a mention of the bot, which wakes the bot with its own message.
+// stripSelfTags removes the bot's own @name from a reply, without leaving a
+// double space behind.
 func stripSelfTags(reply, self string) string {
-	self = safeName(self)
-	if self == "" {
-		return reply
-	}
 	rs := []rune(reply)
-	spans := findAtNames(rs, map[string]knownName{self: {uuid: "self"}})
+	spans := findAtNames(rs, map[string]string{safeName(self): "self"})
 	if len(spans) == 0 {
 		return reply
 	}
@@ -505,15 +402,8 @@ func stripSelfTags(reply, self string) string {
 	for _, s := range spans {
 		out = append(out, rs[pos:s.start]...)
 		pos = s.end
-		before := len(out) == 0 || unicode.IsSpace(out[len(out)-1])
-		if before && pos < len(rs) && (rs[pos] == ',' || rs[pos] == ':') {
-			pos++ // "@bot, hi" -> "hi"
-		}
-		switch {
-		case before && pos < len(rs) && rs[pos] == ' ':
-			pos++ // "hi @bot there" -> "hi there"
-		case len(out) > 0 && out[len(out)-1] == ' ' && (pos == len(rs) || unicode.IsPunct(rs[pos])):
-			out = out[:len(out)-1] // "thanks @bot!" -> "thanks!"
+		if pos < len(rs) && rs[pos] == ' ' && (len(out) == 0 || out[len(out)-1] == ' ') {
+			pos++
 		}
 	}
 	out = append(out, rs[pos:]...)
@@ -534,78 +424,30 @@ const basePrompt = "You are a helpful assistant in a Signal chat. " +
 	"A mention shown as [unnamed user] is someone whose name you don't know; don't invent one. " +
 	"To mention someone, write @ followed by their exact name. Never write your own name with an @."
 
-// selfName is the bot's own display name: BOT_NAME, else its profile name.
+// selfName is the bot's own profile name, or "" until contacts are loaded.
 func (b *Bot) selfName() string {
-	if b.cfg.BotName != "" {
-		return b.cfg.BotName
-	}
-	if r := b.names.lookup(b.sig.SelfIDs()...); r.rank > 0 {
-		return r.name
-	}
-	return ""
+	return b.names.lookup(b.sig.SelfID()).name
 }
 
-// ensureSelfName loads contacts if the bot's own name is not known yet. The
-// attempt is only counted when a lookup actually happened, so throttled
-// no-op refreshes cannot exhaust the budget.
-func (b *Bot) ensureSelfName(ctx context.Context) {
-	if b.selfName() != "" || !b.names.canRefresh() {
-		return
-	}
-	b.refreshContacts()
-	if b.selfName() == "" {
-		logf("own profile name not found; set BOT_NAME to override")
+// ensureSelfName loads contacts if the bot's own name is not known yet.
+func (b *Bot) ensureSelfName() {
+	if b.selfName() == "" && b.refreshContacts() && b.selfName() == "" {
+		logf("own profile name not found; calling itself signalbot (INTRO can name it)")
 	}
 }
 
 // introName is the name the model is told it has.
-func (b *Bot) introName() string {
-	if name := b.selfName(); name != "" {
-		return name
-	}
-	return "signalbot"
-}
+func (b *Bot) introName() string { return cmp.Or(b.selfName(), "signalbot") }
 
 // systemPrompt is the built-in prompt, plus SYSTEM_PROMPT, plus the intro.
 func (b *Bot) systemPrompt() string {
-	name := b.introName()
-	intro := b.cfg.Intro
-	if intro == "" {
-		intro = defaultIntro
-	}
-	intro = strings.NewReplacer("{name}", safeName(name), "{model}", b.cfg.Model).Replace(intro)
-
+	intro := strings.NewReplacer("{name}", safeName(b.introName()), "{model}", b.cfg.Model).Replace(b.cfg.Intro)
 	p := basePrompt
-	if extra := strings.TrimSpace(b.cfg.ExtraPrompt); extra != "" {
-		p += "\n" + extra
+	if b.cfg.ExtraPrompt != "" {
+		p += "\n" + b.cfg.ExtraPrompt
 	}
 	// Quote so a newline or quote in the name or in INTRO cannot escape it.
 	return p + "\nIf asked to introduce yourself, reply with exactly this text and nothing else: " + strconv.Quote(intro)
-}
-
-// bindName records that name n refers to v.uuid. Display names are chosen by
-// their owners, so anyone can claim anyone's name: a name claimed by two
-// different people becomes ambiguous (no uuid) and is never turned into a
-// mention. The one exception is the account owner's own contact name, which
-// is trusted and wins over any self-chosen claim. Reports a new conflict.
-func bindName(m map[string]knownName, n string, v knownName) (conflict bool) {
-	old, ok := m[n]
-	switch {
-	case !ok:
-		m[n] = v
-	case old.uuid == v.uuid:
-		if v.rank > old.rank {
-			m[n] = v
-		}
-	case v.rank >= rankContact && old.rank < rankContact:
-		m[n] = v
-	case old.rank >= rankContact:
-		// keep the trusted binding
-	default:
-		m[n] = knownName{rank: max(old.rank, v.rank)}
-		return old.uuid != ""
-	}
-	return false
 }
 
 // remember records names shown to the model so later replies can mention them.
@@ -615,30 +457,35 @@ func (b *Bot) remember(req *Request) {
 	}
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	b.touch(req.Key)
+	makeRoom(b.known, req.Key, maxChats)
 	k := b.known[req.Key]
 	if k == nil {
-		k = map[string]knownName{}
+		k = map[string]string{}
 		b.known[req.Key] = k
 	}
-	for n, v := range req.Names {
-		if _, ok := k[n]; !ok && len(k) >= 256 {
-			continue
-		}
-		if bindName(k, n, v) {
-			logf("name %q is claimed by more than one user; not linking it", n)
+	for n, uuid := range req.Names {
+		if _, ok := k[n]; ok || len(k) < 256 {
+			bindName(k, n, uuid)
 		}
 	}
 }
 
-func (b *Bot) knownNames(key string) map[string]knownName {
+// bindName records that name n refers to uuid. Display names are self-chosen,
+// so anyone can claim a member's name: a name claimed by two different people
+// is ambiguous, marked "", and never linked.
+func bindName(m map[string]string, n, uuid string) {
+	n = strings.ToLower(n) // mentions match case-insensitively, so "rob" claims "Rob"
+	if old, ok := m[n]; !ok {
+		m[n] = uuid
+	} else if old != uuid {
+		m[n] = ""
+	}
+}
+
+func (b *Bot) knownNames(key string) map[string]string {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	out := make(map[string]knownName, len(b.known[key]))
-	for n, v := range b.known[key] {
-		out[n] = v
-	}
-	return out
+	return maps.Clone(b.known[key])
 }
 
 func (b *Bot) getHistory(key string) []ChatMsg {
@@ -650,7 +497,7 @@ func (b *Bot) getHistory(key string) []ChatMsg {
 func (b *Bot) addHistory(key string, msgs ...ChatMsg) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	b.touch(key)
+	makeRoom(b.history, key, maxChats)
 	h := append(b.history[key], msgs...)
 	if max := b.cfg.HistoryTurns * 2; len(h) > max {
 		h = append([]ChatMsg(nil), h[len(h)-max:]...)
@@ -658,63 +505,42 @@ func (b *Bot) addHistory(key string, msgs ...ChatMsg) {
 	b.history[key] = h
 }
 
-// touch records a chat as used and evicts the least recently used chats once
-// there are more than MaxChats. Chat keys come from the envelope, so without
-// this a sender could grow these maps forever by creating groups.
-// Caller holds b.mu.
-func (b *Bot) touch(key string) {
-	b.used[key] = time.Now()
-	if b.cfg.MaxChats <= 0 {
+// makeRoom makes room for key in m, dropping an arbitrary entry once m holds
+// max. Keys come from the network, so these maps must be bounded. The caller
+// holds the lock that guards m.
+func makeRoom[V any](m map[string]V, key string, max int) {
+	if _, ok := m[key]; ok || len(m) < max {
 		return
 	}
-	for len(b.used) > b.cfg.MaxChats {
-		oldest, at := "", time.Time{}
-		for k, t := range b.used {
-			if k != key && (oldest == "" || t.Before(at)) {
-				oldest, at = k, t
-			}
-		}
-		if oldest == "" {
-			return
-		}
-		delete(b.used, oldest)
-		delete(b.history, oldest)
-		delete(b.known, oldest)
+	for k := range m {
+		delete(m, k)
+		return
 	}
 }
 
 // splitMessage breaks a reply into chunks of at most max runes, preferring a
-// newline and then a space as the break. It is linear: the text is converted
-// to runes once and then sliced.
+// newline and then a space as the break.
 func splitMessage(s string, max int) []string {
 	r := []rune(s)
 	var out []string
-	for len(r) > 0 {
+	for {
 		for len(r) > 0 && unicode.IsSpace(r[0]) {
 			r = r[1:]
 		}
 		if len(r) == 0 {
-			break
+			return out
 		}
-		end := len(r)
-		if end > max {
-			end = max
-			if i := lastIndexRune(r[:max], '\n'); i > 0 {
+		end := min(len(r), max)
+		if end < len(r) {
+			if i := lastIndexRune(r[:end], '\n'); i > 0 {
 				end = i
-			} else if i := lastIndexRune(r[:max], ' '); i > max/2 {
+			} else if i := lastIndexRune(r[:end], ' '); i > max/2 {
 				end = i
 			}
 		}
-		part := r[:end]
-		for len(part) > 0 && unicode.IsSpace(part[len(part)-1]) {
-			part = part[:len(part)-1]
-		}
-		if len(part) > 0 {
-			out = append(out, string(part))
-		}
+		out = append(out, strings.TrimRightFunc(string(r[:end]), unicode.IsSpace))
 		r = r[end:]
 	}
-	return out
 }
 
 func lastIndexRune(r []rune, want rune) int {

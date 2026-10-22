@@ -61,10 +61,10 @@ A small chat bot that connects to a running [signal-cli](https://github.com/Asam
 
 - Go, standard library only; single static binary
 - Talks JSON-RPC to `signal-cli daemon` over a unix socket or TCP (`listAccounts` once per connection to learn its own id)
-- x.ai Responses API (`/v1/responses`) over a shared keep-alive HTTP client, one retry on 429/5xx
+- x.ai Responses API (`/v1/responses`) over a shared keep-alive HTTP client that requires TLS 1.3, one retry on 429/5xx
 - Bounded under load: a concurrency slot (`MAX_CONCURRENCY`) is taken before any goroutine starts, so messages it ignores cost nothing and a flood is dropped, not queued
-- In-memory state only, all capped: history per chat (`HISTORY_TURNS`), number of chats (`MAX_CHATS`), names, frame size (1 MiB) and reply length (4 messages)
-- Treats sender-controlled text as untrusted: display names and quotes are sanitised before reaching the model or the log, a quote is only called the bot's own when it matches a message the bot sent, and a name two people claim is never linked
+- In-memory state only, all capped: history per chat (`HISTORY_TURNS`), number of chats (500), names, frame size (1 MiB) and reply length (4 messages)
+- Treats sender-controlled text as untrusted: display names and quotes are sanitised before reaching the model or the log, and a name two people claim is never linked
 - Configured from environment variables only; runs under systemd (hardened unit included) or Docker. Logs plain lines to stdout, with a timestamp only in a terminal (journald and Docker add their own)
 
 ## Configuration
@@ -79,15 +79,12 @@ A small chat bot that connects to a running [signal-cli](https://github.com/Asam
 | `SIGNAL_ALLOWED_SENDERS` | empty | UUIDs/numbers allowed to DM the bot, separated by commas or whitespace |
 | `SYSTEM_PROMPT` | empty | Extra instructions, appended to the built-in prompt (which keeps answers short and Signal-sized) |
 | `LOG_MESSAGE_BODY` | `false` | Also log the text of each handled message, not just who sent it |
-| `BOT_NAME` | profile name | Name the bot gives when asked to introduce itself; falls back to `signalbot` if no profile name is found |
 | `INTRO` | built-in sentence | Overrides the self-introduction; `{name}` and `{model}` are substituted |
 | `XAI_PRICE_IN` | `1.25` | USD per million input tokens, for the cost estimate |
 | `XAI_PRICE_CACHED` | `0.20` | USD per million cached input tokens, for the cost estimate |
 | `XAI_PRICE_OUT` | `2.50` | USD per million output tokens, for the cost estimate |
 | `MAX_CONCURRENCY` | `32` | Replies in flight at once; messages beyond this are dropped |
 | `HISTORY_TURNS` | `10` | Exchanges remembered per chat |
-| `MAX_CHATS` | `500` | Chats remembered before the least recently used is forgotten |
-| `DEDUPE_SECONDS` | `10` | Ignore the same message from the same sender within this many seconds |
 
 The default `INTRO` is: `hi, I'm {name}, your open source assistant running {model}. I respond to @mentions and replies to my messages. See https://github.com/robdevops/signalbot/blob/main/README.md for details`
 

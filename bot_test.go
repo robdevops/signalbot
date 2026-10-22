@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"log"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -57,7 +58,7 @@ func TestDecide(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			r := Decide(parse(t, tc.in), decideCtx{self: self, allowed: tc.allowed})
+			r := decide(parse(t, tc.in), tc.allowed)
 			if tc.want == "" {
 				if r != nil {
 					t.Fatalf("expected silence, got %+v", r)
@@ -75,7 +76,7 @@ func TestDecide(t *testing.T) {
 			}
 		})
 	}
-	if r := Decide(parse(t, groupReply), decideCtx{self: self}); !strings.Contains(r.Prompt, "oil around 78") {
+	if r := decide(parse(t, groupReply), nil); !strings.Contains(r.Prompt, "oil around 78") {
 		t.Fatalf("quote context missing: %q", r.Prompt)
 	}
 }
@@ -117,7 +118,7 @@ func TestEndToEnd(t *testing.T) {
 				id, _ := json.Marshal(req["id"])
 				c.Write([]byte(`{"jsonrpc":"2.0","result":[{"number":null,"aci":"` + self + `"}],"id":` + string(id) + "}\n"))
 				for _, m := range []string{typing, groupPlain, groupMention, dm} {
-					c.Write([]byte(m + "\n"))
+					c.Write([]byte(receive(m)))
 				}
 			case "listContacts":
 				id, _ := json.Marshal(req["id"])
@@ -132,11 +133,11 @@ func TestEndToEnd(t *testing.T) {
 	}()
 
 	cfg := &Config{Socket: sock, APIKey: "k", Model: "m", Reasoning: "low", Search: true,
-		AllowedSenders: map[string]bool{}, MaxConcurrency: 4, HistoryTurns: 2, MaxChats: 10}
+		AllowedSenders: map[string]bool{}, MaxConcurrency: 4, HistoryTurns: 2}
 	sig := NewSignal(sock)
 	x := NewXAI(cfg)
 	x.url = ai.URL
-	bot := NewBot(cfg, sig, x)
+	bot := NewBot(context.Background(), cfg, sig, x)
 	bot.typingEvery = 50 * time.Millisecond
 	ctx, cancel := contextWithCancel()
 	defer cancel()
@@ -178,21 +179,35 @@ func contextWithCancel() (context.Context, context.CancelFunc) {
 	return context.WithCancel(context.Background())
 }
 
+// decide runs the trigger rules and then Decide, as the bot does.
+func decide(env *Envelope, allowed map[string]bool) *Request {
+	kind := trigger(env, self, allowed)
+	if kind == "" {
+		return nil
+	}
+	return Decide(env, kind, self, NewNames())
+}
+
+// receive wraps a fixture envelope as the JSON-RPC notification signal-cli sends.
+func receive(envelope string) string {
+	return `{"jsonrpc":"2.0","method":"receive","params":` + envelope + "}\n"
+}
+
 var replyToOther = strings.NewReplacer(`"author":"`+self+`"`, `"author":"x"`, `"authorUuid":"`+self+`"`, `"authorUuid":"x"`).Replace(groupReply)
 
 // logged returns what f writes through logf.
 func logged(t *testing.T, timestamps bool, f func()) string {
 	t.Helper()
 	buf := captureLogs(t)
-	old := logTimestamps
-	logTimestamps = timestamps
-	defer func() { logTimestamps = old }()
+	if timestamps {
+		log.SetFlags(log.LstdFlags)
+	}
 	f()
 	return buf.String()
 }
 
 func TestMessageLogLine(t *testing.T) {
-	r := Decide(parse(t, strings.Replace(groupMention, "what is up", "what\\nis up", 1)), decideCtx{self: self})
+	r := decide(parse(t, strings.Replace(groupMention, "what is up", "what\\nis up", 1)), nil)
 	if got, want := r.logLine(false), "mention from Rob("+rob+")"; got != want {
 		t.Fatalf("got %q, want %q", got, want)
 	}
@@ -230,10 +245,10 @@ func TestLogTimestampOnlyWhenInteractive(t *testing.T) {
 }
 
 func TestSystemPromptIntroduction(t *testing.T) {
-	cfg := &Config{Model: "grok-test", ExtraPrompt: "base", MaxConcurrency: 1, HistoryTurns: 1, MaxChats: 10}
+	cfg := &Config{Model: "grok-test", ExtraPrompt: "base", Intro: defaultIntro, MaxConcurrency: 1, HistoryTurns: 1}
 	sig := NewSignal("x")
 	sig.selfID.Store(self)
-	b := NewBot(cfg, sig, nil)
+	b := NewBot(context.Background(), cfg, sig, nil)
 
 	want := func(name string) string {
 		return `"hi, I'm ` + name + `, your open source assistant running grok-test. I respond to @mentions and replies to my messages. See ` +
@@ -246,17 +261,14 @@ func TestSystemPromptIntroduction(t *testing.T) {
 	if p := b.systemPrompt(); !strings.Contains(p, want("Botty")) {
 		t.Fatalf("profile name: %q", p)
 	}
-	cfg.BotName = "Override"
-	if p := b.systemPrompt(); !strings.Contains(p, want("Override")) {
-		t.Fatalf("BOT_NAME override: %q", p)
-	}
 }
 
 func TestSystemPromptIntroOverride(t *testing.T) {
-	cfg := &Config{Model: "grok-test", ExtraPrompt: "base", BotName: "Botty", MaxConcurrency: 1, HistoryTurns: 1, MaxChats: 10}
+	cfg := &Config{Model: "grok-test", ExtraPrompt: "base", MaxConcurrency: 1, HistoryTurns: 1}
 	sig := NewSignal("x")
 	sig.selfID.Store(self)
-	b := NewBot(cfg, sig, nil)
+	b := NewBot(context.Background(), cfg, sig, nil)
+	b.names.addContacts([]Contact{{UUID: self, GivenName: "Botty"}})
 
 	cfg.Intro = "yo, {name} here on {model}"
 	p := b.systemPrompt()

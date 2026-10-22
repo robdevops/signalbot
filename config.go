@@ -16,15 +16,12 @@ type Config struct {
 	AllowedSenders map[string]bool
 	ExtraPrompt    string // SYSTEM_PROMPT: appended to the built-in prompt
 	Intro          string // INTRO: {name} and {model} are substituted
-	BotName        string
 	LogMessageBody bool
 	PriceIn        float64 // USD per million input tokens
 	PriceCached    float64 // USD per million cached input tokens
 	PriceOut       float64 // USD per million output tokens
 	MaxConcurrency int
 	HistoryTurns   int
-	MaxChats       int
-	DedupeWindow   int // seconds
 }
 
 func env(key, def string) string {
@@ -51,24 +48,18 @@ func envFloat(key string, def float64) float64 {
 // envBool accepts the spellings strconv.ParseBool does, case-insensitively,
 // plus yes/no/on/off. An unparseable value falls back to def.
 func envBool(key string, def bool) bool {
-	v := strings.ToLower(env(key, ""))
-	switch v {
-	case "":
-		return def
-	case "yes", "y", "on":
+	switch strings.ToLower(env(key, "")) {
+	case "1", "t", "true", "y", "yes", "on":
 		return true
-	case "no", "n", "off":
+	case "0", "f", "false", "n", "no", "off":
 		return false
 	}
-	b, err := strconv.ParseBool(v)
-	if err != nil {
-		return def
-	}
-	return b
+	return def
 }
 
-// splitIDs splits on commas and any whitespace, so a CRLF env file or a
-// tab-separated list cannot leave an unmatchable id in the allow-list.
+// splitIDs splits on commas, semicolons, spaces, tabs and line breaks, so a
+// CRLF env file or a tab-separated list cannot leave an unmatchable id in the
+// allow-list.
 func splitIDs(s string) []string {
 	return strings.FieldsFunc(s, func(r rune) bool {
 		return r == ',' || r == ';' || r == ' ' || r == '\t' || r == '\n' || r == '\r'
@@ -85,15 +76,12 @@ func LoadConfig() (*Config, error) {
 		AllowedSenders: map[string]bool{},
 		ExtraPrompt:    env("SYSTEM_PROMPT", ""),
 		Intro:          env("INTRO", defaultIntro),
-		BotName:        env("BOT_NAME", ""),
 		LogMessageBody: envBool("LOG_MESSAGE_BODY", false),
 		PriceIn:        envFloat("XAI_PRICE_IN", 1.25),
 		PriceCached:    envFloat("XAI_PRICE_CACHED", 0.20),
 		PriceOut:       envFloat("XAI_PRICE_OUT", 2.50),
 		MaxConcurrency: envInt("MAX_CONCURRENCY", 32),
 		HistoryTurns:   envInt("HISTORY_TURNS", 10),
-		MaxChats:       envInt("MAX_CHATS", 500),
-		DedupeWindow:   envInt("DEDUPE_SECONDS", 10),
 	}
 	for _, s := range splitIDs(os.Getenv("SIGNAL_ALLOWED_SENDERS")) {
 		c.AllowedSenders[s] = true
