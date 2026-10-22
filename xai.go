@@ -19,7 +19,8 @@ type ChatMsg struct {
 // Completion is a model reply plus what it cost.
 type Completion struct {
 	Text         string
-	InputTokens  int
+	InputTokens  int // all input tokens, cached ones included
+	CachedTokens int // the part of InputTokens served from xAI's prompt cache
 	OutputTokens int
 	SearchCalls  int
 }
@@ -29,10 +30,12 @@ type Completion struct {
 const searchCallUSD = 5.0 / 1000
 
 // Cost estimates the request's price in USD from the configured per-million
-// token rates. It is an estimate: cached-input discounts and long-prompt
-// tiers are not modelled.
+// token rates, billing cached input at its own lower rate. It is an
+// estimate: long-prompt pricing tiers are not modelled.
 func (c Completion) Cost(cfg *Config) float64 {
-	return float64(c.InputTokens)/1e6*cfg.PriceIn +
+	cached := min(c.CachedTokens, c.InputTokens)
+	return float64(c.InputTokens-cached)/1e6*cfg.PriceIn +
+		float64(cached)/1e6*cfg.PriceCached +
 		float64(c.OutputTokens)/1e6*cfg.PriceOut +
 		float64(c.SearchCalls)*searchCallUSD
 }
@@ -123,6 +126,13 @@ func parseOutput(data []byte) (Completion, error) {
 			OutputTokens     int `json:"output_tokens"`
 			PromptTokens     int `json:"prompt_tokens"`
 			CompletionTokens int `json:"completion_tokens"`
+			// Responses API and Chat Completions name the cached count differently.
+			InputTokensDetails struct {
+				CachedTokens int `json:"cached_tokens"`
+			} `json:"input_tokens_details"`
+			PromptTokensDetails struct {
+				CachedTokens int `json:"cached_tokens"`
+			} `json:"prompt_tokens_details"`
 		} `json:"usage"`
 	}
 	if err := json.Unmarshal(data, &r); err != nil {
@@ -145,6 +155,7 @@ func parseOutput(data []byte) (Completion, error) {
 	}
 	c.Text = strings.TrimSpace(sb.String())
 	c.InputTokens = max(r.Usage.InputTokens, r.Usage.PromptTokens)
+	c.CachedTokens = max(r.Usage.InputTokensDetails.CachedTokens, r.Usage.PromptTokensDetails.CachedTokens)
 	c.OutputTokens = max(r.Usage.OutputTokens, r.Usage.CompletionTokens)
 	if c.Text == "" {
 		return c, fmt.Errorf("empty response: %s", truncate(string(data), 200))
