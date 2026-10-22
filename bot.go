@@ -187,20 +187,28 @@ func (b *Bot) keepTyping(t Target) (stop func()) {
 
 func (b *Bot) respond(ctx context.Context, req *Request, stopTyping func()) {
 	msgs := append(b.getHistory(req.Key), ChatMsg{Role: "user", Content: req.Prompt})
+	start := time.Now()
 	reply, err := b.ai.Complete(ctx, msgs)
 	stopTyping()
 	if err != nil {
-		slog.Error("x.ai request failed", "err", err)
+		slog.Error("x.ai request failed", "chat", req.Key, "duration", time.Since(start).Round(time.Millisecond), "err", err)
 		reply = "Sorry, I couldn't get an answer right now."
 	} else {
+		slog.Info("x.ai reply", "chat", req.Key, "duration", time.Since(start).Round(time.Millisecond), "chars", len([]rune(reply)))
 		b.addHistory(req.Key, ChatMsg{Role: "user", Content: req.Prompt}, ChatMsg{Role: "assistant", Content: reply})
 	}
-	for _, part := range splitMessage(reply, 4000) {
+	parts := splitMessage(reply, 4000)
+	if len(parts) == 0 {
+		slog.Warn("empty reply, nothing to send", "chat", req.Key)
+		return
+	}
+	for _, part := range parts {
 		if err := b.sig.Send(req.Target, part); err != nil {
-			slog.Error("signal send failed", "err", err)
+			slog.Error("signal send failed", "chat", req.Key, "err", err)
 			return
 		}
 	}
+	slog.Info("reply sent to signal-cli", "chat", req.Key, "parts", len(parts))
 }
 
 func (b *Bot) getHistory(key string) []ChatMsg {
