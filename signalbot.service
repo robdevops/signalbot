@@ -8,7 +8,12 @@ ExecStart=/usr/local/bin/signalbot
 EnvironmentFile=/etc/signalbot/env
 Restart=on-failure
 RestartSec=10s
-DynamicUser=yes
+# A fixed user rather than DynamicUser: the signal-cli socket's permissions
+# decide who may connect, so the bot needs a stable identity to be granted
+# access. It joins signal-cli's group, so the socket must be writable (and its
+# directory searchable) by that group. It must not live under /run/user or
+# /tmp, which this unit hides.
+User=signalbot
 SupplementaryGroups=signal-cli
 
 StandardOutput=journal

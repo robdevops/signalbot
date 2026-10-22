@@ -43,8 +43,9 @@ A small chat bot that connects to a running [signal-cli](https://github.com/Asam
    set +a
    ./signalbot
    ```
-5. Or run as a systemd service:
+5. Or run as a systemd service. The bot runs as user `signalbot` in the `signal-cli` group, so the socket must be writable, and its directory searchable, by that group (check with `ls -ld /run/signal-cli /run/signal-cli/socket`):
    ```
+   sudo useradd --system --no-create-home --shell /usr/sbin/nologin signalbot
    sudo install -m 755 signalbot /usr/local/bin/signalbot
    sudo mkdir -p /etc/signalbot
    sudo install -m 600 .env /etc/signalbot/env
@@ -52,10 +53,11 @@ A small chat bot that connects to a running [signal-cli](https://github.com/Asam
    sudo systemctl daemon-reload
    sudo systemctl enable --now signalbot
    ```
-6. Or run in Docker:
+6. Or run in Docker. `--group-add` gives the container the `signal-cli` group, so it can reach the socket:
    ```
    docker build --build-arg VERSION=$(git describe --tags --always --dirty) -t signalbot .
    docker run -d --restart=always --env-file .env -v /run/signal-cli:/run/signal-cli \
+     --group-add "$(getent group signal-cli | cut -d: -f3)" \
      --read-only --cap-drop=ALL --security-opt=no-new-privileges --pids-limit=64 --memory=300m \
      signalbot
    ```
