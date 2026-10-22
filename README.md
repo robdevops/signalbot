@@ -38,9 +38,7 @@ A small chat bot that connects to a running [signal-cli](https://github.com/Asam
    ```
    go build -ldflags "-X main.version=$(git describe --tags --always --dirty)" -o signalbot .
    ./signalbot --version
-   set -a
-   . ./.env
-   set +a
+   set -a; . ./.env; set +a
    ./signalbot
    ```
 5. Or run as a systemd service. The bot runs as user `signalbot` in the `signal-cli` group, so the socket must be writable, and its directory searchable, by that group (check with `ls -ld /run/signal-cli /run/signal-cli/socket`):
