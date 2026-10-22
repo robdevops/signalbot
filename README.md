@@ -47,11 +47,12 @@ A small chat bot that connects to a running [signal-cli](https://github.com/Asam
    sudo systemctl daemon-reload
    sudo systemctl enable --now signalbot
    ```
-6. Or run in Docker. `--group-add` gives the container the `signal-cli` group, so it can reach the socket:
+6. Or run in Docker. `--group-add` gives the container the `signal-cli` group, so it can reach the socket. Logs go to journald where the host has it, otherwise to Docker's rotating `local` driver; read them with `docker logs -f signalbot` either way:
    ```
    docker build --build-arg VERSION=$(git describe --tags --always --dirty) -t signalbot .
-   docker run -d --restart=always --env-file .env -v /run/signal-cli:/run/signal-cli \
+   docker run -d --name signalbot --restart=always --env-file .env -v /run/signal-cli:/run/signal-cli \
      --group-add "$(getent group signal-cli | cut -d: -f3)" \
+     $(test -S /run/systemd/journal/socket && echo --log-driver=journald || echo --log-driver=local) \
      --read-only --cap-drop=ALL --security-opt=no-new-privileges --pids-limit=64 --memory=300m \
      signalbot
    ```
