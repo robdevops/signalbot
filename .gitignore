@@ -1,0 +1,4 @@
+# The binary `go build` writes here
+/signalbot
+# Local configuration holding the API key
+.env

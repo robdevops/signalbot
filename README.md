@@ -65,7 +65,7 @@ A small chat bot that connects to a running [signal-cli](https://github.com/Asam
 - Bounded under load: a concurrency slot (`MAX_CONCURRENCY`) is taken before any goroutine starts, so messages it ignores cost nothing and a flood is dropped, not queued
 - In-memory state only, all capped: history per chat (`HISTORY_TURNS`), number of chats (500), names, frame size (1 MiB) and reply length (4 messages)
 - Treats sender-controlled text as untrusted: display names and quotes are sanitised before reaching the model or the log, and a name two people claim is never linked
-- Configured from environment variables only; runs under systemd (hardened unit included) or Docker. Logs plain lines to stdout, with a timestamp only in a terminal (journald and Docker add their own)
+- Configured from environment variables only; runs under systemd or Docker (hardened unit and image included; the image is pinned by digest and has no shell). Logs plain lines to stdout, with a timestamp only in a terminal (journald and Docker add their own)
 
 ## Configuration
 
