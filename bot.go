@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -267,15 +268,23 @@ func (b *Bot) ensureSelfName(ctx context.Context) {
 	}
 }
 
-// systemPrompt is the configured prompt plus the fixed self-introduction.
+// defaultIntro is used when INTRO is unset. {name} and {model} are substituted.
+const defaultIntro = "hi, I'm {name}, your open source assistant running {model}. " +
+	"I respond to @mentions and replies to my messages. See " + readmeURL + " for details"
+
+// systemPrompt is the configured prompt plus the self-introduction.
 func (b *Bot) systemPrompt() string {
 	name := b.selfName()
 	if name == "" {
 		name = "signalbot"
 	}
-	return b.cfg.SystemPrompt + fmt.Sprintf("\nIf asked to introduce yourself, reply with exactly this text and nothing else: "+
-		"\"hi, I'm %s, your open source assistant running %s. I respond to @mentions and replies to my messages. See %s for details\"",
-		name, b.cfg.Model, readmeURL)
+	intro := b.cfg.Intro
+	if intro == "" {
+		intro = defaultIntro
+	}
+	intro = strings.NewReplacer("{name}", name, "{model}", b.cfg.Model).Replace(intro)
+	// Quote so a newline or quote in the name or in INTRO cannot escape the sentence.
+	return b.cfg.SystemPrompt + "\nIf asked to introduce yourself, reply with exactly this text and nothing else: " + strconv.Quote(intro)
 }
 
 // remember records names shown to the model so later replies can mention them.

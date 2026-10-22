@@ -16,6 +16,7 @@ type Config struct {
 	AllowedSenders map[string]bool
 	SystemPrompt   string
 	BotName        string // optional override for the bot's own display name
+	Intro          string // self-introduction; {name} and {model} are substituted
 	MaxConcurrency int
 	HistoryTurns   int
 }
@@ -47,6 +48,7 @@ func LoadConfig() (*Config, error) {
 			"A mention shown as [unnamed user] is someone whose name you don't know; don't invent one. "+
 			"In groups, write @ followed by a person's exact name to mention them."),
 		BotName:        env("BOT_NAME", ""),
+		Intro:          env("INTRO", defaultIntro),
 		MaxConcurrency: envInt("MAX_CONCURRENCY", 32),
 		HistoryTurns:   envInt("HISTORY_TURNS", 10),
 	}

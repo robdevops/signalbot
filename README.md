@@ -79,3 +79,4 @@ A small chat bot that connects to a running [signal-cli](https://github.com/Asam
 | `XAI_SEARCH` | `true` | Enable x.ai web search tool |
 | `SIGNAL_ALLOWED_SENDERS` | empty | Comma-separated UUIDs/numbers allowed to DM the bot |
 | `BOT_NAME` | profile name | Optional override for the name the bot gives when asked to introduce itself |
+| `INTRO` | see below | Overrides the self-introduction; `{name}` and `{model}` are substituted |
