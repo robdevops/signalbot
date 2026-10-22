@@ -2,7 +2,6 @@ package main
 
 import (
 	"bytes"
-	"log/slog"
 	"strings"
 	"testing"
 )
@@ -10,9 +9,9 @@ import (
 func captureLogs(t *testing.T) *bytes.Buffer {
 	t.Helper()
 	var buf bytes.Buffer
-	old := slog.Default()
-	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, nil)))
-	t.Cleanup(func() { slog.SetDefault(old) })
+	old := logOut
+	logOut = &buf
+	t.Cleanup(func() { logOut = old })
 	return &buf
 }
 

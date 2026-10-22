@@ -19,6 +19,7 @@ type Config struct {
 	BotName        string
 	LogMessageBody bool
 	PriceIn        float64 // USD per million input tokens
+	PriceCached    float64 // USD per million cached input tokens
 	PriceOut       float64 // USD per million output tokens
 	MaxConcurrency int
 	HistoryTurns   int
@@ -87,6 +88,7 @@ func LoadConfig() (*Config, error) {
 		BotName:        env("BOT_NAME", ""),
 		LogMessageBody: envBool("LOG_MESSAGE_BODY", false),
 		PriceIn:        envFloat("XAI_PRICE_IN", 1.25),
+		PriceCached:    envFloat("XAI_PRICE_CACHED", 0.20),
 		PriceOut:       envFloat("XAI_PRICE_OUT", 2.50),
 		MaxConcurrency: envInt("MAX_CONCURRENCY", 32),
 		HistoryTurns:   envInt("HISTORY_TURNS", 10),

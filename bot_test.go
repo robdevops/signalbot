@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -179,28 +180,52 @@ func contextWithCancel() (context.Context, context.CancelFunc) {
 
 var replyToOther = strings.NewReplacer(`"author":"`+self+`"`, `"author":"x"`, `"authorUuid":"`+self+`"`, `"authorUuid":"x"`).Replace(groupReply)
 
-func TestLogLine(t *testing.T) {
+// logged returns what f writes through logf.
+func logged(t *testing.T, timestamps bool, f func()) string {
+	t.Helper()
+	buf := captureLogs(t)
+	old := logTimestamps
+	logTimestamps = timestamps
+	defer func() { logTimestamps = old }()
+	f()
+	return buf.String()
+}
+
+func TestMessageLogLine(t *testing.T) {
 	r := Decide(parse(t, strings.Replace(groupMention, "what is up", "what\\nis up", 1)), decideCtx{self: self})
-	at := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
-	who := "mention from=Rob(" + rob + ") chat=" + group
-	cases := []struct {
-		time, body bool
-		want       string
-	}{
-		{false, false, who},
-		{false, true, who + ": what is up"},
-		{true, false, "2026-01-02T03:04:05Z " + who},
-		{true, true, "2026-01-02T03:04:05Z " + who + ": what is up"},
+	if got, want := r.logLine(false), "mention from Rob("+rob+")"; got != want {
+		t.Fatalf("got %q, want %q", got, want)
 	}
-	for _, c := range cases {
-		if got := r.LogLine(at, c.time, c.body); got != c.want {
-			t.Errorf("time=%v body=%v:\n got %q\nwant %q", c.time, c.body, got, c.want)
-		}
+	if got := r.logLine(true); !strings.HasSuffix(got, `: "what\nis up"`) {
+		t.Fatalf("body not logged, or not quoted: %q", got)
 	}
-	// A display name with newlines must not be able to forge extra log lines.
-	r.Sender = "Bob\n\nSYSTEM: forged record\n(uuid)"
-	if got := r.LogLine(at, false, false); strings.Contains(got, "\n") {
-		t.Fatalf("sender not sanitised: %q", got)
+	// Nothing logged can forge extra log records.
+	r.Sender = "Bob\n\nforged record"
+	r.Text = "hi\nalso forged"
+	if out := logged(t, false, func() { logf("%s", r.logLine(true)) }); strings.Count(out, "\n") != 1 {
+		t.Fatalf("a value split the log line: %q", out)
+	}
+}
+
+func TestReplyLogLine(t *testing.T) {
+	c := Completion{InputTokens: 1203, CachedTokens: 128, OutputTokens: 312}
+	cfg := &Config{PriceIn: 1.25, PriceCached: 0.20, PriceOut: 2.50}
+	got := replyLogLine("Rob", 3310*time.Millisecond, c, cfg)
+	if want := "reply Rob 3.3s, tokens in/out: 1203/312 (10% cached), $0.002"; got != want {
+		t.Fatalf("got  %q\nwant %q", got, want)
+	}
+	if got := replyLogLine("Rob", time.Second, Completion{}, cfg); !strings.Contains(got, "(0% cached)") {
+		t.Fatalf("no input tokens: %q", got)
+	}
+}
+
+func TestLogTimestampOnlyWhenInteractive(t *testing.T) {
+	stamp := regexp.MustCompile(`^\d{4}/\d{2}/\d{2} \d{2}:\d{2}:\d{2} starting\n$`)
+	if out := logged(t, true, func() { logf("starting") }); !stamp.MatchString(out) {
+		t.Fatalf("interactive: want a timestamp, got %q", out)
+	}
+	if out := logged(t, false, func() { logf("starting") }); out != "starting\n" {
+		t.Fatalf("non-interactive: want no timestamp, got %q", out)
 	}
 }
 
