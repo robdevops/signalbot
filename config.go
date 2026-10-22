@@ -15,6 +15,7 @@ type Config struct {
 	Search         bool
 	AllowedSenders map[string]bool
 	SystemPrompt   string
+	BotName        string // optional override for the bot's own display name
 	MaxConcurrency int
 	HistoryTurns   int
 }
@@ -45,6 +46,7 @@ func LoadConfig() (*Config, error) {
 			"Reply in plain text (no markdown), keep answers short unless asked for detail. "+
 			"A mention shown as [unnamed user] is someone whose name you don't know; don't invent one. "+
 			"In groups, write @ followed by a person's exact name to mention them."),
+		BotName:        env("BOT_NAME", ""),
 		MaxConcurrency: envInt("MAX_CONCURRENCY", 32),
 		HistoryTurns:   envInt("HISTORY_TURNS", 10),
 	}
