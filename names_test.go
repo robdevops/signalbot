@@ -39,7 +39,7 @@ func TestContactDisplayName(t *testing.T) {
 func TestResolvePriority(t *testing.T) {
 	n := NewNames()
 	m := Mention{Name: rob, UUID: rob}
-	if got := n.Resolve(m); got != "someone" {
+	if got := n.Resolve(m); got != unnamedUser {
 		t.Fatalf("unknown id should not leak: %q", got)
 	}
 	if got := n.Resolve(Mention{Name: "FromMention", UUID: rob}); got != "FromMention" {
@@ -68,7 +68,7 @@ func TestResolvePriority(t *testing.T) {
 		t.Fatalf("live name must not displace givenName: %q", got)
 	}
 	var nilNames *Names
-	if got := nilNames.Resolve(m); got != "someone" {
+	if got := nilNames.Resolve(m); got != unnamedUser {
 		t.Fatalf("nil: %q", got)
 	}
 }
@@ -77,6 +77,7 @@ func TestResolvePriority(t *testing.T) {
 // sent to x.ai must contain the real name from listContacts.
 func TestMentionNameResolvedFromContacts(t *testing.T) {
 	bodies := make(chan string, 4)
+	gotBadParams := make(chan struct{}, 1)
 	ai := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		b, _ := io.ReadAll(r.Body)
 		bodies <- string(b)
@@ -114,6 +115,9 @@ func TestMentionNameResolvedFromContacts(t *testing.T) {
 				c.Write([]byte(`{"jsonrpc":"2.0","result":[{"number":null,"aci":"` + self + `"}],"id":` + string(id) + "}\n"))
 				c.Write([]byte(msg + "\n"))
 			case "listContacts":
+				if p, _ := req["params"].(map[string]any); p["allRecipients"] != true {
+					gotBadParams <- struct{}{}
+				}
 				c.Write([]byte(`{"jsonrpc":"2.0","result":` + contactsJSON + `,"id":` + string(id) + "}\n"))
 			}
 		}
@@ -135,5 +139,18 @@ func TestMentionNameResolvedFromContacts(t *testing.T) {
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("no x.ai request")
+	}
+	select {
+	case <-gotBadParams:
+		t.Fatal("listContacts must be called with allRecipients:true")
+	default:
+	}
+}
+
+func TestUnnamedMentionNotAtPrefixed(t *testing.T) {
+	m := Mention{UUID: "u-1", Name: "u-1", Start: 3, Length: 1}
+	got := stripMentions("hi \uFFFC!", []Mention{m}, self, NewNames())
+	if got != "hi [unnamed user]!" {
+		t.Fatalf("got %q", got)
 	}
 }

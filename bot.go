@@ -119,7 +119,11 @@ func stripMentions(msg string, ms []Mention, self string, names *Names) string {
 		}
 		var repl []uint16
 		if m.UUID != self && m.Number != self {
-			repl = utf16.Encode([]rune("@" + names.Resolve(m)))
+			name := names.Resolve(m)
+			if name != unnamedUser {
+				name = "@" + name
+			}
+			repl = utf16.Encode([]rune(name))
 		}
 		u = append(u[:m.Start], append(repl, u[m.Start+m.Length:]...)...)
 	}
