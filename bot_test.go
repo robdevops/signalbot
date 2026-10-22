@@ -211,7 +211,7 @@ func TestReplyLogLine(t *testing.T) {
 	c := Completion{InputTokens: 1203, CachedTokens: 128, OutputTokens: 312}
 	cfg := &Config{PriceIn: 1.25, PriceCached: 0.20, PriceOut: 2.50}
 	got := replyLogLine("Rob", 3310*time.Millisecond, c, cfg)
-	if want := "reply Rob 3.31s, tokens in/out: 1203/312 (10% cached), $0.002"; got != want {
+	if want := "reply Rob 3.3s, tokens in/out: 1203/312 (10% cached), $0.002"; got != want {
 		t.Fatalf("got  %q\nwant %q", got, want)
 	}
 	if got := replyLogLine("Rob", time.Second, Completion{}, cfg); !strings.Contains(got, "(0% cached)") {

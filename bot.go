@@ -134,14 +134,14 @@ func (r *Request) logLine(withBody bool) string {
 }
 
 // replyLogLine is the one-line summary of a model reply, e.g.
-// "reply Rob 3.31s, tokens in/out: 1203/312 (11% cached), $0.002".
+// "reply Rob 3.3s, tokens in/out: 1203/312 (10% cached), $0.002".
 func replyLogLine(name string, took time.Duration, c Completion, cfg *Config) string {
 	cached := 0
 	if c.InputTokens > 0 {
 		cached = 100 * min(c.CachedTokens, c.InputTokens) / c.InputTokens
 	}
-	return fmt.Sprintf("reply %s %s, tokens in/out: %d/%d (%d%% cached), $%.3f",
-		name, took, c.InputTokens, c.OutputTokens, cached, c.Cost(cfg))
+	return fmt.Sprintf("reply %s %.1fs, tokens in/out: %d/%d (%d%% cached), $%.3f",
+		name, took.Seconds(), c.InputTokens, c.OutputTokens, cached, c.Cost(cfg))
 }
 
 // triggers is the cheap, allocation-free half of the trigger rules. It runs
@@ -449,9 +449,9 @@ func (b *Bot) respond(ctx context.Context, req *Request, stopTyping func()) {
 	start := time.Now()
 	res, err := b.ai.Complete(ctx, b.systemPrompt(), msgs)
 	stopTyping()
-	took := time.Since(start).Round(time.Millisecond)
+	took := time.Since(start)
 	if err != nil {
-		logf("x.ai error for %s after %s: %v", req.Name, took, err)
+		logf("x.ai error for %s after %.1fs: %v", req.Name, took.Seconds(), err)
 		res = Completion{Text: "Sorry, I couldn't get an answer right now."}
 	} else {
 		logf("%s", replyLogLine(req.Name, took, res, b.cfg))
