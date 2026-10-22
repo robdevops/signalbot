@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"log"
 	"os"
 	"os/signal"
 	"runtime/debug"
@@ -13,32 +14,12 @@ import (
 // version is set at build time: go build -ldflags "-X main.version=v1.2.3"
 var version = "dev"
 
+// buildVersion is the -X version, else the version go build stamps from git.
 func buildVersion() string {
-	if version != "dev" {
-		return version
+	if info, ok := debug.ReadBuildInfo(); ok && version == "dev" && info.Main.Version != "" && info.Main.Version != "(devel)" {
+		return info.Main.Version
 	}
-	info, ok := debug.ReadBuildInfo()
-	if !ok {
-		return version
-	}
-	var rev, dirty string
-	for _, s := range info.Settings {
-		switch s.Key {
-		case "vcs.revision":
-			rev = s.Value
-		case "vcs.modified":
-			if s.Value == "true" {
-				dirty = "-dirty"
-			}
-		}
-	}
-	if len(rev) > 7 {
-		rev = rev[:7]
-	}
-	if rev == "" {
-		return version
-	}
-	return "dev-" + rev + dirty
+	return version
 }
 
 func main() {
@@ -46,7 +27,10 @@ func main() {
 		fmt.Println("signalbot", buildVersion())
 		return
 	}
-	logTimestamps = isTTY(os.Stdout)
+	log.SetOutput(os.Stdout)
+	if st, err := os.Stdout.Stat(); err != nil || st.Mode()&os.ModeCharDevice == 0 {
+		log.SetFlags(0) // journald and Docker add their own timestamps
+	}
 	logf("signalbot %s starting", buildVersion())
 	cfg, err := LoadConfig()
 	if err != nil {
@@ -61,8 +45,7 @@ func main() {
 	defer closeConn()
 
 	sig := NewSignal(cfg.Socket)
-	bot := NewBot(cfg, sig, NewXAI(cfg))
-	bot.ctx = connCtx
+	bot := NewBot(connCtx, cfg, sig, NewXAI(cfg))
 	logf("model %s, reasoning %s, search %v, %d allowed senders, log message body %v",
 		cfg.Model, cfg.Reasoning, cfg.Search, len(cfg.AllowedSenders), cfg.LogMessageBody)
 
@@ -70,8 +53,7 @@ func main() {
 		<-sigCtx.Done()
 		stop() // a second signal now kills the process immediately
 		logf("shutting down: finishing replies in flight")
-		bot.Close()
-		bot.Wait(8 * time.Second) // under Docker's default 10s stop timeout
+		bot.Shutdown(8 * time.Second) // under Docker's default 10s stop timeout
 		closeConn()
 	}()
 	sig.Run(connCtx, bot.Handle)

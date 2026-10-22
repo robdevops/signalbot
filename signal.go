@@ -2,11 +2,11 @@ package main
 
 import (
 	"bufio"
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"net"
 	"strings"
 	"sync"
@@ -23,7 +23,6 @@ type Mention struct {
 }
 
 type Quote struct {
-	ID         int64  `json:"id"`
 	Author     string `json:"author"`
 	AuthorUUID string `json:"authorUuid"`
 	Text       string `json:"text"`
@@ -72,31 +71,16 @@ type Signal struct {
 	conn    net.Conn
 	pending map[string]chan *rpcMsg
 	selfID  atomic.Value // string: the account's ACI, else its number
-	selfIDs atomic.Value // []string: every id the account is known by
-
-	// OnSent, if set, is called with the timestamp of each message signal-cli
-	// confirms it sent.
-	OnSent func(ts int64)
 }
 
 func NewSignal(addr string) *Signal {
 	return &Signal{addr: addr, pending: map[string]chan *rpcMsg{}}
 }
 
+// SelfID is the bot's account id (ACI, else number), or "" until listAccounts answers.
 func (s *Signal) SelfID() string {
-	v, _ := s.selfID.Load().(string)
-	return v
-}
-
-// SelfIDs is every id the bot's account is known by (ACI and number).
-func (s *Signal) SelfIDs() []string {
-	if v, _ := s.selfIDs.Load().([]string); len(v) > 0 {
-		return v
-	}
-	if id := s.SelfID(); id != "" {
-		return []string{id}
-	}
-	return nil
+	id, _ := s.selfID.Load().(string)
+	return id
 }
 
 // WaitSelf returns the bot's account id, waiting briefly for startup to learn it.
@@ -113,10 +97,7 @@ func (s *Signal) WaitSelf(max time.Duration) string {
 // network picks unix for anything that looks like a path ("/run/x",
 // "run/x", "./x", or an abstract "@x") and tcp for host:port.
 func (s *Signal) network() string {
-	if strings.ContainsRune(s.addr, '/') || strings.HasPrefix(s.addr, "@") {
-		return "unix"
-	}
-	if _, _, err := net.SplitHostPort(s.addr); err == nil {
+	if _, _, err := net.SplitHostPort(s.addr); err == nil && !strings.ContainsRune(s.addr, '/') && !strings.HasPrefix(s.addr, "@") {
 		return "tcp"
 	}
 	return "unix"
@@ -160,19 +141,18 @@ func (s *Signal) serve(ctx context.Context, conn net.Conn, handle func(*Envelope
 	s.mu.Unlock()
 	logf("connected to signal-cli at %s", s.addr)
 
-	go func() { <-ctx.Done(); conn.Close() }()
+	defer context.AfterFunc(ctx, func() { conn.Close() })()
 	go func() {
 		rctx, cancel := context.WithTimeout(ctx, 15*time.Second)
 		defer cancel()
-		ids, err := s.listAccounts(rctx)
+		id, err := s.listAccounts(rctx)
 		if err != nil {
 			logf("listAccounts failed: %v", err)
 			conn.Close()
 			return
 		}
-		s.selfIDs.Store(ids)
-		s.selfID.Store(ids[0])
-		logf("bot account %s", ids[0])
+		s.selfID.Store(id)
+		logf("bot account %s", id)
 	}()
 
 	sc := bufio.NewScanner(conn)
@@ -181,11 +161,7 @@ func (s *Signal) serve(ctx context.Context, conn net.Conn, handle func(*Envelope
 		s.dispatch(sc.Bytes(), handle)
 	}
 	if err := sc.Err(); err != nil && ctx.Err() == nil {
-		if errors.Is(err, bufio.ErrTooLong) {
-			logf("signal-cli sent a frame over %d bytes; reconnecting", maxLine)
-		} else if !errors.Is(err, io.EOF) {
-			logf("signal-cli read failed: %v", err)
-		}
+		logf("signal-cli read failed: %v; reconnecting", err) // a frame over maxLine is bufio.ErrTooLong
 	}
 	conn.Close()
 	s.mu.Lock()
@@ -219,13 +195,16 @@ func (s *Signal) dispatch(line []byte, handle func(*Envelope)) {
 		if json.Unmarshal(m.Params, &p) == nil && p.Envelope != nil {
 			handle(p.Envelope)
 		}
-	case m.Envelope != nil:
-		handle(m.Envelope)
 	}
 }
 
-func (s *Signal) write(v any) error {
-	b, err := json.Marshal(v)
+// write sends one JSON-RPC request.
+func (s *Signal) write(id int64, method string, params any) error {
+	req := map[string]any{"jsonrpc": "2.0", "id": id, "method": method}
+	if params != nil {
+		req["params"] = params
+	}
+	b, err := json.Marshal(req)
 	if err != nil {
 		return err
 	}
@@ -246,14 +225,8 @@ func (s *Signal) call(ctx context.Context, method string, params any) (*rpcMsg, 
 	s.mu.Lock()
 	s.pending[key] = ch
 	s.mu.Unlock()
-	req := map[string]any{"jsonrpc": "2.0", "id": id, "method": method}
-	if params != nil {
-		req["params"] = params
-	}
-	if err := s.write(req); err != nil {
-		s.mu.Lock()
-		delete(s.pending, key)
-		s.mu.Unlock()
+	defer func() { s.mu.Lock(); delete(s.pending, key); s.mu.Unlock() }()
+	if err := s.write(id, method, params); err != nil {
 		return nil, err
 	}
 	select {
@@ -266,39 +239,27 @@ func (s *Signal) call(ctx context.Context, method string, params any) (*rpcMsg, 
 		}
 		return resp, nil
 	case <-ctx.Done():
-		s.mu.Lock()
-		delete(s.pending, key)
-		s.mu.Unlock()
 		return nil, ctx.Err()
 	}
 }
 
-// listAccounts returns the account's ids, primary (ACI, else number) first.
-func (s *Signal) listAccounts(ctx context.Context) ([]string, error) {
+// listAccounts returns the account's ACI, else its number.
+func (s *Signal) listAccounts(ctx context.Context) (string, error) {
 	resp, err := s.call(ctx, "listAccounts", nil)
 	if err != nil {
-		return nil, err
+		return "", err
 	}
 	var accts []struct {
 		Number string `json:"number"`
 		ACI    string `json:"aci"`
 	}
 	if err := json.Unmarshal(resp.Result, &accts); err != nil {
-		return nil, err
+		return "", err
 	}
-	if len(accts) == 0 {
-		return nil, errors.New("no accounts registered")
+	if len(accts) == 0 || cmp.Or(accts[0].ACI, accts[0].Number) == "" {
+		return "", errors.New("no account registered")
 	}
-	var ids []string
-	for _, id := range []string{accts[0].ACI, accts[0].Number} {
-		if id != "" {
-			ids = append(ids, id)
-		}
-	}
-	if len(ids) == 0 {
-		return nil, errors.New("account has neither an ACI nor a number")
-	}
-	return ids, nil
+	return cmp.Or(accts[0].ACI, accts[0].Number), nil
 }
 
 // Target addresses a chat: a group or a single recipient.
@@ -307,58 +268,45 @@ type Target struct {
 	User    string
 }
 
-func (t Target) params(extra map[string]any) map[string]any {
-	p := map[string]any{}
+func (t Target) params() map[string]any {
 	if t.GroupID != "" {
-		p["groupId"] = t.GroupID
-	} else {
-		p["recipient"] = []string{t.User}
+		return map[string]any{"groupId": t.GroupID}
 	}
-	for k, v := range extra {
-		p[k] = v
-	}
-	return p
+	return map[string]any{"recipient": []string{t.User}}
 }
 
 // Send posts msg; mentions are signal-cli specs ("start:length:uuid") for @names in msg.
 func (s *Signal) Send(t Target, msg string, mentions []string) error {
-	extra := map[string]any{"message": msg}
+	p := t.params()
+	p["message"] = msg
 	if len(mentions) > 0 {
-		extra["mention"] = mentions
+		p["mention"] = mentions
 	}
-	return s.write(map[string]any{"jsonrpc": "2.0", "id": s.nextID.Add(1), "method": "send",
-		"params": t.params(extra)})
+	return s.write(s.nextID.Add(1), "send", p)
 }
 
 func (s *Signal) Typing(t Target) {
-	_ = s.write(map[string]any{"jsonrpc": "2.0", "id": s.nextID.Add(1), "method": "sendTyping", "params": t.params(nil)})
+	_ = s.write(s.nextID.Add(1), "sendTyping", t.params())
 }
 
 // handleUnmatched reports the outcome of fire-and-forget requests (send,
-// sendTyping), and passes the timestamp of a successful send to OnSent.
+// sendTyping).
 func (s *Signal) handleUnmatched(m *rpcMsg) {
 	if m.Error != nil {
 		logf("signal-cli request %s failed: %s", m.ID, m.Error.Message)
 		return
 	}
 	var r struct {
-		Timestamp int64 `json:"timestamp"`
-		Results   []struct {
+		Results []struct {
 			Type string `json:"type"`
 		} `json:"results"`
 	}
 	if json.Unmarshal(m.Result, &r) != nil {
 		return
 	}
-	delivered := false
 	for _, res := range r.Results {
 		if res.Type != "" && res.Type != "SUCCESS" {
 			logf("signal-cli request %s not delivered: %s", m.ID, res.Type)
-		} else {
-			delivered = true
 		}
-	}
-	if delivered && r.Timestamp != 0 && s.OnSent != nil {
-		s.OnSent(r.Timestamp)
 	}
 }

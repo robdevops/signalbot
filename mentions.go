@@ -3,7 +3,10 @@ package main
 import (
 	"fmt"
 	"sort"
+	"strings"
 	"unicode"
+	"unicode/utf16"
+	"unicode/utf8"
 )
 
 // atSpan is one "@name" found in a text, as rune indices [start, end).
@@ -14,21 +17,22 @@ type atSpan struct {
 
 // findAtNames finds "@Name" for each known name in rs. Matching is
 // case-insensitive, longest name first, and must sit on word boundaries.
-func findAtNames(rs []rune, known map[string]knownName) []atSpan {
+func findAtNames(rs []rune, known map[string]string) []atSpan {
 	type cand struct {
-		runes []rune
+		lower string
+		n     int // runes
 		uuid  string
 	}
 	cands := make([]cand, 0, len(known))
-	for name, k := range known {
+	for name, uuid := range known {
 		if name != "" {
-			cands = append(cands, cand{[]rune(name), k.uuid})
+			cands = append(cands, cand{strings.ToLower(name), utf8.RuneCountInString(name), uuid})
 		}
 	}
 	if len(cands) == 0 {
 		return nil
 	}
-	sort.Slice(cands, func(i, j int) bool { return len(cands[i].runes) > len(cands[j].runes) })
+	sort.Slice(cands, func(i, j int) bool { return cands[i].n > cands[j].n })
 
 	var out []atSpan
 	for i := 0; i < len(rs); i++ {
@@ -36,8 +40,8 @@ func findAtNames(rs []rune, known map[string]knownName) []atSpan {
 			continue
 		}
 		for _, c := range cands {
-			end := i + 1 + len(c.runes)
-			if end > len(rs) || (end < len(rs) && isWordRune(rs[end])) || !equalFoldRunes(rs[i+1:end], c.runes) {
+			end := i + 1 + c.n
+			if end > len(rs) || (end < len(rs) && isWordRune(rs[end])) || strings.ToLower(string(rs[i+1:end])) != c.lower {
 				continue
 			}
 			out = append(out, atSpan{i, end, c.uuid})
@@ -49,17 +53,16 @@ func findAtNames(rs []rune, known map[string]knownName) []atSpan {
 }
 
 // buildMentions returns signal-cli mention specs ("start:length:uuid") for the
-// known @names in text. Offsets are UTF-16 code units. Ids that are not plain
-// uuids or numbers are skipped: the spec is colon-delimited, so a stray colon
-// would shift its fields.
-func buildMentions(text string, known map[string]knownName) []string {
+// known @names in text. Offsets are UTF-16 code units. An ambiguous name
+// (empty uuid) stays plain text.
+func buildMentions(text string, known map[string]string) []string {
 	rs := []rune(text)
 	var out []string
 	u, pos := 0, 0 // UTF-16 offset of rs[pos]
 	for _, s := range findAtNames(rs, known) {
 		u += utf16Len(rs[pos:s.start])
 		length := utf16Len(rs[s.start:s.end])
-		if validServiceID(s.uuid) {
+		if s.uuid != "" {
 			out = append(out, fmt.Sprintf("%d:%d:%s", u, length, s.uuid))
 		}
 		u += length
@@ -68,44 +71,11 @@ func buildMentions(text string, known map[string]knownName) []string {
 	return out
 }
 
-// validServiceID accepts a uuid or a phone number, nothing that could carry a
-// delimiter into a mention spec.
-func validServiceID(id string) bool {
-	if id == "" {
-		return false
-	}
-	for _, r := range id {
-		switch {
-		case r == '-', r == '+', '0' <= r && r <= '9', 'a' <= r && r <= 'z', 'A' <= r && r <= 'Z':
-		default:
-			return false
-		}
-	}
-	return true
-}
-
 func isWordRune(r rune) bool { return unicode.IsLetter(r) || unicode.IsDigit(r) || r == '_' }
 
-func utf16Len(rs []rune) int {
-	n := 0
+func utf16Len(rs []rune) (n int) {
 	for _, r := range rs {
-		if r >= 0x10000 {
-			n += 2
-		} else {
-			n++
-		}
+		n += utf16.RuneLen(r)
 	}
 	return n
-}
-
-func equalFoldRunes(a, b []rune) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	for i := range a {
-		if unicode.ToLower(a[i]) != unicode.ToLower(b[i]) {
-			return false
-		}
-	}
-	return true
 }
