@@ -20,13 +20,19 @@ func TestContactDisplayName(t *testing.T) {
 	if err := json.Unmarshal([]byte(contactsJSON), &cs); err != nil {
 		t.Fatal(err)
 	}
-	if got := cs[0].DisplayName(); got != "Rob" {
-		t.Fatalf("got %q", got)
+	if got, rank := cs[0].DisplayName(); got != "Rob" || rank != rankGiven {
+		t.Fatalf("profile givenName: %q %d", got, rank)
 	}
-	c := Contact{Name: "Robert S"}
+	c := Contact{GivenName: "Robert", Username: "rob.1"}
 	c.Profile.GivenName = "Rob"
-	if got := c.DisplayName(); got != "Robert S" {
-		t.Fatalf("contact name should win, got %q", got)
+	if got, _ := c.DisplayName(); got != "Robert" {
+		t.Fatalf("contact givenName should win, got %q", got)
+	}
+	if got, rank := (Contact{Username: "rob.1"}).DisplayName(); got != "rob.1" || rank != rankUsername {
+		t.Fatalf("username fallback: %q %d", got, rank)
+	}
+	if got, rank := (Contact{}).DisplayName(); got != "" || rank != 0 {
+		t.Fatalf("empty: %q %d", got, rank)
 	}
 }
 
@@ -36,18 +42,30 @@ func TestResolvePriority(t *testing.T) {
 	if got := n.Resolve(m); got != "someone" {
 		t.Fatalf("unknown id should not leak: %q", got)
 	}
-	if got := n.Resolve(Mention{Name: "Given", UUID: rob}); got != "Given" {
+	if got := n.Resolve(Mention{Name: "FromMention", UUID: rob}); got != "FromMention" {
 		t.Fatalf("mention name: %q", got)
+	}
+	// username is the last resort, below the mention's own name
+	n.addContacts([]Contact{{UUID: rob, Username: "robnocake.20"}})
+	if got := n.Resolve(m); got != "robnocake.20" {
+		t.Fatalf("username fallback: %q", got)
+	}
+	if got := n.Resolve(Mention{Name: "FromMention", UUID: rob}); got != "FromMention" {
+		t.Fatalf("mention name beats username: %q", got)
+	}
+	n.Learn(&Envelope{SourceUUID: rob, SourceName: "Rob Stevens"})
+	if got := n.Resolve(m); got != "Rob Stevens" {
+		t.Fatalf("sender name beats username: %q", got)
 	}
 	var cs []Contact
 	json.Unmarshal([]byte(contactsJSON), &cs)
 	n.addContacts(cs)
 	if got := n.Resolve(m); got != "Rob" {
-		t.Fatalf("contact: %q", got)
+		t.Fatalf("givenName should win: %q", got)
 	}
-	n.Learn(&Envelope{SourceUUID: rob, SourceName: "Robbie"})
-	if got := n.Resolve(m); got != "Robbie" {
-		t.Fatalf("learned name should win: %q", got)
+	n.Learn(&Envelope{SourceUUID: rob, SourceName: "Robbie S"})
+	if got := n.Resolve(m); got != "Rob" {
+		t.Fatalf("live name must not displace givenName: %q", got)
 	}
 	var nilNames *Names
 	if got := nilNames.Resolve(m); got != "someone" {

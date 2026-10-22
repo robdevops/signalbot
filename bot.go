@@ -152,7 +152,7 @@ func (b *Bot) refreshIfUnknownMentions(env *Envelope, self string) {
 		return
 	}
 	for _, m := range env.DataMessage.Mentions {
-		if m.UUID != self && m.Number != self && !b.names.known(m) {
+		if m.UUID != self && m.Number != self && b.names.needsRefresh(m) {
 			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 			defer cancel()
 			b.names.Refresh(ctx, b.sig)

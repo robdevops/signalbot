@@ -11,34 +11,59 @@ import (
 
 // Contact is the subset of a signal-cli listContacts entry we use.
 type Contact struct {
-	Number  string `json:"number"`
-	UUID    string `json:"uuid"`
-	Name    string `json:"name"`
-	Profile struct {
-		GivenName  string `json:"givenName"`
-		FamilyName string `json:"familyName"`
+	Number    string `json:"number"`
+	UUID      string `json:"uuid"`
+	Username  string `json:"username"`
+	GivenName string `json:"givenName"`
+	Profile   struct {
+		GivenName string `json:"givenName"`
 	} `json:"profile"`
 }
 
-// DisplayName picks the best human name: contact name, then profile name.
-func (c Contact) DisplayName() string {
-	if n := strings.TrimSpace(c.Name); n != "" {
-		return n
+// Name ranks: a higher rank is never replaced by a lower one.
+const (
+	rankUsername = 1
+	rankSeen     = 2 // sender name from a live message
+	rankGiven    = 3 // contact or profile given name
+)
+
+// DisplayName prefers the given name (contact, then profile), else the username.
+func (c Contact) DisplayName() (name string, rank int) {
+	for _, g := range []string{c.GivenName, c.Profile.GivenName} {
+		if g = strings.TrimSpace(g); g != "" {
+			return g, rankGiven
+		}
 	}
-	return strings.TrimSpace(c.Profile.GivenName + " " + c.Profile.FamilyName)
+	if u := strings.TrimSpace(c.Username); u != "" {
+		return u, rankUsername
+	}
+	return "", 0
+}
+
+type rankedName struct {
+	name string
+	rank int
 }
 
 // Names maps Signal ids (uuid or number) to real names, learned from
 // message senders and from signal-cli's contact list.
 type Names struct {
 	mu          sync.Mutex
-	byID        map[string]string
+	byID        map[string]rankedName
 	refreshedAt time.Time
 	minRefresh  time.Duration
 }
 
 func NewNames() *Names {
-	return &Names{byID: map[string]string{}, minRefresh: 15 * time.Second}
+	return &Names{byID: map[string]rankedName{}, minRefresh: 15 * time.Second}
+}
+
+func (n *Names) set(name string, rank int, ids ...string) {
+	for _, id := range ids {
+		if id != "" && rank >= n.byID[id].rank {
+			n.byID[id] = rankedName{name, rank}
+		}
+	}
 }
 
 // Learn records the sender's profile name from an incoming envelope.
@@ -48,58 +73,63 @@ func (n *Names) Learn(env *Envelope) {
 	}
 	n.mu.Lock()
 	defer n.mu.Unlock()
-	for _, id := range []string{env.SourceUUID, env.SourceNumber} {
-		if id != "" {
-			n.byID[id] = env.SourceName
-		}
-	}
+	n.set(env.SourceName, rankSeen, env.SourceUUID, env.SourceNumber)
 }
 
-// addContacts fills in names without overwriting ones learned from live messages.
 func (n *Names) addContacts(cs []Contact) {
 	n.mu.Lock()
 	defer n.mu.Unlock()
 	for _, c := range cs {
-		name := c.DisplayName()
-		if name == "" {
-			continue
-		}
-		for _, id := range []string{c.UUID, c.Number} {
-			if id != "" && n.byID[id] == "" {
-				n.byID[id] = name
-			}
+		if name, rank := c.DisplayName(); rank > 0 {
+			n.set(name, rank, c.UUID, c.Number)
 		}
 	}
 }
 
-func (n *Names) lookup(ids ...string) string {
+func (n *Names) lookup(ids ...string) rankedName {
 	n.mu.Lock()
 	defer n.mu.Unlock()
+	var best rankedName
 	for _, id := range ids {
-		if id != "" && n.byID[id] != "" {
-			return n.byID[id]
+		if r := n.byID[id]; id != "" && r.rank > best.rank {
+			best = r
 		}
+	}
+	return best
+}
+
+func realMentionName(m Mention) string {
+	if m.Name != m.UUID && m.Name != m.Number {
+		return m.Name
 	}
 	return ""
 }
 
-// Resolve returns the best name for a mention: known real name, then the name
-// signal-cli put in the mention (unless it is just an id), else "someone".
+// Resolve returns the best name for a mention: given name, sender name, username,
+// then the name signal-cli put in the mention (unless it is just an id), else "someone".
 func (n *Names) Resolve(m Mention) string {
+	var r rankedName
 	if n != nil {
-		if name := n.lookup(m.UUID, m.Number); name != "" {
-			return name
-		}
+		r = n.lookup(m.UUID, m.Number)
 	}
-	if m.Name != "" && m.Name != m.UUID && m.Name != m.Number {
-		return m.Name
+	switch {
+	case r.rank >= rankSeen:
+		return r.name
+	case realMentionName(m) != "":
+		return realMentionName(m)
+	case r.rank > 0:
+		return r.name
 	}
 	return "someone"
 }
 
-// known reports whether we have a real name for the mention.
-func (n *Names) known(m Mention) bool {
-	return n.lookup(m.UUID, m.Number) != "" || (m.Name != "" && m.Name != m.UUID && m.Name != m.Number)
+// needsRefresh reports whether the contact list should be (re)loaded for this mention:
+// we have never loaded it, or we have no real name for the person.
+func (n *Names) needsRefresh(m Mention) bool {
+	n.mu.Lock()
+	never := n.refreshedAt.IsZero()
+	n.mu.Unlock()
+	return never || (n.lookup(m.UUID, m.Number).rank < rankSeen && realMentionName(m) == "")
 }
 
 // Refresh loads signal-cli contacts, at most once per minRefresh.
