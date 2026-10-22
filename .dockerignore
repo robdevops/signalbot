@@ -1,2 +1,6 @@
-.git
+# Send only what the build needs. Everything else stays out of the build
+# context, notably a .env holding the API key.
+*
+!go.mod
+!*.go
 *_test.go
