@@ -16,6 +16,27 @@ type ChatMsg struct {
 	Content string `json:"content"`
 }
 
+// Completion is a model reply plus what it cost.
+type Completion struct {
+	Text         string
+	InputTokens  int
+	OutputTokens int
+	SearchCalls  int
+}
+
+// searchCallUSD is xAI's price for one server-side web search call
+// ($5 per 1,000), billed on top of tokens.
+const searchCallUSD = 5.0 / 1000
+
+// Cost estimates the request's price in USD from the configured per-million
+// token rates. It is an estimate: cached-input discounts and long-prompt
+// tiers are not modelled.
+func (c Completion) Cost(cfg *Config) float64 {
+	return float64(c.InputTokens)/1e6*cfg.PriceIn +
+		float64(c.OutputTokens)/1e6*cfg.PriceOut +
+		float64(c.SearchCalls)*searchCallUSD
+}
+
 type XAI struct {
 	cfg  *Config
 	url  string
@@ -36,7 +57,7 @@ func NewXAI(cfg *Config) *XAI {
 }
 
 // Complete sends the conversation to the x.ai Responses API and returns the reply text.
-func (x *XAI) Complete(ctx context.Context, system string, msgs []ChatMsg) (string, error) {
+func (x *XAI) Complete(ctx context.Context, system string, msgs []ChatMsg) (Completion, error) {
 	ctx, cancel := context.WithTimeout(ctx, 90*time.Second)
 	defer cancel()
 
@@ -53,11 +74,12 @@ func (x *XAI) Complete(ctx context.Context, system string, msgs []ChatMsg) (stri
 	}
 	payload, err := json.Marshal(body)
 	if err != nil {
-		return "", err
+		return Completion{}, err
 	}
 
+	const attempts = 2
 	var lastErr error
-	for attempt := 0; attempt < 2; attempt++ {
+	for attempt := 1; attempt <= attempts; attempt++ {
 		req, _ := http.NewRequestWithContext(ctx, http.MethodPost, x.url, bytes.NewReader(payload))
 		req.Header.Set("Authorization", "Bearer "+x.cfg.APIKey)
 		req.Header.Set("Content-Type", "application/json")
@@ -67,15 +89,16 @@ func (x *XAI) Complete(ctx context.Context, system string, msgs []ChatMsg) (stri
 		} else {
 			data, _ := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
 			resp.Body.Close()
-			if resp.StatusCode == 429 || resp.StatusCode >= 500 {
-				lastErr = fmt.Errorf("x.ai status %d: %s", resp.StatusCode, truncate(string(data), 200))
-			} else if resp.StatusCode != 200 {
-				return "", fmt.Errorf("x.ai status %d: %s", resp.StatusCode, truncate(string(data), 200))
-			} else {
+			switch {
+			case resp.StatusCode == 200:
 				return parseOutput(data)
+			case resp.StatusCode == 429 || resp.StatusCode >= 500:
+				lastErr = fmt.Errorf("x.ai status %d: %s", resp.StatusCode, truncate(string(data), 200))
+			default:
+				return Completion{}, fmt.Errorf("x.ai status %d: %s", resp.StatusCode, truncate(string(data), 200))
 			}
 		}
-		if ctx.Err() != nil {
+		if attempt == attempts || ctx.Err() != nil {
 			break
 		}
 		select {
@@ -83,10 +106,10 @@ func (x *XAI) Complete(ctx context.Context, system string, msgs []ChatMsg) (stri
 		case <-time.After(time.Second):
 		}
 	}
-	return "", lastErr
+	return Completion{}, lastErr
 }
 
-func parseOutput(data []byte) (string, error) {
+func parseOutput(data []byte) (Completion, error) {
 	var r struct {
 		Output []struct {
 			Type    string `json:"type"`
@@ -95,31 +118,44 @@ func parseOutput(data []byte) (string, error) {
 				Text string `json:"text"`
 			} `json:"content"`
 		} `json:"output"`
+		Usage struct {
+			InputTokens      int `json:"input_tokens"`
+			OutputTokens     int `json:"output_tokens"`
+			PromptTokens     int `json:"prompt_tokens"`
+			CompletionTokens int `json:"completion_tokens"`
+		} `json:"usage"`
 	}
 	if err := json.Unmarshal(data, &r); err != nil {
-		return "", err
+		return Completion{}, err
 	}
+	var c Completion
 	var sb strings.Builder
 	for _, o := range r.Output {
+		if strings.HasSuffix(o.Type, "search_call") {
+			c.SearchCalls++
+		}
 		if o.Type != "message" {
 			continue
 		}
-		for _, c := range o.Content {
-			if c.Type == "output_text" || c.Type == "text" {
-				sb.WriteString(c.Text)
+		for _, part := range o.Content {
+			if part.Type == "output_text" || part.Type == "text" {
+				sb.WriteString(part.Text)
 			}
 		}
 	}
-	out := strings.TrimSpace(sb.String())
-	if out == "" {
-		return "", fmt.Errorf("empty response: %s", truncate(string(data), 200))
+	c.Text = strings.TrimSpace(sb.String())
+	c.InputTokens = max(r.Usage.InputTokens, r.Usage.PromptTokens)
+	c.OutputTokens = max(r.Usage.OutputTokens, r.Usage.CompletionTokens)
+	if c.Text == "" {
+		return c, fmt.Errorf("empty response: %s", truncate(string(data), 200))
 	}
-	return out, nil
+	return c, nil
 }
 
+// truncate shortens s to at most n runes, so it never splits a UTF-8 rune.
 func truncate(s string, n int) string {
-	if len(s) > n {
-		return s[:n] + "..."
+	if r := []rune(s); len(r) > n {
+		return string(r[:n]) + "..."
 	}
 	return s
 }

@@ -126,7 +126,7 @@ func TestMentionNameResolvedFromContacts(t *testing.T) {
 		}
 	}()
 
-	cfg := &Config{Socket: sock, APIKey: "k", Model: "m", AllowedSenders: map[string]bool{}, MaxConcurrency: 4, HistoryTurns: 2}
+	cfg := &Config{Socket: sock, APIKey: "k", Model: "m", AllowedSenders: map[string]bool{}, MaxConcurrency: 4, HistoryTurns: 2, MaxChats: 10}
 	sig := NewSignal(sock)
 	x := NewXAI(cfg)
 	x.url = ai.URL

@@ -20,19 +20,23 @@ type Contact struct {
 	} `json:"profile"`
 }
 
-// Name ranks: a higher rank is never replaced by a lower one.
+// Name ranks: a higher rank is never replaced by a lower one. Only
+// rankContact is trusted: every other source is a name its owner chose.
 const (
 	rankUsername = 1
-	rankSeen     = 2 // sender name from a live message
-	rankGiven    = 3 // contact or profile given name
+	rankSeen     = 2 // sender name from a live message (self-chosen)
+	rankGiven    = 3 // profile given name (self-chosen)
+	rankContact  = 4 // the account owner's own name for the contact (trusted)
 )
 
-// DisplayName prefers the given name (contact, then profile), else the username.
+// DisplayName prefers the given name (the account owner's contact name, then
+// the person's own profile name), else the username.
 func (c Contact) DisplayName() (name string, rank int) {
-	for _, g := range []string{c.GivenName, c.Profile.GivenName} {
-		if g = strings.TrimSpace(g); g != "" {
-			return g, rankGiven
-		}
+	if g := strings.TrimSpace(c.GivenName); g != "" {
+		return g, rankContact
+	}
+	if g := strings.TrimSpace(c.Profile.GivenName); g != "" {
+		return g, rankGiven
 	}
 	if u := strings.TrimSpace(c.Username); u != "" {
 		return u, rankUsername
@@ -58,22 +62,36 @@ func NewNames() *Names {
 	return &Names{byID: map[string]rankedName{}, minRefresh: 15 * time.Second}
 }
 
+// maxNames bounds the name cache. Ids come from the network, so it must not
+// grow without limit; past the cap an arbitrary entry is dropped (map
+// iteration order is random), and a dropped name is simply re-learned.
+const maxNames = 5000
+
+// set records a name for ids. Caller holds n.mu.
 func (n *Names) set(name string, rank int, ids ...string) {
 	for _, id := range ids {
-		if id != "" && rank >= n.byID[id].rank {
-			n.byID[id] = rankedName{name, rank}
+		if id == "" || rank < n.byID[id].rank {
+			continue
 		}
+		if _, ok := n.byID[id]; !ok && len(n.byID) >= maxNames {
+			for k := range n.byID {
+				delete(n.byID, k)
+				break
+			}
+		}
+		n.byID[id] = rankedName{name, rank}
 	}
 }
 
 // Learn records the sender's profile name from an incoming envelope.
 func (n *Names) Learn(env *Envelope) {
-	if n == nil || strings.TrimSpace(env.SourceName) == "" {
+	name := safeName(env.SourceName)
+	if n == nil || name == "" {
 		return
 	}
 	n.mu.Lock()
 	defer n.mu.Unlock()
-	n.set(env.SourceName, rankSeen, env.SourceUUID, env.SourceNumber)
+	n.set(name, rankSeen, env.SourceUUID, env.SourceNumber)
 }
 
 func (n *Names) addContacts(cs []Contact) {
@@ -81,7 +99,9 @@ func (n *Names) addContacts(cs []Contact) {
 	defer n.mu.Unlock()
 	for _, c := range cs {
 		if name, rank := c.DisplayName(); rank > 0 {
-			n.set(name, rank, c.UUID, c.Number)
+			if name = safeName(name); name != "" {
+				n.set(name, rank, c.UUID, c.Number)
+			}
 		}
 	}
 }
@@ -101,39 +121,67 @@ func (n *Names) lookup(ids ...string) rankedName {
 // unnamedUser stands in for a mention whose name we could not find.
 const unnamedUser = "[unnamed user]"
 
+// realMentionName is the name signal-cli put in the mention, unless that is
+// just the id. The sender chose it, so it is sanitised before use.
 func realMentionName(m Mention) string {
 	if m.Name != m.UUID && m.Name != m.Number {
-		return m.Name
+		return safeName(m.Name)
 	}
 	return ""
 }
 
-// Resolve returns the best name for a mention: given name, sender name, username,
-// then the name signal-cli put in the mention (unless it is just an id), else unnamedUser.
-func (n *Names) Resolve(m Mention) string {
+// ResolveRanked returns the best name for a mention and how much to trust it:
+// given name, sender name, username, then the name signal-cli put in the
+// mention (unless it is just an id), else unnamedUser. A miss is logged.
+func (n *Names) ResolveRanked(m Mention) (string, int) {
+	name, rank := n.resolve(m)
+	if rank == 0 {
+		slog.Warn("unresolved mention", "uuid", m.UUID, "number", m.Number)
+	}
+	return name, rank
+}
+
+// resolve is ResolveRanked without logging a miss.
+func (n *Names) resolve(m Mention) (string, int) {
 	var r rankedName
 	if n != nil {
 		r = n.lookup(m.UUID, m.Number)
 	}
 	switch {
 	case r.rank >= rankSeen:
-		return r.name
+		return r.name, r.rank
 	case realMentionName(m) != "":
-		return realMentionName(m)
+		return realMentionName(m), rankSeen
 	case r.rank > 0:
-		return r.name
+		return r.name, r.rank
 	}
-	slog.Warn("unresolved mention", "uuid", m.UUID, "number", m.Number, "mention_name", m.Name)
-	return unnamedUser
+	return unnamedUser, 0
+}
+
+// Resolve is ResolveRanked without the rank.
+func (n *Names) Resolve(m Mention) string {
+	name, _ := n.ResolveRanked(m)
+	return name
 }
 
 // needsRefresh reports whether the contact list should be (re)loaded for this mention:
 // we have never loaded it, or we have no real name for the person.
 func (n *Names) needsRefresh(m Mention) bool {
+	if n == nil {
+		return false
+	}
 	n.mu.Lock()
 	never := n.refreshedAt.IsZero()
 	n.mu.Unlock()
 	return never || (n.lookup(m.UUID, m.Number).rank < rankSeen && realMentionName(m) == "")
+}
+
+// canRefresh reports whether Refresh would actually call signal-cli now,
+// rather than return early because of the rate limit.
+func (n *Names) canRefresh() bool {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	return time.Since(n.refreshedAt) >= n.minRefresh
 }
 
 // Refresh loads signal-cli contacts, at most once per minRefresh.
