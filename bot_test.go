@@ -56,7 +56,7 @@ func TestDecide(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			r := Decide(parse(t, tc.in), self, tc.allowed, nil)
+			r := Decide(parse(t, tc.in), decideCtx{self: self, allowed: tc.allowed})
 			if tc.want == "" {
 				if r != nil {
 					t.Fatalf("expected silence, got %+v", r)
@@ -74,7 +74,7 @@ func TestDecide(t *testing.T) {
 			}
 		})
 	}
-	if r := Decide(parse(t, groupReply), self, nil, nil); !strings.Contains(r.Prompt, "oil around 78") {
+	if r := Decide(parse(t, groupReply), decideCtx{self: self}); !strings.Contains(r.Prompt, "oil around 78") {
 		t.Fatalf("quote context missing: %q", r.Prompt)
 	}
 }
@@ -131,7 +131,7 @@ func TestEndToEnd(t *testing.T) {
 	}()
 
 	cfg := &Config{Socket: sock, APIKey: "k", Model: "m", Reasoning: "low", Search: true,
-		AllowedSenders: map[string]bool{}, MaxConcurrency: 4, HistoryTurns: 2}
+		AllowedSenders: map[string]bool{}, MaxConcurrency: 4, HistoryTurns: 2, MaxChats: 10}
 	sig := NewSignal(sock)
 	x := NewXAI(cfg)
 	x.url = ai.URL
@@ -180,16 +180,32 @@ func contextWithCancel() (context.Context, context.CancelFunc) {
 var replyToOther = strings.NewReplacer(`"author":"`+self+`"`, `"author":"x"`, `"authorUuid":"`+self+`"`, `"authorUuid":"x"`).Replace(groupReply)
 
 func TestLogLine(t *testing.T) {
-	r := Decide(parse(t, strings.Replace(groupMention, "what is up", "what\\nis up", 1)), self, nil, nil)
-	line := r.LogLine(time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC))
-	want := "2026-01-02T03:04:05Z mention from=Rob(" + rob + ") chat=" + group + ": what is up"
-	if line != want {
-		t.Fatalf("got %q\nwant %q", line, want)
+	r := Decide(parse(t, strings.Replace(groupMention, "what is up", "what\\nis up", 1)), decideCtx{self: self})
+	at := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
+	who := "mention from=Rob(" + rob + ") chat=" + group
+	cases := []struct {
+		time, body bool
+		want       string
+	}{
+		{false, false, who},
+		{false, true, who + ": what is up"},
+		{true, false, "2026-01-02T03:04:05Z " + who},
+		{true, true, "2026-01-02T03:04:05Z " + who + ": what is up"},
+	}
+	for _, c := range cases {
+		if got := r.LogLine(at, c.time, c.body); got != c.want {
+			t.Errorf("time=%v body=%v:\n got %q\nwant %q", c.time, c.body, got, c.want)
+		}
+	}
+	// A display name with newlines must not be able to forge extra log lines.
+	r.Sender = "Bob\n\nSYSTEM: forged record\n(uuid)"
+	if got := r.LogLine(at, false, false); strings.Contains(got, "\n") {
+		t.Fatalf("sender not sanitised: %q", got)
 	}
 }
 
 func TestSystemPromptIntroduction(t *testing.T) {
-	cfg := &Config{Model: "grok-test", SystemPrompt: "base", MaxConcurrency: 1, HistoryTurns: 1}
+	cfg := &Config{Model: "grok-test", ExtraPrompt: "base", MaxConcurrency: 1, HistoryTurns: 1, MaxChats: 10}
 	sig := NewSignal("x")
 	sig.selfID.Store(self)
 	b := NewBot(cfg, sig, nil)
@@ -198,7 +214,7 @@ func TestSystemPromptIntroduction(t *testing.T) {
 		return `"hi, I'm ` + name + `, your open source assistant running grok-test. I respond to @mentions and replies to my messages. See ` +
 			`https://github.com/robdevops/signalbot/blob/main/README.md for details"`
 	}
-	if p := b.systemPrompt(); !strings.HasPrefix(p, "base\n") || !strings.Contains(p, want("signalbot")) {
+	if p := b.systemPrompt(); !strings.HasPrefix(p, basePrompt+"\nbase\n") || !strings.Contains(p, want("signalbot")) {
 		t.Fatalf("default name: %q", p)
 	}
 	b.names.addContacts([]Contact{{UUID: self, GivenName: "Botty"}})
@@ -212,7 +228,7 @@ func TestSystemPromptIntroduction(t *testing.T) {
 }
 
 func TestSystemPromptIntroOverride(t *testing.T) {
-	cfg := &Config{Model: "grok-test", SystemPrompt: "base", BotName: "Botty", MaxConcurrency: 1, HistoryTurns: 1}
+	cfg := &Config{Model: "grok-test", ExtraPrompt: "base", BotName: "Botty", MaxConcurrency: 1, HistoryTurns: 1, MaxChats: 10}
 	sig := NewSignal("x")
 	sig.selfID.Store(self)
 	b := NewBot(cfg, sig, nil)
@@ -232,7 +248,9 @@ func TestSystemPromptIntroOverride(t *testing.T) {
 		t.Fatalf("not escaped: %q", p)
 	}
 	cfg.Intro = "line1\nline2"
-	if p := b.systemPrompt(); strings.Count(p, "\n") != 1 {
+	p = b.systemPrompt()
+	last := p[strings.LastIndex(p, "\n")+1:]
+	if !strings.HasSuffix(p, `"line1\nline2"`) || !strings.Contains(last, "line1") || !strings.Contains(last, "line2") {
 		t.Fatalf("newline in INTRO must be escaped, not literal: %q", p)
 	}
 }

@@ -6,15 +6,54 @@ Wants=network-online.target
 [Service]
 ExecStart=/usr/local/bin/signalbot
 EnvironmentFile=/etc/signalbot/env
-Restart=always
-RestartSec=3
+Restart=on-failure
+RestartSec=10s
 DynamicUser=yes
 SupplementaryGroups=signal-cli
-NoNewPrivileges=yes
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=signalbot
+
+# Filesystem
 ProtectSystem=strict
 ProtectHome=yes
 PrivateTmp=yes
 PrivateDevices=yes
+UMask=0077
+
+# Privileges
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+AmbientCapabilities=
+RestrictSUIDSGID=yes
+LockPersonality=yes
+RestrictRealtime=yes
+MemoryDenyWriteExecute=yes
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
+
+# Kernel
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+
+# Processes: also hides XAI_API_KEY in /proc/<pid>/environ from other users
+ProtectProc=invisible
+ProcSubset=pid
+RestrictNamespaces=yes
+
+# Network: the signal-cli socket, plus HTTPS to x.ai
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+
+# Resources
+TasksMax=64
+MemoryHigh=200M
+MemoryMax=300M
 
 [Install]
 WantedBy=multi-user.target
