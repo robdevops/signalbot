@@ -274,7 +274,7 @@ func (b *Bot) systemPrompt() string {
 		name = "signalbot"
 	}
 	return b.cfg.SystemPrompt + fmt.Sprintf("\nIf asked to introduce yourself, reply with exactly this text and nothing else: "+
-		"\"hi, I'm %s running %s. I respond to @mentions and replies to my messages. See %s for details\"",
+		"\"hi, I'm %s, your open source assistant running %s. I respond to @mentions and replies to my messages. See %s for details\"",
 		name, b.cfg.Model, readmeURL)
 }
 
