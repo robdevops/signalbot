@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"encoding/json"
-	"log/slog"
 	"strings"
 	"sync"
 	"time"
@@ -136,7 +135,11 @@ func realMentionName(m Mention) string {
 func (n *Names) ResolveRanked(m Mention) (string, int) {
 	name, rank := n.resolve(m)
 	if rank == 0 {
-		slog.Warn("unresolved mention", "uuid", m.UUID, "number", m.Number)
+		id := m.UUID
+		if id == "" {
+			id = m.Number
+		}
+		logf("unresolved mention of %s", id)
 	}
 	return name, rank
 }
@@ -196,10 +199,10 @@ func (n *Names) Refresh(ctx context.Context, s *Signal) {
 
 	cs, err := s.ListContacts(ctx)
 	if err != nil {
-		slog.Warn("listContacts failed", "err", err)
+		logf("listContacts failed: %v", err)
 		return
 	}
-	slog.Info("loaded contacts", "count", len(cs))
+	logf("loaded %d contacts", len(cs))
 	n.addContacts(cs)
 }
 

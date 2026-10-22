@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"fmt"
-	"log/slog"
 	"sort"
 	"strconv"
 	"strings"
@@ -105,7 +104,7 @@ func (b *Bot) Wait(d time.Duration) {
 	select {
 	case <-done:
 	case <-time.After(d):
-		slog.Warn("shutdown timed out with replies still in flight")
+		logf("shutdown timed out with replies still in flight")
 	}
 }
 
@@ -116,7 +115,8 @@ type Request struct {
 	Prompt string
 
 	Kind   string // "mention", "reply" or "dm"
-	Sender string
+	Sender string // display name and id, for the log
+	Name   string // display name, else the id: short form for the log
 	Text   string // message text with the bot mention stripped
 
 	// Names the model has been shown in this message, so "@Name" in its reply
@@ -124,15 +124,24 @@ type Request struct {
 	Names map[string]knownName
 }
 
-// logAttrs describes the request for the log: who sent it and which chat,
-// plus the text when withBody. slog quotes any value containing spaces or
-// newlines, so a display name or message cannot forge extra log lines.
-func (r *Request) logAttrs(withBody bool) []any {
-	attrs := []any{"from", r.Sender, "chat", r.Key}
+// logLine says who sent the request, plus the text (quoted) when withBody.
+func (r *Request) logLine(withBody bool) string {
+	line := r.Kind + " from " + r.Sender
 	if withBody {
-		attrs = append(attrs, "text", r.Text)
+		line += ": " + strconv.Quote(r.Text)
 	}
-	return attrs
+	return line
+}
+
+// replyLogLine is the one-line summary of a model reply, e.g.
+// "reply Rob 3.31s, tokens in/out: 1203/312 (11% cached), $0.002".
+func replyLogLine(name string, took time.Duration, c Completion, cfg *Config) string {
+	cached := 0
+	if c.InputTokens > 0 {
+		cached = 100 * min(c.CachedTokens, c.InputTokens) / c.InputTokens
+	}
+	return fmt.Sprintf("reply %s %s, tokens in/out: %d/%d (%d%% cached), $%.3f",
+		name, took, c.InputTokens, c.OutputTokens, cached, c.Cost(cfg))
 }
 
 // triggers is the cheap, allocation-free half of the trigger rules. It runs
@@ -222,7 +231,11 @@ func Decide(env *Envelope, d decideCtx) *Request {
 		who = name + "(" + sender + ")"
 	}
 
-	req := &Request{Target: target, Key: key, Prompt: text, Kind: kind, Sender: who, Text: raw}
+	short := name
+	if short == "" {
+		short = sender
+	}
+	req := &Request{Target: target, Key: key, Prompt: text, Kind: kind, Sender: who, Name: short, Text: raw}
 	if target.GroupID != "" {
 		req.Names = map[string]knownName{}
 		add := func(n string, rank int, uuid string) {
@@ -302,7 +315,7 @@ func (b *Bot) Handle(env *Envelope) {
 	select {
 	case b.sem <- struct{}{}:
 	default:
-		slog.Warn("at capacity, dropping message", "limit", b.cfg.MaxConcurrency)
+		logf("at capacity (%d), dropping message", b.cfg.MaxConcurrency)
 		return
 	}
 	// Checked and counted under one lock, so no reply can start after Close
@@ -335,11 +348,11 @@ func (b *Bot) handle(env *Envelope) {
 		return
 	}
 	if b.duplicate(req) {
-		slog.Info("ignored duplicate message", "chat", req.Key)
+		logf("ignored duplicate from %s", req.Name)
 		return
 	}
 	b.remember(req)
-	slog.Info(req.Kind, req.logAttrs(b.cfg.LogMessageBody)...)
+	logf("%s", req.logLine(b.cfg.LogMessageBody))
 
 	stop := b.keepTyping(req.Target)
 	defer stop()
@@ -438,31 +451,28 @@ func (b *Bot) respond(ctx context.Context, req *Request, stopTyping func()) {
 	stopTyping()
 	took := time.Since(start).Round(time.Millisecond)
 	if err != nil {
-		slog.Error("x.ai request failed", "chat", req.Key, "duration", took, "err", err)
+		logf("x.ai error for %s after %s: %v", req.Name, took, err)
 		res = Completion{Text: "Sorry, I couldn't get an answer right now."}
 	} else {
-		slog.Info("x.ai reply", "chat", req.Key, "duration", took, "chars", len([]rune(res.Text)),
-			"tokens_in", res.InputTokens, "tokens_cached", res.CachedTokens, "tokens_out", res.OutputTokens,
-			"cost_usd", fmt.Sprintf("%.5f", res.Cost(b.cfg)))
+		logf("%s", replyLogLine(req.Name, took, res, b.cfg))
 		b.addHistory(req.Key, ChatMsg{Role: "user", Content: req.Prompt}, ChatMsg{Role: "assistant", Content: res.Text})
 	}
 
 	if n := len([]rune(res.Text)); n > maxReplyRunes {
-		slog.Warn("reply truncated", "chat", req.Key, "chars", n, "limit", maxReplyRunes)
+		logf("reply to %s truncated from %d chars", req.Name, n)
 	}
 	parts := replyParts(res.Text, b.introName())
 	if len(parts) == 0 {
-		slog.Warn("empty reply, nothing to send", "chat", req.Key)
+		logf("empty reply to %s, nothing sent", req.Name)
 		return
 	}
 	known := b.knownNames(req.Key)
 	for _, part := range parts {
 		if err := b.sig.Send(req.Target, part, buildMentions(part, known)); err != nil {
-			slog.Error("signal send failed", "chat", req.Key, "err", err)
+			logf("send to %s failed: %v", req.Name, err)
 			return
 		}
 	}
-	slog.Info("reply sent to signal-cli", "chat", req.Key, "parts", len(parts))
 }
 
 const truncatedMarker = " […truncated]"
@@ -544,7 +554,7 @@ func (b *Bot) ensureSelfName(ctx context.Context) {
 	}
 	b.refreshContacts()
 	if b.selfName() == "" {
-		slog.Warn("bot's own profile name not found; set BOT_NAME to override", "self", b.sig.SelfID())
+		logf("own profile name not found; set BOT_NAME to override")
 	}
 }
 
@@ -616,7 +626,7 @@ func (b *Bot) remember(req *Request) {
 			continue
 		}
 		if bindName(k, n, v) {
-			slog.Warn("name claimed by more than one user; it will not be linked", "chat", req.Key)
+			logf("name %q is claimed by more than one user; not linking it", n)
 		}
 	}
 }

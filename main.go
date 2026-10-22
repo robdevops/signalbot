@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"fmt"
-	"log/slog"
 	"os"
 	"os/signal"
 	"runtime/debug"
@@ -47,12 +46,11 @@ func main() {
 		fmt.Println("signalbot", buildVersion())
 		return
 	}
-	interactive := isTTY(os.Stdout)
-	setupLogging(os.Stdout, interactive, !interactive && stdoutIsJournal())
-	slog.Info("starting", "version", buildVersion())
+	logTimestamps = isTTY(os.Stdout)
+	logf("signalbot %s starting", buildVersion())
 	cfg, err := LoadConfig()
 	if err != nil {
-		slog.Error("config", "err", err)
+		logf("config error: %v", err)
 		os.Exit(1)
 	}
 	sigCtx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -65,17 +63,17 @@ func main() {
 	sig := NewSignal(cfg.Socket)
 	bot := NewBot(cfg, sig, NewXAI(cfg))
 	bot.ctx = connCtx
-	slog.Info("config", "model", cfg.Model, "reasoning", cfg.Reasoning, "search", cfg.Search,
-		"allowed_senders", len(cfg.AllowedSenders), "log_message_body", cfg.LogMessageBody)
+	logf("model %s, reasoning %s, search %v, %d allowed senders, log message body %v",
+		cfg.Model, cfg.Reasoning, cfg.Search, len(cfg.AllowedSenders), cfg.LogMessageBody)
 
 	go func() {
 		<-sigCtx.Done()
 		stop() // a second signal now kills the process immediately
-		slog.Info("shutting down: finishing replies in flight")
+		logf("shutting down: finishing replies in flight")
 		bot.Close()
 		bot.Wait(8 * time.Second) // under Docker's default 10s stop timeout
 		closeConn()
 	}()
 	sig.Run(connCtx, bot.Handle)
-	slog.Info("stopped")
+	logf("stopped")
 }

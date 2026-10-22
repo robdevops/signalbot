@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"log/slog"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -599,11 +598,11 @@ func TestLogLineOmitsBodyByDefault(t *testing.T) {
 		t.Fatal(err)
 	}
 	r := Decide(parse(t, groupMention), decideCtx{self: self})
-	out := prodLog(t, false, func() { slog.Info(r.Kind, r.logAttrs(cfg.LogMessageBody)...) })
+	out := r.logLine(cfg.LogMessageBody)
 	if strings.Contains(out, "what is up") {
 		t.Fatalf("message body logged by default: %q", out)
 	}
-	if !strings.Contains(out, "mention from=Rob("+rob+")") {
+	if out != "mention from Rob("+rob+")" {
 		t.Fatalf("who mentioned the bot must still be logged: %q", out)
 	}
 }
