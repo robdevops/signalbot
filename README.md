@@ -34,7 +34,7 @@ A small chat bot that connects to a running [signal-cli](https://github.com/Asam
    ```
 4. Build and run:
    ```
-   /usr/local/go/bin/go build -ldflags "-X main.version=$(git describe --tags --always --dirty)" -o signalbot .
+   /usr/local/go/bin/go build
    set -a; . ./.env; set +a
    ./signalbot
    ```
