@@ -219,8 +219,8 @@ func Decide(env *Envelope, d decideCtx) *Request {
 	if target.GroupID != "" {
 		req.Names = map[string]string{}
 		add := func(n, uuid string) {
-			if n = safeName(n); n != "" && uuid != "" && uuid != d.self && req.Names[n] == "" {
-				req.Names[n] = uuid
+			if n = safeName(n); n != "" && uuid != "" && uuid != d.self {
+				bindName(req.Names, n, uuid)
 			}
 		}
 		if env.SourceUUID != "" {
@@ -557,12 +557,21 @@ func (b *Bot) remember(req *Request) {
 		k = map[string]string{}
 		b.known[req.Key] = k
 	}
-	// First claim wins: display names are self-chosen, so renaming yourself
-	// to a member's name must not capture their mentions.
 	for n, uuid := range req.Names {
-		if _, ok := k[n]; !ok && len(k) < 256 {
-			k[n] = uuid
+		if _, ok := k[n]; ok || len(k) < 256 {
+			bindName(k, n, uuid)
 		}
+	}
+}
+
+// bindName records that name n refers to uuid. Display names are self-chosen,
+// so anyone can claim a member's name: a name claimed by two different people
+// is ambiguous, marked "", and never linked.
+func bindName(m map[string]string, n, uuid string) {
+	if old, ok := m[n]; !ok {
+		m[n] = uuid
+	} else if old != uuid {
+		m[n] = ""
 	}
 }
 

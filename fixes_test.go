@@ -105,12 +105,24 @@ func TestMentionNamesCannotInjectTurns(t *testing.T) {
 }
 
 func TestMentionHijackByRenameIsRefused(t *testing.T) {
-	// Rename yourself to a member's name, then mention the bot: first claim wins.
-	b := NewBot(testCfg(), NewSignal("x"), nil)
-	b.remember(&Request{Key: "g:1", Names: map[string]string{"Alice": "victim"}})
-	b.remember(&Request{Key: "g:1", Names: map[string]string{"Alice": "attacker"}})
-	if got := buildMentions("hi @Alice", b.knownNames("g:1")); len(got) != 1 || !strings.HasSuffix(got[0], ":victim") {
-		t.Fatalf("renaming yourself must not capture another member's mentions: %v", got)
+	// Rename yourself to a member's name and mention the bot, before or after
+	// the real member speaks: the name becomes ambiguous and links to no one.
+	for _, order := range [][]string{{"victim", "attacker"}, {"attacker", "victim"}} {
+		b := NewBot(testCfg(), NewSignal("x"), nil)
+		for _, who := range order {
+			b.remember(&Request{Key: "g:1", Names: map[string]string{"Alice": who}})
+		}
+		b.remember(&Request{Key: "g:1", Names: map[string]string{"Alice": order[0]}}) // stays ambiguous
+		if got := buildMentions("hi @Alice", b.knownNames("g:1")); len(got) != 0 {
+			t.Fatalf("order %v: a name two people claim must not be linked: %v", order, got)
+		}
+	}
+	// One message naming two different people "Alice" is ambiguous too.
+	m := map[string]string{}
+	bindName(m, "Alice", "a")
+	bindName(m, "Alice", "a")
+	if m["Alice"] != "a" {
+		t.Fatal("the same person claiming a name twice is not a conflict")
 	}
 }
 

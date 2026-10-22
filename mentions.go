@@ -49,7 +49,8 @@ func findAtNames(rs []rune, known map[string]string) []atSpan {
 }
 
 // buildMentions returns signal-cli mention specs ("start:length:uuid") for the
-// known @names in text. Offsets are UTF-16 code units.
+// known @names in text. Offsets are UTF-16 code units. An ambiguous name
+// (empty uuid) stays plain text.
 func buildMentions(text string, known map[string]string) []string {
 	rs := []rune(text)
 	var out []string
@@ -57,7 +58,9 @@ func buildMentions(text string, known map[string]string) []string {
 	for _, s := range findAtNames(rs, known) {
 		u += utf16Len(rs[pos:s.start])
 		length := utf16Len(rs[s.start:s.end])
-		out = append(out, fmt.Sprintf("%d:%d:%s", u, length, s.uuid))
+		if s.uuid != "" {
+			out = append(out, fmt.Sprintf("%d:%d:%s", u, length, s.uuid))
+		}
 		u += length
 		pos = s.end
 	}
