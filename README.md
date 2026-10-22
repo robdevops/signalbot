@@ -31,11 +31,10 @@ A small chat bot that connects to a running [signal-cli](https://github.com/Asam
    curl -fsSLO https://go.dev/dl/go1.24.7.linux-amd64.tar.gz
    sudo rm -rf /usr/local/go
    sudo tar -C /usr/local -xzf go1.24.7.linux-amd64.tar.gz
-   export PATH=$PATH:/usr/local/go/bin
    ```
 4. Build and run:
    ```
-   go build -ldflags "-X main.version=$(git describe --tags --always --dirty)" -o signalbot .
+   /usr/local/go/bin/go build -ldflags "-X main.version=$(git describe --tags --always --dirty)" -o signalbot .
    set -a; . ./.env; set +a
    ./signalbot
    ```
