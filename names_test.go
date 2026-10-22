@@ -78,10 +78,11 @@ func TestResolvePriority(t *testing.T) {
 func TestMentionNameResolvedFromContacts(t *testing.T) {
 	bodies := make(chan string, 4)
 	gotBadParams := make(chan struct{}, 1)
+	sent := make(chan map[string]any, 2)
 	ai := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		b, _ := io.ReadAll(r.Body)
 		bodies <- string(b)
-		w.Write([]byte(`{"output":[{"type":"message","content":[{"type":"output_text","text":"hi"}]}]}`))
+		w.Write([]byte(`{"output":[{"type":"message","content":[{"type":"output_text","text":"hello @rob!"}]}]}`))
 	}))
 	defer ai.Close()
 
@@ -114,6 +115,8 @@ func TestMentionNameResolvedFromContacts(t *testing.T) {
 			case "listAccounts":
 				c.Write([]byte(`{"jsonrpc":"2.0","result":[{"number":null,"aci":"` + self + `"}],"id":` + string(id) + "}\n"))
 				c.Write([]byte(msg + "\n"))
+			case "send":
+				sent <- req["params"].(map[string]any)
 			case "listContacts":
 				if p, _ := req["params"].(map[string]any); p["allRecipients"] != true {
 					gotBadParams <- struct{}{}
@@ -139,6 +142,15 @@ func TestMentionNameResolvedFromContacts(t *testing.T) {
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("no x.ai request")
+	}
+	select {
+	case p := <-sent:
+		ms, _ := p["mention"].([]any)
+		if len(ms) != 1 || ms[0] != "6:4:"+rob {
+			t.Fatalf("want mention 6:4:%s, got %v (message %q)", rob, p["mention"], p["message"])
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("no send")
 	}
 	select {
 	case <-gotBadParams:

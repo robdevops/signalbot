@@ -281,9 +281,14 @@ func (t Target) params(extra map[string]any) map[string]any {
 	return p
 }
 
-func (s *Signal) Send(t Target, msg string) error {
+// Send posts msg; mentions are signal-cli specs ("start:length:uuid") for @names in msg.
+func (s *Signal) Send(t Target, msg string, mentions []string) error {
+	extra := map[string]any{"message": msg}
+	if len(mentions) > 0 {
+		extra["mention"] = mentions
+	}
 	return s.write(map[string]any{"jsonrpc": "2.0", "id": s.nextID.Add(1), "method": "send",
-		"params": t.params(map[string]any{"message": msg})})
+		"params": t.params(extra)})
 }
 
 func (s *Signal) Typing(t Target) {
