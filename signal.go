@@ -73,10 +73,6 @@ type Signal struct {
 	pending map[string]chan *rpcMsg
 	selfID  atomic.Value // string: the account's ACI, else its number
 	selfIDs atomic.Value // []string: every id the account is known by
-
-	// OnSent, if set, is called with the timestamp of each message signal-cli
-	// confirms it sent.
-	OnSent func(ts int64)
 }
 
 func NewSignal(addr string) *Signal {
@@ -335,30 +331,23 @@ func (s *Signal) Typing(t Target) {
 }
 
 // handleUnmatched reports the outcome of fire-and-forget requests (send,
-// sendTyping), and passes the timestamp of a successful send to OnSent.
+// sendTyping).
 func (s *Signal) handleUnmatched(m *rpcMsg) {
 	if m.Error != nil {
 		logf("signal-cli request %s failed: %s", m.ID, m.Error.Message)
 		return
 	}
 	var r struct {
-		Timestamp int64 `json:"timestamp"`
-		Results   []struct {
+		Results []struct {
 			Type string `json:"type"`
 		} `json:"results"`
 	}
 	if json.Unmarshal(m.Result, &r) != nil {
 		return
 	}
-	delivered := false
 	for _, res := range r.Results {
 		if res.Type != "" && res.Type != "SUCCESS" {
 			logf("signal-cli request %s not delivered: %s", m.ID, res.Type)
-		} else {
-			delivered = true
 		}
-	}
-	if delivered && r.Timestamp != 0 && s.OnSent != nil {
-		s.OnSent(r.Timestamp)
 	}
 }

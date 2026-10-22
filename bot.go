@@ -55,19 +55,11 @@ type Bot struct {
 
 	mu      sync.Mutex
 	history map[string][]ChatMsg
-	known   map[string]map[string]knownName // chat key -> name -> who to mention
-	used    map[string]time.Time            // chat key -> last use, for eviction
+	known   map[string]map[string]string // chat key -> name -> uuid shown to the model
 	names   *Names
 	dedupe  map[string]time.Time
-	sentTS  map[int64]time.Time // timestamps of messages we sent
 
 	typingEvery time.Duration
-}
-
-// knownName is a name the model has been shown, and who it refers to.
-type knownName struct {
-	uuid string
-	rank int
 }
 
 func NewBot(cfg *Config, sig *Signal, ai *XAI) *Bot {
@@ -76,15 +68,10 @@ func NewBot(cfg *Config, sig *Signal, ai *XAI) *Bot {
 		sem:         make(chan struct{}, cfg.MaxConcurrency),
 		ctx:         context.Background(),
 		history:     map[string][]ChatMsg{},
-		known:       map[string]map[string]knownName{},
-		used:        map[string]time.Time{},
+		known:       map[string]map[string]string{},
 		names:       NewNames(),
 		dedupe:      map[string]time.Time{},
-		sentTS:      map[int64]time.Time{},
 		typingEvery: 10 * time.Second,
-	}
-	if sig != nil {
-		sig.OnSent = b.recordSent
 	}
 	return b
 }
@@ -119,9 +106,9 @@ type Request struct {
 	Name   string // display name, else the id: short form for the log
 	Text   string // message text with the bot mention stripped
 
-	// Names the model has been shown in this message, so "@Name" in its reply
-	// can become a real Signal mention. Groups only.
-	Names map[string]knownName
+	// Names the model has been shown in this message (name -> uuid), so
+	// "@Name" in its reply can become a real Signal mention. Groups only.
+	Names map[string]string
 }
 
 // logLine says who sent the request, plus the text (quoted) when withBody.
@@ -172,10 +159,6 @@ type decideCtx struct {
 	self    string
 	allowed map[string]bool
 	names   *Names
-	// sent reports whether we actually sent the message with this timestamp.
-	// Quote fields are composed by the sending client, so a quote attributed
-	// to us is only evidence when it matches something we really sent.
-	sent func(int64) bool
 }
 
 // Decide applies the trigger rules and builds the prompt. It returns nil if
@@ -214,13 +197,10 @@ func Decide(env *Envelope, d decideCtx) *Request {
 	}
 	raw := text
 	if q := dm.Quote; q != nil && q.Text != "" && (q.AuthorUUID == d.self || q.Author == d.self) {
-		label := "a message the sender claims you sent"
-		if d.sent != nil && d.sent(q.ID) {
-			label = "your earlier message"
-		}
-		// Quoted text is attacker-controlled: escape it so it cannot close the
-		// wrapper and pose as a new turn, and clamp it so it cannot flood.
-		text = "[In reply to " + label + ": " + strconv.Quote(clamp(q.Text, maxQuoteRunes)) + "]\n" + text
+		// The sender composes the quote, so it may not be what the bot said.
+		// Escape it so it cannot close the wrapper and pose as a new turn, and
+		// clamp it so it cannot flood.
+		text = "[Replying to a message attributed to you: " + strconv.Quote(clamp(q.Text, maxQuoteRunes)) + "]\n" + text
 	}
 	name := safeName(env.SourceName)
 	if target.GroupID != "" && name != "" {
@@ -237,16 +217,16 @@ func Decide(env *Envelope, d decideCtx) *Request {
 	}
 	req := &Request{Target: target, Key: key, Prompt: text, Kind: kind, Sender: who, Name: short, Text: raw}
 	if target.GroupID != "" {
-		req.Names = map[string]knownName{}
-		add := func(n string, rank int, uuid string) {
-			if n = safeName(n); n != "" && uuid != "" && uuid != d.self {
-				bindName(req.Names, n, knownName{uuid, rank})
+		req.Names = map[string]string{}
+		add := func(n, uuid string) {
+			if n = safeName(n); n != "" && uuid != "" && uuid != d.self && req.Names[n] == "" {
+				req.Names[n] = uuid
 			}
 		}
 		if env.SourceUUID != "" {
-			add(env.SourceName, rankSeen, env.SourceUUID)
+			add(env.SourceName, env.SourceUUID)
 			if n, rank := d.names.resolve(Mention{UUID: env.SourceUUID, Number: env.SourceNumber}); rank > 0 {
-				add(n, rank, env.SourceUUID)
+				add(n, env.SourceUUID)
 			}
 		}
 		for _, m := range dm.Mentions {
@@ -255,7 +235,7 @@ func Decide(env *Envelope, d decideCtx) *Request {
 			}
 			// stripMentions has already logged any miss for this mention.
 			if n, rank := d.names.resolve(m); rank > 0 {
-				add(n, rank, m.UUID)
+				add(n, m.UUID)
 			}
 		}
 	}
@@ -343,7 +323,7 @@ func (b *Bot) handle(env *Envelope) {
 	b.names.Learn(env)
 	b.refreshIfUnknownMentions(env, self)
 
-	req := Decide(env, decideCtx{self: self, allowed: b.cfg.AllowedSenders, names: b.names, sent: b.wasSent})
+	req := Decide(env, decideCtx{self: self, allowed: b.cfg.AllowedSenders, names: b.names})
 	if req == nil {
 		return
 	}
@@ -380,25 +360,6 @@ func (b *Bot) duplicate(req *Request) bool {
 	}
 	b.dedupe[key] = now
 	return false
-}
-
-func (b *Bot) recordSent(ts int64) {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	cutoff := time.Now().Add(-24 * time.Hour)
-	for k, t := range b.sentTS {
-		if t.Before(cutoff) || len(b.sentTS) > 1000 {
-			delete(b.sentTS, k)
-		}
-	}
-	b.sentTS[ts] = time.Now()
-}
-
-func (b *Bot) wasSent(ts int64) bool {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	_, ok := b.sentTS[ts]
-	return ok
 }
 
 // refreshIfUnknownMentions loads the contact list when a message mentions
@@ -496,7 +457,7 @@ func stripSelfTags(reply, self string) string {
 		return reply
 	}
 	rs := []rune(reply)
-	spans := findAtNames(rs, map[string]knownName{self: {uuid: "self"}})
+	spans := findAtNames(rs, map[string]string{self: "self"})
 	if len(spans) == 0 {
 		return reply
 	}
@@ -583,31 +544,6 @@ func (b *Bot) systemPrompt() string {
 	return p + "\nIf asked to introduce yourself, reply with exactly this text and nothing else: " + strconv.Quote(intro)
 }
 
-// bindName records that name n refers to v.uuid. Display names are chosen by
-// their owners, so anyone can claim anyone's name: a name claimed by two
-// different people becomes ambiguous (no uuid) and is never turned into a
-// mention. The one exception is the account owner's own contact name, which
-// is trusted and wins over any self-chosen claim. Reports a new conflict.
-func bindName(m map[string]knownName, n string, v knownName) (conflict bool) {
-	old, ok := m[n]
-	switch {
-	case !ok:
-		m[n] = v
-	case old.uuid == v.uuid:
-		if v.rank > old.rank {
-			m[n] = v
-		}
-	case v.rank >= rankContact && old.rank < rankContact:
-		m[n] = v
-	case old.rank >= rankContact:
-		// keep the trusted binding
-	default:
-		m[n] = knownName{rank: max(old.rank, v.rank)}
-		return old.uuid != ""
-	}
-	return false
-}
-
 // remember records names shown to the model so later replies can mention them.
 func (b *Bot) remember(req *Request) {
 	if len(req.Names) == 0 {
@@ -615,26 +551,25 @@ func (b *Bot) remember(req *Request) {
 	}
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	b.touch(req.Key)
+	capChats(b.known, req.Key, b.cfg.MaxChats)
 	k := b.known[req.Key]
 	if k == nil {
-		k = map[string]knownName{}
+		k = map[string]string{}
 		b.known[req.Key] = k
 	}
-	for n, v := range req.Names {
-		if _, ok := k[n]; !ok && len(k) >= 256 {
-			continue
-		}
-		if bindName(k, n, v) {
-			logf("name %q is claimed by more than one user; not linking it", n)
+	// First claim wins: display names are self-chosen, so renaming yourself
+	// to a member's name must not capture their mentions.
+	for n, uuid := range req.Names {
+		if _, ok := k[n]; !ok && len(k) < 256 {
+			k[n] = uuid
 		}
 	}
 }
 
-func (b *Bot) knownNames(key string) map[string]knownName {
+func (b *Bot) knownNames(key string) map[string]string {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	out := make(map[string]knownName, len(b.known[key]))
+	out := make(map[string]string, len(b.known[key]))
 	for n, v := range b.known[key] {
 		out[n] = v
 	}
@@ -650,7 +585,7 @@ func (b *Bot) getHistory(key string) []ChatMsg {
 func (b *Bot) addHistory(key string, msgs ...ChatMsg) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	b.touch(key)
+	capChats(b.history, key, b.cfg.MaxChats)
 	h := append(b.history[key], msgs...)
 	if max := b.cfg.HistoryTurns * 2; len(h) > max {
 		h = append([]ChatMsg(nil), h[len(h)-max:]...)
@@ -658,28 +593,16 @@ func (b *Bot) addHistory(key string, msgs ...ChatMsg) {
 	b.history[key] = h
 }
 
-// touch records a chat as used and evicts the least recently used chats once
-// there are more than MaxChats. Chat keys come from the envelope, so without
-// this a sender could grow these maps forever by creating groups.
+// capChats makes room for key in m, dropping an arbitrary chat once there
+// are MaxChats. Chat keys come from the envelope, so the maps must be bounded.
 // Caller holds b.mu.
-func (b *Bot) touch(key string) {
-	b.used[key] = time.Now()
-	if b.cfg.MaxChats <= 0 {
+func capChats[V any](m map[string]V, key string, max int) {
+	if _, ok := m[key]; ok || max <= 0 || len(m) < max {
 		return
 	}
-	for len(b.used) > b.cfg.MaxChats {
-		oldest, at := "", time.Time{}
-		for k, t := range b.used {
-			if k != key && (oldest == "" || t.Before(at)) {
-				oldest, at = k, t
-			}
-		}
-		if oldest == "" {
-			return
-		}
-		delete(b.used, oldest)
-		delete(b.history, oldest)
-		delete(b.known, oldest)
+	for k := range m {
+		delete(m, k)
+		return
 	}
 }
 

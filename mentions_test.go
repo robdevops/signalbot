@@ -6,7 +6,7 @@ import (
 )
 
 func TestBuildMentions(t *testing.T) {
-	known := map[string]knownName{"Rob": {uuid: "u-rob"}, "Rob Stevens": {uuid: "u-rs"}, "Dkam": {uuid: "u-d"}, "svs_fluffyegg": {uuid: "u-s"}}
+	known := map[string]string{"Rob": "u-rob", "Rob Stevens": "u-rs", "Dkam": "u-d", "svs_fluffyegg": "u-s"}
 	tests := []struct {
 		name, text string
 		want       []string
@@ -35,7 +35,7 @@ func TestBuildMentions(t *testing.T) {
 
 func TestDecideCollectsNamesForGroupsOnly(t *testing.T) {
 	r := Decide(parse(t, groupMention), decideCtx{self: self})
-	if r.Names["Rob"].uuid != rob {
+	if r.Names["Rob"] != rob {
 		t.Fatalf("sender name missing: %v", r.Names)
 	}
 	if d := Decide(parse(t, dm), decideCtx{self: self, allowed: map[string]bool{rob: true}}); d.Names != nil {
