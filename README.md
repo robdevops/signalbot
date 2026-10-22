@@ -62,7 +62,7 @@ A small chat bot that connects to a running `signal-cli` daemon over its socket 
 ## Tech specs
 
 - Go, standard library only; single static binary
-- Talks JSON-RPC to `signal-cli daemon` over a unix socket or TCP (`listAccounts` once per connection to learn its own id)
+- Talks JSON-RPC to [signal-cli](https://github.com/AsamK/signal-cli) daemon over a unix socket or TCP (`listAccounts` once per connection to learn its own id)
 - x.ai Responses API (`/v1/responses`) over a shared keep-alive HTTP client, one retry on 429/5xx
 - One goroutine per accepted message, bounded by a semaphore (`MAX_CONCURRENCY`, default 32)
 - In-memory history only (`HISTORY_TURNS`, default 10); no database or disk state
