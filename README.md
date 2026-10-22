@@ -36,7 +36,8 @@ A small chat bot that connects to a running `signal-cli` daemon over its socket 
    ```
 4. Build and run:
    ```
-   go build -o signalbot .
+   go build -ldflags "-X main.version=$(git describe --tags --always --dirty)" -o signalbot .
+   ./signalbot --version
    set -a
    . ./.env
    set +a
@@ -53,7 +54,7 @@ A small chat bot that connects to a running `signal-cli` daemon over its socket 
    ```
 6. Or run in Docker:
    ```
-   docker build -t signalbot .
+   docker build --build-arg VERSION=$(git describe --tags --always --dirty) -t signalbot .
    docker run -d --restart=always --env-file .env -v /run/signal-cli:/run/signal-cli signalbot
    ```
 7. Add the bot's account to a group and @mention it, reply to one of its messages, or DM it from an allowed sender.
