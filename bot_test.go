@@ -56,7 +56,7 @@ func TestDecide(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			r := Decide(parse(t, tc.in), self, tc.allowed)
+			r := Decide(parse(t, tc.in), self, tc.allowed, nil)
 			if tc.want == "" {
 				if r != nil {
 					t.Fatalf("expected silence, got %+v", r)
@@ -74,7 +74,7 @@ func TestDecide(t *testing.T) {
 			}
 		})
 	}
-	if r := Decide(parse(t, groupReply), self, nil); !strings.Contains(r.Prompt, "oil around 78") {
+	if r := Decide(parse(t, groupReply), self, nil, nil); !strings.Contains(r.Prompt, "oil around 78") {
 		t.Fatalf("quote context missing: %q", r.Prompt)
 	}
 }
@@ -177,7 +177,7 @@ func contextWithCancel() (context.Context, context.CancelFunc) {
 var replyToOther = strings.NewReplacer(`"author":"`+self+`"`, `"author":"x"`, `"authorUuid":"`+self+`"`, `"authorUuid":"x"`).Replace(groupReply)
 
 func TestLogLine(t *testing.T) {
-	r := Decide(parse(t, strings.Replace(groupMention, "what is up", "what\\nis up", 1)), self, nil)
+	r := Decide(parse(t, strings.Replace(groupMention, "what is up", "what\\nis up", 1)), self, nil, nil)
 	line := r.LogLine(time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC))
 	want := "2026-01-02T03:04:05Z mention from=Rob(" + rob + ") chat=" + group + ": what is up"
 	if line != want {
