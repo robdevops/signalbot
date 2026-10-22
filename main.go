@@ -51,11 +51,15 @@ func isTTY(f *os.File) bool {
 	return err == nil && st.Mode()&os.ModeCharDevice != 0
 }
 
-// setupLogging drops the date and time from log lines unless interactive.
-// slog's default handler writes through the log package, so this keeps the
-// familiar "INFO msg key=value" format.
+// setupLogging sends every log line to stdout in slog's default
+// "INFO msg key=value" format, which it writes through the log package. The
+// date and time are added only when interactive: journald and Docker add
+// their own.
 func setupLogging(interactive bool) {
-	if !interactive {
+	log.SetOutput(os.Stdout)
+	if interactive {
+		log.SetFlags(log.LstdFlags)
+	} else {
 		log.SetFlags(0)
 	}
 }
@@ -65,9 +69,7 @@ func main() {
 		fmt.Println("signalbot", buildVersion())
 		return
 	}
-	interactive := isTTY(os.Stdout)
-	setupLogging(interactive)
-	fmt.Println("signalbot", buildVersion())
+	setupLogging(isTTY(os.Stdout))
 	slog.Info("starting", "version", buildVersion())
 	cfg, err := LoadConfig()
 	if err != nil {
@@ -83,7 +85,6 @@ func main() {
 
 	sig := NewSignal(cfg.Socket)
 	bot := NewBot(cfg, sig, NewXAI(cfg))
-	bot.logTime = interactive
 	bot.ctx = connCtx
 	slog.Info("config", "model", cfg.Model, "reasoning", cfg.Reasoning, "search", cfg.Search,
 		"allowed_senders", len(cfg.AllowedSenders), "log_message_body", cfg.LogMessageBody)

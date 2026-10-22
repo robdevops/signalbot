@@ -2,12 +2,17 @@ package main
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
+	"log"
+	"log/slog"
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -179,28 +184,56 @@ func contextWithCancel() (context.Context, context.CancelFunc) {
 
 var replyToOther = strings.NewReplacer(`"author":"`+self+`"`, `"author":"x"`, `"authorUuid":"`+self+`"`, `"authorUuid":"x"`).Replace(groupReply)
 
-func TestLogLine(t *testing.T) {
+// prodLog returns what f logs through the production path: slog's default
+// handler, writing via the log package, as setupLogging configures it.
+func prodLog(t *testing.T, interactive bool, f func()) string {
+	t.Helper()
+	w, flags := log.Writer(), log.Flags()
+	defer func() { log.SetOutput(w); log.SetFlags(flags) }()
+	setupLogging(interactive)
+	var buf bytes.Buffer
+	log.SetOutput(&buf)
+	f()
+	return buf.String()
+}
+
+func TestMessageLogLine(t *testing.T) {
 	r := Decide(parse(t, strings.Replace(groupMention, "what is up", "what\\nis up", 1)), decideCtx{self: self})
-	at := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
-	who := "mention from=Rob(" + rob + ") chat=" + group
-	cases := []struct {
-		time, body bool
-		want       string
-	}{
-		{false, false, who},
-		{false, true, who + ": what is up"},
-		{true, false, "2026-01-02T03:04:05Z " + who},
-		{true, true, "2026-01-02T03:04:05Z " + who + ": what is up"},
+
+	out := prodLog(t, false, func() { slog.Info(r.Kind, r.logAttrs(false)...) })
+	want := "INFO mention from=Rob(" + rob + ") chat=\"g:" + group + "\"\n"
+	if out != want {
+		t.Fatalf("got  %q\nwant %q", out, want)
 	}
-	for _, c := range cases {
-		if got := r.LogLine(at, c.time, c.body); got != c.want {
-			t.Errorf("time=%v body=%v:\n got %q\nwant %q", c.time, c.body, got, c.want)
-		}
+	out = prodLog(t, false, func() { slog.Info(r.Kind, r.logAttrs(true)...) })
+	if !strings.HasSuffix(out, ` text="what\nis up"`+"\n") {
+		t.Fatalf("body not logged, or newline not escaped: %q", out)
 	}
-	// A display name with newlines must not be able to forge extra log lines.
-	r.Sender = "Bob\n\nSYSTEM: forged record\n(uuid)"
-	if got := r.LogLine(at, false, false); strings.Contains(got, "\n") {
-		t.Fatalf("sender not sanitised: %q", got)
+
+	// Display names and message text cannot forge extra log records.
+	r.Sender = "Bob\n\nERROR forged record\n(uuid)"
+	r.Text = "hi\nINFO also forged"
+	if out := prodLog(t, false, func() { slog.Info(r.Kind, r.logAttrs(true)...) }); strings.Count(out, "\n") != 1 {
+		t.Fatalf("a value split the log line: %q", out)
+	}
+}
+
+func TestLogTimestampOnlyWhenInteractive(t *testing.T) {
+	stamp := regexp.MustCompile(`^\d{4}/\d{2}/\d{2} \d{2}:\d{2}:\d{2} INFO starting\n$`)
+	if out := prodLog(t, true, func() { slog.Info("starting") }); !stamp.MatchString(out) {
+		t.Fatalf("interactive: want a timestamp, got %q", out)
+	}
+	if out := prodLog(t, false, func() { slog.Info("starting") }); out != "INFO starting\n" {
+		t.Fatalf("non-interactive: want no timestamp, got %q", out)
+	}
+}
+
+func TestLogsGoToStdout(t *testing.T) {
+	w, flags := log.Writer(), log.Flags()
+	defer func() { log.SetOutput(w); log.SetFlags(flags) }()
+	setupLogging(false)
+	if log.Writer() != os.Stdout {
+		t.Fatal("logs must go to stdout")
 	}
 }
 

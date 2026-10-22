@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -590,19 +591,20 @@ func TestSystemPromptLayering(t *testing.T) {
 }
 
 func TestLogLineOmitsBodyByDefault(t *testing.T) {
-	cfg, _ := func() (*Config, error) {
-		t.Setenv("SIGNALCLI_SOCKET", "/x")
-		t.Setenv("XAI_API_KEY", "k")
-		t.Setenv("LOG_MESSAGE_BODY", "")
-		return LoadConfig()
-	}()
-	r := Decide(parse(t, groupMention), decideCtx{self: self})
-	line := r.LogLine(time.Now(), false, cfg.LogMessageBody)
-	if strings.Contains(line, "what is up") {
-		t.Fatalf("message body logged by default: %q", line)
+	t.Setenv("SIGNALCLI_SOCKET", "/x")
+	t.Setenv("XAI_API_KEY", "k")
+	t.Setenv("LOG_MESSAGE_BODY", "")
+	cfg, err := LoadConfig()
+	if err != nil {
+		t.Fatal(err)
 	}
-	if !strings.Contains(line, "mention from=Rob("+rob+")") {
-		t.Fatalf("who mentioned the bot must still be logged: %q", line)
+	r := Decide(parse(t, groupMention), decideCtx{self: self})
+	out := prodLog(t, false, func() { slog.Info(r.Kind, r.logAttrs(cfg.LogMessageBody)...) })
+	if strings.Contains(out, "what is up") {
+		t.Fatalf("message body logged by default: %q", out)
+	}
+	if !strings.Contains(out, "INFO mention from=Rob("+rob+")") {
+		t.Fatalf("who mentioned the bot must still be logged: %q", out)
 	}
 }
 

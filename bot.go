@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"os"
 	"sort"
 	"strconv"
 	"strings"
@@ -63,7 +62,6 @@ type Bot struct {
 	dedupe  map[string]time.Time
 	sentTS  map[int64]time.Time // timestamps of messages we sent
 
-	logTime     bool
 	typingEvery time.Duration
 }
 
@@ -126,21 +124,15 @@ type Request struct {
 	Names map[string]knownName
 }
 
-// LogLine renders the request as a single line for stdout. The sender is
-// sanitised like the body, so a display name cannot forge extra log records.
-func (r *Request) LogLine(now time.Time, withTime, withBody bool) string {
-	chat := "dm"
-	if r.Target.GroupID != "" {
-		chat = r.Target.GroupID
-	}
-	line := fmt.Sprintf("%s from=%s chat=%s", r.Kind, safeName(r.Sender), chat)
+// logAttrs describes the request for the log: who sent it and which chat,
+// plus the text when withBody. slog quotes any value containing spaces or
+// newlines, so a display name or message cannot forge extra log lines.
+func (r *Request) logAttrs(withBody bool) []any {
+	attrs := []any{"from", r.Sender, "chat", r.Key}
 	if withBody {
-		line += ": " + strings.Join(strings.Fields(r.Text), " ")
+		attrs = append(attrs, "text", r.Text)
 	}
-	if withTime {
-		line = now.Format(time.RFC3339) + " " + line
-	}
-	return line
+	return attrs
 }
 
 // triggers is the cheap, allocation-free half of the trigger rules. It runs
@@ -347,7 +339,7 @@ func (b *Bot) handle(env *Envelope) {
 		return
 	}
 	b.remember(req)
-	fmt.Fprintln(os.Stdout, req.LogLine(time.Now(), b.logTime, b.cfg.LogMessageBody))
+	slog.Info(req.Kind, req.logAttrs(b.cfg.LogMessageBody)...)
 
 	stop := b.keepTyping(req.Target)
 	defer stop()
