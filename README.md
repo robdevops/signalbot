@@ -12,7 +12,7 @@ A small chat bot that connects to a running [signal-cli](https://github.com/Asam
 - Shows a typing indicator (refreshed every 10s) while it thinks; many chats are handled at once and a slow answer never blocks others
 - Logs who mentioned, replied to or messaged it, plus the token count and cost of each reply; reconnects automatically if signal-cli restarts
 
-## Quick start
+## Install
 
 1. Start the signal-cli daemon (account already registered or linked):
    ```
