@@ -47,8 +47,7 @@ A small chat bot that connects to a running [signal-cli](https://github.com/Asam
    ```
    sudo useradd --system --no-create-home --shell /usr/sbin/nologin signalbot
    sudo install -m 755 signalbot /usr/local/bin/signalbot
-   sudo mkdir -p /etc/signalbot
-   sudo install -m 600 .env /etc/signalbot/env
+   sudo install -m 600 .env /etc/signalbot.env
    sudo cp signalbot.service /etc/systemd/system/
    sudo systemctl daemon-reload
    sudo systemctl enable --now signalbot
