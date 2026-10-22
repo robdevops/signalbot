@@ -7,6 +7,7 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 	"unicode/utf16"
 )
@@ -17,10 +18,11 @@ type Bot struct {
 	ai  *XAI
 	sem chan struct{}
 
-	mu      sync.Mutex
-	history map[string][]ChatMsg
-	names   *Names
-	known   map[string]map[string]string // chat key -> name -> uuid shown to the model
+	mu          sync.Mutex
+	history     map[string][]ChatMsg
+	names       *Names
+	selfLookups atomic.Int32                 // attempts to learn the bot's own name
+	known       map[string]map[string]string // chat key -> name -> uuid shown to the model
 
 	typingEvery time.Duration
 }
@@ -214,7 +216,8 @@ func (b *Bot) keepTyping(t Target) (stop func()) {
 func (b *Bot) respond(ctx context.Context, req *Request, stopTyping func()) {
 	msgs := append(b.getHistory(req.Key), ChatMsg{Role: "user", Content: req.Prompt})
 	start := time.Now()
-	reply, err := b.ai.Complete(ctx, msgs)
+	b.ensureSelfName(ctx)
+	reply, err := b.ai.Complete(ctx, b.systemPrompt(), msgs)
 	stopTyping()
 	if err != nil {
 		slog.Error("x.ai request failed", "chat", req.Key, "duration", time.Since(start).Round(time.Millisecond), "err", err)
@@ -236,6 +239,43 @@ func (b *Bot) respond(ctx context.Context, req *Request, stopTyping func()) {
 		}
 	}
 	slog.Info("reply sent to signal-cli", "chat", req.Key, "parts", len(parts))
+}
+
+const readmeURL = "https://github.com/robdevops/signalbot/blob/main/README.md"
+
+// selfName is the bot's own display name: BOT_NAME, else its profile/contact name.
+func (b *Bot) selfName() string {
+	if b.cfg.BotName != "" {
+		return b.cfg.BotName
+	}
+	if r := b.names.lookup(b.sig.SelfID()); r.rank > 0 {
+		return r.name
+	}
+	return ""
+}
+
+// ensureSelfName loads contacts (rate limited) if the bot's own name is not known yet.
+func (b *Bot) ensureSelfName(ctx context.Context) {
+	if b.selfName() != "" || b.selfLookups.Add(1) > 3 {
+		return
+	}
+	cctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	b.names.Refresh(cctx, b.sig)
+	if b.selfName() == "" {
+		slog.Warn("bot's own profile name not found; set BOT_NAME to override", "self", b.sig.SelfID())
+	}
+}
+
+// systemPrompt is the configured prompt plus the fixed self-introduction.
+func (b *Bot) systemPrompt() string {
+	name := b.selfName()
+	if name == "" {
+		name = "signalbot"
+	}
+	return b.cfg.SystemPrompt + fmt.Sprintf("\nIf asked to introduce yourself, reply with exactly this text and nothing else: "+
+		"\"hi, I'm %s running %s. I respond to @mentions and replies to my messages. See %s for details\"",
+		name, b.cfg.Model, readmeURL)
 }
 
 // remember records names shown to the model so later replies can mention them.

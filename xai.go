@@ -36,13 +36,13 @@ func NewXAI(cfg *Config) *XAI {
 }
 
 // Complete sends the conversation to the x.ai Responses API and returns the reply text.
-func (x *XAI) Complete(ctx context.Context, msgs []ChatMsg) (string, error) {
+func (x *XAI) Complete(ctx context.Context, system string, msgs []ChatMsg) (string, error) {
 	ctx, cancel := context.WithTimeout(ctx, 90*time.Second)
 	defer cancel()
 
 	body := map[string]any{
 		"model": x.cfg.Model,
-		"input": append([]ChatMsg{{Role: "system", Content: x.cfg.SystemPrompt}}, msgs...),
+		"input": append([]ChatMsg{{Role: "system", Content: system}}, msgs...),
 		"store": false,
 	}
 	if r := x.cfg.Reasoning; r != "" && r != "none" {

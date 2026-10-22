@@ -118,6 +118,9 @@ func TestEndToEnd(t *testing.T) {
 				for _, m := range []string{typing, groupPlain, groupMention, dm} {
 					c.Write([]byte(m + "\n"))
 				}
+			case "listContacts":
+				id, _ := json.Marshal(req["id"])
+				c.Write([]byte(`{"jsonrpc":"2.0","result":[],"id":` + string(id) + "}\n"))
 			case "sendTyping":
 				events <- "typing"
 			case "send":
@@ -182,5 +185,28 @@ func TestLogLine(t *testing.T) {
 	want := "2026-01-02T03:04:05Z mention from=Rob(" + rob + ") chat=" + group + ": what is up"
 	if line != want {
 		t.Fatalf("got %q\nwant %q", line, want)
+	}
+}
+
+func TestSystemPromptIntroduction(t *testing.T) {
+	cfg := &Config{Model: "grok-test", SystemPrompt: "base", MaxConcurrency: 1, HistoryTurns: 1}
+	sig := NewSignal("x")
+	sig.selfID.Store(self)
+	b := NewBot(cfg, sig, nil)
+
+	want := func(name string) string {
+		return `"hi, I'm ` + name + ` running grok-test. I respond to @mentions and replies to my messages. See ` +
+			`https://github.com/robdevops/signalbot/blob/main/README.md for details"`
+	}
+	if p := b.systemPrompt(); !strings.HasPrefix(p, "base\n") || !strings.Contains(p, want("signalbot")) {
+		t.Fatalf("default name: %q", p)
+	}
+	b.names.addContacts([]Contact{{UUID: self, GivenName: "Botty"}})
+	if p := b.systemPrompt(); !strings.Contains(p, want("Botty")) {
+		t.Fatalf("profile name: %q", p)
+	}
+	cfg.BotName = "Override"
+	if p := b.systemPrompt(); !strings.Contains(p, want("Override")) {
+		t.Fatalf("BOT_NAME override: %q", p)
 	}
 }
