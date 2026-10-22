@@ -82,6 +82,7 @@ A small chat bot that connects to a running [signal-cli](https://github.com/Asam
 | `BOT_NAME` | profile name | Name the bot gives when asked to introduce itself; falls back to `signalbot` if no profile name is found |
 | `INTRO` | built-in sentence | Overrides the self-introduction; `{name}` and `{model}` are substituted |
 | `XAI_PRICE_IN` | `1.25` | USD per million input tokens, for the cost estimate |
+| `XAI_PRICE_CACHED` | `0.20` | USD per million cached input tokens, for the cost estimate |
 | `XAI_PRICE_OUT` | `2.50` | USD per million output tokens, for the cost estimate |
 | `MAX_CONCURRENCY` | `32` | Replies in flight at once; messages beyond this are dropped |
 | `HISTORY_TURNS` | `10` | Exchanges remembered per chat |
@@ -90,4 +91,4 @@ A small chat bot that connects to a running [signal-cli](https://github.com/Asam
 
 The default `INTRO` is: `hi, I'm {name}, your open source assistant running {model}. I respond to @mentions and replies to my messages. See https://github.com/robdevops/signalbot/blob/main/README.md for details`
 
-The cost estimate uses xAI's published grok-4.3 rates plus $5 per 1,000 web searches. It does not model cached-input discounts or long-prompt pricing tiers, so check [xAI's pricing](https://docs.x.ai/docs/models) and set `XAI_PRICE_IN`/`XAI_PRICE_OUT` for other models.
+The cost estimate uses xAI's published grok-4.3 rates, bills input served from xAI's prompt cache at the cached rate, and adds $5 per 1,000 web searches. It does not model long-prompt pricing tiers, so check [xAI's pricing](https://docs.x.ai/docs/models) and set the `XAI_PRICE_*` variables for other models.

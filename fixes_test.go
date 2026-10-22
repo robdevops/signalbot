@@ -60,7 +60,7 @@ func rpc(c net.Conn, r *bufio.Reader, results func(method string) (string, bool)
 func testCfg() *Config {
 	return &Config{Model: "m", APIKey: "k", AllowedSenders: map[string]bool{},
 		MaxConcurrency: 4, HistoryTurns: 2, MaxChats: 100, DedupeWindow: 10,
-		PriceIn: 1.25, PriceOut: 2.50}
+		PriceIn: 1.25, PriceCached: 0.20, PriceOut: 2.50}
 }
 
 // --- security --------------------------------------------------------------
@@ -377,8 +377,8 @@ func TestConfigParsing(t *testing.T) {
 	if c.ExtraPrompt != "" {
 		t.Error(`SYSTEM_PROMPT must default to ""`)
 	}
-	if c.PriceIn != 1.25 || c.PriceOut != 2.50 {
-		t.Errorf("price defaults: in=%v out=%v", c.PriceIn, c.PriceOut)
+	if c.PriceIn != 1.25 || c.PriceCached != 0.20 || c.PriceOut != 2.50 {
+		t.Errorf("price defaults: in=%v cached=%v out=%v", c.PriceIn, c.PriceCached, c.PriceOut)
 	}
 	t.Setenv("LOG_MESSAGE_BODY", "True")
 	if c, _ := LoadConfig(); !c.LogMessageBody {
@@ -547,6 +547,26 @@ func TestCostEstimateFromUsage(t *testing.T) {
 	c, _ = parseOutput([]byte(`{"output":[{"type":"message","content":[{"type":"text","text":"x"}]}],"usage":{"prompt_tokens":7,"completion_tokens":9}}`))
 	if c.InputTokens != 7 || c.OutputTokens != 9 {
 		t.Fatalf("prompt/completion token names not parsed: %+v", c)
+	}
+
+	// Cached input is part of input_tokens and billed at the cached rate:
+	// 200k uncached at $1.25/M + 800k cached at $0.20/M = $0.25 + $0.16.
+	c, _ = parseOutput([]byte(`{"output":[{"type":"message","content":[{"type":"output_text","text":"x"}]}],` +
+		`"usage":{"input_tokens":1000000,"output_tokens":0,"input_tokens_details":{"cached_tokens":800000}}}`))
+	if c.CachedTokens != 800000 {
+		t.Fatalf("Responses API cached_tokens not parsed: %+v", c)
+	}
+	if got, want := c.Cost(testCfg()), 0.41; got < want-1e-9 || got > want+1e-9 {
+		t.Fatalf("cost with cached input = %v, want %v", got, want)
+	}
+	c, _ = parseOutput([]byte(`{"output":[{"type":"message","content":[{"type":"text","text":"x"}]}],` +
+		`"usage":{"prompt_tokens":10,"completion_tokens":1,"prompt_tokens_details":{"cached_tokens":6}}}`))
+	if c.CachedTokens != 6 {
+		t.Fatalf("Chat Completions cached_tokens not parsed: %+v", c)
+	}
+	// A cached count above the input count must not produce a negative charge.
+	if got := (Completion{InputTokens: 10, CachedTokens: 50}).Cost(testCfg()); got < 0 {
+		t.Fatalf("negative cost %v", got)
 	}
 }
 

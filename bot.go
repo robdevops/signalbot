@@ -450,7 +450,7 @@ func (b *Bot) respond(ctx context.Context, req *Request, stopTyping func()) {
 		res = Completion{Text: "Sorry, I couldn't get an answer right now."}
 	} else {
 		slog.Info("x.ai reply", "chat", req.Key, "duration", took, "chars", len([]rune(res.Text)),
-			"tokens_in", res.InputTokens, "tokens_out", res.OutputTokens,
+			"tokens_in", res.InputTokens, "tokens_cached", res.CachedTokens, "tokens_out", res.OutputTokens,
 			"cost_usd", fmt.Sprintf("%.5f", res.Cost(b.cfg)))
 		b.addHistory(req.Key, ChatMsg{Role: "user", Content: req.Prompt}, ChatMsg{Role: "assistant", Content: res.Text})
 	}
