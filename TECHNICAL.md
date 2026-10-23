@@ -14,9 +14,9 @@
 
 Only the socket. The bot speaks JSON-RPC to it and never touches signal-cli's data directory, where the account keys live.
 
-The socket's permissions decide who may connect, and `DynamicUser` can't work for the bot, because a throwaway user id has nothing stable to be granted access:
+The socket's permissions decide who may connect, and the bot is let in through a group, not a user id, so a transient `DynamicUser` works:
 
-- `signalbot.service` runs as user `signalbot` with `SupplementaryGroups=signal-cli`.
+- `signalbot.service` runs with `DynamicUser=yes` and `SupplementaryGroups=signal-cli`, so its throwaway user is in the group.
 - Docker's `--group-add` puts the container's user in the same group. The container mounts only the socket's directory, so the data directory isn't there to read.
 - signal-cli should create the socket group-writable (`0770`, from `UMask=0007`) in a directory the group can search (`0750`). A default umask gives `0755` and locks out even the group.
 

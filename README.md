@@ -44,7 +44,7 @@ Then install the bot with systemd or with Docker.
 
 ### With systemd
 
-The bot runs as user `signalbot` in the `signal-cli` group, which is how it reaches the socket.
+The bot runs as a dynamic user (`DynamicUser=yes`) in the `signal-cli` group, which is how it reaches the socket.
 
 1. Install Go 1.24+:
    ```
@@ -55,7 +55,6 @@ The bot runs as user `signalbot` in the `signal-cli` group, which is how it reac
 2. Build and install:
    ```
    /usr/local/go/bin/go build
-   sudo useradd --system --no-create-home --shell /usr/sbin/nologin signalbot
    sudo install -m 755 signalbot /usr/local/bin/signalbot
    sudo cp signalbot.service /etc/systemd/system/
    sudo systemctl daemon-reload
