@@ -63,10 +63,14 @@ The bot runs as a dynamic user (`DynamicUser=yes`) in the `signal-cli` group, wh
    sudo systemctl daemon-reload
    sudo systemctl enable --now signalbot
    ```
+3. Read the logs:
+   ```
+   journalctl -fu signalbot
+   ```
 
 ### With Docker
 
-`--group-add` gives the container the `signal-cli` group, which is how it reaches the socket. Docker reads `--env-file` as the calling user, so run it with `sudo`: the file is root-only. Logs go to journald where the host has it, otherwise to Docker's rotating `local` driver; read them with `docker logs -f signalbot` either way:
+`--group-add` gives the container the `signal-cli` group, which is how it reaches the socket. Docker reads `--env-file` as the calling user, so run it with `sudo`: the file is root-only. Logs go to journald where the host has it, otherwise to Docker's rotating `local` driver; `docker logs` reads either:
 
 ```
 sudo docker build --build-arg VERSION=$(git describe --tags --always --dirty) -t signalbot .
@@ -75,6 +79,12 @@ sudo docker run -d --name signalbot --restart=always --env-file /etc/signalbot.e
   $(test -S /run/systemd/journal/socket && echo --log-driver=journald || echo --log-driver=local) \
   --read-only --cap-drop=ALL --security-opt=no-new-privileges --pids-limit=64 --memory=300m \
   signalbot
+```
+
+Read the logs:
+
+```
+docker logs -f signalbot
 ```
 
 ### Then
