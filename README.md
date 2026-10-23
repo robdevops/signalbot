@@ -12,32 +12,45 @@ A small chat bot that connects to a running [signal-cli](https://github.com/Asam
 - Shows a typing indicator (refreshed every 10s) while it thinks; many chats are handled at once and a slow answer never blocks others
 - Logs who mentioned, replied to or messaged it, plus the token count and cost of each reply; reconnects automatically if signal-cli restarts
 
+See [TECHNICAL.md](TECHNICAL.md) for how it works.
+
 ## Prerequisites
 
-A running signal-cli daemon, with the account already registered or linked:
+[signal-cli](https://github.com/AsamK/signal-cli), installed at `/usr/local/bin/signal-cli`, running as its own user so that both install methods below can be granted access to its socket. Create the user and link your Signal account to it (this prints a link to scan in Signal's *Linked devices*; see the signal-cli docs to register a number instead):
 
 ```
-signal-cli -a +1234567890 daemon --socket /run/signal-cli/socket
+sudo useradd --system --user-group --home-dir /var/lib/signal-cli --no-create-home --shell /usr/sbin/nologin signal-cli
+sudo install -d -o signal-cli -g signal-cli -m 700 /var/lib/signal-cli
+sudo -u signal-cli signal-cli --config /var/lib/signal-cli link --name signalbot
 ```
-
-Or listen on TCP with `--tcp 127.0.0.1:7583` and set `SIGNALCLI_SOCKET=127.0.0.1:7583`.
 
 ## Install
 
-Get the code and create the config. The file holds your API key, so it is root-only; edit it, setting `XAI_API_KEY` and `SIGNAL_ALLOWED_SENDERS`:
+Get the code, and start signal-cli as a service. First set your account's number in `signal-cli.service` (the `-a +1234567890` in `ExecStart`):
 
 ```
 git clone https://github.com/robdevops/signalbot.git
 cd signalbot
+sudo cp signal-cli.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now signal-cli
+ls -l /run/signal-cli/socket
+```
+
+The socket should show as `srwxrwx--- signal-cli signal-cli`: group-writable, so members of the `signal-cli` group can connect. Both install methods below use that group. (To use TCP instead, run signal-cli with `--tcp 127.0.0.1:7583` and set `SIGNALCLI_SOCKET=127.0.0.1:7583`; then any local user can connect.)
+
+Create the config. The file holds your API key, so it is root-only; edit it, setting `XAI_API_KEY` and `SIGNAL_ALLOWED_SENDERS`:
+
+```
 sudo install -m 660 .env.example /etc/signalbot.env
 sudoedit /etc/signalbot.env
 ```
 
-Then install with systemd or with Docker.
+Then install the bot with systemd or with Docker.
 
 ### With systemd
 
-The bot runs as user `signalbot` in the `signal-cli` group, so the socket must be writable, and its directory searchable, by that group (check with `ls -ld /run/signal-cli /run/signal-cli/socket`).
+The bot runs as user `signalbot` in the `signal-cli` group, which is how it reaches the socket.
 
 1. Install Go 1.24+:
    ```
@@ -57,7 +70,7 @@ The bot runs as user `signalbot` in the `signal-cli` group, so the socket must b
 
 ### With Docker
 
-`--group-add` gives the container the `signal-cli` group, so it can reach the socket. Docker reads `--env-file` as the calling user, so run it with `sudo`: the file is root-only. Logs go to journald where the host has it, otherwise to Docker's rotating `local` driver; read them with `docker logs -f signalbot` either way:
+`--group-add` gives the container the `signal-cli` group, which is how it reaches the socket. Docker reads `--env-file` as the calling user, so run it with `sudo`: the file is root-only. Logs go to journald where the host has it, otherwise to Docker's rotating `local` driver; read them with `docker logs -f signalbot` either way:
 
 ```
 sudo docker build --build-arg VERSION=$(git describe --tags --always --dirty) -t signalbot .
@@ -71,16 +84,6 @@ sudo docker run -d --name signalbot --restart=always --env-file /etc/signalbot.e
 ### Then
 
 Add the bot's account to a group and @mention it, reply to one of its messages, or DM it from an allowed sender.
-
-## Tech specs
-
-- Go, standard library only; single static binary
-- Talks JSON-RPC to `signal-cli daemon` over a unix socket or TCP (`listAccounts` once per connection to learn its own id)
-- x.ai Responses API (`/v1/responses`) over a shared keep-alive HTTP client that requires TLS 1.3, one retry on 429/5xx
-- Bounded under load: a concurrency slot (`MAX_CONCURRENCY`) is taken before any goroutine starts, so messages it ignores cost nothing and a flood is dropped, not queued
-- In-memory state only, all capped: history per chat (`HISTORY_TURNS`), number of chats (500), names, frame size (1 MiB) and reply length (4 messages)
-- Treats sender-controlled text as untrusted: display names and quotes are sanitised before reaching the model or the log, and a name two people claim is never linked
-- Configured from environment variables only; runs under systemd or Docker (hardened unit and image included; the image is pinned by digest and has no shell). Logs plain lines to stdout, with a timestamp only in a terminal (journald and Docker add their own)
 
 ## Configuration
 
