@@ -16,11 +16,14 @@ See [TECHNICAL.md](TECHNICAL.md) for how it works.
 
 ## Prerequisites
 
-A running [signal-cli](https://github.com/AsamK/signal-cli) daemon with your Signal account registered or linked. How you run it is up to you; the bot needs only its socket:
+A running [signal-cli](https://github.com/AsamK/signal-cli) daemon with your Signal account registered or linked. How you run it is up to you, but the bot needs only its socket:
 
 - The socket is at `/run/signal-cli/socket` (or set `SIGNALCLI_SOCKET`).
-- Members of a group named `signal-cli` can write to the socket, and to its directory: the bot's systemd unit joins that group (`SupplementaryGroups=signal-cli`) and Docker does too (`--group-add`). A socket created with the default umask is `0755`, which locks the group out; running signal-cli with `UMask=0007` gives `0770`. Check with `ls -l /run/signal-cli/socket`.
-- signal-cli's data directory holds your account keys. Keep it private to signal-cli's own user, and don't run the bot as that user. The bot never needs it: Docker mounts only the socket's directory, and the systemd unit runs as a different user and hides `/home`, where signal-cli keeps it by default.
+- A group named `signal-cli` can write to the socket and search its directory. The bot's systemd unit joins that group (`SupplementaryGroups=signal-cli`) and Docker does too (`--group-add`). Create it with `sudo groupadd --system signal-cli`.
+- signal-cli runs with `UMask=0007`, which makes the socket `0770`. The default umask gives `0755`, which locks the group out. Check with `ls -l /run/signal-cli/socket`.
+- signal-cli's data directory holds your account keys, so keep it at mode `0700` (`chmod 700 ~/.local/share/signal-cli`). The umask above makes new files in it group-accessible, so the directory's own mode is what keeps the bot out. Don't run the bot as signal-cli's user.
+
+[`examples/signal-cli.service`](examples/signal-cli.service) is an example unit that does this. Edit `User=` and the path in `ExecStart`, then copy it to `/etc/systemd/system/` and `systemctl enable --now signal-cli`.
 
 To use TCP instead, run signal-cli with `--tcp 127.0.0.1:7583` and set `SIGNALCLI_SOCKET=127.0.0.1:7583`; then any local user can connect.
 
