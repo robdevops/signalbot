@@ -16,28 +16,22 @@ See [TECHNICAL.md](TECHNICAL.md) for how it works.
 
 ## Prerequisites
 
-[signal-cli](https://github.com/AsamK/signal-cli), installed at `/usr/local/bin/signal-cli`, running as its own user so that both install methods below can be granted access to its socket. Create the user and link your Signal account to it (this prints a link to scan in Signal's *Linked devices*; see the signal-cli docs to register a number instead):
+A running [signal-cli](https://github.com/AsamK/signal-cli) daemon with your Signal account registered or linked. How you run it is up to you; the bot needs only its socket:
 
-```
-sudo useradd --system --user-group --home-dir /var/lib/signal-cli --no-create-home --shell /usr/sbin/nologin signal-cli
-sudo install -d -o signal-cli -g signal-cli -m 700 /var/lib/signal-cli
-sudo -u signal-cli signal-cli --config /var/lib/signal-cli link --name signalbot
-```
+- The socket is at `/run/signal-cli/socket` (or set `SIGNALCLI_SOCKET`).
+- Members of a group named `signal-cli` can write to the socket, and to its directory: the bot's systemd unit joins that group (`SupplementaryGroups=signal-cli`) and Docker does too (`--group-add`). A socket created with the default umask is `0755`, which locks the group out; running signal-cli with `UMask=0007` gives `0770`. Check with `ls -l /run/signal-cli/socket`.
+- signal-cli's data directory holds your account keys. Keep it private to signal-cli's own user, and don't run the bot as that user. The bot never needs it: Docker mounts only the socket's directory, and the systemd unit runs as a different user and hides `/home`, where signal-cli keeps it by default.
+
+To use TCP instead, run signal-cli with `--tcp 127.0.0.1:7583` and set `SIGNALCLI_SOCKET=127.0.0.1:7583`; then any local user can connect.
 
 ## Install
 
-Get the code, and start signal-cli as a service. First set your account's number in `signal-cli.service` (the `-a +1234567890` in `ExecStart`):
+Get the code:
 
 ```
 git clone https://github.com/robdevops/signalbot.git
 cd signalbot
-sudo cp signal-cli.service /etc/systemd/system/
-sudo systemctl daemon-reload
-sudo systemctl enable --now signal-cli
-ls -l /run/signal-cli/socket
 ```
-
-The socket should show as `srwxrwx--- signal-cli signal-cli`: group-writable, so members of the `signal-cli` group can connect. Both install methods below use that group. (To use TCP instead, run signal-cli with `--tcp 127.0.0.1:7583` and set `SIGNALCLI_SOCKET=127.0.0.1:7583`; then any local user can connect.)
 
 Create the config. The file holds your API key, so it is root-only; edit it, setting `XAI_API_KEY` and `SIGNAL_ALLOWED_SENDERS`:
 

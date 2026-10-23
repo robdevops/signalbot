@@ -10,14 +10,18 @@
 - Treats sender-controlled text as untrusted: display names and quotes are sanitised before reaching the model or the log, and a name two people claim is never linked
 - Configured from environment variables only; runs under systemd or Docker (hardened unit and image included; the image is pinned by digest and has no shell). Logs plain lines to stdout, with a timestamp only in a terminal (journald and Docker add their own)
 
-## How the socket is shared
+## What the bot needs from signal-cli
 
-signal-cli and the bot talk over a unix socket, and the socket's permissions decide who may connect. Neither side can use `DynamicUser`, because a throwaway user id has nothing stable to be granted access:
+Only the socket. The bot speaks JSON-RPC to it and never touches signal-cli's data directory, where the account keys live.
 
-- `signal-cli.service` runs as the fixed user `signal-cli`, with a `RuntimeDirectory` (`/run/signal-cli`, mode `0750`, so the group can search it) and `UMask=0007`, so the socket is created `0770`. A default umask would make it `0755`, which locks out even the group.
+The socket's permissions decide who may connect, and `DynamicUser` can't work for the bot, because a throwaway user id has nothing stable to be granted access:
+
 - `signalbot.service` runs as user `signalbot` with `SupplementaryGroups=signal-cli`.
-- Docker's `--group-add` puts the container's user in the same group.
+- Docker's `--group-add` puts the container's user in the same group. The container mounts only the socket's directory, so the data directory isn't there to read.
+- signal-cli should create the socket group-writable (`0770`, from `UMask=0007`) in a directory the group can search (`0750`). A default umask gives `0755` and locks out even the group.
 
-Everyone else gets "Permission denied". The `signal-cli` group is the only access control: anyone in it can drive the Signal account, so keep it to the bot.
+Everyone outside the group gets "Permission denied". The group is the only access control: anyone in it can drive the Signal account, so keep it to the bot.
+
+The bot's keys stay out of reach in two ways. It runs as a different user from signal-cli, so a private data directory (mode `0700`) is unreadable to it. And `ProtectHome=yes` hides `/home`, where signal-cli keeps its data by default (`~/.local/share/signal-cli`). Data kept elsewhere, such as `/var/lib/signal-cli`, relies on the permissions alone; add it to `InaccessiblePaths=` in the unit to hide it outright.
 
 A TCP socket (`--tcp 127.0.0.1:7583`) needs none of this, but then any local user can connect.
