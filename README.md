@@ -12,51 +12,65 @@ A small chat bot that connects to a running [signal-cli](https://github.com/Asam
 - Shows a typing indicator (refreshed every 10s) while it thinks; many chats are handled at once and a slow answer never blocks others
 - Logs who mentioned, replied to or messaged it, plus the token count and cost of each reply; reconnects automatically if signal-cli restarts
 
+## Prerequisites
+
+A running signal-cli daemon, with the account already registered or linked:
+
+```
+signal-cli -a +1234567890 daemon --socket /run/signal-cli/socket
+```
+
+Or listen on TCP with `--tcp 127.0.0.1:7583` and set `SIGNALCLI_SOCKET=127.0.0.1:7583`.
+
 ## Install
 
-1. Start the signal-cli daemon (account already registered or linked):
-   ```
-   signal-cli -a +1234567890 daemon --socket /run/signal-cli/socket
-   ```
-   Or listen on TCP with `--tcp 127.0.0.1:7583` and set `SIGNALCLI_SOCKET=127.0.0.1:7583`.
-2. Configure the bot:
-   ```
-   git clone https://github.com/robdevops/signalbot.git
-   cd signalbot
-   cp .env.example .env
-   ```
-   Edit `.env` and set `XAI_API_KEY` and `SIGNAL_ALLOWED_SENDERS`.
-3. Install Go 1.24+ (skip for Docker):
+Get the code and create the config. The file holds your API key, so it is root-only; edit it, setting `XAI_API_KEY` and `SIGNAL_ALLOWED_SENDERS`:
+
+```
+git clone https://github.com/robdevops/signalbot.git
+cd signalbot
+sudo install -m 660 .env.example /etc/signalbot.env
+sudoedit /etc/signalbot.env
+```
+
+Then install with systemd or with Docker.
+
+### With systemd
+
+The bot runs as user `signalbot` in the `signal-cli` group, so the socket must be writable, and its directory searchable, by that group (check with `ls -ld /run/signal-cli /run/signal-cli/socket`).
+
+1. Install Go 1.24+:
    ```
    curl -fsSLO https://go.dev/dl/go1.24.7.linux-amd64.tar.gz
    sudo rm -rf /usr/local/go
    sudo tar -C /usr/local -xzf go1.24.7.linux-amd64.tar.gz
    ```
-4. Build and run:
+2. Build and install:
    ```
    /usr/local/go/bin/go build
-   set -a; . ./.env; set +a
-   ./signalbot
-   ```
-5. Or run as a systemd service. The bot runs as user `signalbot` in the `signal-cli` group, so the socket must be writable, and its directory searchable, by that group (check with `ls -ld /run/signal-cli /run/signal-cli/socket`):
-   ```
    sudo useradd --system --no-create-home --shell /usr/sbin/nologin signalbot
    sudo install -m 755 signalbot /usr/local/bin/signalbot
-   sudo install -m 660 .env /etc/signalbot.env
    sudo cp signalbot.service /etc/systemd/system/
    sudo systemctl daemon-reload
    sudo systemctl enable --now signalbot
    ```
-6. Or run in Docker. `--group-add` gives the container the `signal-cli` group, so it can reach the socket. Logs go to journald where the host has it, otherwise to Docker's rotating `local` driver; read them with `docker logs -f signalbot` either way:
-   ```
-   docker build --build-arg VERSION=$(git describe --tags --always --dirty) -t signalbot .
-   docker run -d --name signalbot --restart=always --env-file .env -v /run/signal-cli:/run/signal-cli \
-     --group-add "$(getent group signal-cli | cut -d: -f3)" \
-     $(test -S /run/systemd/journal/socket && echo --log-driver=journald || echo --log-driver=local) \
-     --read-only --cap-drop=ALL --security-opt=no-new-privileges --pids-limit=64 --memory=300m \
-     signalbot
-   ```
-7. Add the bot's account to a group and @mention it, reply to one of its messages, or DM it from an allowed sender.
+
+### With Docker
+
+`--group-add` gives the container the `signal-cli` group, so it can reach the socket. Docker reads `--env-file` as the calling user, so run it with `sudo`: the file is root-only. Logs go to journald where the host has it, otherwise to Docker's rotating `local` driver; read them with `docker logs -f signalbot` either way:
+
+```
+sudo docker build --build-arg VERSION=$(git describe --tags --always --dirty) -t signalbot .
+sudo docker run -d --name signalbot --restart=always --env-file /etc/signalbot.env -v /run/signal-cli:/run/signal-cli \
+  --group-add "$(getent group signal-cli | cut -d: -f3)" \
+  $(test -S /run/systemd/journal/socket && echo --log-driver=journald || echo --log-driver=local) \
+  --read-only --cap-drop=ALL --security-opt=no-new-privileges --pids-limit=64 --memory=300m \
+  signalbot
+```
+
+### Then
+
+Add the bot's account to a group and @mention it, reply to one of its messages, or DM it from an allowed sender.
 
 ## Tech specs
 
