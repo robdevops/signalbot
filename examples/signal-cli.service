@@ -19,7 +19,9 @@ UMask=0007
 # /run/signal-cli, searchable by the group.
 RuntimeDirectory=signal-cli
 RuntimeDirectoryMode=0750
-ExecStart=/usr/local/bin/signal-cli -o json daemon --socket /run/signal-cli/socket
+# --no-receive-stdout keeps received messages out of the journal; the bot
+# gets them over the socket.
+ExecStart=/usr/local/bin/signal-cli -o json daemon --socket /run/signal-cli/socket --no-receive-stdout
 Restart=on-failure
 
 [Install]
