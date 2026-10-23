@@ -1,64 +1,65 @@
 [Unit]
-Description=Signal chat bot (x.ai)
 After=network-online.target signal-cli.service
+Description=Signal LLM chat bot
 Wants=network-online.target
 
 [Service]
-ExecStart=/usr/local/bin/signalbot
 EnvironmentFile=/etc/signalbot.env
+ExecStart=/usr/local/bin/signalbot
 Restart=on-failure
 RestartSec=10s
+StandardError=journal
+StandardOutput=journal
+SupplementaryGroups=signal-cli
+SyslogIdentifier=signalbot
 # A fixed user rather than DynamicUser: the signal-cli socket's permissions
 # decide who may connect, so the bot needs a stable identity to be granted
 # access. It joins signal-cli's group, so the socket must be writable (and its
 # directory searchable) by that group. It must not live under /run/user or
 # /tmp, which this unit hides.
 User=signalbot
-SupplementaryGroups=signal-cli
-
-StandardOutput=journal
-StandardError=journal
-SyslogIdentifier=signalbot
 
 # Filesystem
-ProtectSystem=strict
-ProtectHome=yes
-PrivateTmp=yes
+InaccessiblePaths=/boot /media /mnt
 PrivateDevices=yes
+PrivateTmp=yes
+ProtectHome=yes
+ProtectSystem=strict
 UMask=0077
 
 # Privileges
-NoNewPrivileges=yes
-CapabilityBoundingSet=
 AmbientCapabilities=
-RestrictSUIDSGID=yes
+CapabilityBoundingSet=
 LockPersonality=yes
-RestrictRealtime=yes
 MemoryDenyWriteExecute=yes
+NoNewPrivileges=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
 SystemCallArchitectures=native
-SystemCallFilter=@system-service
 SystemCallErrorNumber=EPERM
+SystemCallFilter=@system-service
 
 # Kernel
-ProtectKernelTunables=yes
-ProtectKernelModules=yes
-ProtectKernelLogs=yes
-ProtectControlGroups=yes
 ProtectClock=yes
+ProtectControlGroups=yes
 ProtectHostname=yes
+ProtectKernelLogs=yes
+ProtectKernelModules=yes
+ProtectKernelTunables=yes
 
-# Processes: also hides XAI_API_KEY in /proc/<pid>/environ from other users
-ProtectProc=invisible
+# Process isolation
 ProcSubset=pid
+ProtectProc=invisible
 RestrictNamespaces=yes
 
-# Network: the signal-cli socket, plus HTTPS to x.ai
+# Network: the signal-cli socket, plus HTTPS to LLM
 RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
 
 # Resources
-TasksMax=64
+MemoryAccounting=yes
 MemoryHigh=200M
 MemoryMax=300M
+TasksMax=64
 
 [Install]
 WantedBy=multi-user.target
