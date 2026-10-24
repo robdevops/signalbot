@@ -1,0 +1,28 @@
+# An example unit for signal-cli, so that signalbot (systemd or Docker) can
+# reach its socket. Edit User= and the path in ExecStart.
+[Unit]
+Description=signal-cli daemon
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+# The user that owns signal-cli's data (your account keys), by default in
+# ~/.local/share/signal-cli. Keep that directory at mode 0700: UMask below
+# makes new files group-accessible, and the bot is in that group, so only the
+# directory's own mode keeps it out.
+User=YOUR_USER
+# The group the bot joins to reach the socket (sudo groupadd --system signal-cli).
+Group=signal-cli
+# Makes the socket group-writable (0770). The default umask gives 0755, which
+# locks the group out.
+UMask=0007
+# /run/signal-cli, searchable by the group.
+RuntimeDirectory=signal-cli
+RuntimeDirectoryMode=0750
+# --no-receive-stdout keeps received messages out of the journal; the bot
+# gets them over the socket.
+ExecStart=/usr/local/bin/signal-cli -o json daemon --socket /run/signal-cli/socket --no-receive-stdout
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target
