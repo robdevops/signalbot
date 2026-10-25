@@ -98,7 +98,7 @@ Add the bot's account to a group and @mention it, reply to one of its messages, 
 | `SIGNALCLI_SOCKET` | required | Unix socket path, or `host:port` for TCP |
 | `XAI_API_KEY` | one of the two keys | x.ai API key. Set this or `OPENROUTER_API_KEY`, never both: the bot refuses to start if neither or both are set |
 | `OPENROUTER_API_KEY` | one of the two keys | [OpenRouter](https://openrouter.ai) API key, used instead of x.ai |
-| `MODEL` | `grok-4.3` (x.ai); required for OpenRouter | Model name; OpenRouter wants `provider/model`, e.g. `x-ai/grok-4` |
+| `MODEL` | `grok-4.3` (x.ai), `deepseek/deepseek-v4.1-flash-1017` (OpenRouter) | Model name; OpenRouter wants `provider/model`, e.g. `x-ai/grok-4` |
 | `REASONING` | `low` | Reasoning effort (`none` to omit) |
 | `XAI_SEARCH` | `true` | Enable x.ai web search tool (`true`/`false`, `yes`/`no`, `on`/`off`, `1`/`0`) |
 | `OPENROUTER_SEARCH` | `false` | Enable OpenRouter's web search plugin, which is billed per search |

@@ -22,8 +22,8 @@ func TestProviderSelection(t *testing.T) {
 		{name: "neither", wantErr: true},
 		{name: "both", xai: "a", openrouter: "b", model: "x-ai/grok-4", wantErr: true},
 		{name: "xai", xai: "a", wantProvider: "x.ai", wantModel: "grok-4.3", wantSearchWhenUnset: true},
-		{name: "openrouter", openrouter: "b", model: "x-ai/grok-4", wantProvider: "OpenRouter", wantModel: "x-ai/grok-4"},
-		{name: "openrouter needs a model", openrouter: "b", wantErr: true},
+		{name: "openrouter", openrouter: "b", wantProvider: "OpenRouter", wantModel: "deepseek/deepseek-v4.1-flash-1017"},
+		{name: "openrouter with a model", openrouter: "b", model: "x-ai/grok-4", wantProvider: "OpenRouter", wantModel: "x-ai/grok-4"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Setenv("SIGNALCLI_SOCKET", "/x")

@@ -95,10 +95,7 @@ func LoadConfig() (*Config, error) {
 		c.Search = envBool("XAI_SEARCH", true)
 	case openrouter != "":
 		c.Provider, c.APIKey = "OpenRouter", openrouter
-		c.Model = env("MODEL", "")
-		if c.Model == "" {
-			return nil, fmt.Errorf("MODEL is required with OPENROUTER_API_KEY, as OpenRouter's provider/model (e.g. x-ai/grok-4)")
-		}
+		c.Model = env("MODEL", "deepseek/deepseek-v4.1-flash-1017")
 		c.Search = envBool("OPENROUTER_SEARCH", false)
 	default:
 		return nil, fmt.Errorf("XAI_API_KEY or OPENROUTER_API_KEY is required")
