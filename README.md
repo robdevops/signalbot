@@ -1,6 +1,6 @@
 # signalbot
 
-A small, privacy conscious chat bot that connects to a running [signal-cli](https://github.com/AsamK/signal-cli) daemon over its socket and answers using a model from [OpenRouter](https://openrouter.ai) or [x.ai](https://x.ai).
+A small, privacy-conscious chat bot that connects to a running [signal-cli](https://github.com/AsamK/signal-cli) daemon over its socket and answers using a model from [OpenRouter](https://openrouter.ai) or [x.ai](https://x.ai).
 
 ## Features
 
