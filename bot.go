@@ -451,13 +451,19 @@ func (b *Bot) ensureSelfName() {
 // introName is the name the model is told it has.
 func (b *Bot) introName() string { return cmp.Or(b.selfName(), "signalbot") }
 
+// modelName drops OpenRouter's provider prefix: "deepseek/deepseek-v4" is
+// introduced as "deepseek-v4".
+func modelName(model string) string {
+	return model[strings.LastIndex(model, "/")+1:]
+}
+
 // systemPrompt is the built-in prompt, plus SYSTEM_PROMPT, plus the intro.
 func (b *Bot) systemPrompt() string {
 	tools := "none"
 	if b.cfg.Search {
 		tools = "web search"
 	}
-	intro := strings.NewReplacer("{name}", safeName(b.introName()), "{model}", b.cfg.Model, "{tools}", tools).Replace(b.cfg.Intro)
+	intro := strings.NewReplacer("{name}", safeName(b.introName()), "{model}", modelName(b.cfg.Model), "{tools}", tools).Replace(b.cfg.Intro)
 	p := basePrompt
 	if b.cfg.ExtraPrompt != "" {
 		p += "\n" + b.cfg.ExtraPrompt

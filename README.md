@@ -103,7 +103,7 @@ Add the bot's account to a group and @mention it, reply to one of its messages, 
 | `MODEL_SEARCH` | `true` | Let the model search the web when it decides to, using OpenRouter's web search tool or x.ai's search tool; searches are billed (`true`/`false`, `yes`/`no`, `on`/`off`, `1`/`0`) |
 | `SIGNAL_DM_USER_IDS` | empty | UUIDs/numbers allowed to DM the bot, separated by commas or whitespace |
 | `SYSTEM_PROMPT` | empty | Extra instructions, appended to the built-in prompt (which keeps answers short and Signal-sized) |
-| `INTRO` | built-in sentence | Overrides the self-introduction; `{name}`, `{model}` and `{tools}` (`web search`, or `none`) are substituted |
+| `INTRO` | built-in sentence | Overrides the self-introduction; `{name}`, `{model}` (without any OpenRouter `provider/` prefix) and `{tools}` (`web search`, or `none`) are substituted |
 | `XAI_PRICE_IN` | `1.25` | x.ai only: USD per million input tokens, for the cost estimate |
 | `XAI_PRICE_CACHED` | `0.20` | x.ai only: USD per million cached input tokens, for the cost estimate |
 | `XAI_PRICE_OUT` | `2.50` | x.ai only: USD per million output tokens, for the cost estimate |

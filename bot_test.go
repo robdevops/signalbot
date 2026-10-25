@@ -272,6 +272,11 @@ func TestSystemPromptIntroOverride(t *testing.T) {
 	if !strings.HasSuffix(p, `"yo, Botty here on grok-test with none"`) {
 		t.Fatalf("placeholders not substituted: %q", p)
 	}
+	cfg.Model = "deepseek/deepseek-v4.1-flash-1017"
+	if p := b.systemPrompt(); !strings.HasSuffix(p, `"yo, Botty here on deepseek-v4.1-flash-1017 with none"`) {
+		t.Fatalf("the provider prefix must be dropped from {model}: %q", p)
+	}
+	cfg.Model = "grok-test"
 	cfg.Search = true
 	if p := b.systemPrompt(); !strings.HasSuffix(p, `"yo, Botty here on grok-test with web search"`) {
 		t.Fatalf("{tools} must name web search when it is on: %q", p)
