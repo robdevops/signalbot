@@ -15,8 +15,6 @@ With web search on (`MODEL_SEARCH`), the model may also search the web. The sear
 
 Every request asks the provider not to keep it: x.ai gets `store: false`, and OpenRouter is told to use only providers that do not collect the data (`data_collection: deny`). These are requests. The bot cannot check or enforce what the provider does, so read the provider's own policy.
 
-Messages that are not addressed to the bot are never sent anywhere, not even to the bot's own logs. A DM is addressed to the bot, so when one arrives from someone who is not in `SIGNAL_DM_USER_IDS`, it is not answered or sent anywhere, but the log records the sender's ID (metadata only, never their name or what they wrote), for convenience, so that you can add it to `SIGNAL_DM_USER_IDS` if desired.
-
 ## What the bot keeps
 
 - **Conversation history is kept in memory only.** It is per chat, holds at most `HISTORY_TURNS` exchanges (and 500 chats), and nothing is kept longer than 24 hours. If the chat has a shorter disappearing-messages timer, that timer applies, and the messages are removed from memory when it runs out. A restart clears everything. The bot never writes history to disk.
