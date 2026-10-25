@@ -1,14 +1,14 @@
 # signalbot
 
-A small, privacy conscious chat bot that connects to a running [signal-cli](https://github.com/AsamK/signal-cli) daemon over its socket and answers using the x.ai (Grok) API.
+A small, privacy conscious chat bot that connects to a running [signal-cli](https://github.com/AsamK/signal-cli) daemon over its socket and answers using the x.ai (Grok) or OpenRouter API.
 
 ## Features
 
-- The bot replies when it is @mentioned in a group; people it mentions are shown to the model by real name (every request sets x.ai's "do not store" flag, for privacy), and @names in its replies become real Signal mentions
+- The bot replies when it is @mentioned in a group; people it mentions are shown to the model by real name (every request asks the provider not to keep it, for privacy), and @names in its replies become real Signal mentions
 - Replies when someone replies to one of its messages (the quoted text is passed as context)
 - Replies to DMs from senders listed in `SIGNAL_DM_USER_IDS`; ignores everything else
-- Short answers sized for Signal (aims for one line, never over Signal's 2000-character limit); optional x.ai web search and configurable reasoning effort
-- Short per-conversation memory so follow-up questions work. This is in-memory only, never logged or stored on disk, and forgotten after a day. Any Disappearing messages setting is respected and the message is erased from memory
+- Short answers sized for Signal (aims for one line, never over Signal's 2000-character limit); optional web search and configurable reasoning effort
+- Short per-conversation memory so follow-up questions work. This is in-memory only, never logged or stored on disk, and forgotten after a day. Any shorter _disappearing messages_ setting is respected and the message is erased from memory
 - Shows a typing indicator (refreshed every 10s) while the bot thinks; many chats are handled at once and a slow answer never blocks others
 - The bot ignores everything not addressed to it: a message that doesn't mention it, reply to it, or arrive as a DM is passed over in silence, leaving no trace in its logs, not even a note that it arrived. When it is addressed, it logs who spoke and the token count and cost of each reply
 
@@ -36,7 +36,7 @@ git clone https://github.com/robdevops/signalbot.git
 cd signalbot
 ```
 
-Create the config. The file holds your API key, so it is root-only; edit it, setting `XAI_API_KEY` and `SIGNAL_DM_USER_IDS`:
+Create the config. The file holds your API key, so it is root-only; edit it, setting `XAI_API_KEY` (or `OPENROUTER_API_KEY`) and `SIGNAL_DM_USER_IDS`:
 
 ```
 sudo install -m 660 .env.example /etc/signalbot.env
@@ -96,10 +96,12 @@ Add the bot's account to a group and @mention it, reply to one of its messages, 
 | Variable | Default | Description |
 |---|---|---|
 | `SIGNALCLI_SOCKET` | required | Unix socket path, or `host:port` for TCP |
-| `XAI_API_KEY` | required | x.ai API key |
-| `MODEL` | `grok-4.3` | Model name |
+| `XAI_API_KEY` | one of the two keys | x.ai API key. Set this or `OPENROUTER_API_KEY`, never both: the bot refuses to start if neither or both are set |
+| `OPENROUTER_API_KEY` | one of the two keys | [OpenRouter](https://openrouter.ai) API key, used instead of x.ai |
+| `MODEL` | `grok-4.3` (x.ai); required for OpenRouter | Model name; OpenRouter wants `provider/model`, e.g. `x-ai/grok-4` |
 | `REASONING` | `low` | Reasoning effort (`none` to omit) |
 | `XAI_SEARCH` | `true` | Enable x.ai web search tool (`true`/`false`, `yes`/`no`, `on`/`off`, `1`/`0`) |
+| `OPENROUTER_SEARCH` | `false` | Enable OpenRouter's web search plugin, which is billed per search |
 | `SIGNAL_DM_USER_IDS` | empty | UUIDs/numbers allowed to DM the bot, separated by commas or whitespace |
 | `SYSTEM_PROMPT` | empty | Extra instructions, appended to the built-in prompt (which keeps answers short and Signal-sized) |
 | `INTRO` | built-in sentence | Overrides the self-introduction; `{name}` and `{model}` are substituted |
@@ -111,4 +113,6 @@ Add the bot's account to a group and @mention it, reply to one of its messages, 
 
 The default `INTRO` is: `hi, I'm {name}, your open source assistant running {model}. I respond to @mentions and replies to my messages. See https://github.com/robdevops/signalbot/blob/main/README.md for details`
 
-The cost estimate uses xAI's published grok-4.3 rates, bills input served from xAI's prompt cache at the cached rate, and adds $5 per 1,000 web searches. It does not model long-prompt pricing tiers, so check [xAI's pricing](https://docs.x.ai/docs/models) and set the `XAI_PRICE_*` variables for other models.
+With OpenRouter the cost logged is the amount OpenRouter reports billing, and the `XAI_PRICE_*` variables are ignored.
+
+The x.ai cost estimate uses xAI's published grok-4.3 rates, bills input served from xAI's prompt cache at the cached rate, and adds $5 per 1,000 web searches. It does not model long-prompt pricing tiers, so check [xAI's pricing](https://docs.x.ai/docs/models) and set the `XAI_PRICE_*` variables for other models.

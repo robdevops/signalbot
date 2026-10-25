@@ -45,9 +45,13 @@ func main() {
 	defer closeConn()
 
 	sig := NewSignal(cfg.Socket)
-	bot := NewBot(connCtx, cfg, sig, NewXAI(cfg))
-	logf("model %s, reasoning %s, search %v, %d allowed senders",
-		cfg.Model, cfg.Reasoning, cfg.Search, len(cfg.AllowedSenders))
+	var ai Completer = NewXAI(cfg)
+	if cfg.Provider == "OpenRouter" {
+		ai = NewOpenRouter(cfg)
+	}
+	bot := NewBot(connCtx, cfg, sig, ai)
+	logf("%s model %s, reasoning %s, search %v, %d allowed senders",
+		cfg.Provider, cfg.Model, cfg.Reasoning, cfg.Search, len(cfg.AllowedSenders))
 
 	go func() {
 		<-sigCtx.Done()

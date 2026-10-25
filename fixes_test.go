@@ -311,6 +311,7 @@ func TestSocketNetwork(t *testing.T) {
 func TestConfigParsing(t *testing.T) {
 	t.Setenv("SIGNALCLI_SOCKET", "/x")
 	t.Setenv("XAI_API_KEY", "k")
+	t.Setenv("OPENROUTER_API_KEY", "")
 
 	t.Setenv("SIGNAL_DM_USER_IDS", "uuid-a,uuid-b\r\n\tuuid-c;uuid-d\r")
 	c, err := LoadConfig()

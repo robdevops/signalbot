@@ -28,21 +28,75 @@ type Completion struct {
 	CachedTokens int // the part of InputTokens served from xAI's prompt cache
 	OutputTokens int
 	SearchCalls  int
+	// Billed is the cost the provider reported, when it does (OpenRouter).
+	Billed *float64
 }
 
 // searchCallUSD is xAI's price for one server-side web search call
 // ($5 per 1,000), billed on top of tokens.
 const searchCallUSD = 5.0 / 1000
 
-// Cost estimates the request's price in USD from the configured per-million
-// token rates, billing cached input at its own lower rate. It is an
+// Cost is the request's price in USD: what the provider billed, else an
+// estimate from the configured per-million token rates, billing cached input at its own lower rate. It is an
 // estimate: long-prompt pricing tiers are not modelled.
 func (c Completion) Cost(cfg *Config) float64 {
+	if c.Billed != nil {
+		return *c.Billed
+	}
 	cached := min(c.CachedTokens, c.InputTokens)
 	return float64(c.InputTokens-cached)/1e6*cfg.PriceIn +
 		float64(cached)/1e6*cfg.PriceCached +
 		float64(c.OutputTokens)/1e6*cfg.PriceOut +
 		float64(c.SearchCalls)*searchCallUSD
+}
+
+// Completer is a model API the bot can ask for a reply.
+type Completer interface {
+	Complete(ctx context.Context, system string, msgs []ChatMsg) (Completion, error)
+}
+
+// newHTTPClient is Go's default transport (proxy settings, timeouts, HTTP/2),
+// but refusing anything older than TLS 1.3.
+func newHTTPClient() *http.Client {
+	t := http.DefaultTransport.(*http.Transport).Clone()
+	t.TLSClientConfig = &tls.Config{MinVersion: tls.VersionTLS13}
+	return &http.Client{Transport: t}
+}
+
+// postJSON POSTs payload with a bearer key and returns the body of a 200
+// response. A network error, 429 or 5xx gets one retry; name labels errors.
+func postJSON(ctx context.Context, c *http.Client, name, url, key string, payload []byte) ([]byte, error) {
+	ctx, cancel := context.WithTimeout(ctx, 90*time.Second)
+	defer cancel()
+	const attempts = 2
+	var lastErr error
+	for attempt := 1; attempt <= attempts; attempt++ {
+		req, _ := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(payload))
+		req.Header.Set("Authorization", "Bearer "+key)
+		req.Header.Set("Content-Type", "application/json")
+		resp, err := c.Do(req)
+		if err != nil {
+			lastErr = err
+		} else {
+			data, _ := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
+			resp.Body.Close()
+			if resp.StatusCode == http.StatusOK {
+				return data, nil
+			}
+			lastErr = fmt.Errorf("%s status %d: %s", name, resp.StatusCode, clamp(string(data), 200))
+			if resp.StatusCode != 429 && resp.StatusCode < 500 {
+				return nil, lastErr
+			}
+		}
+		if attempt == attempts || ctx.Err() != nil {
+			break
+		}
+		select {
+		case <-ctx.Done():
+		case <-time.After(time.Second):
+		}
+	}
+	return nil, lastErr
 }
 
 type XAI struct {
@@ -52,18 +106,11 @@ type XAI struct {
 }
 
 func NewXAI(cfg *Config) *XAI {
-	// Go's default transport (proxy settings, timeouts, HTTP/2), but refusing
-	// anything older than TLS 1.3.
-	t := http.DefaultTransport.(*http.Transport).Clone()
-	t.TLSClientConfig = &tls.Config{MinVersion: tls.VersionTLS13}
-	return &XAI{cfg: cfg, url: "https://api.x.ai/v1/responses", http: &http.Client{Transport: t}}
+	return &XAI{cfg: cfg, url: "https://api.x.ai/v1/responses", http: newHTTPClient()}
 }
 
 // Complete sends the conversation to the x.ai Responses API and returns the reply text.
 func (x *XAI) Complete(ctx context.Context, system string, msgs []ChatMsg) (Completion, error) {
-	ctx, cancel := context.WithTimeout(ctx, 90*time.Second)
-	defer cancel()
-
 	body := map[string]any{
 		"model": x.cfg.Model,
 		"input": append([]ChatMsg{{Role: "system", Content: system}}, msgs...),
@@ -79,36 +126,11 @@ func (x *XAI) Complete(ctx context.Context, system string, msgs []ChatMsg) (Comp
 	if err != nil {
 		return Completion{}, err
 	}
-
-	const attempts = 2
-	var lastErr error
-	for attempt := 1; attempt <= attempts; attempt++ {
-		req, _ := http.NewRequestWithContext(ctx, http.MethodPost, x.url, bytes.NewReader(payload))
-		req.Header.Set("Authorization", "Bearer "+x.cfg.APIKey)
-		req.Header.Set("Content-Type", "application/json")
-		resp, err := x.http.Do(req)
-		if err != nil {
-			lastErr = err
-		} else {
-			data, _ := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
-			resp.Body.Close()
-			if resp.StatusCode == http.StatusOK {
-				return parseOutput(data)
-			}
-			lastErr = fmt.Errorf("x.ai status %d: %s", resp.StatusCode, clamp(string(data), 200))
-			if resp.StatusCode != 429 && resp.StatusCode < 500 {
-				return Completion{}, lastErr
-			}
-		}
-		if attempt == attempts || ctx.Err() != nil {
-			break
-		}
-		select {
-		case <-ctx.Done():
-		case <-time.After(time.Second):
-		}
+	data, err := postJSON(ctx, x.http, "x.ai", x.url, x.cfg.APIKey, payload)
+	if err != nil {
+		return Completion{}, err
 	}
-	return Completion{}, lastErr
+	return parseOutput(data)
 }
 
 func parseOutput(data []byte) (Completion, error) {

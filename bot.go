@@ -54,7 +54,7 @@ func clamp(s string, max int) string {
 type Bot struct {
 	cfg     *Config
 	sig     *Signal
-	ai      *XAI
+	ai      Completer
 	sem     chan struct{}
 	ctx     context.Context
 	closing atomic.Bool // set by Shutdown: no new reply starts
@@ -68,7 +68,7 @@ type Bot struct {
 	typingEvery time.Duration
 }
 
-func NewBot(ctx context.Context, cfg *Config, sig *Signal, ai *XAI) *Bot {
+func NewBot(ctx context.Context, cfg *Config, sig *Signal, ai Completer) *Bot {
 	return &Bot{
 		cfg: cfg, sig: sig, ai: ai, ctx: ctx,
 		sem:         make(chan struct{}, cfg.MaxConcurrency),
@@ -363,7 +363,7 @@ func (b *Bot) respond(req *Request) {
 	stopTyping()
 	took := time.Since(start)
 	if err != nil {
-		logf("x.ai error for %s after %.1fs: %v", req.Name, took.Seconds(), err)
+		logf("%s error for %s after %.1fs: %v", b.cfg.Provider, req.Name, took.Seconds(), err)
 		res = Completion{Text: "Sorry, I couldn't get an answer right now."}
 	} else {
 		logf("%s", replyLogLine(req.Name, took, res, b.cfg))
