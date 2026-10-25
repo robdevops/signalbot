@@ -38,7 +38,7 @@ func TestProviderSelection(t *testing.T) {
 			if err != nil {
 				return
 			}
-			if c.Provider != tc.wantProvider || c.Model != tc.wantModel || c.Search != tc.wantSearchWhenUnset || c.Reasoning != "none" {
+			if c.Provider != tc.wantProvider || c.Model != tc.wantModel || c.Search != tc.wantSearchWhenUnset || c.Reasoning != "low" {
 				t.Fatalf("got provider %q model %q search %v reasoning %q", c.Provider, c.Model, c.Search, c.Reasoning)
 			}
 		})

@@ -99,7 +99,7 @@ Add the bot's account to a group and @mention it, reply to one of its messages, 
 | `OPENROUTER_API_KEY` | one of the two keys | [OpenRouter](https://openrouter.ai) API key. Set this or `XAI_API_KEY`, never both: the bot refuses to start if neither or both are set |
 | `XAI_API_KEY` | one of the two keys | [x.ai](https://x.ai) API key, to use x.ai directly instead of OpenRouter |
 | `MODEL` | `deepseek/deepseek-v4.1-flash-1017` (OpenRouter), `grok-4.3` (x.ai) | Model name; OpenRouter wants `provider/model`, e.g. `x-ai/grok-4` |
-| `REASONING` | `none` | Reasoning effort, e.g. `low`, `medium`, `high` (`none` to omit) |
+| `REASONING` | `low` | Reasoning effort, e.g. `low`, `medium`, `high` (`none` to omit) |
 | `MODEL_SEARCH` | `true` | Let the model search the web when it decides to, using OpenRouter's web search tool or x.ai's search tool; searches are billed (`true`/`false`, `yes`/`no`, `on`/`off`, `1`/`0`) |
 | `SIGNAL_DM_USER_IDS` | empty | UUIDs/numbers allowed to DM the bot, separated by commas or whitespace |
 | `SYSTEM_PROMPT` | empty | Extra instructions, appended to the built-in prompt (which keeps answers short and Signal-sized) |

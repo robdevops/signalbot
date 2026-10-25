@@ -70,7 +70,7 @@ func LoadConfig() (*Config, error) {
 	c := &Config{
 		Socket:         env("SIGNALCLI_SOCKET", ""),
 		Search:         envBool("MODEL_SEARCH", true),
-		Reasoning:      strings.ToLower(env("REASONING", "none")),
+		Reasoning:      strings.ToLower(env("REASONING", "low")),
 		AllowedSenders: map[string]bool{},
 		ExtraPrompt:    env("SYSTEM_PROMPT", ""),
 		Intro:          env("INTRO", defaultIntro),
