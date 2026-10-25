@@ -107,7 +107,7 @@ Add the bot's account to a group and @mention it, reply to one of its messages, 
 | `XAI_PRICE_IN` | `1.25` | USD per million input tokens, for the cost estimate |
 | `XAI_PRICE_CACHED` | `0.20` | USD per million cached input tokens, for the cost estimate |
 | `XAI_PRICE_OUT` | `2.50` | USD per million output tokens, for the cost estimate |
-| `MAX_CONCURRENCY` | `32` | Replies in flight at once; messages beyond this are dropped |
+| `MAX_CONCURRENCY` | `32` | Conversations in flight at once; messages beyond this are dropped |
 | `HISTORY_TURNS` | `10` | Exchanges remembered per chat |
 
 The default `INTRO` is: `hi, I'm {name}, your open source assistant running {model}. I respond to @mentions and replies to my messages. See https://github.com/robdevops/signalbot/blob/main/README.md for details`
