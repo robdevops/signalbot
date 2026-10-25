@@ -102,7 +102,7 @@ Add the bot's account to a group and @mention it, reply to one of its messages, 
 | `XAI_SEARCH` | `true` | Enable x.ai web search tool (`true`/`false`, `yes`/`no`, `on`/`off`, `1`/`0`) |
 | `SIGNAL_ALLOWED_SENDERS` | empty | UUIDs/numbers allowed to DM the bot, separated by commas or whitespace |
 | `SYSTEM_PROMPT` | empty | Extra instructions, appended to the built-in prompt (which keeps answers short and Signal-sized) |
-| `LOG_MESSAGE_BODY` | `false` | Also log the text of each handled message, not just who sent it |
+| `LOG_MESSAGE_BODY` | `false` | Also log the text of each handled message, not just who sent it (DANGEROUS) |
 | `INTRO` | built-in sentence | Overrides the self-introduction; `{name}` and `{model}` are substituted |
 | `XAI_PRICE_IN` | `1.25` | USD per million input tokens, for the cost estimate |
 | `XAI_PRICE_CACHED` | `0.20` | USD per million cached input tokens, for the cost estimate |
