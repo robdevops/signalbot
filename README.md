@@ -4,7 +4,7 @@ A small, privacy conscious chat bot that connects to a running [signal-cli](http
 
 ## Features
 
-- The bot replies when it is @mentioned in a group; people it mentions are shown to the model by real name, and @names in its replies become real Signal mentions
+- The bot replies when it is @mentioned in a group; people it mentions are shown to the model by real name (every request sets x.ai's "do not store" flag, for privacy), and @names in its replies become real Signal mentions
 - Replies when someone replies to one of its messages (the quoted text is passed as context)
 - Replies to DMs from senders listed in `SIGNAL_DM_USER_IDS`; ignores everything else
 - Short answers sized for Signal (aims for one line, never over Signal's 2000-character limit); optional x.ai web search and configurable reasoning effort
