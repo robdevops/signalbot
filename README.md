@@ -1,6 +1,6 @@
 # signalbot
 
-A small chat bot that connects to a running [signal-cli](https://github.com/AsamK/signal-cli) daemon over its socket and answers using the x.ai (Grok) API.
+A small, privacy conscious chat bot that connects to a running [signal-cli](https://github.com/AsamK/signal-cli) daemon over its socket and answers using the x.ai (Grok) API.
 
 ## Features
 
@@ -77,7 +77,7 @@ sudo docker build --build-arg VERSION=$(git describe --tags --always --dirty) -t
 sudo docker run -d --name signalbot --restart=always --env-file /etc/signalbot.env -v /run/signal-cli:/run/signal-cli \
   --group-add "$(getent group signal-cli | cut -d: -f3)" \
   $(test -S /run/systemd/journal/socket && echo --log-driver=journald || echo --log-driver=local) \
-  --read-only --cap-drop=ALL --security-opt=no-new-privileges --pids-limit=64 --memory=300m --memory-swap=300m \
+  --read-only --cap-drop=ALL --security-opt=no-new-privileges --pids-limit=64 --memory=300m --memory-swap=300m --ulimit core=0 \
   signalbot
 ```
 

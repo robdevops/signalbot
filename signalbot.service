@@ -58,6 +58,8 @@ MemoryHigh=200M
 MemoryMax=300M
 # Never swap, so conversation history cannot reach disk
 MemorySwapMax=0
+# No core dumps, which would write conversation history and the API key to disk
+LimitCORE=0
 TasksMax=64
 
 [Install]
