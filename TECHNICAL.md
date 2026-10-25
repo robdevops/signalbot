@@ -7,6 +7,7 @@
 - Reconnects by itself if signal-cli restarts or the connection drops, waiting 1s and then doubling up to 32s between attempts; the wait resets once a connection has stayed up for a minute, and requests in flight when it drops fail rather than hang
 - x.ai Responses API (`/v1/responses`) over a shared keep-alive HTTP client that requires TLS 1.3, one retry on 429/5xx
 - Bounded under load: a concurrency slot (`MAX_CONCURRENCY`) is taken before any goroutine starts, so messages it ignores cost nothing and a flood is dropped, not queued
+- Never swapped: `MemorySwapMax=0` in the unit and `--memory-swap` equal to `--memory` in Docker keep conversation history out of swap (cgroup v2 with swap accounting; no capability needed)
 - In-memory state only, all capped: history per chat (`HISTORY_TURNS`), number of chats (500), names, frame size (1 MiB) and reply length (4 messages)
 - Message text is never logged. A message that is not a mention, a reply or a DM is not logged at all. A DM from someone not in `SIGNAL_DM_USER_IDS` is ignored too, but its sender's id is logged, never the name or text
 - The same message repeated by the same sender in the same chat within 10 seconds is ignored
