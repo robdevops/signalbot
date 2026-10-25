@@ -15,7 +15,7 @@ With web search on (`MODEL_SEARCH`), the model may also search the web. The sear
 
 Every request asks the provider not to keep it: x.ai gets `store: false`, and OpenRouter is told to use only providers that do not collect the data (`data_collection: deny`). These are requests. The bot cannot check or enforce what the provider does, so read the provider's own policy.
 
-Messages that are not addressed to the bot are never sent anywhere, not even to the bot's own logs. The one exception is a DM from someone who is not in `SIGNAL_DM_USER_IDS`: the log records their id (never their name or what they wrote), so you can see who is trying.
+Messages that are not addressed to the bot are never sent anywhere, not even to the bot's own logs. The one exception is a DM from someone who is not in `SIGNAL_DM_USER_IDS`: the log records their id (never their name or what they wrote), for convenience, so that you can add the ID to `SIGNAL_DM_USER_IDS` if desired.
 
 ## What the bot keeps
 
