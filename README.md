@@ -1,6 +1,6 @@
 # signalbot
 
-A small, privacy conscious chat bot that connects to a running [signal-cli](https://github.com/AsamK/signal-cli) daemon over its socket and answers using the x.ai (Grok) or OpenRouter API.
+A small, privacy conscious chat bot that connects to a running [signal-cli](https://github.com/AsamK/signal-cli) daemon over its socket and answers using a model from [OpenRouter](https://openrouter.ai) or [x.ai](https://x.ai).
 
 ## Features
 
@@ -36,7 +36,7 @@ git clone https://github.com/robdevops/signalbot.git
 cd signalbot
 ```
 
-Create the config. The file holds your API key, so it is root-only; edit it, setting `XAI_API_KEY` (or `OPENROUTER_API_KEY`) and `SIGNAL_DM_USER_IDS`:
+Create the config. The file holds your API key, so it is root-only; edit it, setting one API key (`OPENROUTER_API_KEY` or `XAI_API_KEY`) and `SIGNAL_DM_USER_IDS`:
 
 ```
 sudo install -m 660 .env.example /etc/signalbot.env
@@ -96,22 +96,20 @@ Add the bot's account to a group and @mention it, reply to one of its messages, 
 | Variable | Default | Description |
 |---|---|---|
 | `SIGNALCLI_SOCKET` | required | Unix socket path, or `host:port` for TCP |
-| `XAI_API_KEY` | one of the two keys | x.ai API key. Set this or `OPENROUTER_API_KEY`, never both: the bot refuses to start if neither or both are set |
-| `OPENROUTER_API_KEY` | one of the two keys | [OpenRouter](https://openrouter.ai) API key, used instead of x.ai |
-| `MODEL` | `grok-4.3` (x.ai), `deepseek/deepseek-v4.1-flash-1017` (OpenRouter) | Model name; OpenRouter wants `provider/model`, e.g. `x-ai/grok-4` |
+| `OPENROUTER_API_KEY` | one of the two keys | [OpenRouter](https://openrouter.ai) API key. Set this or `XAI_API_KEY`, never both: the bot refuses to start if neither or both are set |
+| `XAI_API_KEY` | one of the two keys | [x.ai](https://x.ai) API key, to use x.ai directly instead of OpenRouter |
+| `MODEL` | `deepseek/deepseek-v4.1-flash-1017` (OpenRouter), `grok-4.3` (x.ai) | Model name; OpenRouter wants `provider/model`, e.g. `x-ai/grok-4` |
 | `REASONING` | `none` | Reasoning effort, e.g. `low`, `medium`, `high` (`none` to omit) |
-| `MODEL_SEARCH` | `true` | Let the model search the web when it decides to, using x.ai's search tool or OpenRouter's web search tool; searches are billed (`true`/`false`, `yes`/`no`, `on`/`off`, `1`/`0`) |
+| `MODEL_SEARCH` | `true` | Let the model search the web when it decides to, using OpenRouter's web search tool or x.ai's search tool; searches are billed (`true`/`false`, `yes`/`no`, `on`/`off`, `1`/`0`) |
 | `SIGNAL_DM_USER_IDS` | empty | UUIDs/numbers allowed to DM the bot, separated by commas or whitespace |
 | `SYSTEM_PROMPT` | empty | Extra instructions, appended to the built-in prompt (which keeps answers short and Signal-sized) |
 | `INTRO` | built-in sentence | Overrides the self-introduction; `{name}` and `{model}` are substituted |
-| `XAI_PRICE_IN` | `1.25` | USD per million input tokens, for the cost estimate |
-| `XAI_PRICE_CACHED` | `0.20` | USD per million cached input tokens, for the cost estimate |
-| `XAI_PRICE_OUT` | `2.50` | USD per million output tokens, for the cost estimate |
+| `XAI_PRICE_IN` | `1.25` | x.ai only: USD per million input tokens, for the cost estimate |
+| `XAI_PRICE_CACHED` | `0.20` | x.ai only: USD per million cached input tokens, for the cost estimate |
+| `XAI_PRICE_OUT` | `2.50` | x.ai only: USD per million output tokens, for the cost estimate |
 | `MAX_CONCURRENCY` | `32` | Conversations in flight at once; messages beyond this are dropped |
 | `HISTORY_TURNS` | `10` | Exchanges remembered per chat |
 
 The default `INTRO` is: `hi, I'm {name}, your open source assistant running {model}. I respond to @mentions and replies to my messages. See https://github.com/robdevops/signalbot/blob/main/README.md for details`
 
-With OpenRouter the cost logged is the amount OpenRouter reports billing, and the `XAI_PRICE_*` variables are ignored.
-
-The x.ai cost estimate uses xAI's published grok-4.3 rates, bills input served from xAI's prompt cache at the cached rate, and adds $5 per 1,000 web searches. It does not model long-prompt pricing tiers, so check [xAI's pricing](https://docs.x.ai/docs/models) and set the `XAI_PRICE_*` variables for other models.
+With OpenRouter, the cost logged is the amount OpenRouter reports billing. x.ai reports only token counts, so with x.ai the cost is an estimate from the `XAI_PRICE_*` variables, whose defaults are xAI's published grok-4.3 rates. The estimate bills input served from xAI's prompt cache at the cached rate and adds $5 per 1,000 web searches. It does not model long-prompt pricing tiers, so check [xAI's pricing](https://docs.x.ai/docs/models) and set the `XAI_PRICE_*` variables for other models.
