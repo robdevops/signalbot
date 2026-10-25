@@ -5,7 +5,7 @@ A small, [privacy-conscious](PRIVACY.md) chat bot that connects to a running [si
 ## Features
 
 - The bot replies when it is @mentioned in a group; people it mentions are shown to the model by real name, and @names in its replies become real Signal mentions
-- Replies when someone replies to one of its messages (the quoted text is passed as context)
+- Replies when someone replies to one of its messages, and passes the quoted text as context; the same when someone mentions it in reply to another person's message
 - Replies to DMs from senders listed in `SIGNAL_DM_USER_IDS`; ignores everything else
 - Short answers sized for Signal (aims for one line, never over Signal's 2000-character limit); optional web search and configurable reasoning effort
 - Short per-conversation memory so follow-up questions work. It is forgotten after a day, sooner if the chat has a shorter _disappearing messages_ setting

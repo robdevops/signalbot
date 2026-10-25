@@ -176,11 +176,18 @@ func Decide(env *Envelope, kind, self string, names *Names) *Request {
 		return nil
 	}
 	raw := text
-	if q := dm.Quote; q != nil && q.Text != "" && (q.AuthorUUID == self || q.Author == self) {
-		// The sender composes the quote, so it may not be what the bot said.
-		// Escape it so it cannot close the wrapper and pose as a new turn, and
-		// clamp it so it cannot flood.
-		text = "[Replying to a message attributed to you: " + strconv.Quote(clamp(q.Text, maxQuoteRunes)) + "]\n" + text
+	if q := dm.Quote; q != nil && q.Text != "" {
+		// The sender composes the quote, so it may not be what the author
+		// wrote. Escape it so it cannot close the wrapper and pose as a new
+		// turn, and clamp it so it cannot flood. A message the sender tagged
+		// the bot into is context they chose to share, whoever wrote it.
+		quoted := strconv.Quote(clamp(q.Text, maxQuoteRunes))
+		if q.AuthorUUID == self || q.Author == self {
+			text = "[Replying to a message attributed to you: " + quoted + "]\n" + text
+		} else {
+			author := cmp.Or(names.lookup(q.AuthorUUID, q.Author).name, "someone")
+			text = "[Replying to a message by " + strconv.Quote(author) + ": " + quoted + "]\n" + text
+		}
 	}
 	name := safeName(env.SourceName)
 	if target.GroupID != "" && name != "" {
