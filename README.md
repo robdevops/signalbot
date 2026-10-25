@@ -10,7 +10,7 @@ A small chat bot that connects to a running [signal-cli](https://github.com/Asam
 - Short answers sized for Signal (aims for one line, never over Signal's 2000-character limit); optional x.ai web search and configurable reasoning effort
 - Short per-conversation memory, so follow-up questions work; the same message repeated within 10 seconds is ignored
 - Shows a typing indicator (refreshed every 10s) while it thinks; many chats are handled at once and a slow answer never blocks others
-- Logs who mentioned, replied to or messaged it, plus the token count and cost of each reply; reconnects automatically if signal-cli restarts
+- Ignores everything not addressed to it: a message that doesn't mention it, reply to it, or arrive as a DM from an allowed sender is passed over in silence, leaving no trace in its logs, not even a note that it arrived. When it is addressed, it logs who spoke and the token count and cost of each reply, and it reconnects by itself if signal-cli restarts
 
 See [TECHNICAL.md](TECHNICAL.md) for how it works.
 
@@ -102,7 +102,7 @@ Add the bot's account to a group and @mention it, reply to one of its messages, 
 | `XAI_SEARCH` | `true` | Enable x.ai web search tool (`true`/`false`, `yes`/`no`, `on`/`off`, `1`/`0`) |
 | `SIGNAL_ALLOWED_SENDERS` | empty | UUIDs/numbers allowed to DM the bot, separated by commas or whitespace |
 | `SYSTEM_PROMPT` | empty | Extra instructions, appended to the built-in prompt (which keeps answers short and Signal-sized) |
-| `LOG_MESSAGE_BODY` | `false` | Also log the text of each handled message, not just who sent it (DANGEROUS) |
+| `LOG_MESSAGE_BODY` | `false` | Also log the text of each handled message, not just who sent it (PRIVACY RISK) |
 | `INTRO` | built-in sentence | Overrides the self-introduction; `{name}` and `{model}` are substituted |
 | `XAI_PRICE_IN` | `1.25` | USD per million input tokens, for the cost estimate |
 | `XAI_PRICE_CACHED` | `0.20` | USD per million cached input tokens, for the cost estimate |
