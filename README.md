@@ -8,7 +8,7 @@ A small chat bot that connects to a running [signal-cli](https://github.com/Asam
 - Replies when someone replies to one of its messages (the quoted text is passed as context)
 - Replies to DMs from senders listed in `SIGNAL_DM_USER_IDS`; ignores everything else
 - Short answers sized for Signal (aims for one line, never over Signal's 2000-character limit); optional x.ai web search and configurable reasoning effort
-- Short per-conversation memory, so follow-up questions work; the same message repeated within 10 seconds is ignored
+- Short per-conversation memory so follow-up questions work. This is in-memory only and never logged or stored on disk. Any Disappearing messages setting is respected and the message is erased from memory
 - Shows a typing indicator (refreshed every 10s) while it thinks; many chats are handled at once and a slow answer never blocks others
 - Ignores everything not addressed to it: a message that doesn't mention it, reply to it, or arrive as a DM is passed over in silence, leaving no trace in its logs, not even a note that it arrived. When it is addressed, it logs who spoke and the token count and cost of each reply
 
@@ -102,7 +102,6 @@ Add the bot's account to a group and @mention it, reply to one of its messages, 
 | `XAI_SEARCH` | `true` | Enable x.ai web search tool (`true`/`false`, `yes`/`no`, `on`/`off`, `1`/`0`) |
 | `SIGNAL_DM_USER_IDS` | empty | UUIDs/numbers allowed to DM the bot, separated by commas or whitespace |
 | `SYSTEM_PROMPT` | empty | Extra instructions, appended to the built-in prompt (which keeps answers short and Signal-sized) |
-| `LOG_MESSAGE_BODY` | `false` | Also log the text of each handled message, not just who sent it (PRIVACY RISK) |
 | `INTRO` | built-in sentence | Overrides the self-introduction; `{name}` and `{model}` are substituted |
 | `XAI_PRICE_IN` | `1.25` | USD per million input tokens, for the cost estimate |
 | `XAI_PRICE_CACHED` | `0.20` | USD per million cached input tokens, for the cost estimate |

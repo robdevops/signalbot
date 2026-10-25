@@ -15,6 +15,10 @@ import (
 type ChatMsg struct {
 	Role    string `json:"role"`
 	Content string `json:"content"`
+
+	// Expires is when this message must be forgotten (disappearing messages);
+	// zero means it is kept until pushed out. Never sent to the model.
+	Expires time.Time `json:"-"`
 }
 
 // Completion is a model reply plus what it cost.

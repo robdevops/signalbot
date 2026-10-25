@@ -46,8 +46,8 @@ func main() {
 
 	sig := NewSignal(cfg.Socket)
 	bot := NewBot(connCtx, cfg, sig, NewXAI(cfg))
-	logf("model %s, reasoning %s, search %v, %d allowed senders, log message body %v",
-		cfg.Model, cfg.Reasoning, cfg.Search, len(cfg.AllowedSenders), cfg.LogMessageBody)
+	logf("model %s, reasoning %s, search %v, %d allowed senders",
+		cfg.Model, cfg.Reasoning, cfg.Search, len(cfg.AllowedSenders))
 
 	go func() {
 		<-sigCtx.Done()
