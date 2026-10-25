@@ -113,3 +113,16 @@ Add the bot's account to a group and @mention it, reply to one of its messages, 
 The default `INTRO` is: `hi, I'm {name}, your open source assistant running {model} (tools: {tools}). I respond to @mentions and replies to my messages. See https://github.com/robdevops/signalbot/blob/main/README.md for details.`
 
 With OpenRouter, the cost logged is the amount OpenRouter reports billing. x.ai reports only token counts, so with x.ai the cost is an estimate from the `XAI_PRICE_*` variables, whose defaults are xAI's published grok-4.3 rates. The estimate bills input served from xAI's prompt cache at the cached rate and adds $5 per 1,000 web searches. It does not model long-prompt pricing tiers, so check [xAI's pricing](https://docs.x.ai/docs/models) and set the `XAI_PRICE_*` variables for other models.
+
+## Troubleshooting
+
+**Permission denied on the socket.** Whatever connects to `/run/signal-cli/socket` must be in the `signal-cli` group, and the socket must be group-writable (`ls -l /run/signal-cli/socket` should show `srwxrwx---` and the group `signal-cli`). This goes wrong when:
+
+- A service was already running when you created the group. Restart it: `sudo systemctl restart signal-cli signalbot`.
+- You added yourself to the group (`sudo usermod -aG signal-cli "$USER"`) to test the socket with `socat`. Your open shell keeps its old groups until you log out and back in, or run `newgrp signal-cli`.
+- You run signal-cli from a shell instead of the systemd unit. It then uses your own group and umask, so the socket is `0755` and the `signal-cli` group cannot write to it. Start it in the right group with the right umask, once `/run/signal-cli` exists with that group:
+
+  ```
+  sudo install -d -o "$USER" -g signal-cli -m 0750 /run/signal-cli
+  sg signal-cli -c 'umask 007 && signal-cli -o json daemon --socket /run/signal-cli/socket --no-receive-stdout'
+  ```
