@@ -1,6 +1,6 @@
 # signalbot
 
-A small chat bot that connects to a running [signal-cli](https://github.com/AsamK/signal-cli) daemon over its socket and answers using the x.ai (Grok) API.
+A small, privacy conscious chat bot that connects to a running [signal-cli](https://github.com/AsamK/signal-cli) daemon over its socket and answers using the x.ai (Grok) API.
 
 ## Features
 
