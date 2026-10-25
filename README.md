@@ -5,12 +5,12 @@ A small, [privacy-conscious](PRIVACY.md) chat bot that connects to a running [si
 ## Features
 
 - The bot replies when it is @mentioned in a group; people it mentions are shown to the model by real name, and @names in its replies become real Signal mentions
-- Replies when someone replies to one of its messages, and passes the quoted text as context; the same when someone mentions it in reply to another person's message
+- Answers replies to its own messages, and @mentions made in reply to someone else's, using the quoted message as context
 - Replies to DMs from senders listed in `SIGNAL_DM_USER_IDS`; ignores everything else
-- Short answers sized for Signal (aims for one line, never over Signal's 2000-character limit); optional web search and configurable reasoning effort
-- Short per-conversation memory so follow-up questions work. It is forgotten after a day, sooner if the chat has a shorter _disappearing messages_ setting
-- Shows a typing indicator (refreshed every 10s) while the bot thinks; many chats are handled at once and a slow answer never blocks others
-- The bot ignores everything not addressed to it: a message that doesn't mention it, reply to it, or arrive as a DM is passed over. It logs the tokens used and the cost of each reply
+- Short answers sized for Signal (one line if possible, never over its 2000-character limit); optional web search and reasoning effort
+- Short per-conversation memory for follow-up questions, forgotten after a day (sooner with a shorter _disappearing messages_ setting)
+- Shows a typing indicator (refreshed every 10s) while the bot thinks; chats run concurrently, so a slow answer never blocks the rest
+- The bot ignores everything not addressed to it: a message that doesn't mention it, reply to it, or arrive as a DM is passed over. It logs the tokens used and cost of each reply
 
 The messages the bot answers, and the names in them, are sent to the AI provider you configure. See [TECHNICAL.md](TECHNICAL.md) and [PRIVACY.md](PRIVACY.md) for details on how it works.
 
@@ -25,7 +25,7 @@ A running [signal-cli](https://github.com/AsamK/signal-cli) daemon with your Sig
 
 [`examples/signal-cli.service`](examples/signal-cli.service) is an example unit that does this. Edit `User=` and the path in `ExecStart`, then copy it to `/etc/systemd/system/`, and run `sudo systemctl daemon-reload` and `sudo systemctl enable --now signal-cli`.
 
-To use TCP instead, run signal-cli with `--tcp 127.0.0.1:7583` and set `SIGNALCLI_SOCKET=127.0.0.1:7583`; but then any local user can connect and control or spy on the Signal account (PRIVACY RISK).
+To use TCP instead, run signal-cli with `--tcp 127.0.0.1:7583` and set `SIGNALCLI_SOCKET=127.0.0.1:7583`. Any local user can then connect and control or spy on the Signal account (PRIVACY RISK).
 
 ## Install
 
@@ -70,7 +70,7 @@ The bot runs as a dynamic user (`DynamicUser=yes`) in the `signal-cli` group, wh
 
 ### With Docker
 
-`--group-add` gives the container the `signal-cli` group, which is how it reaches the socket. Docker reads `--env-file` as the calling user, so run it with `sudo`: the file is root-only. Logs go to journald where the host has it, otherwise to Docker's rotating `local` driver; `docker logs` reads both.
+`--group-add` gives the container the `signal-cli` group, which is how it reaches the socket. Run it with `sudo`, because Docker reads `--env-file` as the calling user and the file is root-only. Logs go to journald where available, otherwise to Docker's rotating `local` driver; `docker logs` reads both.
 
 ```
 sudo docker build --build-arg VERSION=$(git describe --tags --always --dirty) -t signalbot .
@@ -96,11 +96,11 @@ Add the bot's account to a group and @mention it, reply to one of its messages, 
 | Variable | Default | Description |
 |---|---|---|
 | `SIGNALCLI_SOCKET` | required | Unix socket path, or `host:port` for TCP |
-| `OPENROUTER_API_KEY` | one of the two keys | [OpenRouter](https://openrouter.ai) API key. Set this or `XAI_API_KEY`, never both: the bot refuses to start if neither or both are set |
-| `XAI_API_KEY` | one of the two keys | [x.ai](https://x.ai) API key, to use x.ai directly instead of OpenRouter |
-| `MODEL` | `deepseek/deepseek-v4.1-flash-1017` (OpenRouter), `grok-4.3` (x.ai) | Model name; OpenRouter wants `provider/model`, e.g. `x-ai/grok-4` |
+| `OPENROUTER_API_KEY` | one of the two keys | [OpenRouter](https://openrouter.ai) API key. Set this or `XAI_API_KEY`, never both: the bot won't start with neither or both |
+| `XAI_API_KEY` | one of the two keys | [x.ai](https://x.ai) API key, to use x.ai directly |
+| `MODEL` | `deepseek/deepseek-v4.1-flash-1017` (OpenRouter), `grok-4.3` (x.ai) | Model name; OpenRouter needs `provider/model`, e.g. `x-ai/grok-4` |
 | `REASONING` | `low` | Reasoning effort, e.g. `low`, `medium`, `high` (`none` to omit) |
-| `MODEL_SEARCH` | `true` | Let the model search the web when it decides to, using OpenRouter's web search tool or x.ai's search tool; searches are billed (`true`/`false`, `yes`/`no`, `on`/`off`, `1`/`0`) |
+| `MODEL_SEARCH` | `true` | Lets the model search the web when it decides to (OpenRouter's web search tool or x.ai's); searches are billed. Accepts `true`/`false`, `yes`/`no`, `on`/`off`, `1`/`0` |
 | `SIGNAL_DM_USER_IDS` | empty | UUIDs/numbers allowed to DM the bot, separated by commas or whitespace |
 | `SYSTEM_PROMPT` | empty | Extra instructions, appended to the built-in prompt (which keeps answers short and Signal-sized) |
 | `INTRO` | built-in sentence | Overrides the self-introduction; `{name}`, `{model}` (without any OpenRouter `provider/` prefix) and `{tools}` (`web search`, or `none`) are substituted |
@@ -112,15 +112,15 @@ Add the bot's account to a group and @mention it, reply to one of its messages, 
 
 The default `INTRO` is: `hi, I'm {name}, your open source assistant running {model} (tools: {tools}). I respond to @mentions and replies to my messages. See https://github.com/robdevops/signalbot/blob/main/README.md for details.`
 
-With OpenRouter, the cost logged is the amount OpenRouter reports billing. x.ai reports only token counts, so with x.ai the cost is an estimate from the `XAI_PRICE_*` variables, whose defaults are xAI's published grok-4.3 rates. The estimate bills input served from xAI's prompt cache at the cached rate and adds $5 per 1,000 web searches. It does not model long-prompt pricing tiers, so check [xAI's pricing](https://docs.x.ai/docs/models) and set the `XAI_PRICE_*` variables for other models.
+OpenRouter reports the cost of each reply, and the bot logs it. x.ai reports only token counts, so the bot estimates the cost from the `XAI_PRICE_*` variables, whose defaults are xAI's published grok-4.3 rates; cached input is billed at the cached rate, and web searches add $5 per 1,000. Long-prompt pricing tiers are not modelled, so check [xAI's pricing](https://docs.x.ai/docs/models) and set the variables for other models.
 
 ## Troubleshooting
 
-**Permission denied on the socket.** Whatever connects to `/run/signal-cli/socket` must be in the `signal-cli` group, and the socket must be group-writable (`ls -l /run/signal-cli/socket` should show `srwxrwx---` and the group `signal-cli`). This goes wrong when:
+**Permission denied on the socket.** Whatever connects to `/run/signal-cli/socket` must be in the `signal-cli` group, and the socket must be group-writable (`ls -l /run/signal-cli/socket` should show `srwxrwx---` and the group `signal-cli`). Common causes:
 
-- A service was already running when you created the group. Restart it: `sudo systemctl restart signal-cli signalbot`.
+- A service started before the group existed. Restart it: `sudo systemctl restart signal-cli signalbot`.
 - You added yourself to the group (`sudo usermod -aG signal-cli "$USER"`) to test the socket with `socat`. Your open shell keeps its old groups until you log out and back in, or run `newgrp signal-cli`.
-- You run signal-cli from a shell instead of the systemd unit. It then uses your own group and umask, so the socket is `0755` and the `signal-cli` group cannot write to it. Start it with the right group and umask, once `/run/signal-cli` exists with that group:
+- You run signal-cli from a shell instead of the systemd unit. It then uses your own group and umask, so the socket is `0755` and the group cannot write to it. Start it with the right group and umask, once `/run/signal-cli` exists with that group:
 
   ```
   # create socket directory:
@@ -130,4 +130,4 @@ With OpenRouter, the cost logged is the amount OpenRouter reports billing. x.ai 
   sudo -u "$USER" -g signal-cli sh -c 'umask 007 && signal-cli -o json daemon --socket /run/signal-cli/socket --no-receive-stdout'
   ```
 
-  On Linux, `sg signal-cli -c '…'` does the same without `sudo`, as long as you are in the group. `doas` cannot set a group, so on OpenBSD use `su` or the system's `rc.d` service instead.
+  On Linux, `sg signal-cli -c '…'` does the same without `sudo` if you are in the group. `doas` cannot set a group, so on OpenBSD use `su` or the system's `rc.d` service.

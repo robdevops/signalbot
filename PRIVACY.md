@@ -11,34 +11,34 @@ When the bot answers a message, it sends this to the AI provider you configured 
 - the new message, with the display name of whoever sent it (in groups) and of anyone it @mentions;
 - the quoted text, when someone replies to one of the bot's messages, or mentions the bot in reply to someone else.
 
-With web search on (`MODEL_SEARCH`), the model may also search the web. The search query comes from the conversation and is handled by the provider's search service.
+With web search on (`MODEL_SEARCH`), the model may also search the web, using a query drawn from the conversation and handled by the provider's search service.
 
-Every request asks the provider not to keep it: x.ai gets `store: false`, and OpenRouter is told to use only providers that do not collect the data (`data_collection: deny`). These are requests. The bot cannot check or enforce what the provider does, so read the provider's own policy.
+Every request asks the provider not to keep it: x.ai gets `store: false`, and OpenRouter is told to use only providers that do not collect data (`data_collection: deny`). These are requests the bot cannot check or enforce, so read the provider's own policy.
 
 ## What the bot keeps
 
-- **Conversation history is kept in memory only.** It is per chat, holds at most `HISTORY_TURNS` exchanges (and 500 chats), and nothing is kept longer than 24 hours. If the chat has a shorter disappearing-messages timer, that timer applies, and the messages are removed from memory when it runs out. A restart clears everything. The bot never writes history to disk.
-- **No swap or core dumps.** The included systemd unit and Docker command forbid swapping the bot's memory and writing core dumps, so history cannot reach disk that way.
-- **Memory is freed, not wiped.** When a message expires, the bot drops it and Go's garbage collector reclaims the memory, but the bytes may remain until something overwrites them. Someone with root access to the host could read them from the running process.
-- **Names.** The bot remembers display names (up to 5,000) so it can show and mention people by name. It learns them from signal-cli's contact list and from group members who write in a group the bot is in, including when they are not talking to the bot. Only the name and id are kept, never what they wrote. Names stay in memory until a restart, or until the cache is full and older ones are pushed out.
+- **History lives in memory only.** It is kept per chat, up to `HISTORY_TURNS` exchanges and 500 chats, for at most 24 hours, or until a shorter disappearing-messages timer runs out. A restart clears it, and the bot never writes it to disk.
+- **No swap or core dumps.** The included systemd unit and Docker command forbid both, so history cannot reach disk that way.
+- **Memory is freed, not wiped.** An expired message is dropped and Go's garbage collector reclaims its memory, but the bytes may linger until overwritten, and someone with root access to the host could read them from the running process.
+- **Names.** The bot remembers up to 5,000 display names so it can show and mention people by name. It learns them from signal-cli's contact list and from group members who write in a group the bot is in, even when they are not talking to the bot. Only the name and ID are kept, never what they wrote, and only until a restart or until the cache is full and older ones are pushed out.
 
 ## What the bot logs
 
-- **A message addressed to the bot:** a line saying what kind it was (mention, reply or DM) and who sent it, by name and id. After the model answers, a line with the sender's name, how long it took, the tokens used and the cost.
-- **Never the text of any message.** Errors are logged without quoting messages, and API errors without the request.
+- **A message addressed to the bot:** a line with the kind (mention, reply or DM) and the sender's name and ID; after the answer, a line with the sender's name, time taken, tokens used and cost.
+- **Never the text of any message,** nor errors that quote one.
 - **A message not addressed to the bot:** nothing, not even a note that it arrived.
-- **A DM from someone not in `SIGNAL_DM_USER_IDS`:** their id only, with no name and no text.
+- **A DM from someone not in `SIGNAL_DM_USER_IDS`:** their ID only, never a name or text.
 
-The logs go to the journal or to Docker's log driver, which keep them according to your settings. Names and ids stay there as long as the logs do.
+Logs go to the journal or Docker's log driver and are kept as long as your settings keep them, names and IDs included.
 
 ## What the bot can see
 
-In a group, signal-cli passes every message to the bot, and the bot looks at each one to decide whether it is addressed to it. Messages that are not addressed to it are dropped on the spot; apart from the sender's name and id (see above), nothing about them is kept. In DMs, the bot answers only the ids listed in `SIGNAL_DM_USER_IDS`.
+In a group, signal-cli passes every message to the bot, which checks each one for whether it is addressed to it. Unaddressed messages are dropped on the spot; apart from the sender's name and ID (see above), nothing about them is kept. In DMs, the bot answers only the IDs listed in `SIGNAL_DM_USER_IDS`.
 
 ## What this does not cover
 
 - **The provider.** Once a message is sent, the provider's retention, logging and sub-processors apply.
-- **End-to-end encryption.** Signal's encryption protects messages between people. The bot is a participant: signal-cli decrypts what the bot receives, and what the bot answers is sent to the provider. People in a chat should know the bot is there.
-- **signal-cli's own data.** The Signal account keys and whatever signal-cli stores are in signal-cli's data directory, which the bot does not read. Keep that directory private (see the [README](README.md#prerequisites)).
+- **End-to-end encryption.** Signal's encryption protects messages between people. The bot is a participant: signal-cli decrypts what it receives, and what it answers goes to the provider. People in a chat should know the bot is there.
+- **signal-cli's own data.** The account keys and whatever else signal-cli stores sit in its data directory, which the bot does not read. Keep it private (see the [README](README.md#prerequisites)).
 - **Anyone in the `signal-cli` group** can use the socket to drive the Signal account, so keep the group to the bot.
-- **The host.** Root users can read process memory, and backups of the logs keep what the logs contain.
+- **The host.** Root users can read process memory, and log backups keep what the logs contain.
