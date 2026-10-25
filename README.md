@@ -1,18 +1,18 @@
 # signalbot
 
-A small, privacy-conscious chat bot that connects to a running [signal-cli](https://github.com/AsamK/signal-cli) daemon over its socket and answers using a model from [OpenRouter](https://openrouter.ai) or [x.ai](https://x.ai).
+A small, [privacy-conscious](PRIVACY.md) chat bot that connects to a running [signal-cli](https://github.com/AsamK/signal-cli) daemon over its socket and answers using a model from [OpenRouter](https://openrouter.ai) or [x.ai](https://x.ai).
 
 ## Features
 
-- The bot replies when it is @mentioned in a group; people it mentions are shown to the model by real name (every request asks the provider not to keep it, for privacy), and @names in its replies become real Signal mentions
+- The bot replies when it is @mentioned in a group; people it mentions are shown to the model by real name, and @names in its replies become real Signal mentions
 - Replies when someone replies to one of its messages (the quoted text is passed as context)
 - Replies to DMs from senders listed in `SIGNAL_DM_USER_IDS`; ignores everything else
 - Short answers sized for Signal (aims for one line, never over Signal's 2000-character limit); optional web search and configurable reasoning effort
-- Short per-conversation memory so follow-up questions work. This is in-memory only, never logged or stored on disk, and forgotten after a day. Any shorter _disappearing messages_ setting is respected and the message is erased from memory
+- Short per-conversation memory so follow-up questions work. It is forgotten after a day, sooner if the chat has a shorter _disappearing messages_ setting
 - Shows a typing indicator (refreshed every 10s) while the bot thinks; many chats are handled at once and a slow answer never blocks others
-- The bot ignores everything not addressed to it: a message that doesn't mention it, reply to it, or arrive as a DM is passed over in silence, leaving no trace in its logs, not even a note that it arrived. When it is addressed, it logs who spoke and the token count and cost of each reply. The message body is never logged
+- The bot ignores everything not addressed to it: a message that doesn't mention it, reply to it, or arrive as a DM is passed over. It logs the tokens used and the cost of each reply
 
-See [TECHNICAL.md](TECHNICAL.md) for how it works.
+The messages the bot answers, and the names in them, are sent to the AI provider you configure. See [TECHNICAL.md](TECHNICAL.md) and [PRIVACY.md](PRIVACY.md) for details on how it works.
 
 ## Prerequisites
 

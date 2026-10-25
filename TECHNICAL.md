@@ -1,5 +1,7 @@
 # Technical notes
 
+For what happens to your messages and data, see [PRIVACY.md](PRIVACY.md).
+
 ## Design
 
 - Go, standard library only; single static binary
