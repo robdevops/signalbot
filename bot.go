@@ -262,7 +262,7 @@ func (b *Bot) Handle(env *Envelope) {
 		} else if !fromSelf(env, self) && !isAllowed(env, b.cfg.AllowedSenders) {
 			// A DM from someone who may not use the bot: say so, with the id
 			// only, never the name or text.
-			logf("%s ignored because not in SIGNAL_ALLOWED_SENDERS",
+			logf("%s ignored because not in SIGNAL_IDS_ALLOWED_TO_DM",
 				cmp.Or(env.SourceUUID, env.Source, env.SourceNumber, "unknown sender"))
 		}
 		return

@@ -312,7 +312,7 @@ func TestConfigParsing(t *testing.T) {
 	t.Setenv("SIGNALCLI_SOCKET", "/x")
 	t.Setenv("XAI_API_KEY", "k")
 
-	t.Setenv("SIGNAL_ALLOWED_SENDERS", "uuid-a,uuid-b\r\n\tuuid-c;uuid-d\r")
+	t.Setenv("SIGNAL_IDS_ALLOWED_TO_DM", "uuid-a,uuid-b\r\n\tuuid-c;uuid-d\r")
 	c, err := LoadConfig()
 	if err != nil {
 		t.Fatal(err)
@@ -723,7 +723,7 @@ func TestUnaddressedMessagesAreNeverLogged(t *testing.T) {
 	}
 }
 
-// A DM from someone who is not in SIGNAL_ALLOWED_SENDERS is ignored, but the
+// A DM from someone who is not in SIGNAL_IDS_ALLOWED_TO_DM is ignored, but the
 // operator is told, with the sender's id and never the name or text.
 func TestDMFromUnlistedSenderIsLoggedByIDOnly(t *testing.T) {
 	cfg := testCfg()
@@ -735,7 +735,7 @@ func TestDMFromUnlistedSenderIsLoggedByIDOnly(t *testing.T) {
 	logs := captureLogs(t)
 
 	b.Handle(parse(t, dm)) // Rob, "Test DM"
-	want := rob + " ignored because not in SIGNAL_ALLOWED_SENDERS\n"
+	want := rob + " ignored because not in SIGNAL_IDS_ALLOWED_TO_DM\n"
 	if logs.String() != want {
 		t.Fatalf("got %q, want %q", logs.String(), want)
 	}
