@@ -249,7 +249,7 @@ func TestSystemPromptIntroduction(t *testing.T) {
 
 	want := func(name string) string {
 		return `"hi, I'm ` + name + `, your open source assistant running grok-test (tools: none). I respond to @mentions and replies to my messages. See ` +
-			`https://github.com/robdevops/signalbot/blob/main/README.md for details"`
+			`https://github.com/robdevops/signalbot/blob/main/README.md for details."`
 	}
 	if p := b.systemPrompt(); !strings.HasPrefix(p, basePrompt+"\nbase\n") || !strings.Contains(p, want("signalbot")) {
 		t.Fatalf("default name: %q", p)

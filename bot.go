@@ -426,7 +426,7 @@ const readmeURL = "https://github.com/robdevops/signalbot/blob/main/README.md"
 
 // defaultIntro is used when INTRO is unset. {name}, {model} and {tools} are substituted.
 const defaultIntro = "hi, I'm {name}, your open source assistant running {model} (tools: {tools}). " +
-	"I respond to @mentions and replies to my messages. See " + readmeURL + " for details"
+	"I respond to @mentions and replies to my messages. See " + readmeURL + " for details."
 
 // basePrompt always applies; SYSTEM_PROMPT is appended to it.
 const basePrompt = "You are a helpful assistant in a Signal chat. " +

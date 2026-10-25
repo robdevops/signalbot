@@ -110,6 +110,6 @@ Add the bot's account to a group and @mention it, reply to one of its messages, 
 | `MAX_CONCURRENCY` | `32` | Conversations in flight at once; messages beyond this are dropped |
 | `HISTORY_TURNS` | `10` | Exchanges remembered per chat |
 
-The default `INTRO` is: `hi, I'm {name}, your open source assistant running {model} (tools: {tools}). I respond to @mentions and replies to my messages. See https://github.com/robdevops/signalbot/blob/main/README.md for details`
+The default `INTRO` is: `hi, I'm {name}, your open source assistant running {model} (tools: {tools}). I respond to @mentions and replies to my messages. See https://github.com/robdevops/signalbot/blob/main/README.md for details.`
 
 With OpenRouter, the cost logged is the amount OpenRouter reports billing. x.ai reports only token counts, so with x.ai the cost is an estimate from the `XAI_PRICE_*` variables, whose defaults are xAI's published grok-4.3 rates. The estimate bills input served from xAI's prompt cache at the cached rate and adds $5 per 1,000 web searches. It does not model long-prompt pricing tiers, so check [xAI's pricing](https://docs.x.ai/docs/models) and set the `XAI_PRICE_*` variables for other models.
