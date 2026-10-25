@@ -11,7 +11,7 @@ When the bot answers a message, it sends this to the AI provider you configured 
 - the new message, with the display name of whoever sent it (in groups) and of anyone it @mentions;
 - the quoted text, when someone replies to one of the bot's messages, or mentions the bot in reply to someone else.
 
-With web search on (`MODEL_SEARCH`), the model may also search the web, using a query drawn from the conversation and handled by the provider's search service.
+With web search on (`MODEL_SEARCH`), the model decides whether to search and writes the query itself. The query can contain anything the model was sent (see above), such as a name or a phrase from a message, and goes to the provider's search service.
 
 Every request asks the provider not to keep it: x.ai gets `store: false`, and OpenRouter is told to use only providers that do not collect data (`data_collection: deny`). These are requests the bot cannot check or enforce, so read the provider's own policy.
 
