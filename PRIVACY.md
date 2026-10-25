@@ -7,7 +7,7 @@ What happens to your messages when this bot is in a chat. For how the bot is bui
 When the bot answers a message, it sends this to the AI provider you configured ([OpenRouter](https://openrouter.ai) or [x.ai](https://x.ai)):
 
 - its instructions (the built-in prompt, plus `SYSTEM_PROMPT` and `INTRO`);
-- the chat's recent messages: at most `HISTORY_TURNS` exchanges, none older than a day;
+- the earlier messages in this chat that were addressed to the bot, with the bot's replies: at most `HISTORY_TURNS` exchanges, none older than a day. Other conversation in the group is never included;
 - the new message, with the display name of whoever sent it (in groups) and of anyone it @mentions;
 - the quoted text, when someone replies to one of the bot's messages.
 
