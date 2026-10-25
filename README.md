@@ -120,9 +120,11 @@ With OpenRouter, the cost logged is the amount OpenRouter reports billing. x.ai 
 
 - A service was already running when you created the group. Restart it: `sudo systemctl restart signal-cli signalbot`.
 - You added yourself to the group (`sudo usermod -aG signal-cli "$USER"`) to test the socket with `socat`. Your open shell keeps its old groups until you log out and back in, or run `newgrp signal-cli`.
-- You run signal-cli from a shell instead of the systemd unit. It then uses your own group and umask, so the socket is `0755` and the `signal-cli` group cannot write to it. Start it in the right group with the right umask, once `/run/signal-cli` exists with that group:
+- You run signal-cli from a shell instead of the systemd unit. It then uses your own group and umask, so the socket is `0755` and the `signal-cli` group cannot write to it. Start it with the right group and umask, once `/run/signal-cli` exists with that group:
 
   ```
   sudo install -d -o "$USER" -g signal-cli -m 0750 /run/signal-cli
-  sg signal-cli -c 'umask 007 && signal-cli -o json daemon --socket /run/signal-cli/socket --no-receive-stdout'
+  sudo -u "$USER" -g signal-cli sh -c 'umask 007 && signal-cli -o json daemon --socket /run/signal-cli/socket --no-receive-stdout'
   ```
+
+  On Linux, `sg signal-cli -c '…'` does the same without `sudo`, as long as you are in the group. `doas` cannot set a group, so on OpenBSD use `su` or the system's `rc.d` service instead.
