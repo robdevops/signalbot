@@ -5,7 +5,7 @@
 - Go, standard library only; single static binary
 - Talks JSON-RPC to `signal-cli daemon` over a unix socket or TCP (`listAccounts` once per connection to learn its own id)
 - Reconnects by itself if signal-cli restarts or the connection drops, waiting 1s and then doubling up to 32s between attempts; the wait resets once a connection has stayed up for a minute, and requests in flight when it drops fail rather than hang
-- x.ai Responses API (`/v1/responses`) over a shared keep-alive HTTP client that requires TLS 1.3, one retry on 429/5xx
+- Exactly one provider, chosen by which key is set (`OPENROUTER_API_KEY` or `XAI_API_KEY`; both or neither is a startup error), over a shared keep-alive HTTP client that requires TLS 1.3, with one retry on a network error, 429 or 5xx. OpenRouter uses chat completions with `provider.data_collection: deny` (only providers that do not collect the data) and asks for the real cost to be reported. x.ai uses the Responses API (`/v1/responses`), and every request sets `store: false`, so x.ai is asked not to keep the conversation
 - Bounded under load: a concurrency slot (`MAX_CONCURRENCY`) is taken before any goroutine starts, so messages it ignores cost nothing and a flood is dropped, not queued
 - Never swapped: `MemorySwapMax=0` in the unit and `--memory-swap` equal to `--memory` in Docker keep conversation history out of swap (cgroup v2 with swap accounting; no capability needed)
 - In-memory state only, all capped: history per chat (`HISTORY_TURNS`), number of chats (500), names, frame size (1 MiB) and reply length (4 messages)
@@ -14,6 +14,21 @@
 - Honours disappearing messages: a chat's timer (`expiresInSeconds`) is stored with its history. No message is kept longer than 24 hours, or than that timer if shorter; expired messages are dropped from memory when their time is up (and ignored by any read before then), and the garbage collector reclaims them
 - Treats sender-controlled text as untrusted: display names and quotes are sanitised before reaching the model or the log, and a name two people claim is never linked
 - Configured from environment variables only; runs under systemd or Docker (hardened unit and image included; the image is pinned by digest and has no shell). Logs plain lines to stdout, with a timestamp only in a terminal (journald and Docker add their own)
+
+## The prompt
+
+Each request sends the model a system prompt, then the chat's remembered messages, then the new message.
+
+The system prompt is built from three parts, in this order:
+
+1. The built-in prompt, always sent:
+
+   > You are a helpful assistant in a Signal chat. Reply in plain text: Signal does not render markdown. Aim for a single line. Two or three sentences at the very most, and only when asked for detail. Never exceed 2000 characters, which is Signal's limit for one message. A mention shown as [unnamed user] is someone whose name you don't know; don't invent one. To mention someone, write @ followed by their exact name. Never write your own name with an @.
+
+2. `SYSTEM_PROMPT`, if set, on a new line after it. It adds to the built-in prompt and never replaces it.
+3. The introduction rule, always last: `If asked to introduce yourself, reply with exactly this text and nothing else: "…"`. The quoted text is `INTRO` with `{name}` (the bot's own Signal profile name, else `signalbot`) `{model}` (without any OpenRouter `provider/` prefix) and `{tools}` (`web search` when `MODEL_SEARCH` is on, else `none`) filled in. It is quoted so a newline or quote in it cannot escape into the rest of the prompt.
+
+The messages that follow are the chat's history (at most `HISTORY_TURNS` exchanges, none older than 24 hours), then the new message. In a group each message is prefixed with its sender's name ("Rob: …"). When someone replies to one of the bot's messages, the quoted text is added as `[Replying to a message attributed to you: "…"]`, escaped and capped at 500 characters because the sender composes it.
 
 ## What the bot needs from signal-cli
 

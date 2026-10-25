@@ -311,6 +311,7 @@ func TestSocketNetwork(t *testing.T) {
 func TestConfigParsing(t *testing.T) {
 	t.Setenv("SIGNALCLI_SOCKET", "/x")
 	t.Setenv("XAI_API_KEY", "k")
+	t.Setenv("OPENROUTER_API_KEY", "")
 
 	t.Setenv("SIGNAL_DM_USER_IDS", "uuid-a,uuid-b\r\n\tuuid-c;uuid-d\r")
 	c, err := LoadConfig()
@@ -330,13 +331,13 @@ func TestConfigParsing(t *testing.T) {
 		"true": true, "True": true, "TRUE": true, "1": true, "yes": true, "on": true,
 		"false": false, "False": false, "0": false, "no": false, "off": false, "garbage": true,
 	} {
-		t.Setenv("XAI_SEARCH", v)
+		t.Setenv("MODEL_SEARCH", v)
 		if c, _ := LoadConfig(); c.Search != want {
-			t.Errorf("XAI_SEARCH=%q: got %v, want %v", v, c.Search, want)
+			t.Errorf("MODEL_SEARCH=%q: got %v, want %v", v, c.Search, want)
 		}
 	}
 
-	t.Setenv("XAI_SEARCH", "")
+	t.Setenv("MODEL_SEARCH", "")
 	t.Setenv("SYSTEM_PROMPT", "")
 	c, _ = LoadConfig()
 	if c.ExtraPrompt != "" {

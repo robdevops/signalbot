@@ -9,13 +9,14 @@ import (
 
 type Config struct {
 	Socket         string
+	Provider       string // "x.ai" or "OpenRouter", whichever key is set
 	APIKey         string
 	Model          string
 	Reasoning      string
 	Search         bool
 	AllowedSenders map[string]bool
 	ExtraPrompt    string  // SYSTEM_PROMPT: appended to the built-in prompt
-	Intro          string  // INTRO: {name} and {model} are substituted
+	Intro          string  // INTRO: {name}, {model} and {tools} are substituted
 	PriceIn        float64 // USD per million input tokens
 	PriceCached    float64 // USD per million cached input tokens
 	PriceOut       float64 // USD per million output tokens
@@ -68,10 +69,8 @@ func splitIDs(s string) []string {
 func LoadConfig() (*Config, error) {
 	c := &Config{
 		Socket:         env("SIGNALCLI_SOCKET", ""),
-		APIKey:         env("XAI_API_KEY", ""),
-		Model:          env("MODEL", "grok-4.3"),
+		Search:         envBool("MODEL_SEARCH", true),
 		Reasoning:      strings.ToLower(env("REASONING", "low")),
-		Search:         envBool("XAI_SEARCH", true),
 		AllowedSenders: map[string]bool{},
 		ExtraPrompt:    env("SYSTEM_PROMPT", ""),
 		Intro:          env("INTRO", defaultIntro),
@@ -87,8 +86,18 @@ func LoadConfig() (*Config, error) {
 	if c.Socket == "" {
 		return nil, fmt.Errorf("SIGNALCLI_SOCKET is required")
 	}
-	if c.APIKey == "" {
-		return nil, fmt.Errorf("XAI_API_KEY is required")
+	xai, openrouter := env("XAI_API_KEY", ""), env("OPENROUTER_API_KEY", "")
+	switch {
+	case xai != "" && openrouter != "":
+		return nil, fmt.Errorf("set XAI_API_KEY or OPENROUTER_API_KEY, not both")
+	case xai != "":
+		c.Provider, c.APIKey = "x.ai", xai
+		c.Model = env("MODEL", "grok-4.3")
+	case openrouter != "":
+		c.Provider, c.APIKey = "OpenRouter", openrouter
+		c.Model = env("MODEL", "deepseek/deepseek-v4.1-flash-1017")
+	default:
+		return nil, fmt.Errorf("XAI_API_KEY or OPENROUTER_API_KEY is required")
 	}
 	return c, nil
 }

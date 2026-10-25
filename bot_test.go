@@ -248,8 +248,8 @@ func TestSystemPromptIntroduction(t *testing.T) {
 	b := NewBot(context.Background(), cfg, sig, nil)
 
 	want := func(name string) string {
-		return `"hi, I'm ` + name + `, your open source assistant running grok-test. I respond to @mentions and replies to my messages. See ` +
-			`https://github.com/robdevops/signalbot/blob/main/README.md for details"`
+		return `"hi, I'm ` + name + `, your open source assistant running grok-test (tools: none). I respond to @mentions and replies to my messages. See ` +
+			`https://github.com/robdevops/signalbot/blob/main/README.md for details."`
 	}
 	if p := b.systemPrompt(); !strings.HasPrefix(p, basePrompt+"\nbase\n") || !strings.Contains(p, want("signalbot")) {
 		t.Fatalf("default name: %q", p)
@@ -267,10 +267,19 @@ func TestSystemPromptIntroOverride(t *testing.T) {
 	b := NewBot(context.Background(), cfg, sig, nil)
 	b.names.addContacts([]Contact{{UUID: self, GivenName: "Botty"}})
 
-	cfg.Intro = "yo, {name} here on {model}"
+	cfg.Intro = "yo, {name} here on {model} with {tools}"
 	p := b.systemPrompt()
-	if !strings.HasSuffix(p, `"yo, Botty here on grok-test"`) {
+	if !strings.HasSuffix(p, `"yo, Botty here on grok-test with none"`) {
 		t.Fatalf("placeholders not substituted: %q", p)
+	}
+	cfg.Model = "deepseek/deepseek-v4.1-flash-1017"
+	if p := b.systemPrompt(); !strings.HasSuffix(p, `"yo, Botty here on deepseek-v4.1-flash-1017 with none"`) {
+		t.Fatalf("the provider prefix must be dropped from {model}: %q", p)
+	}
+	cfg.Model = "grok-test"
+	cfg.Search = true
+	if p := b.systemPrompt(); !strings.HasSuffix(p, `"yo, Botty here on grok-test with web search"`) {
+		t.Fatalf("{tools} must name web search when it is on: %q", p)
 	}
 	if strings.Contains(p, "open source assistant") {
 		t.Fatalf("default intro leaked through: %q", p)
