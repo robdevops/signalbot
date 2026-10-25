@@ -367,10 +367,7 @@ func (b *Bot) respond(req *Request) {
 		res = Completion{Text: "Sorry, I couldn't get an answer right now."}
 	} else {
 		logf("%s", replyLogLine(req.Name, took, res, b.cfg))
-		var gone time.Time
-		if req.Expires > 0 {
-			gone = start.Add(req.Expires)
-		}
+		gone := historyExpiry(start, req.Expires)
 		b.addHistory(req.Key, ChatMsg{Role: "user", Content: req.Prompt, Expires: gone}, ChatMsg{Role: "assistant", Content: res.Text, Expires: gone})
 	}
 
@@ -509,6 +506,18 @@ func (b *Bot) getHistory(key string) []ChatMsg {
 	return unexpired(b.history[key], time.Now())
 }
 
+// maxHistoryAge is the longest any message is kept. A chat's shorter
+// disappearing-messages timer wins.
+const maxHistoryAge = 24 * time.Hour
+
+// historyExpiry is when a message handled at now must be forgotten.
+func historyExpiry(now time.Time, disappearing time.Duration) time.Time {
+	if disappearing <= 0 {
+		disappearing = maxHistoryAge
+	}
+	return now.Add(min(disappearing, maxHistoryAge))
+}
+
 // unexpired returns a copy of h without the messages whose disappearing-
 // messages time has passed.
 func unexpired(h []ChatMsg, now time.Time) []ChatMsg {
@@ -537,6 +546,7 @@ func (b *Bot) addHistory(key string, msgs ...ChatMsg) {
 		h = append([]ChatMsg(nil), h[len(h)-max:]...)
 	}
 	b.history[key] = h
+	// Erase the expired messages and let the garbage collector reclaim them.
 	if e := msgs[0].Expires; !e.IsZero() {
 		time.AfterFunc(time.Until(e), func() { b.forget(key) })
 	}

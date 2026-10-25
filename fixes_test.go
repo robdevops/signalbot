@@ -775,3 +775,18 @@ func TestDisappearingMessagesAreErasedFromHistory(t *testing.T) {
 		t.Fatalf("expired messages still in memory: %d left, want 2", n)
 	}
 }
+
+// No message is remembered for more than a day, whatever the chat's
+// disappearing-messages setting; a shorter timer wins.
+func TestHistoryExpiry(t *testing.T) {
+	now := time.Now()
+	for _, tc := range []struct{ timer, want time.Duration }{
+		{0, 24 * time.Hour},
+		{time.Hour, time.Hour},
+		{7 * 24 * time.Hour, 24 * time.Hour},
+	} {
+		if got := historyExpiry(now, tc.timer); !got.Equal(now.Add(tc.want)) {
+			t.Errorf("timer %v: expires in %v, want %v", tc.timer, got.Sub(now), tc.want)
+		}
+	}
+}

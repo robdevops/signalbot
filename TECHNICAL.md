@@ -11,7 +11,7 @@
 - In-memory state only, all capped: history per chat (`HISTORY_TURNS`), number of chats (500), names, frame size (1 MiB) and reply length (4 messages)
 - Message text is never logged. A message that is not a mention, a reply or a DM is not logged at all. A DM from someone not in `SIGNAL_DM_USER_IDS` is ignored too, but its sender's id is logged, never the name or text
 - The same message repeated by the same sender in the same chat within 10 seconds is ignored
-- Honours disappearing messages: a chat's timer (`expiresInSeconds`) is stored with its history, and expired messages are dropped from memory when the timer fires, or at the next read or write
+- Honours disappearing messages: a chat's timer (`expiresInSeconds`) is stored with its history. No message is kept longer than 24 hours, or than that timer if shorter; expired messages are dropped from memory when their time is up (and ignored by any read before then), and the garbage collector reclaims them
 - Treats sender-controlled text as untrusted: display names and quotes are sanitised before reaching the model or the log, and a name two people claim is never linked
 - Configured from environment variables only; runs under systemd or Docker (hardened unit and image included; the image is pinned by digest and has no shell). Logs plain lines to stdout, with a timestamp only in a terminal (journald and Docker add their own)
 
