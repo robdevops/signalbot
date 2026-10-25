@@ -687,3 +687,38 @@ func TestXAIRequiresTLS13(t *testing.T) {
 		}
 	}
 }
+
+// The README promises that a message which does not address the bot is
+// ignored and never logged, not even that it arrived, even with
+// LOG_MESSAGE_BODY on. Hold it to that, whichever way it is addressed to
+// someone else.
+func TestUnaddressedMessagesAreNeverLogged(t *testing.T) {
+	cfg := testCfg()
+	cfg.LogMessageBody = true
+	sig := NewSignal("x")
+	sig.selfID.Store(self)
+	b := NewBot(context.Background(), cfg, sig, nil) // nil client: any call to x.ai would panic
+	logs := captureLogs(t)
+
+	other := "11111111-2222-3333-4444-555555555555"
+	msgs := map[string]string{
+		"group message to nobody":      groupPlain,
+		"typing indicator":             typing,
+		"reply to someone else":        replyToOther,
+		"DM from a sender not allowed": dm,
+		"read receipt": `{"envelope":{"source":"` + rob + `","sourceUuid":"` + rob + `","sourceName":"Rob",` +
+			`"receiptMessage":{"when":1,"isDelivery":false,"isRead":true,"isViewed":false,"timestamps":[1]}},"account":"` + self + `"}`,
+		"group message mentioning someone else": `{"envelope":{"source":"` + rob + `","sourceUuid":"` + rob + `","sourceName":"Rob",` +
+			`"dataMessage":{"message":"￼ lunch?","mentions":[{"uuid":"` + other + `","start":0,"length":1}],` +
+			`"groupInfo":{"groupId":"` + group + `"}}},"account":"` + self + `"}`,
+	}
+	for name, m := range msgs {
+		b.Handle(parse(t, m))
+		if logs.Len() != 0 {
+			t.Fatalf("%s was logged: %q", name, logs.String())
+		}
+	}
+	if len(b.sem) != 0 {
+		t.Fatal("an unaddressed message took a concurrency slot, so it was processed")
+	}
+}
