@@ -15,6 +15,21 @@
 - Treats sender-controlled text as untrusted: display names and quotes are sanitised before reaching the model or the log, and a name two people claim is never linked
 - Configured from environment variables only; runs under systemd or Docker (hardened unit and image included; the image is pinned by digest and has no shell). Logs plain lines to stdout, with a timestamp only in a terminal (journald and Docker add their own)
 
+## The prompt
+
+Each request sends the model a system prompt, then the chat's remembered messages, then the new message.
+
+The system prompt is built from three parts, in this order:
+
+1. The built-in prompt, always sent:
+
+   > You are a helpful assistant in a Signal chat. Reply in plain text: Signal does not render markdown. Aim for a single line. Two or three sentences at the very most, and only when asked for detail. Never exceed 2000 characters, which is Signal's limit for one message. A mention shown as [unnamed user] is someone whose name you don't know; don't invent one. To mention someone, write @ followed by their exact name. Never write your own name with an @.
+
+2. `SYSTEM_PROMPT`, if set, on a new line after it. It adds to the built-in prompt and never replaces it.
+3. The introduction rule, always last: `If asked to introduce yourself, reply with exactly this text and nothing else: "…"`. The quoted text is `INTRO` with `{name}` (the bot's own Signal profile name, else `signalbot`) and `{model}` filled in. It is quoted so a newline or quote in it cannot escape into the rest of the prompt.
+
+The messages that follow are the chat's history (at most `HISTORY_TURNS` exchanges, none older than 24 hours), then the new message. In a group each message is prefixed with its sender's name ("Rob: …"). When someone replies to one of the bot's messages, the quoted text is added as `[Replying to a message attributed to you: "…"]`, escaped and capped at 500 characters because the sender composes it.
+
 ## What the bot needs from signal-cli
 
 Only the socket. The bot speaks JSON-RPC to it and never touches signal-cli's data directory, where the account keys live.
