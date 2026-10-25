@@ -89,8 +89,11 @@ func TestOpenRouterRequestAndReply(t *testing.T) {
 	if got["reasoning"].(map[string]any)["effort"] != "low" {
 		t.Fatalf("reasoning = %v", got["reasoning"])
 	}
-	if got["plugins"].([]any)[0].(map[string]any)["id"] != "web" {
-		t.Fatalf("search plugin missing: %v", got["plugins"])
+	if got["tools"].([]any)[0].(map[string]any)["type"] != "openrouter:web_search" {
+		t.Fatalf("search tool missing: %v", got["tools"])
+	}
+	if _, ok := got["plugins"]; ok {
+		t.Fatal("the web plugin searches on every request; use the server tool the model chooses to call")
 	}
 	if _, ok := got["store"]; ok {
 		t.Fatal("store is an x.ai field and must not be sent to OpenRouter")
@@ -115,8 +118,8 @@ func TestOpenRouterOmitsOptionsWhenOff(t *testing.T) {
 	if _, ok := got["reasoning"]; ok {
 		t.Error("reasoning sent although REASONING=none")
 	}
-	if _, ok := got["plugins"]; ok {
-		t.Error("search plugin sent although search is off")
+	if _, ok := got["tools"]; ok {
+		t.Error("search tool sent although search is off")
 	}
 	if res.Billed != nil || res.Cost(cfg) <= 0 {
 		t.Errorf("with no reported cost the token estimate must be used, got %v", res.Cost(cfg))

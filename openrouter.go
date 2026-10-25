@@ -33,7 +33,9 @@ func (o *OpenRouter) Complete(ctx context.Context, system string, msgs []ChatMsg
 		body["reasoning"] = map[string]string{"effort": r}
 	}
 	if o.cfg.Search {
-		body["plugins"] = []map[string]string{{"id": "web"}}
+		// A server tool the model calls only when it decides to search, unlike
+		// the deprecated "web" plugin, which searched on every request.
+		body["tools"] = []map[string]string{{"type": "openrouter:web_search"}}
 	}
 	payload, err := json.Marshal(body)
 	if err != nil {
