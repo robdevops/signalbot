@@ -83,7 +83,7 @@ func LoadConfig() (*Config, error) {
 		MaxConcurrency: envInt("MAX_CONCURRENCY", 32),
 		HistoryTurns:   envInt("HISTORY_TURNS", 10),
 	}
-	for _, s := range splitIDs(os.Getenv("SIGNAL_ALLOWED_SENDERS")) {
+	for _, s := range splitIDs(os.Getenv("SIGNAL_DM_USER_IDS")) {
 		c.AllowedSenders[s] = true
 	}
 	if c.Socket == "" {

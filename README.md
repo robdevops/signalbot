@@ -6,11 +6,11 @@ A small chat bot that connects to a running [signal-cli](https://github.com/Asam
 
 - Replies when it is @mentioned in a group; people it mentions are shown to the model by real name, and @names in its replies become real Signal mentions
 - Replies when someone replies to one of its messages (the quoted text is passed as context)
-- Replies to DMs from senders listed in `SIGNAL_ALLOWED_SENDERS`; ignores everything else
+- Replies to DMs from senders listed in `SIGNAL_DM_USER_IDS`; ignores everything else
 - Short answers sized for Signal (aims for one line, never over Signal's 2000-character limit); optional x.ai web search and configurable reasoning effort
 - Short per-conversation memory, so follow-up questions work; the same message repeated within 10 seconds is ignored
 - Shows a typing indicator (refreshed every 10s) while it thinks; many chats are handled at once and a slow answer never blocks others
-- Ignores everything not addressed to it: a message that doesn't mention it, reply to it, or arrive as a DM from an allowed sender is passed over in silence, leaving no trace in its logs, not even a note that it arrived. When it is addressed, it logs who spoke and the token count and cost of each reply
+- Ignores everything not addressed to it: a message that doesn't mention it, reply to it, or arrive as a DM is passed over in silence, leaving no trace in its logs, not even a note that it arrived. When it is addressed, it logs who spoke and the token count and cost of each reply
 
 See [TECHNICAL.md](TECHNICAL.md) for how it works.
 
@@ -36,7 +36,7 @@ git clone https://github.com/robdevops/signalbot.git
 cd signalbot
 ```
 
-Create the config. The file holds your API key, so it is root-only; edit it, setting `XAI_API_KEY` and `SIGNAL_ALLOWED_SENDERS`:
+Create the config. The file holds your API key, so it is root-only; edit it, setting `XAI_API_KEY` and `SIGNAL_DM_USER_IDS`:
 
 ```
 sudo install -m 660 .env.example /etc/signalbot.env
@@ -100,7 +100,7 @@ Add the bot's account to a group and @mention it, reply to one of its messages, 
 | `MODEL` | `grok-4.3` | Model name |
 | `REASONING` | `low` | Reasoning effort (`none` to omit) |
 | `XAI_SEARCH` | `true` | Enable x.ai web search tool (`true`/`false`, `yes`/`no`, `on`/`off`, `1`/`0`) |
-| `SIGNAL_ALLOWED_SENDERS` | empty | UUIDs/numbers allowed to DM the bot, separated by commas or whitespace |
+| `SIGNAL_DM_USER_IDS` | empty | UUIDs/numbers allowed to DM the bot, separated by commas or whitespace |
 | `SYSTEM_PROMPT` | empty | Extra instructions, appended to the built-in prompt (which keeps answers short and Signal-sized) |
 | `LOG_MESSAGE_BODY` | `false` | Also log the text of each handled message, not just who sent it (PRIVACY RISK) |
 | `INTRO` | built-in sentence | Overrides the self-introduction; `{name}` and `{model}` are substituted |
