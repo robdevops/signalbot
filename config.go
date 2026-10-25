@@ -14,9 +14,8 @@ type Config struct {
 	Reasoning      string
 	Search         bool
 	AllowedSenders map[string]bool
-	ExtraPrompt    string // SYSTEM_PROMPT: appended to the built-in prompt
-	Intro          string // INTRO: {name} and {model} are substituted
-	LogMessageBody bool
+	ExtraPrompt    string  // SYSTEM_PROMPT: appended to the built-in prompt
+	Intro          string  // INTRO: {name} and {model} are substituted
 	PriceIn        float64 // USD per million input tokens
 	PriceCached    float64 // USD per million cached input tokens
 	PriceOut       float64 // USD per million output tokens
@@ -76,7 +75,6 @@ func LoadConfig() (*Config, error) {
 		AllowedSenders: map[string]bool{},
 		ExtraPrompt:    env("SYSTEM_PROMPT", ""),
 		Intro:          env("INTRO", defaultIntro),
-		LogMessageBody: envBool("LOG_MESSAGE_BODY", false),
 		PriceIn:        envFloat("XAI_PRICE_IN", 1.25),
 		PriceCached:    envFloat("XAI_PRICE_CACHED", 0.20),
 		PriceOut:       envFloat("XAI_PRICE_OUT", 2.50),

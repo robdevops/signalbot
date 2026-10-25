@@ -107,18 +107,16 @@ type Request struct {
 	Name   string // display name, else the id: short form for the log
 	Text   string // message text with the bot mention stripped
 
+	Expires time.Duration // the chat's disappearing-messages timer, 0 if off
+
 	// Names the model has been shown in this message (name -> uuid), so
 	// "@Name" in its reply can become a real Signal mention. Groups only.
 	Names map[string]string
 }
 
-// logLine says who sent the request, plus the text (quoted) when withBody.
-func (r *Request) logLine(withBody bool) string {
-	line := r.Kind + " from " + r.Sender
-	if withBody {
-		line += ": " + strconv.Quote(r.Text)
-	}
-	return line
+// logLine says who sent the request, never what they said.
+func (r *Request) logLine() string {
+	return r.Kind + " from " + r.Sender
 }
 
 // replyLogLine is the one-line summary of a model reply, e.g.
@@ -193,7 +191,8 @@ func Decide(env *Envelope, kind, self string, names *Names) *Request {
 		who = name + "(" + sender + ")"
 	}
 
-	req := &Request{Target: target, Key: key, Prompt: text, Kind: kind, Sender: who, Name: cmp.Or(name, sender), Text: raw}
+	req := &Request{Target: target, Key: key, Prompt: text, Kind: kind, Sender: who, Name: cmp.Or(name, sender), Text: raw,
+		Expires: time.Duration(dm.ExpiresInSeconds) * time.Second}
 	if target.GroupID != "" {
 		req.Names = map[string]string{}
 		add := func(n, uuid string) {
@@ -303,7 +302,7 @@ func (b *Bot) handle(env *Envelope) {
 		return
 	}
 	b.remember(req)
-	logf("%s", req.logLine(b.cfg.LogMessageBody))
+	logf("%s", req.logLine())
 	b.respond(req)
 }
 
@@ -368,7 +367,8 @@ func (b *Bot) respond(req *Request) {
 		res = Completion{Text: "Sorry, I couldn't get an answer right now."}
 	} else {
 		logf("%s", replyLogLine(req.Name, took, res, b.cfg))
-		b.addHistory(req.Key, ChatMsg{Role: "user", Content: req.Prompt}, ChatMsg{Role: "assistant", Content: res.Text})
+		gone := historyExpiry(start, req.Expires)
+		b.addHistory(req.Key, ChatMsg{Role: "user", Content: req.Prompt, Expires: gone}, ChatMsg{Role: "assistant", Content: res.Text, Expires: gone})
 	}
 
 	if n := len([]rune(res.Text)); n > maxReplyRunes {
@@ -503,18 +503,53 @@ func (b *Bot) knownNames(key string) map[string]string {
 func (b *Bot) getHistory(key string) []ChatMsg {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	return append([]ChatMsg(nil), b.history[key]...)
+	return unexpired(b.history[key], time.Now())
+}
+
+// maxHistoryAge is the longest any message is kept. A chat's shorter
+// disappearing-messages timer wins.
+const maxHistoryAge = 24 * time.Hour
+
+// historyExpiry is when a message handled at now must be forgotten.
+func historyExpiry(now time.Time, disappearing time.Duration) time.Time {
+	if disappearing <= 0 {
+		disappearing = maxHistoryAge
+	}
+	return now.Add(min(disappearing, maxHistoryAge))
+}
+
+// unexpired returns a copy of h without the messages whose disappearing-
+// messages time has passed.
+func unexpired(h []ChatMsg, now time.Time) []ChatMsg {
+	return slices.DeleteFunc(slices.Clone(h), func(m ChatMsg) bool {
+		return !m.Expires.IsZero() && !now.Before(m.Expires)
+	})
+}
+
+// forget erases the chat's expired messages from memory.
+func (b *Bot) forget(key string) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if h := unexpired(b.history[key], time.Now()); len(h) > 0 {
+		b.history[key] = h
+	} else {
+		delete(b.history, key)
+	}
 }
 
 func (b *Bot) addHistory(key string, msgs ...ChatMsg) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	makeRoom(b.history, key, maxChats)
-	h := append(b.history[key], msgs...)
+	h := append(unexpired(b.history[key], time.Now()), msgs...)
 	if max := b.cfg.HistoryTurns * 2; len(h) > max {
 		h = append([]ChatMsg(nil), h[len(h)-max:]...)
 	}
 	b.history[key] = h
+	// Erase the expired messages and let the garbage collector reclaim them.
+	if e := msgs[0].Expires; !e.IsZero() {
+		time.AfterFunc(time.Until(e), func() { b.forget(key) })
+	}
 }
 
 // makeRoom makes room for key in m, dropping an arbitrary entry once m holds

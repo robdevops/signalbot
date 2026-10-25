@@ -337,21 +337,13 @@ func TestConfigParsing(t *testing.T) {
 	}
 
 	t.Setenv("XAI_SEARCH", "")
-	t.Setenv("LOG_MESSAGE_BODY", "")
 	t.Setenv("SYSTEM_PROMPT", "")
 	c, _ = LoadConfig()
-	if c.LogMessageBody {
-		t.Error("LOG_MESSAGE_BODY must default to false")
-	}
 	if c.ExtraPrompt != "" {
 		t.Error(`SYSTEM_PROMPT must default to ""`)
 	}
 	if c.PriceIn != 1.25 || c.PriceCached != 0.20 || c.PriceOut != 2.50 {
 		t.Errorf("price defaults: in=%v cached=%v out=%v", c.PriceIn, c.PriceCached, c.PriceOut)
-	}
-	t.Setenv("LOG_MESSAGE_BODY", "True")
-	if c, _ := LoadConfig(); !c.LogMessageBody {
-		t.Error("LOG_MESSAGE_BODY=True should enable body logging")
 	}
 }
 
@@ -527,16 +519,9 @@ func TestSystemPromptLayering(t *testing.T) {
 	}
 }
 
-func TestLogLineOmitsBodyByDefault(t *testing.T) {
-	t.Setenv("SIGNALCLI_SOCKET", "/x")
-	t.Setenv("XAI_API_KEY", "k")
-	t.Setenv("LOG_MESSAGE_BODY", "")
-	cfg, err := LoadConfig()
-	if err != nil {
-		t.Fatal(err)
-	}
+func TestLogLineOmitsBody(t *testing.T) {
 	r := decide(parse(t, groupMention), nil)
-	out := r.logLine(cfg.LogMessageBody)
+	out := r.logLine()
 	if strings.Contains(out, "what is up") {
 		t.Fatalf("message body logged by default: %q", out)
 	}
@@ -690,12 +675,9 @@ func TestXAIRequiresTLS13(t *testing.T) {
 
 // The README promises that a message which does not address the bot (not a
 // mention, a reply to it, or a DM) is ignored and never logged, not even that
-// it arrived, even with
-// LOG_MESSAGE_BODY on. Hold it to that, whichever way it is addressed to
-// someone else.
+// it arrived. Hold it to that, whichever way it is addressed to someone else.
 func TestUnaddressedMessagesAreNeverLogged(t *testing.T) {
 	cfg := testCfg()
-	cfg.LogMessageBody = true
 	sig := NewSignal("x")
 	sig.selfID.Store(self)
 	b := NewBot(context.Background(), cfg, sig, nil) // nil client: any call to x.ai would panic
@@ -727,7 +709,6 @@ func TestUnaddressedMessagesAreNeverLogged(t *testing.T) {
 // operator is told, with the sender's id and never the name or text.
 func TestDMFromUnlistedSenderIsLoggedByIDOnly(t *testing.T) {
 	cfg := testCfg()
-	cfg.LogMessageBody = true // the text still must not appear
 	cfg.AllowedSenders = map[string]bool{"someone-else": true}
 	sig := NewSignal("x")
 	sig.selfID.Store(self)
@@ -767,6 +748,45 @@ func TestOnlyUnlistedDMsGetTheIgnoredLine(t *testing.T) {
 		b.Handle(parse(t, m))
 		if logs.Len() != 0 {
 			t.Fatalf("%s: unexpected log %q", name, logs.String())
+		}
+	}
+}
+
+// Disappearing messages: the chat's timer is read from the message, and the
+// history entries it produces are erased from memory once it runs out.
+func TestDisappearingMessagesAreErasedFromHistory(t *testing.T) {
+	env := parse(t, strings.Replace(groupMention, `"groupInfo"`, `"expiresInSeconds":3600,"groupInfo"`, 1))
+	if got := decide(env, nil).Expires; got != time.Hour {
+		t.Fatalf("Expires = %v, want 1h", got)
+	}
+
+	b := NewBot(context.Background(), testCfg(), NewSignal("x"), nil)
+	soon := time.Now().Add(50 * time.Millisecond)
+	b.addHistory("k", ChatMsg{Role: "user", Content: "a", Expires: soon}, ChatMsg{Role: "assistant", Content: "b", Expires: soon})
+	b.addHistory("k", ChatMsg{Role: "user", Content: "kept"}, ChatMsg{Role: "assistant", Content: "kept"})
+	if n := len(b.getHistory("k")); n != 4 {
+		t.Fatalf("history before expiry has %d messages, want 4", n)
+	}
+	time.Sleep(150 * time.Millisecond)
+	b.mu.Lock()
+	n := len(b.history["k"])
+	b.mu.Unlock()
+	if n != 2 {
+		t.Fatalf("expired messages still in memory: %d left, want 2", n)
+	}
+}
+
+// No message is remembered for more than a day, whatever the chat's
+// disappearing-messages setting; a shorter timer wins.
+func TestHistoryExpiry(t *testing.T) {
+	now := time.Now()
+	for _, tc := range []struct{ timer, want time.Duration }{
+		{0, 24 * time.Hour},
+		{time.Hour, time.Hour},
+		{7 * 24 * time.Hour, 24 * time.Hour},
+	} {
+		if got := historyExpiry(now, tc.timer); !got.Equal(now.Add(tc.want)) {
+			t.Errorf("timer %v: expires in %v, want %v", tc.timer, got.Sub(now), tc.want)
 		}
 	}
 }

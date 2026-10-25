@@ -208,16 +208,13 @@ func logged(t *testing.T, timestamps bool, f func()) string {
 
 func TestMessageLogLine(t *testing.T) {
 	r := decide(parse(t, strings.Replace(groupMention, "what is up", "what\\nis up", 1)), nil)
-	if got, want := r.logLine(false), "mention from Rob("+rob+")"; got != want {
+	if got, want := r.logLine(), "mention from Rob("+rob+")"; got != want {
 		t.Fatalf("got %q, want %q", got, want)
-	}
-	if got := r.logLine(true); !strings.HasSuffix(got, `: "what\nis up"`) {
-		t.Fatalf("body not logged, or not quoted: %q", got)
 	}
 	// Nothing logged can forge extra log records.
 	r.Sender = "Bob\n\nforged record"
 	r.Text = "hi\nalso forged"
-	if out := logged(t, false, func() { logf("%s", r.logLine(true)) }); strings.Count(out, "\n") != 1 {
+	if out := logged(t, false, func() { logf("%s", r.logLine()) }); strings.Count(out, "\n") != 1 {
 		t.Fatalf("a value split the log line: %q", out)
 	}
 }

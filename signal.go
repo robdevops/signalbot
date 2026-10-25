@@ -37,6 +37,9 @@ type DataMessage struct {
 	Mentions  []Mention  `json:"mentions"`
 	Quote     *Quote     `json:"quote"`
 	GroupInfo *GroupInfo `json:"groupInfo"`
+
+	// ExpiresInSeconds is the chat's disappearing-messages timer, 0 if off.
+	ExpiresInSeconds int `json:"expiresInSeconds"`
 }
 
 type Envelope struct {
