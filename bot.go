@@ -129,18 +129,25 @@ func replyLogLine(name string, took time.Duration, c Completion, cfg *Config) st
 		name, took.Seconds(), c.InputTokens, c.OutputTokens, cached, c.Cost(cfg))
 }
 
+func fromSelf(env *Envelope, self string) bool {
+	return env.SourceUUID == self || env.Source == self || env.SourceNumber == self
+}
+
+func isAllowed(env *Envelope, allowed map[string]bool) bool {
+	return allowed[env.SourceUUID] || allowed[env.Source] || allowed[env.SourceNumber]
+}
+
 // trigger is the cheap, allocation-free half of the trigger rules: it says why
 // the bot should answer ("mention", "reply" or "dm"), or "" to stay silent. It
 // runs inline on the reader goroutine so that messages the bot will ignore
 // cost nothing: no goroutine, no lock, no RPC.
 func trigger(env *Envelope, self string, allowed map[string]bool) string {
 	dm := env.DataMessage
-	if dm == nil || self == "" || strings.TrimSpace(dm.Message) == "" ||
-		env.SourceUUID == self || env.Source == self || env.SourceNumber == self {
+	if dm == nil || self == "" || strings.TrimSpace(dm.Message) == "" || fromSelf(env, self) {
 		return ""
 	}
 	if dm.GroupInfo == nil || dm.GroupInfo.GroupID == "" {
-		if allowed[env.SourceUUID] || allowed[env.Source] || allowed[env.SourceNumber] {
+		if isAllowed(env, allowed) {
 			return "dm"
 		}
 		return ""
@@ -247,11 +254,16 @@ func (b *Bot) Handle(env *Envelope) {
 	// Cheap inline rejection. Before the account id is known (the first moment
 	// after connecting) we cannot judge, so we let it through to the slow path.
 	if self := b.sig.SelfID(); self != "" && trigger(env, self, b.cfg.AllowedSenders) == "" {
-		// Remember group members' names, so they resolve if mentioned later.
-		// It is cheap and bounded, and only group senders: they are members of
-		// a group the bot is in. DMs can come from anyone and are ignored.
 		if g := env.DataMessage.GroupInfo; g != nil && g.GroupID != "" {
+			// Remember group members' names, so they resolve if mentioned
+			// later. It is cheap and bounded, and only for group senders:
+			// they are members of a group the bot is in.
 			b.names.Learn(env)
+		} else if !fromSelf(env, self) && !isAllowed(env, b.cfg.AllowedSenders) {
+			// A DM from someone who may not use the bot: say so, with the id
+			// only, never the name or text.
+			logf("%s ignored because not in SIGNAL_ALLOWED_SENDERS",
+				cmp.Or(env.SourceUUID, env.Source, env.SourceNumber, "unknown sender"))
 		}
 		return
 	}

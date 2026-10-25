@@ -688,8 +688,9 @@ func TestXAIRequiresTLS13(t *testing.T) {
 	}
 }
 
-// The README promises that a message which does not address the bot is
-// ignored and never logged, not even that it arrived, even with
+// The README promises that a message which does not address the bot (not a
+// mention, a reply to it, or a DM) is ignored and never logged, not even that
+// it arrived, even with
 // LOG_MESSAGE_BODY on. Hold it to that, whichever way it is addressed to
 // someone else.
 func TestUnaddressedMessagesAreNeverLogged(t *testing.T) {
@@ -702,10 +703,9 @@ func TestUnaddressedMessagesAreNeverLogged(t *testing.T) {
 
 	other := "11111111-2222-3333-4444-555555555555"
 	msgs := map[string]string{
-		"group message to nobody":      groupPlain,
-		"typing indicator":             typing,
-		"reply to someone else":        replyToOther,
-		"DM from a sender not allowed": dm,
+		"group message to nobody": groupPlain,
+		"typing indicator":        typing,
+		"reply to someone else":   replyToOther,
 		"read receipt": `{"envelope":{"source":"` + rob + `","sourceUuid":"` + rob + `","sourceName":"Rob",` +
 			`"receiptMessage":{"when":1,"isDelivery":false,"isRead":true,"isViewed":false,"timestamps":[1]}},"account":"` + self + `"}`,
 		"group message mentioning someone else": `{"envelope":{"source":"` + rob + `","sourceUuid":"` + rob + `","sourceName":"Rob",` +
@@ -720,5 +720,53 @@ func TestUnaddressedMessagesAreNeverLogged(t *testing.T) {
 	}
 	if len(b.sem) != 0 {
 		t.Fatal("an unaddressed message took a concurrency slot, so it was processed")
+	}
+}
+
+// A DM from someone who is not in SIGNAL_ALLOWED_SENDERS is ignored, but the
+// operator is told, with the sender's id and never the name or text.
+func TestDMFromUnlistedSenderIsLoggedByIDOnly(t *testing.T) {
+	cfg := testCfg()
+	cfg.LogMessageBody = true // the text still must not appear
+	cfg.AllowedSenders = map[string]bool{"someone-else": true}
+	sig := NewSignal("x")
+	sig.selfID.Store(self)
+	b := NewBot(context.Background(), cfg, sig, nil) // nil client: any call to x.ai would panic
+	logs := captureLogs(t)
+
+	b.Handle(parse(t, dm)) // Rob, "Test DM"
+	want := rob + " ignored because not in SIGNAL_ALLOWED_SENDERS\n"
+	if logs.String() != want {
+		t.Fatalf("got %q, want %q", logs.String(), want)
+	}
+	if strings.Contains(logs.String(), "Rob") || strings.Contains(logs.String(), "Test DM") {
+		t.Fatalf("the sender's name or the text was logged: %q", logs.String())
+	}
+	if len(b.sem) != 0 || len(b.names.byID) != 0 {
+		t.Fatal("an ignored DM took a slot or was remembered")
+	}
+}
+
+func TestOnlyUnlistedDMsGetTheIgnoredLine(t *testing.T) {
+	cfg := testCfg()
+	cfg.AllowedSenders = map[string]bool{rob: true}
+	sig := NewSignal("x")
+	sig.selfID.Store(self)
+	b := NewBot(context.Background(), cfg, sig, nil)
+	logs := captureLogs(t)
+
+	// Messages the line must not appear for, though none will be answered here.
+	noAttachmentText := `{"envelope":{"source":"` + rob + `","sourceUuid":"` + rob + `","sourceName":"Rob","dataMessage":{"message":""}},"account":"` + self + `"}`
+	fromSelf := `{"envelope":{"source":"` + self + `","sourceUuid":"` + self + `","dataMessage":{"message":"note to self"}},"account":"` + self + `"}`
+	for name, m := range map[string]string{
+		"group message to nobody":                 groupPlain,
+		"typing indicator":                        typing,
+		"a DM with no text, from an allowed user": noAttachmentText,
+		"a message from the bot's own account":    fromSelf,
+	} {
+		b.Handle(parse(t, m))
+		if logs.Len() != 0 {
+			t.Fatalf("%s: unexpected log %q", name, logs.String())
+		}
 	}
 }
