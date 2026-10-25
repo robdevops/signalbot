@@ -424,8 +424,8 @@ func stripSelfTags(reply, self string) string {
 
 const readmeURL = "https://github.com/robdevops/signalbot/blob/main/README.md"
 
-// defaultIntro is used when INTRO is unset. {name} and {model} are substituted.
-const defaultIntro = "hi, I'm {name}, your open source assistant running {model}. " +
+// defaultIntro is used when INTRO is unset. {name}, {model} and {tools} are substituted.
+const defaultIntro = "hi, I'm {name}, your open source assistant running {model} (tools: {tools}). " +
 	"I respond to @mentions and replies to my messages. See " + readmeURL + " for details"
 
 // basePrompt always applies; SYSTEM_PROMPT is appended to it.
@@ -453,7 +453,11 @@ func (b *Bot) introName() string { return cmp.Or(b.selfName(), "signalbot") }
 
 // systemPrompt is the built-in prompt, plus SYSTEM_PROMPT, plus the intro.
 func (b *Bot) systemPrompt() string {
-	intro := strings.NewReplacer("{name}", safeName(b.introName()), "{model}", b.cfg.Model).Replace(b.cfg.Intro)
+	tools := "none"
+	if b.cfg.Search {
+		tools = "web search"
+	}
+	intro := strings.NewReplacer("{name}", safeName(b.introName()), "{model}", b.cfg.Model, "{tools}", tools).Replace(b.cfg.Intro)
 	p := basePrompt
 	if b.cfg.ExtraPrompt != "" {
 		p += "\n" + b.cfg.ExtraPrompt

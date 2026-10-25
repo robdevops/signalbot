@@ -16,7 +16,7 @@ type Config struct {
 	Search         bool
 	AllowedSenders map[string]bool
 	ExtraPrompt    string  // SYSTEM_PROMPT: appended to the built-in prompt
-	Intro          string  // INTRO: {name} and {model} are substituted
+	Intro          string  // INTRO: {name}, {model} and {tools} are substituted
 	PriceIn        float64 // USD per million input tokens
 	PriceCached    float64 // USD per million cached input tokens
 	PriceOut       float64 // USD per million output tokens
