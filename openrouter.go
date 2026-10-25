@@ -65,7 +65,7 @@ func parseChatCompletion(data []byte) (Completion, error) {
 		} `json:"usage"`
 	}
 	if err := json.Unmarshal(data, &r); err != nil {
-		return Completion{}, err
+		return Completion{}, fmt.Errorf("malformed response") // not err: it can quote the body
 	}
 	c := Completion{
 		InputTokens:  r.Usage.PromptTokens,
@@ -77,7 +77,7 @@ func parseChatCompletion(data []byte) (Completion, error) {
 		c.Text = strings.TrimSpace(r.Choices[0].Message.Content)
 	}
 	if c.Text == "" {
-		return c, fmt.Errorf("empty response: %s", clamp(string(data), 200))
+		return c, fmt.Errorf("empty response") // not the body: it can hold the conversation
 	}
 	return c, nil
 }

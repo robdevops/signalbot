@@ -247,6 +247,7 @@ func stripMentions(msg string, ms []Mention, self string, names *Names) string {
 // let a remote sender create unbounded goroutines, tickers or RPCs: the
 // concurrency slot is taken before anything is spawned.
 func (b *Bot) Handle(env *Envelope) {
+	defer quietRecover("reading a message")
 	if env.DataMessage == nil || b.closing.Load() {
 		return
 	}
@@ -274,6 +275,7 @@ func (b *Bot) Handle(env *Envelope) {
 	}
 	go func() {
 		defer func() { <-b.sem }()
+		defer quietRecover("answering a message")
 		b.handle(env)
 	}()
 }
@@ -350,11 +352,13 @@ func (b *Bot) keepTyping(t Target) (stop func()) {
 			}
 		}
 	}()
-	return func() { close(done) }
+	var once sync.Once
+	return func() { once.Do(func() { close(done) }) }
 }
 
 func (b *Bot) respond(req *Request) {
 	stopTyping := b.keepTyping(req.Target)
+	defer stopTyping() // also if something below panics
 	b.ensureSelfName()
 	msgs := append(b.getHistory(req.Key), ChatMsg{Role: "user", Content: req.Prompt})
 

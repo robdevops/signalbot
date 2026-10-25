@@ -179,7 +179,7 @@ func (s *Signal) serve(ctx context.Context, conn net.Conn, handle func(*Envelope
 func (s *Signal) dispatch(line []byte, handle func(*Envelope)) {
 	var m rpcMsg
 	if err := json.Unmarshal(line, &m); err != nil {
-		logf("bad JSON from signal-cli: %v", err)
+		logf("bad JSON from signal-cli (%d bytes), ignored", len(line)) // not err: it can quote the frame
 		return
 	}
 	switch {

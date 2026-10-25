@@ -10,7 +10,7 @@ A small, privacy-conscious chat bot that connects to a running [signal-cli](http
 - Short answers sized for Signal (aims for one line, never over Signal's 2000-character limit); optional web search and configurable reasoning effort
 - Short per-conversation memory so follow-up questions work. This is in-memory only, never logged or stored on disk, and forgotten after a day. Any shorter _disappearing messages_ setting is respected and the message is erased from memory
 - Shows a typing indicator (refreshed every 10s) while the bot thinks; many chats are handled at once and a slow answer never blocks others
-- The bot ignores everything not addressed to it: a message that doesn't mention it, reply to it, or arrive as a DM is passed over in silence, leaving no trace in its logs, not even a note that it arrived. When it is addressed, it logs who spoke and the token count and cost of each reply
+- The bot ignores everything not addressed to it: a message that doesn't mention it, reply to it, or arrive as a DM is passed over in silence, leaving no trace in its logs, not even a note that it arrived. When it is addressed, it logs who spoke and the token count and cost of each reply. The message body is never logged
 
 See [TECHNICAL.md](TECHNICAL.md) for how it works.
 

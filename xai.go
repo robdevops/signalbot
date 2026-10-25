@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"crypto/tls"
 	"encoding/json"
@@ -63,6 +64,30 @@ func newHTTPClient() *http.Client {
 	return &http.Client{Transport: t}
 }
 
+// apiErrorText is what an API error body says, for the log. Only its message
+// is kept: other fields can quote the request (OpenRouter's moderation
+// errors include the flagged input).
+func apiErrorText(data []byte) string {
+	var e struct {
+		Message string          `json:"message"`
+		Error   json.RawMessage `json:"error"`
+	}
+	if json.Unmarshal(data, &e) != nil {
+		return "(unreadable error body)"
+	}
+	msg := e.Message
+	var s string
+	var o struct {
+		Message string `json:"message"`
+	}
+	if json.Unmarshal(e.Error, &s) == nil && s != "" {
+		msg = s
+	} else if json.Unmarshal(e.Error, &o) == nil && o.Message != "" {
+		msg = o.Message
+	}
+	return cmp.Or(clamp(msg, 200), "(no message)")
+}
+
 // postJSON POSTs payload with a bearer key and returns the body of a 200
 // response. A network error, 429 or 5xx gets one retry; name labels errors.
 func postJSON(ctx context.Context, c *http.Client, name, url, key string, payload []byte) ([]byte, error) {
@@ -83,7 +108,7 @@ func postJSON(ctx context.Context, c *http.Client, name, url, key string, payloa
 			if resp.StatusCode == http.StatusOK {
 				return data, nil
 			}
-			lastErr = fmt.Errorf("%s status %d: %s", name, resp.StatusCode, clamp(string(data), 200))
+			lastErr = fmt.Errorf("%s status %d: %s", name, resp.StatusCode, apiErrorText(data))
 			if resp.StatusCode != 429 && resp.StatusCode < 500 {
 				return nil, lastErr
 			}
@@ -151,7 +176,7 @@ func parseOutput(data []byte) (Completion, error) {
 		} `json:"usage"`
 	}
 	if err := json.Unmarshal(data, &r); err != nil {
-		return Completion{}, err
+		return Completion{}, fmt.Errorf("malformed response") // not err: it can quote the body
 	}
 	var c Completion
 	var sb strings.Builder
@@ -173,7 +198,7 @@ func parseOutput(data []byte) (Completion, error) {
 	c.CachedTokens = r.Usage.InputTokensDetails.CachedTokens
 	c.OutputTokens = r.Usage.OutputTokens
 	if c.Text == "" {
-		return c, fmt.Errorf("empty response: %s", clamp(string(data), 200))
+		return c, fmt.Errorf("empty response") // not the body: it can hold the conversation
 	}
 	return c, nil
 }
