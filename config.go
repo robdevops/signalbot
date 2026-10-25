@@ -69,7 +69,8 @@ func splitIDs(s string) []string {
 func LoadConfig() (*Config, error) {
 	c := &Config{
 		Socket:         env("SIGNALCLI_SOCKET", ""),
-		Reasoning:      strings.ToLower(env("REASONING", "low")),
+		Search:         envBool("MODEL_SEARCH", true),
+		Reasoning:      strings.ToLower(env("REASONING", "none")),
 		AllowedSenders: map[string]bool{},
 		ExtraPrompt:    env("SYSTEM_PROMPT", ""),
 		Intro:          env("INTRO", defaultIntro),
@@ -92,11 +93,9 @@ func LoadConfig() (*Config, error) {
 	case xai != "":
 		c.Provider, c.APIKey = "x.ai", xai
 		c.Model = env("MODEL", "grok-4.3")
-		c.Search = envBool("XAI_SEARCH", true)
 	case openrouter != "":
 		c.Provider, c.APIKey = "OpenRouter", openrouter
 		c.Model = env("MODEL", "deepseek/deepseek-v4.1-flash-1017")
-		c.Search = envBool("OPENROUTER_SEARCH", false)
 	default:
 		return nil, fmt.Errorf("XAI_API_KEY or OPENROUTER_API_KEY is required")
 	}

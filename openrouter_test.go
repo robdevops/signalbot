@@ -12,26 +12,25 @@ import (
 // Exactly one of the two keys must be set; each key selects its provider.
 func TestProviderSelection(t *testing.T) {
 	for _, tc := range []struct {
-		name                         string
-		xai, openrouter, model       string
-		wantErr                      bool
-		wantProvider, wantModel      string
-		wantSearchWhenUnset          bool
-		wantSearchWhenExplicitlyTrue bool
+		name                    string
+		xai, openrouter, model  string
+		wantErr                 bool
+		wantProvider, wantModel string
+		wantSearchWhenUnset     bool
 	}{
 		{name: "neither", wantErr: true},
 		{name: "both", xai: "a", openrouter: "b", model: "x-ai/grok-4", wantErr: true},
 		{name: "xai", xai: "a", wantProvider: "x.ai", wantModel: "grok-4.3", wantSearchWhenUnset: true},
-		{name: "openrouter", openrouter: "b", wantProvider: "OpenRouter", wantModel: "deepseek/deepseek-v4.1-flash-1017"},
-		{name: "openrouter with a model", openrouter: "b", model: "x-ai/grok-4", wantProvider: "OpenRouter", wantModel: "x-ai/grok-4"},
+		{name: "openrouter", openrouter: "b", wantProvider: "OpenRouter", wantModel: "deepseek/deepseek-v4.1-flash-1017", wantSearchWhenUnset: true},
+		{name: "openrouter with a model", openrouter: "b", model: "x-ai/grok-4", wantProvider: "OpenRouter", wantModel: "x-ai/grok-4", wantSearchWhenUnset: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Setenv("SIGNALCLI_SOCKET", "/x")
 			t.Setenv("XAI_API_KEY", tc.xai)
 			t.Setenv("OPENROUTER_API_KEY", tc.openrouter)
 			t.Setenv("MODEL", tc.model)
-			t.Setenv("XAI_SEARCH", "")
-			t.Setenv("OPENROUTER_SEARCH", "")
+			t.Setenv("MODEL_SEARCH", "")
+			t.Setenv("REASONING", "")
 			c, err := LoadConfig()
 			if (err != nil) != tc.wantErr {
 				t.Fatalf("err = %v, want error: %v", err, tc.wantErr)
@@ -39,8 +38,8 @@ func TestProviderSelection(t *testing.T) {
 			if err != nil {
 				return
 			}
-			if c.Provider != tc.wantProvider || c.Model != tc.wantModel || c.Search != tc.wantSearchWhenUnset {
-				t.Fatalf("got provider %q model %q search %v", c.Provider, c.Model, c.Search)
+			if c.Provider != tc.wantProvider || c.Model != tc.wantModel || c.Search != tc.wantSearchWhenUnset || c.Reasoning != "none" {
+				t.Fatalf("got provider %q model %q search %v reasoning %q", c.Provider, c.Model, c.Search, c.Reasoning)
 			}
 		})
 	}

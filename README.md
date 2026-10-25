@@ -99,9 +99,8 @@ Add the bot's account to a group and @mention it, reply to one of its messages, 
 | `XAI_API_KEY` | one of the two keys | x.ai API key. Set this or `OPENROUTER_API_KEY`, never both: the bot refuses to start if neither or both are set |
 | `OPENROUTER_API_KEY` | one of the two keys | [OpenRouter](https://openrouter.ai) API key, used instead of x.ai |
 | `MODEL` | `grok-4.3` (x.ai), `deepseek/deepseek-v4.1-flash-1017` (OpenRouter) | Model name; OpenRouter wants `provider/model`, e.g. `x-ai/grok-4` |
-| `REASONING` | `low` | Reasoning effort (`none` to omit) |
-| `XAI_SEARCH` | `true` | Enable x.ai web search tool (`true`/`false`, `yes`/`no`, `on`/`off`, `1`/`0`) |
-| `OPENROUTER_SEARCH` | `false` | Enable OpenRouter's web search plugin, which is billed per search |
+| `REASONING` | `none` | Reasoning effort, e.g. `low`, `medium`, `high` (`none` to omit) |
+| `MODEL_SEARCH` | `true` | Let the model search the web, with x.ai's search tool or OpenRouter's web plugin; searches are billed (`true`/`false`, `yes`/`no`, `on`/`off`, `1`/`0`) |
 | `SIGNAL_DM_USER_IDS` | empty | UUIDs/numbers allowed to DM the bot, separated by commas or whitespace |
 | `SYSTEM_PROMPT` | empty | Extra instructions, appended to the built-in prompt (which keeps answers short and Signal-sized) |
 | `INTRO` | built-in sentence | Overrides the self-introduction; `{name}` and `{model}` are substituted |
