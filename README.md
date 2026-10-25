@@ -123,7 +123,10 @@ With OpenRouter, the cost logged is the amount OpenRouter reports billing. x.ai 
 - You run signal-cli from a shell instead of the systemd unit. It then uses your own group and umask, so the socket is `0755` and the `signal-cli` group cannot write to it. Start it with the right group and umask, once `/run/signal-cli` exists with that group:
 
   ```
+  # create socket directory:
   sudo install -d -o "$USER" -g signal-cli -m 0750 /run/signal-cli
+
+  # run signal-cli
   sudo -u "$USER" -g signal-cli sh -c 'umask 007 && signal-cli -o json daemon --socket /run/signal-cli/socket --no-receive-stdout'
   ```
 
