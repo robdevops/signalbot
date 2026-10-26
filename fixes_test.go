@@ -554,13 +554,15 @@ func TestCloseStopsNewReplies(t *testing.T) {
 	}
 }
 
-func TestGroupMembersNamesAreLearned(t *testing.T) {
+// A group message that is not for the bot teaches it nothing: names come from
+// signal-cli's contact list, never from messages the bot is not answering.
+func TestUnaddressedGroupMessageTeachesNothing(t *testing.T) {
 	sig := NewSignal("x")
 	sig.selfID.Store(self)
 	b := NewBot(context.Background(), testCfg(), sig, nil)
 	b.Handle(parse(t, groupPlain)) // Rob talking in the group, not to the bot
-	if got := b.names.lookup(rob).name; got != "Rob" {
-		t.Fatalf("group member's name not learned: %q", got)
+	if len(b.names.byID) != 0 {
+		t.Fatalf("a name was kept from an unaddressed message: %v", b.names.byID)
 	}
 	if len(b.sem) != 0 {
 		t.Fatal("an ignored message took a concurrency slot")

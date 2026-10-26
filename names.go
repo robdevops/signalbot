@@ -47,13 +47,19 @@ type rankedName struct {
 type Names struct {
 	mu          sync.Mutex
 	byID        map[string]rankedName
-	refreshedAt time.Time
+	refreshedAt time.Time // when a load was last attempted
+	loadedAt    time.Time // when one last succeeded
 	minRefresh  time.Duration
+	loading     sync.Mutex // held while the contact list loads, so a second caller waits for it
 }
 
 func NewNames() *Names {
 	return &Names{byID: map[string]rankedName{}, minRefresh: 15 * time.Second}
 }
+
+// maxNamesAge is how old the contact list may get before the next mention
+// reloads it: it catches renames and edits that no group event reports.
+const maxNamesAge = 24 * time.Hour
 
 // maxNames bounds the name cache: ids come from the network. A dropped name
 // is simply re-learned.
@@ -81,11 +87,33 @@ func (n *Names) Learn(env *Envelope) {
 func (n *Names) addContacts(cs []Contact) {
 	n.mu.Lock()
 	defer n.mu.Unlock()
+	n.setContacts(cs)
+}
+
+// replaceContacts swaps the whole cache for signal-cli's current list, so
+// people who left their groups are forgotten.
+func (n *Names) replaceContacts(cs []Contact) {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	n.byID = map[string]rankedName{}
+	n.setContacts(cs)
+	n.loadedAt = time.Now()
+}
+
+// setContacts records the contacts' names. Caller holds n.mu.
+func (n *Names) setContacts(cs []Contact) {
 	for _, c := range cs {
 		if name, rank := c.DisplayName(); rank > 0 {
 			n.set(name, rank, c.UUID, c.Number)
 		}
 	}
+}
+
+// untilRefreshAllowed is how long until Refresh may load the contact list.
+func (n *Names) untilRefreshAllowed() time.Duration {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	return max(0, n.minRefresh-time.Since(n.refreshedAt))
 }
 
 func (n *Names) lookup(ids ...string) rankedName {
@@ -123,18 +151,23 @@ func (n *Names) Resolve(m Mention) string {
 	return r.name
 }
 
-// needsRefresh reports whether the contact list should be (re)loaded for this mention:
-// we have never loaded it, or we have no real name for the person.
+// needsRefresh reports whether the contact list should be (re)loaded for this
+// mention: we have never loaded it, it is over a day old, or we have no real
+// name for the person.
 func (n *Names) needsRefresh(m Mention) bool {
 	n.mu.Lock()
 	never := n.refreshedAt.IsZero()
+	stale := !n.loadedAt.IsZero() && time.Since(n.loadedAt) > maxNamesAge
 	n.mu.Unlock()
-	return never || (n.lookup(m.UUID, m.Number).rank < rankSeen && realMentionName(m) == "")
+	return never || stale || (n.lookup(m.UUID, m.Number).rank < rankSeen && realMentionName(m) == "")
 }
 
 // Refresh loads signal-cli contacts, at most once per minRefresh, and reports
 // whether it tried.
 func (n *Names) Refresh(ctx context.Context, s *Signal) bool {
+	// A caller that arrives mid-load waits, and then finds the cache fresh.
+	n.loading.Lock()
+	defer n.loading.Unlock()
 	n.mu.Lock()
 	if time.Since(n.refreshedAt) < n.minRefresh {
 		n.mu.Unlock()
@@ -149,7 +182,7 @@ func (n *Names) Refresh(ctx context.Context, s *Signal) bool {
 		return true
 	}
 	logf("loaded %d contacts", len(cs))
-	n.addContacts(cs)
+	n.replaceContacts(cs)
 	return true
 }
 

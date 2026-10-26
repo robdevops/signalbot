@@ -59,6 +59,8 @@ type Bot struct {
 	ctx     context.Context
 	closing atomic.Bool // set by Shutdown: no new reply starts
 
+	refreshPending atomic.Bool // a contact reload is already scheduled
+
 	mu      sync.Mutex
 	history map[string][]ChatMsg
 	known   map[string]map[string]string // chat key -> name -> uuid shown to the model
@@ -69,7 +71,7 @@ type Bot struct {
 }
 
 func NewBot(ctx context.Context, cfg *Config, sig *Signal, ai Completer) *Bot {
-	return &Bot{
+	b := &Bot{
 		cfg: cfg, sig: sig, ai: ai, ctx: ctx,
 		sem:         make(chan struct{}, cfg.MaxConcurrency),
 		history:     map[string][]ChatMsg{},
@@ -78,6 +80,9 @@ func NewBot(ctx context.Context, cfg *Config, sig *Signal, ai Completer) *Bot {
 		dedupe:      map[string]time.Time{},
 		typingEvery: 10 * time.Second,
 	}
+	load := b.refreshSoon
+	sig.onConnect.Store(&load) // load names on startup and after every reconnect
+	return b
 }
 
 // Shutdown stops new replies starting and waits up to d for those in flight.
@@ -176,11 +181,18 @@ func Decide(env *Envelope, kind, self string, names *Names) *Request {
 		return nil
 	}
 	raw := text
-	if q := dm.Quote; q != nil && q.Text != "" && (q.AuthorUUID == self || q.Author == self) {
-		// The sender composes the quote, so it may not be what the bot said.
-		// Escape it so it cannot close the wrapper and pose as a new turn, and
-		// clamp it so it cannot flood.
-		text = "[Replying to a message attributed to you: " + strconv.Quote(clamp(q.Text, maxQuoteRunes)) + "]\n" + text
+	if q := dm.Quote; q != nil && q.Text != "" {
+		// The sender composes the quote, so it may not be what the author
+		// wrote. Escape it so it cannot close the wrapper and pose as a new
+		// turn, and clamp it so it cannot flood. A message the sender tagged
+		// the bot into is context they chose to share, whoever wrote it.
+		quoted := strconv.Quote(clamp(q.Text, maxQuoteRunes))
+		if q.AuthorUUID == self || q.Author == self {
+			text = "[Replying to a message attributed to you: " + quoted + "]\n" + text
+		} else {
+			author := cmp.Or(names.lookup(q.AuthorUUID, q.Author).name, "someone")
+			text = "[Replying to a message by " + strconv.Quote(author) + ": " + quoted + "]\n" + text
+		}
 	}
 	name := safeName(env.SourceName)
 	if target.GroupID != "" && name != "" {
@@ -251,15 +263,18 @@ func (b *Bot) Handle(env *Envelope) {
 	if env.DataMessage == nil || b.closing.Load() {
 		return
 	}
+	// A group changed (members, name or description): reload the contact list
+	// so new members are known and departed ones are forgotten.
+	if g := env.DataMessage.GroupInfo; g != nil && g.Type == "UPDATE" {
+		b.forgetKnown("g:" + g.GroupID)
+		b.refreshSoon()
+	}
 	// Cheap inline rejection. Before the account id is known (the first moment
 	// after connecting) we cannot judge, so we let it through to the slow path.
 	if self := b.sig.SelfID(); self != "" && trigger(env, self, b.cfg.AllowedSenders) == "" {
-		if g := env.DataMessage.GroupInfo; g != nil && g.GroupID != "" {
-			// Remember group members' names, so they resolve if mentioned
-			// later. It is cheap and bounded, and only for group senders:
-			// they are members of a group the bot is in.
-			b.names.Learn(env)
-		} else if !fromSelf(env, self) && !isAllowed(env, b.cfg.AllowedSenders) {
+		// A message in a group that is not for the bot is dropped untouched:
+		// nothing is read from it or kept.
+		if g := env.DataMessage.GroupInfo; (g == nil || g.GroupID == "") && !fromSelf(env, self) && !isAllowed(env, b.cfg.AllowedSenders) {
 			// A DM from someone who may not use the bot: say so, with the id
 			// only, never the name or text.
 			logf("%s ignored because not in SIGNAL_DM_USER_IDS",
@@ -326,6 +341,29 @@ func (b *Bot) duplicate(req *Request) bool {
 	}
 	b.dedupe[key] = now
 	return false
+}
+
+// forgetKnown drops the names remembered for a chat, because its members
+// changed. People still in it are remembered again by their next message.
+func (b *Bot) forgetKnown(key string) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	delete(b.known, key)
+}
+
+// refreshSoon reloads the contact list as soon as the rate limit allows. Calls
+// made while a reload is already scheduled fold into it, so a burst of group
+// changes costs one reload and at most one timer.
+func (b *Bot) refreshSoon() {
+	if b.closing.Load() || !b.refreshPending.CompareAndSwap(false, true) {
+		return
+	}
+	time.AfterFunc(b.names.untilRefreshAllowed(), func() {
+		b.refreshPending.Store(false)
+		if !b.closing.Load() {
+			b.refreshContacts()
+		}
+	})
 }
 
 // refreshContacts loads the contact list unless that was done moments ago,

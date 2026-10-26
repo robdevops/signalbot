@@ -30,6 +30,7 @@ type Quote struct {
 
 type GroupInfo struct {
 	GroupID string `json:"groupId"`
+	Type    string `json:"type"` // "UPDATE" when the group's members, name or description changed
 }
 
 type DataMessage struct {
@@ -74,6 +75,10 @@ type Signal struct {
 	conn    net.Conn
 	pending map[string]chan *rpcMsg
 	selfID  atomic.Value // string: the account's ACI, else its number
+
+	// onConnect, if set, is called after each (re)connection once the bot's
+	// account id is known. It must not block.
+	onConnect atomic.Pointer[func()]
 }
 
 func NewSignal(addr string) *Signal {
@@ -156,6 +161,9 @@ func (s *Signal) serve(ctx context.Context, conn net.Conn, handle func(*Envelope
 		}
 		s.selfID.Store(id)
 		logf("bot account %s", id)
+		if f := s.onConnect.Load(); f != nil {
+			(*f)()
+		}
 	}()
 
 	sc := bufio.NewScanner(conn)
