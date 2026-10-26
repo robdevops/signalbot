@@ -266,6 +266,7 @@ func (b *Bot) Handle(env *Envelope) {
 	// A group changed (members, name or description): reload the contact list
 	// so new members are known and departed ones are forgotten.
 	if g := env.DataMessage.GroupInfo; g != nil && g.Type == "UPDATE" {
+		b.forgetKnown("g:" + g.GroupID)
 		b.refreshSoon()
 	}
 	// Cheap inline rejection. Before the account id is known (the first moment
@@ -340,6 +341,14 @@ func (b *Bot) duplicate(req *Request) bool {
 	}
 	b.dedupe[key] = now
 	return false
+}
+
+// forgetKnown drops the names remembered for a chat, because its members
+// changed. People still in it are remembered again by their next message.
+func (b *Bot) forgetKnown(key string) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	delete(b.known, key)
 }
 
 // refreshSoon reloads the contact list as soon as the rate limit allows. Calls

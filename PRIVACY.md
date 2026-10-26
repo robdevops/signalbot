@@ -20,7 +20,7 @@ Every request asks the provider not to keep it: x.ai gets `store: false`, and Op
 - **History lives in memory only.** It is kept per chat, up to `HISTORY_TURNS` exchanges and 500 chats, for at most 24 hours, or until a shorter disappearing-messages timer runs out. A restart clears it, and the bot never writes it to disk.
 - **No swap or core dumps.** The included systemd unit and Docker command forbid both, so history cannot reach disk that way.
 - **Memory is freed, not wiped.** An expired message is dropped and Go's garbage collector reclaims its memory, but the bytes may linger until overwritten, and someone with root access to the host could read them from the running process.
-- **Names.** The bot keeps up to 5,000 display names in memory so it can show and mention people by name. It loads them from signal-cli's contact list at startup, after reconnecting, and whenever a group changes, replacing what it had, so people who leave a group are forgotten. It also keeps the name of anyone who sends it an addressed message. Only names and IDs are kept, never what anyone wrote.
+- **Names.** The bot keeps a copy of signal-cli's contact list (names and IDs) in memory, so it can show and mention people by name. It reloads the list at startup, after reconnecting, when a group changes, and at least daily when in use, replacing what it had, so people who leave a group are forgotten. It also keeps the name of anyone who sends it an addressed message. It never keeps what anyone wrote.
 
 ## What the bot logs
 
