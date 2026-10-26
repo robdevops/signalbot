@@ -31,7 +31,7 @@ The system prompt is built from three parts, in this order:
 2. `SYSTEM_PROMPT`, if set, on a new line after it. It adds to the built-in prompt and never replaces it.
 3. The introduction rule, always last: `If asked to introduce yourself, reply with exactly this text and nothing else: "…"`. The quoted text is `INTRO` with `{name}` (the bot's own Signal profile name, else `signalbot`), `{model}` (without any OpenRouter `provider/` prefix) and `{tools}` (`web search` when `MODEL_SEARCH` is on, else `none`) filled in. It is quoted so a newline or quote in it cannot escape into the rest of the prompt.
 
-The messages that follow are the chat's history (at most `HISTORY_TURNS` exchanges, none older than 24 hours), then the new message. In a group each message is prefixed with its sender's name ("Rob: …"). A quoted message is added as `[Replying to a message attributed to you: "…"]` when it is the bot's own, or as `[Replying to a message by "Dan": "…"]` when someone mentions the bot in reply to another person (`"someone"` if the author's name is unknown). Quotes are escaped and capped at 500 characters, because the sender composes them.
+The messages that follow are the chat's history (at most `HISTORY_TURNS` exchanges, none older than 24 hours), then the new message. In a group each message is prefixed with its sender's name ("Alice: …"). A quoted message is added as `[Replying to a message attributed to you: "…"]` when it is the bot's own, or as `[Replying to a message by "Bob": "…"]` when someone mentions the bot in reply to another person (`"someone"` if the author's name is unknown). Quotes are escaped and capped at 500 characters, because the sender composes them.
 
 ## What the bot needs from signal-cli
 

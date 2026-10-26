@@ -6,19 +6,19 @@ import (
 )
 
 func TestBuildMentions(t *testing.T) {
-	known := map[string]string{"Rob": "u-rob", "Rob Stevens": "u-rs", "Dkam": "u-d", "svs_fluffyegg": "u-s"}
+	known := map[string]string{"Alice": "u-alice", "Alice Smith": "u-as", "Zack": "u-d", "example_user1": "u-s"}
 	tests := []struct {
 		name, text string
 		want       []string
 	}{
 		{"none", "no mentions here", nil},
-		{"simple", "Hi @Rob!", []string{"3:4:u-rob"}},
-		{"case insensitive", "hi @rob", []string{"3:4:u-rob"}},
-		{"longest name wins", "hi @Rob Stevens, ok", []string{"3:12:u-rs"}},
-		{"word boundary", "hi @Robert", nil},
-		{"not preceded by word", "mail me@Rob", nil},
-		{"emoji counts as two UTF-16 units", "\U0001F389 @Rob!", []string{"3:4:u-rob"}},
-		{"multiple", "@Dkam and @svs_fluffyegg", []string{"0:5:u-d", "10:14:u-s"}},
+		{"simple", "Hi @Alice!", []string{"3:6:u-alice"}},
+		{"case insensitive", "hi @alice", []string{"3:6:u-alice"}},
+		{"longest name wins", "hi @Alice Smith, ok", []string{"3:12:u-as"}},
+		{"word boundary", "hi @Albert", nil},
+		{"not preceded by word", "mail me@Alice", nil},
+		{"emoji counts as two UTF-16 units", "\U0001F389 @Alice!", []string{"3:6:u-alice"}},
+		{"multiple", "@Zack and @example_user1", []string{"0:5:u-d", "10:14:u-s"}},
 		{"unknown name", "hi @Nobody", nil},
 	}
 	for _, tc := range tests {
@@ -28,17 +28,17 @@ func TestBuildMentions(t *testing.T) {
 			}
 		})
 	}
-	if got := buildMentions("@Rob", nil); got != nil {
+	if got := buildMentions("@Alice", nil); got != nil {
 		t.Fatalf("nil known: %v", got)
 	}
 }
 
 func TestDecideCollectsNamesForGroupsOnly(t *testing.T) {
 	r := decide(parse(t, groupMention), nil)
-	if r.Names["rob"] != rob {
+	if r.Names["alice"] != alice {
 		t.Fatalf("sender name missing: %v", r.Names)
 	}
-	if d := decide(parse(t, dm), map[string]bool{rob: true}); d.Names != nil {
+	if d := decide(parse(t, dm), map[string]bool{alice: true}); d.Names != nil {
 		t.Fatalf("DMs should not collect names: %v", d.Names)
 	}
 }

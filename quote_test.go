@@ -5,13 +5,13 @@ import (
 	"testing"
 )
 
-const dan = "99999999-8888-7777-6666-555555555555"
+const bob = "99999999-8888-7777-6666-555555555555"
 
 // mentionQuoting is a group message that tags the bot while replying to a
-// message written by Dan.
+// message written by Bob.
 func mentionQuoting(quoted string) string {
 	return strings.Replace(groupMention, `"groupInfo"`,
-		`"quote":{"id":1,"author":"`+dan+`","authorUuid":"`+dan+`","text":"`+quoted+`"},"groupInfo"`, 1)
+		`"quote":{"id":1,"author":"`+bob+`","authorUuid":"`+bob+`","text":"`+quoted+`"},"groupInfo"`, 1)
 }
 
 // Tagging the bot into someone else's message shares that message with the
@@ -19,9 +19,9 @@ func mentionQuoting(quoted string) string {
 func TestQuotedMessageOfSomeoneElseIsPassedAsContext(t *testing.T) {
 	env := parse(t, mentionQuoting("lunch at noon?"))
 	names := NewNames()
-	names.addContacts([]Contact{{UUID: dan, GivenName: "Dan"}})
+	names.addContacts([]Contact{{UUID: bob, GivenName: "Bob"}})
 	r := Decide(env, trigger(env, self, nil), self, names)
-	want := "Rob: [Replying to a message by \"Dan\": \"lunch at noon?\"]\nwhat is up"
+	want := "Alice: [Replying to a message by \"Bob\": \"lunch at noon?\"]\nwhat is up"
 	if r == nil || r.Prompt != want {
 		t.Fatalf("prompt = %q, want %q", r.Prompt, want)
 	}
