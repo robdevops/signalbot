@@ -19,7 +19,7 @@ The messages the bot answers, and the names in them, are sent to the AI provider
 A running [signal-cli](https://github.com/AsamK/signal-cli) daemon with your Signal account registered or linked. How you run it is up to you, but the bot needs only its socket:
 
 - The socket is at `/run/signal-cli/socket` (or set `SIGNALCLI_SOCKET`).
-- A group named `signal-cli` can write to the socket and search its directory. The bot's systemd unit joins that group (`SupplementaryGroups=signal-cli`) and Docker does too (`--group-add`). Create it with `sudo groupadd --system signal-cli`.
+- A Unix group named `signal-cli` can write to the socket and search its directory. The bot's systemd unit joins that group (`SupplementaryGroups=signal-cli`) and Docker does too (`--group-add`). Create it with `sudo groupadd --system signal-cli`.
 - signal-cli runs with `UMask=0007`, which makes the socket `0770`. The default umask gives `0755`, which locks the group out. Check with `ls -l /run/signal-cli/socket`.
 - signal-cli's data directory holds your account keys, so keep it at mode `0700` (`chmod 700 ~/.local/share/signal-cli`). The umask above makes new files in it group-accessible, so the directory's own mode is what keeps the bot out. Don't run the bot as signal-cli's user.
 
@@ -47,7 +47,7 @@ Then install the bot with systemd or with Docker.
 
 ### With systemd
 
-The bot runs as a dynamic user (`DynamicUser=yes`) in the `signal-cli` group, which is how it reaches the socket.
+The bot runs as a dynamic user (`DynamicUser=yes`) in the `signal-cli` Unix group, which is how it reaches the socket.
 
 1. Install Go 1.24+:
    ```
@@ -70,7 +70,7 @@ The bot runs as a dynamic user (`DynamicUser=yes`) in the `signal-cli` group, wh
 
 ### With Docker
 
-`--group-add` gives the container the `signal-cli` group, which is how it reaches the socket. Run it with `sudo`, because Docker reads `--env-file` as the calling user and the file is root-only. Logs go to journald where available, otherwise to Docker's rotating `local` driver; `docker logs` reads both.
+`--group-add` gives the container the `signal-cli` Unix group, which is how it reaches the socket. Run it with `sudo`, because Docker reads `--env-file` as the calling user and the file is root-only. Logs go to journald where available, otherwise to Docker's rotating `local` driver; `docker logs` reads both.
 
 ```
 sudo docker build --build-arg VERSION=$(git describe --tags --always --dirty) -t signalbot .
@@ -116,7 +116,7 @@ OpenRouter reports the cost of each reply, and the bot logs it. x.ai reports onl
 
 ## Troubleshooting
 
-**Permission denied on the socket.** Whatever connects to `/run/signal-cli/socket` must be in the `signal-cli` group, and the socket must be group-writable (`ls -l /run/signal-cli/socket` should show `srwxrwx---` and the group `signal-cli`). Common causes:
+**Permission denied on the socket.** Whatever connects to `/run/signal-cli/socket` must be in the `signal-cli` Unix group, and the socket must be group-writable (`ls -l /run/signal-cli/socket` should show `srwxrwx---` and the group `signal-cli`). Common causes:
 
 - A service started before the group existed. Restart it: `sudo systemctl restart signal-cli signalbot`.
 - You added yourself to the group (`sudo usermod -aG signal-cli "$USER"`) to test the socket with `socat`. Your open shell keeps its old groups until you log out and back in, or run `newgrp signal-cli`.
