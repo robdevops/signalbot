@@ -16,9 +16,9 @@ import (
 )
 
 const (
-	self  = "dd4b961d-f4ee-4850-bf52-f80fce25631a"
-	rob   = "8a68caf9-b6b8-4c9d-a396-ce8edd6e23ad"
-	group = "082TFdVusmUHNcQk9PV4axEj/MbSMNWobsVdNkcG4pU="
+	self  = "c7e2a9d4-1b3f-4a86-8e05-6f9d2b4a7c31"
+	alice = "3b1f6c2e-7a4d-4e58-9c13-0d2a5b8e71f4"
+	group = "dGVzdC1ncm91cC1pZC1maXh0dXJlLTAwMDAwMDAwMDA="
 )
 
 func parse(t *testing.T, s string) *Envelope {
@@ -31,15 +31,15 @@ func parse(t *testing.T, s string) *Envelope {
 }
 
 const (
-	typing       = `{"envelope":{"source":"` + rob + `","sourceUuid":"` + rob + `","sourceName":"Rob","timestamp":1,"typingMessage":{"action":"STARTED","timestamp":1,"groupId":"` + group + `"}},"account":"` + self + `"}`
-	groupPlain   = `{"envelope":{"source":"` + rob + `","sourceUuid":"` + rob + `","sourceName":"Rob","dataMessage":{"message":"Group test","groupInfo":{"groupId":"` + group + `","type":"DELIVER"}}},"account":"` + self + `"}`
-	groupMention = `{"envelope":{"source":"` + rob + `","sourceUuid":"` + rob + `","sourceName":"Rob","dataMessage":{"message":"￼ what is up","mentions":[{"name":"` + self + `","number":null,"uuid":"` + self + `","start":0,"length":1}],"groupInfo":{"groupId":"` + group + `"}}},"account":"` + self + `"}`
-	groupReply   = `{"envelope":{"source":"` + rob + `","sourceUuid":"` + rob + `","sourceName":"Rob","dataMessage":{"message":"Are you still there","quote":{"id":1,"author":"` + self + `","authorNumber":null,"authorUuid":"` + self + `","text":"oil around 78"},"groupInfo":{"groupId":"` + group + `"}}},"account":"` + self + `"}`
-	dm           = `{"envelope":{"source":"` + rob + `","sourceUuid":"` + rob + `","sourceName":"Rob","dataMessage":{"message":"Test DM"}},"account":"` + self + `"}`
+	typing       = `{"envelope":{"source":"` + alice + `","sourceUuid":"` + alice + `","sourceName":"Alice","timestamp":1,"typingMessage":{"action":"STARTED","timestamp":1,"groupId":"` + group + `"}},"account":"` + self + `"}`
+	groupPlain   = `{"envelope":{"source":"` + alice + `","sourceUuid":"` + alice + `","sourceName":"Alice","dataMessage":{"message":"Group test","groupInfo":{"groupId":"` + group + `","type":"DELIVER"}}},"account":"` + self + `"}`
+	groupMention = `{"envelope":{"source":"` + alice + `","sourceUuid":"` + alice + `","sourceName":"Alice","dataMessage":{"message":"￼ what is up","mentions":[{"name":"` + self + `","number":null,"uuid":"` + self + `","start":0,"length":1}],"groupInfo":{"groupId":"` + group + `"}}},"account":"` + self + `"}`
+	groupReply   = `{"envelope":{"source":"` + alice + `","sourceUuid":"` + alice + `","sourceName":"Alice","dataMessage":{"message":"Are you still there","quote":{"id":1,"author":"` + self + `","authorNumber":null,"authorUuid":"` + self + `","text":"oil around 78"},"groupInfo":{"groupId":"` + group + `"}}},"account":"` + self + `"}`
+	dm           = `{"envelope":{"source":"` + alice + `","sourceUuid":"` + alice + `","sourceName":"Alice","dataMessage":{"message":"Test DM"}},"account":"` + self + `"}`
 )
 
 func TestDecide(t *testing.T) {
-	allowed := map[string]bool{rob: true}
+	allowed := map[string]bool{alice: true}
 	tests := []struct {
 		name    string
 		in      string
@@ -50,7 +50,7 @@ func TestDecide(t *testing.T) {
 	}{
 		{"typing ignored", typing, allowed, "", "", false},
 		{"plain group msg ignored", groupPlain, allowed, "", "", false},
-		{"mention", groupMention, nil, "Rob: what is up", "mention", true},
+		{"mention", groupMention, nil, "Alice: what is up", "mention", true},
 		{"reply to bot", groupReply, nil, "Are you still there", "reply", true},
 		{"reply to someone else", replyToOther, nil, "", "", false},
 		{"allowed DM", dm, allowed, "Test DM", "dm", false},
@@ -71,7 +71,7 @@ func TestDecide(t *testing.T) {
 			if r.Kind != tc.kind {
 				t.Fatalf("kind = %q, want %q", r.Kind, tc.kind)
 			}
-			if tc.group && r.Target.GroupID != group || !tc.group && r.Target.User != rob {
+			if tc.group && r.Target.GroupID != group || !tc.group && r.Target.User != alice {
 				t.Fatalf("wrong target %+v", r.Target)
 			}
 		})
@@ -208,7 +208,7 @@ func logged(t *testing.T, timestamps bool, f func()) string {
 
 func TestMessageLogLine(t *testing.T) {
 	r := decide(parse(t, strings.Replace(groupMention, "what is up", "what\\nis up", 1)), nil)
-	if got, want := r.logLine(), "mention from Rob("+rob+")"; got != want {
+	if got, want := r.logLine(), "mention from Alice("+alice+")"; got != want {
 		t.Fatalf("got %q, want %q", got, want)
 	}
 	// Nothing logged can forge extra log records.
@@ -222,11 +222,11 @@ func TestMessageLogLine(t *testing.T) {
 func TestReplyLogLine(t *testing.T) {
 	c := Completion{InputTokens: 1203, CachedTokens: 128, OutputTokens: 312}
 	cfg := &Config{PriceIn: 1.25, PriceCached: 0.20, PriceOut: 2.50}
-	got := replyLogLine("Rob", 3310*time.Millisecond, c, cfg)
-	if want := "reply Rob 3.3s, tokens in/out: 1203/312 (10% cached), $0.002"; got != want {
+	got := replyLogLine("Alice", 3310*time.Millisecond, c, cfg)
+	if want := "reply Alice 3.3s, tokens in/out: 1203/312 (10% cached), $0.002"; got != want {
 		t.Fatalf("got  %q\nwant %q", got, want)
 	}
-	if got := replyLogLine("Rob", time.Second, Completion{}, cfg); !strings.Contains(got, "(0% cached)") {
+	if got := replyLogLine("Alice", time.Second, Completion{}, cfg); !strings.Contains(got, "(0% cached)") {
 		t.Fatalf("no input tokens: %q", got)
 	}
 }

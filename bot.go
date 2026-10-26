@@ -125,7 +125,7 @@ func (r *Request) logLine() string {
 }
 
 // replyLogLine is the one-line summary of a model reply, e.g.
-// "reply Rob 3.3s, tokens in/out: 1203/312 (10% cached), $0.002".
+// "reply Alice 3.3s, tokens in/out: 1203/312 (10% cached), $0.002".
 func replyLogLine(name string, took time.Duration, c Completion, cfg *Config) string {
 	cached := 100 * min(c.CachedTokens, c.InputTokens) / max(c.InputTokens, 1)
 	return fmt.Sprintf("reply %s %.1fs, tokens in/out: %d/%d (%d%% cached), $%.3f",
@@ -538,7 +538,7 @@ func (b *Bot) remember(req *Request) {
 // so anyone can claim a member's name: a name claimed by two different people
 // is ambiguous, marked "", and never linked.
 func bindName(m map[string]string, n, uuid string) {
-	n = strings.ToLower(n) // mentions match case-insensitively, so "rob" claims "Rob"
+	n = strings.ToLower(n) // mentions match case-insensitively, so "alice" claims "Alice"
 	if old, ok := m[n]; !ok {
 		m[n] = uuid
 	} else if old != uuid {

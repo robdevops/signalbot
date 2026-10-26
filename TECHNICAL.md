@@ -31,19 +31,19 @@ The system prompt is built from three parts, in this order:
 2. `SYSTEM_PROMPT`, if set, on a new line after it. It adds to the built-in prompt and never replaces it.
 3. The introduction rule, always last: `If asked to introduce yourself, reply with exactly this text and nothing else: "…"`. The quoted text is `INTRO` with `{name}` (the bot's own Signal profile name, else `signalbot`), `{model}` (without any OpenRouter `provider/` prefix) and `{tools}` (`web search` when `MODEL_SEARCH` is on, else `none`) filled in. It is quoted so a newline or quote in it cannot escape into the rest of the prompt.
 
-The messages that follow are the chat's history (at most `HISTORY_TURNS` exchanges, none older than 24 hours), then the new message. In a group each message is prefixed with its sender's name ("Rob: …"). A quoted message is added as `[Replying to a message attributed to you: "…"]` when it is the bot's own, or as `[Replying to a message by "Dan": "…"]` when someone mentions the bot in reply to another person (`"someone"` if the author's name is unknown). Quotes are escaped and capped at 500 characters, because the sender composes them.
+The messages that follow are the chat's history (at most `HISTORY_TURNS` exchanges, none older than 24 hours), then the new message. In a group each message is prefixed with its sender's name ("Alice: …"). A quoted message is added as `[Replying to a message attributed to you: "…"]` when it is the bot's own, or as `[Replying to a message by "Bob": "…"]` when someone mentions the bot in reply to another person (`"someone"` if the author's name is unknown). Quotes are escaped and capped at 500 characters, because the sender composes them.
 
 ## What the bot needs from signal-cli
 
 Only the socket. The bot speaks JSON-RPC to it and never touches signal-cli's data directory, where the account keys live.
 
-The socket's permissions decide who may connect, and the bot is let in through a group, not a user id, so a transient `DynamicUser` works:
+The socket's permissions decide who may connect, and the bot is let in through a Unix group, not a user id, so a transient `DynamicUser` works:
 
 - `signalbot.service` runs with `DynamicUser=yes` and `SupplementaryGroups=signal-cli`, so its throwaway user is in the group.
 - Docker's `--group-add` puts the container's user in the same group. The container mounts only the socket's directory, so the data directory isn't there to read.
 - signal-cli should create the socket group-writable (`0770`, from `UMask=0007`) in a directory the group can search (`0750`). A default umask gives `0755` and locks out even the group.
 
-Everyone outside the group gets "Permission denied". The group is the only access control: anyone in it can drive the Signal account, so keep it to the bot.
+Everyone outside the Unix group gets "Permission denied". The group is the only access control: anyone in it can drive the Signal account, so keep it to the bot.
 
 The bot's keys stay out of reach in two ways. It runs as a different user from signal-cli, and the data directory is mode `0700`, so it can't be searched. That mode matters: `UMask=0007` makes files signal-cli creates group-accessible, and the bot is in that group, so with a `0755` directory it could read them (tested). Also, `ProtectHome=yes` hides `/home`, where signal-cli keeps its data by default (`~/.local/share/signal-cli`). Data kept elsewhere, such as `/var/lib/signal-cli`, relies on the directory mode alone; add it to `InaccessiblePaths=` in the unit to hide it outright.
 
