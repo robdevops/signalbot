@@ -20,20 +20,21 @@ Every request asks the provider not to keep it: x.ai gets `store: false`, and Op
 - **History lives in memory only.** It is kept per chat, up to `HISTORY_TURNS` exchanges and 500 chats, for at most 24 hours, or until a shorter disappearing-messages timer runs out. A restart clears it, and the bot never writes it to disk.
 - **No swap or core dumps.** The included systemd unit and Docker command forbid both, so history cannot reach disk that way.
 - **Memory is freed, not wiped.** An expired message is dropped and Go's garbage collector reclaims its memory, but the bytes may linger until overwritten, and someone with root access to the host could read them from the running process.
-- **Names.** The bot remembers up to 5,000 display names so it can show and mention people by name. It learns them from signal-cli's contact list and from group members who write in a group the bot is in, even when they are not talking to the bot. Only the name and ID are kept, never what they wrote, and only until a restart or until the cache is full and older ones are pushed out.
+- **Names.** The bot keeps up to 5,000 display names in memory so it can show and mention people by name. It loads them from signal-cli's contact list at startup, after reconnecting, and whenever a group changes, replacing what it had, so people who leave a group are forgotten. It also keeps the name of anyone who sends it an addressed message. Only names and IDs are kept, never what anyone wrote.
 
 ## What the bot logs
 
 - **A message addressed to the bot:** a line with the kind (mention, reply or DM) and the sender's name and ID; after the answer, a line with the sender's name, time taken, tokens used and cost.
 - **Never the text of any message,** nor errors that quote one.
 - **A message not addressed to the bot:** nothing, not even a note that it arrived.
+- **A contact list load:** a line with the number of contacts, at startup, after reconnecting and when a group changes.
 - **A DM from someone not in `SIGNAL_DM_USER_IDS`:** their ID only, never a name or text.
 
 Logs go to the journal or Docker's log driver and are kept as long as your settings keep them, names and IDs included.
 
 ## What the bot can see
 
-In a group, signal-cli passes every message to the bot, which checks each one for whether it is addressed to it. Unaddressed messages are dropped on the spot; apart from the sender's name and ID (see above), nothing about them is kept. In DMs, the bot answers only the IDs listed in `SIGNAL_DM_USER_IDS`.
+In a group, signal-cli passes every message to the bot, which checks each one for whether it is addressed to it. Unaddressed messages are dropped on the spot, and nothing about them is kept. In DMs, the bot answers only the IDs listed in `SIGNAL_DM_USER_IDS`.
 
 ## What this does not cover
 

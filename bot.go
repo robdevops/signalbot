@@ -59,6 +59,8 @@ type Bot struct {
 	ctx     context.Context
 	closing atomic.Bool // set by Shutdown: no new reply starts
 
+	refreshPending atomic.Bool // a contact reload is already scheduled
+
 	mu      sync.Mutex
 	history map[string][]ChatMsg
 	known   map[string]map[string]string // chat key -> name -> uuid shown to the model
@@ -69,7 +71,7 @@ type Bot struct {
 }
 
 func NewBot(ctx context.Context, cfg *Config, sig *Signal, ai Completer) *Bot {
-	return &Bot{
+	b := &Bot{
 		cfg: cfg, sig: sig, ai: ai, ctx: ctx,
 		sem:         make(chan struct{}, cfg.MaxConcurrency),
 		history:     map[string][]ChatMsg{},
@@ -78,6 +80,9 @@ func NewBot(ctx context.Context, cfg *Config, sig *Signal, ai Completer) *Bot {
 		dedupe:      map[string]time.Time{},
 		typingEvery: 10 * time.Second,
 	}
+	load := b.refreshSoon
+	sig.onConnect.Store(&load) // load names on startup and after every reconnect
+	return b
 }
 
 // Shutdown stops new replies starting and waits up to d for those in flight.
@@ -258,15 +263,17 @@ func (b *Bot) Handle(env *Envelope) {
 	if env.DataMessage == nil || b.closing.Load() {
 		return
 	}
+	// A group changed (members, name or description): reload the contact list
+	// so new members are known and departed ones are forgotten.
+	if g := env.DataMessage.GroupInfo; g != nil && g.Type == "UPDATE" {
+		b.refreshSoon()
+	}
 	// Cheap inline rejection. Before the account id is known (the first moment
 	// after connecting) we cannot judge, so we let it through to the slow path.
 	if self := b.sig.SelfID(); self != "" && trigger(env, self, b.cfg.AllowedSenders) == "" {
-		if g := env.DataMessage.GroupInfo; g != nil && g.GroupID != "" {
-			// Remember group members' names, so they resolve if mentioned
-			// later. It is cheap and bounded, and only for group senders:
-			// they are members of a group the bot is in.
-			b.names.Learn(env)
-		} else if !fromSelf(env, self) && !isAllowed(env, b.cfg.AllowedSenders) {
+		// A message in a group that is not for the bot is dropped untouched:
+		// nothing is read from it or kept.
+		if g := env.DataMessage.GroupInfo; (g == nil || g.GroupID == "") && !fromSelf(env, self) && !isAllowed(env, b.cfg.AllowedSenders) {
 			// A DM from someone who may not use the bot: say so, with the id
 			// only, never the name or text.
 			logf("%s ignored because not in SIGNAL_DM_USER_IDS",
@@ -333,6 +340,21 @@ func (b *Bot) duplicate(req *Request) bool {
 	}
 	b.dedupe[key] = now
 	return false
+}
+
+// refreshSoon reloads the contact list as soon as the rate limit allows. Calls
+// made while a reload is already scheduled fold into it, so a burst of group
+// changes costs one reload and at most one timer.
+func (b *Bot) refreshSoon() {
+	if b.closing.Load() || !b.refreshPending.CompareAndSwap(false, true) {
+		return
+	}
+	time.AfterFunc(b.names.untilRefreshAllowed(), func() {
+		b.refreshPending.Store(false)
+		if !b.closing.Load() {
+			b.refreshContacts()
+		}
+	})
 }
 
 // refreshContacts loads the contact list unless that was done moments ago,
