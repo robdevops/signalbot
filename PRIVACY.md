@@ -37,7 +37,7 @@ In a group, signal-cli passes every message to the bot, which checks each one fo
 
 ## What this does not cover
 
-- **The provider.** Once a message is sent, the provider's retention, logging and sub-processors apply.
+- **The provider.** Once a message is sent, the model provider's retention, logging and sub-processors apply.
 - **End-to-end encryption.** Signal's encryption protects messages between people. The bot is a participant: signal-cli decrypts what it receives, and what it answers goes to the provider. People in a chat should know the bot is there.
 - **signal-cli's own data.** The account keys and whatever else signal-cli stores sit in its data directory, which the bot does not read. Keep it private (see the [README](README.md#prerequisites)).
 - **Anyone in the `signal-cli` group** can use the socket to drive the Signal account, so keep the group to the bot.
