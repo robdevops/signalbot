@@ -25,7 +25,7 @@ A running [signal-cli](https://github.com/AsamK/signal-cli) daemon with your Sig
 
 [`examples/signal-cli.service`](examples/signal-cli.service) is an example unit that does this. Edit `User=` and the path in `ExecStart`, then copy it to `/etc/systemd/system/`, and run `sudo systemctl daemon-reload` and `sudo systemctl enable --now signal-cli`.
 
-To use TCP instead, run signal-cli with `--tcp 127.0.0.1:7583` and set `SIGNALCLI_SOCKET=127.0.0.1:7583`. Any local user can then connect and control or spy on the Signal account (PRIVACY RISK).
+To use TCP instead, run signal-cli with `--tcp 127.0.0.1:7583` and set `SIGNALCLI_SOCKET=127.0.0.1:7583`. But any local user can then connect and control or spy on the Signal account (PRIVACY RISK).
 
 ## Install
 
