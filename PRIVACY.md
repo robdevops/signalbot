@@ -4,16 +4,16 @@ What happens to your messages when this bot is in a chat. For how the bot is bui
 
 ## What leaves your machine
 
-When the bot answers a message, it sends this to the AI provider you configured ([OpenRouter](https://openrouter.ai) or [x.ai](https://x.ai)):
+When the bot answers a message, it sends this to [OpenRouter](https://openrouter.ai), which passes it to the model's provider:
 
 - its instructions (the built-in prompt, plus `SYSTEM_PROMPT` and `INTRO`);
 - the earlier messages in this chat that were addressed to the bot, with the bot's replies: at most `HISTORY_TURNS` exchanges, none older than a day. Other conversation in the group is never included, apart from a message quoted as described below;
 - the new message, with the display name of whoever sent it (in groups) and of anyone it @mentions;
 - the quoted text, when someone replies to one of the bot's messages, or mentions the bot in reply to someone else.
 
-With web search on (`MODEL_SEARCH`), the model decides whether to search and writes the query itself. The query can contain anything the model was sent (see above), such as a name or a phrase from a message, and goes to the provider's search service.
+With web search on (`MODEL_SEARCH`), the model decides whether to search and writes the query itself. The query can contain anything the model was sent (see above), such as a name or a phrase from a message, and goes to the search service OpenRouter uses.
 
-Every request asks the provider not to keep it: x.ai gets `store: false`, and OpenRouter is told to use only providers that do not collect data (`data_collection: deny`). These are requests the bot cannot check or enforce, so read the provider's own policy.
+Every request tells OpenRouter to use only model providers that do not collect data (`data_collection: deny`). That is a request the bot cannot check or enforce, so read OpenRouter's policy and the model provider's.
 
 ## What the bot keeps
 

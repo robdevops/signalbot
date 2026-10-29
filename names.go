@@ -84,29 +84,18 @@ func (n *Names) Learn(env *Envelope) {
 	}
 }
 
-func (n *Names) addContacts(cs []Contact) {
-	n.mu.Lock()
-	defer n.mu.Unlock()
-	n.setContacts(cs)
-}
-
 // replaceContacts swaps the whole cache for signal-cli's current list, so
 // people who left their groups are forgotten.
 func (n *Names) replaceContacts(cs []Contact) {
 	n.mu.Lock()
 	defer n.mu.Unlock()
 	n.byID = map[string]rankedName{}
-	n.setContacts(cs)
-	n.loadedAt = time.Now()
-}
-
-// setContacts records the contacts' names. Caller holds n.mu.
-func (n *Names) setContacts(cs []Contact) {
 	for _, c := range cs {
 		if name, rank := c.DisplayName(); rank > 0 {
 			n.set(name, rank, c.UUID, c.Number)
 		}
 	}
+	n.loadedAt = time.Now()
 }
 
 // untilRefreshAllowed is how long until Refresh may load the contact list.

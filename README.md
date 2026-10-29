@@ -1,6 +1,6 @@
 # signalbot
 
-A small, [privacy-conscious](PRIVACY.md) chat bot that connects to a running [signal-cli](https://github.com/AsamK/signal-cli) daemon over its socket and answers using a model from [OpenRouter](https://openrouter.ai) or [x.ai](https://x.ai).
+A small, [privacy-conscious](PRIVACY.md) chat bot that connects to a running [signal-cli](https://github.com/AsamK/signal-cli) daemon over its socket and answers using a model from [OpenRouter](https://openrouter.ai).
 
 ## Features
 
@@ -12,7 +12,7 @@ A small, [privacy-conscious](PRIVACY.md) chat bot that connects to a running [si
 - Shows a typing indicator (refreshed every 10s) while the bot thinks; chats run concurrently, so a slow answer never blocks the rest
 - The bot ignores everything not addressed to it: a message that doesn't mention it, reply to it, or arrive as a DM is passed over. It logs the tokens used and cost of each reply
 
-The messages the bot answers, and the names in them, are sent to the AI provider you configure. See [TECHNICAL.md](TECHNICAL.md) and [PRIVACY.md](PRIVACY.md) for details on how it works.
+The messages the bot answers, and the names in them, are sent to OpenRouter and on to the model's provider. See [TECHNICAL.md](TECHNICAL.md) and [PRIVACY.md](PRIVACY.md) for details on how it works.
 
 ## Prerequisites
 
@@ -36,7 +36,7 @@ git clone https://github.com/robdevops/signalbot.git
 cd signalbot
 ```
 
-Create the config. The file holds your API key, so it is root-only; edit it, setting one API key (`OPENROUTER_API_KEY` or `XAI_API_KEY`) and `SIGNAL_DM_USER_IDS`:
+Create the config. The file holds your API key, so it is root-only; edit it, setting `OPENROUTER_API_KEY` and `SIGNAL_DM_USER_IDS`:
 
 ```
 sudo install -m 660 .env.example /etc/signalbot.env
@@ -96,23 +96,19 @@ Add the bot's account to a group and @mention it, reply to one of its messages, 
 | Variable | Default | Description |
 |---|---|---|
 | `SIGNALCLI_SOCKET` | required | Unix socket path, or `host:port` for TCP |
-| `OPENROUTER_API_KEY` | one of the two keys | [OpenRouter](https://openrouter.ai) API key. Set this or `XAI_API_KEY`, never both: the bot won't start with neither or both |
-| `XAI_API_KEY` | one of the two keys | [x.ai](https://x.ai) API key, to use x.ai directly |
-| `MODEL` | `deepseek/deepseek-v4.1-flash-1017` (OpenRouter), `grok-4.3` (x.ai) | Model name; OpenRouter needs `provider/model`, e.g. `x-ai/grok-4` |
+| `OPENROUTER_API_KEY` | required | [OpenRouter](https://openrouter.ai) API key |
+| `MODEL` | `deepseek/deepseek-v4.1-flash-1017` | OpenRouter model name, as `provider/model` |
 | `REASONING` | `low` | Reasoning effort, e.g. `low`, `medium`, `high` (`none` to omit) |
-| `MODEL_SEARCH` | `true` | Lets the model search the web when it decides to (OpenRouter's web search tool or x.ai's); searches are billed. Accepts `true`/`false`, `yes`/`no`, `on`/`off`, `1`/`0` |
+| `MODEL_SEARCH` | `true` | Lets the model search the web (OpenRouter's web search tool) when it decides to; searches are billed. Accepts `true`/`false`, `yes`/`no`, `on`/`off`, `1`/`0` |
 | `SIGNAL_DM_USER_IDS` | empty | UUIDs/numbers allowed to DM the bot, separated by commas or whitespace |
 | `SYSTEM_PROMPT` | empty | Extra instructions, appended to the built-in prompt (which keeps answers short and Signal-sized) |
 | `INTRO` | built-in sentence | Overrides the self-introduction; `{name}`, `{model}` (without any OpenRouter `provider/` prefix) and `{tools}` (`web search`, or `none`) are substituted |
-| `XAI_PRICE_IN` | `1.25` | x.ai only: USD per million input tokens, for the cost estimate |
-| `XAI_PRICE_CACHED` | `0.20` | x.ai only: USD per million cached input tokens, for the cost estimate |
-| `XAI_PRICE_OUT` | `2.50` | x.ai only: USD per million output tokens, for the cost estimate |
 | `MAX_CONCURRENCY` | `32` | Conversations in flight at once; messages beyond this are dropped |
 | `HISTORY_TURNS` | `10` | Exchanges remembered per chat |
 
 The default `INTRO` is: `hi, I'm {name}, your open source assistant running {model} (tools: {tools}). I respond to @mentions and replies to my messages. See https://github.com/robdevops/signalbot/blob/main/README.md for details.`
 
-OpenRouter reports the cost of each reply, and the bot logs it. x.ai reports only token counts, so the bot estimates the cost from the `XAI_PRICE_*` variables, whose defaults are xAI's published grok-4.3 rates; cached input is billed at the cached rate, and web searches add $5 per 1,000. Long-prompt pricing tiers are not modelled, so check [xAI's pricing](https://docs.x.ai/docs/models) and set the variables for other models.
+The cost logged with each reply is the amount OpenRouter reports billing for it.
 
 ## Troubleshooting
 
