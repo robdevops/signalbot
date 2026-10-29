@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"log"
 	"strings"
 	"sync"
 	"testing"
@@ -30,10 +29,7 @@ func (s *syncBuf) String() string {
 func captureLogsSafely(t *testing.T) *syncBuf {
 	t.Helper()
 	buf := &syncBuf{}
-	w, flags := log.Writer(), log.Flags()
-	log.SetOutput(buf)
-	log.SetFlags(0)
-	t.Cleanup(func() { log.SetOutput(w); log.SetFlags(flags) })
+	redirectLogs(t, buf, buf)
 	return buf
 }
 

@@ -31,6 +31,7 @@ func main() {
 	if st, err := os.Stdout.Stat(); err != nil || st.Mode()&os.ModeCharDevice == 0 {
 		log.SetFlags(0) // journald and Docker add their own timestamps
 	}
+	errLog.SetFlags(log.Flags())
 	toJournal.Store(stdoutIsJournal())
 	infof("signalbot %s starting", buildVersion())
 	cfg, err := LoadConfig()

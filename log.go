@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"log"
+	"os"
 	"strings"
 	"sync/atomic"
 )
@@ -24,6 +25,11 @@ var (
 )
 
 func init() { maxLevel.Store(int32(levelInfo)) }
+
+// errLog takes errors and warnings when journald is not reading the "<N>"
+// prefix. They go to stderr, which Docker's journald driver records at
+// priority 3 (err) and stdout at 6 (info), so journalctl -p can pick them out.
+var errLog = log.New(os.Stderr, "", log.LstdFlags)
 
 // parseLevel reads LOG_LEVEL: debug, info (the default), warn or error.
 func parseLevel(s string) (level, bool) {
@@ -51,22 +57,25 @@ func warnf(format string, args ...any)  { logAt(levelWarn, format, args...) }
 func infof(format string, args ...any)  { logAt(levelInfo, format, args...) }
 func debugf(format string, args ...any) { logAt(levelDebug, format, args...) }
 
-// logAt writes one line through the standard logger, which main points at
-// stdout. Newlines are escaped, so no value (an error body, a display name)
-// can start a forged line. Under systemd the line starts with its priority,
-// "<3>" for an error, which journald turns into the entry's priority and
-// journalctl into its colour; elsewhere a word such as "error: " says it.
+// logAt writes one line. Newlines are escaped, so no value (an error body, a
+// display name) can start a forged line. Under systemd every line goes to
+// stdout and starts with its priority, "<3>" for an error, which journald
+// turns into the entry's priority and journalctl into its colour. Elsewhere
+// a word such as "error: " says the level, and errors and warnings go to
+// stderr, the rest to stdout.
 func logAt(l level, format string, args ...any) {
 	if int32(l) > maxLevel.Load() {
 		return
 	}
 	line := logEscaper.Replace(fmt.Sprintf(format, args...))
-	if toJournal.Load() {
-		line = fmt.Sprintf("<%d>%s", l, line)
-	} else {
-		line = levelWord[l] + line
+	switch {
+	case toJournal.Load():
+		log.Printf("<%d>%s", l, line)
+	case l <= levelWarn:
+		errLog.Print(levelWord[l] + line)
+	default:
+		log.Print(levelWord[l] + line)
 	}
-	log.Print(line)
 }
 
 var logEscaper = strings.NewReplacer("\n", `\n`, "\r", `\r`)
