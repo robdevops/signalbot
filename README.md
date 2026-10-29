@@ -86,7 +86,10 @@ Read the logs:
 
 ```
 docker logs -f signalbot
+journalctl CONTAINER_NAME=signalbot -p err   # warnings and errors only, where Docker logs to journald
 ```
+
+Docker's journald driver records stderr at priority 3 (err) and stdout at 6 (info), so warnings and errors, which the bot writes to stderr, both show as errors there.
 
 ### Then
 

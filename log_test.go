@@ -86,3 +86,29 @@ func TestLogLevelConfig(t *testing.T) {
 		t.Error("an unknown LOG_LEVEL must be a config error")
 	}
 }
+
+// Without journald reading priorities, errors and warnings go to stderr and
+// the rest to stdout, so Docker's journald driver can tell them apart.
+func TestStreamsSplitWithoutJournal(t *testing.T) {
+	withLogMode(t, false, levelDebug)
+	var out, errOut strings.Builder
+	redirectLogs(t, &out, &errOut)
+	logAll()
+	if got, want := errOut.String(), "error: e\nwarning: w\n"; got != want {
+		t.Errorf("stderr: got %q, want %q", got, want)
+	}
+	if got, want := out.String(), "i\ndebug: d\n"; got != want {
+		t.Errorf("stdout: got %q, want %q", got, want)
+	}
+}
+
+// Under systemd everything goes to stdout: the prefix carries the priority.
+func TestJournalUsesStdoutOnly(t *testing.T) {
+	withLogMode(t, true, levelDebug)
+	var out, errOut strings.Builder
+	redirectLogs(t, &out, &errOut)
+	logAll()
+	if errOut.Len() != 0 || out.String() != "<3>e\n<4>w\n<6>i\n<7>d\n" {
+		t.Fatalf("stdout %q, stderr %q", out.String(), errOut.String())
+	}
+}
