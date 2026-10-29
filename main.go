@@ -31,12 +31,14 @@ func main() {
 	if st, err := os.Stdout.Stat(); err != nil || st.Mode()&os.ModeCharDevice == 0 {
 		log.SetFlags(0) // journald and Docker add their own timestamps
 	}
-	logf("signalbot %s starting", buildVersion())
+	toJournal.Store(stdoutIsJournal())
+	infof("signalbot %s starting", buildVersion())
 	cfg, err := LoadConfig()
 	if err != nil {
-		logf("config error: %v", err)
+		errorf("config error: %v", err)
 		os.Exit(1)
 	}
+	setLogLevel(cfg.LogLevel)
 	sigCtx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	// The connection outlives the shutdown signal, so replies already being
@@ -46,16 +48,15 @@ func main() {
 
 	sig := NewSignal(cfg.Socket)
 	bot := NewBot(connCtx, cfg, sig, NewOpenRouter(cfg))
-	logf("model %s, reasoning %s, search %v, %d allowed senders",
-		cfg.Model, cfg.Reasoning, cfg.Search, len(cfg.AllowedSenders))
+	infof("model %s, reasoning %s, search %v", cfg.Model, cfg.Reasoning, cfg.Search)
 
 	go func() {
 		<-sigCtx.Done()
 		stop() // a second signal now kills the process immediately
-		logf("shutting down: finishing replies in flight")
+		infof("shutting down: finishing replies in flight")
 		bot.Shutdown(8 * time.Second) // under Docker's default 10s stop timeout
 		closeConn()
 	}()
 	sig.Run(connCtx, bot.Handle)
-	logf("stopped")
+	infof("stopped")
 }

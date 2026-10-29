@@ -195,7 +195,7 @@ func receive(envelope string) string {
 
 var replyToOther = strings.NewReplacer(`"author":"`+self+`"`, `"author":"x"`, `"authorUuid":"`+self+`"`, `"authorUuid":"x"`).Replace(groupReply)
 
-// logged returns what f writes through logf.
+// logged returns what f writes to the log.
 func logged(t *testing.T, timestamps bool, f func()) string {
 	t.Helper()
 	buf := captureLogs(t)
@@ -214,7 +214,7 @@ func TestMessageLogLine(t *testing.T) {
 	// Nothing logged can forge extra log records.
 	r.Sender = "Bob\n\nforged record"
 	r.Text = "hi\nalso forged"
-	if out := logged(t, false, func() { logf("%s", r.logLine()) }); strings.Count(out, "\n") != 1 {
+	if out := logged(t, false, func() { infof("%s", r.logLine()) }); strings.Count(out, "\n") != 1 {
 		t.Fatalf("a value split the log line: %q", out)
 	}
 }
@@ -232,10 +232,10 @@ func TestReplyLogLine(t *testing.T) {
 
 func TestLogTimestampOnlyWhenInteractive(t *testing.T) {
 	stamp := regexp.MustCompile(`^\d{4}/\d{2}/\d{2} \d{2}:\d{2}:\d{2} starting\n$`)
-	if out := logged(t, true, func() { logf("starting") }); !stamp.MatchString(out) {
+	if out := logged(t, true, func() { infof("starting") }); !stamp.MatchString(out) {
 		t.Fatalf("interactive: want a timestamp, got %q", out)
 	}
-	if out := logged(t, false, func() { logf("starting") }); out != "starting\n" {
+	if out := logged(t, false, func() { infof("starting") }); out != "starting\n" {
 		t.Fatalf("non-interactive: want no timestamp, got %q", out)
 	}
 }

@@ -66,6 +66,7 @@ The bot runs as a dynamic user (`DynamicUser=yes`) in the `signal-cli` Unix grou
 3. Read the logs:
    ```
    journalctl -fu signalbot
+   journalctl -u signalbot -p warning   # warnings and errors only
    ```
 
 ### With Docker
@@ -105,6 +106,7 @@ Add the bot's account to a group and @mention it, reply to one of its messages, 
 | `INTRO` | built-in sentence | Overrides the self-introduction; `{name}`, `{model}` (without any OpenRouter `provider/` prefix) and `{tools}` (`web search`, or `none`) are substituted |
 | `MAX_CONCURRENCY` | `32` | Conversations in flight at once; messages beyond this are dropped |
 | `HISTORY_TURNS` | `10` | Exchanges remembered per chat |
+| `LOG_LEVEL` | `info` | `debug`, `info`, `warn` or `error` |
 
 The default `INTRO` is: `hi, I'm {name}, your open source assistant running {model} (tools: {tools}). I respond to @mentions and replies to my messages. See https://github.com/robdevops/signalbot/blob/main/README.md for details.`
 

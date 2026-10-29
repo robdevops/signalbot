@@ -27,7 +27,7 @@ Every request tells OpenRouter to use only model providers that do not collect d
 - **A message addressed to the bot:** a line with the kind (mention, reply or DM) and the sender's name and ID; after the answer, a line with the sender's name, time taken, tokens used and cost.
 - **Never the text of any message,** nor errors that quote one.
 - **A message not addressed to the bot:** nothing, not even a note that it arrived.
-- **A contact list load:** a line with the number of contacts, at startup, after reconnecting and when a group changes.
+- **A contact list load,** at `LOG_LEVEL=debug` only: a line with the number of contacts.
 - **A DM from someone not in `SIGNAL_DM_USER_IDS`:** their ID only, never a name or text.
 
 Logs go to the journal or Docker's log driver and are kept as long as your settings keep them, names and IDs included.
