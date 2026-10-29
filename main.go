@@ -48,8 +48,7 @@ func main() {
 
 	sig := NewSignal(cfg.Socket)
 	bot := NewBot(connCtx, cfg, sig, NewOpenRouter(cfg))
-	infof("model %s, reasoning %s, search %v, %d allowed senders",
-		cfg.Model, cfg.Reasoning, cfg.Search, len(cfg.AllowedSenders))
+	infof("model %s, reasoning %s, search %v", cfg.Model, cfg.Reasoning, cfg.Search)
 
 	go func() {
 		<-sigCtx.Done()
