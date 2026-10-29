@@ -79,7 +79,6 @@ func TestPanicWhileAnsweringIsContained(t *testing.T) {
 func TestAPIErrorTextKeepsOnlyTheMessage(t *testing.T) {
 	for name, tc := range map[string]struct{ body, want string }{
 		"openai style": {`{"error":{"message":"No auth credentials","code":401}}`, "No auth credentials"},
-		"x.ai style":   {`{"code":"Client specified an invalid argument","error":"Incorrect API key"}`, "Incorrect API key"},
 		"openrouter moderation": {`{"error":{"message":"Input flagged","code":403,"metadata":{"flagged_input":"` +
 			secretText + `","reasons":["x"]}}}`, "Input flagged"},
 		"html":  {`<html>502 Bad Gateway ` + secretText + `</html>`, "(unreadable error body)"},
@@ -100,10 +99,8 @@ func TestBadReplyBodiesAreNotEchoed(t *testing.T) {
 		`{"choices":[],"echo":"` + secretText + `"}`,
 		`{"output": ` + secretText,
 	} {
-		for _, parse := range []func([]byte) (Completion, error){parseOutput, parseChatCompletion} {
-			if _, err := parse([]byte(body)); err == nil || strings.Contains(err.Error(), secretText) {
-				t.Errorf("body %q: err = %v", body, err)
-			}
+		if _, err := parseChatCompletion([]byte(body)); err == nil || strings.Contains(err.Error(), secretText) {
+			t.Errorf("body %q: err = %v", body, err)
 		}
 	}
 }

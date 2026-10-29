@@ -12,7 +12,7 @@ COPY go.mod *.go ./
 RUN go build -trimpath -ldflags "-s -w -X main.version=${VERSION}" -o /signalbot .
 
 # distroless/static: no shell or package manager, CA certificates for TLS to
-# x.ai, and the unprivileged nonroot user. The binary stays root-owned, so the
+# OpenRouter, and the unprivileged nonroot user. The binary stays root-owned, so the
 # bot cannot modify it.
 FROM gcr.io/distroless/static-debian12:nonroot@sha256:afa5c872c891853ca7fcf1f12c3edb23f7eeef36189728842dd51042ff57f7ab
 COPY --from=build /signalbot /signalbot

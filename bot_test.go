@@ -88,7 +88,7 @@ func TestEndToEnd(t *testing.T) {
 			return
 		}
 		time.Sleep(250 * time.Millisecond)
-		w.Write([]byte(`{"output":[{"type":"reasoning"},{"type":"message","content":[{"type":"output_text","text":"hi there"}]}]}`))
+		w.Write([]byte(`{"choices":[{"message":{"content":"hi there"}}]}`))
 	}))
 	defer ai.Close()
 
@@ -135,7 +135,7 @@ func TestEndToEnd(t *testing.T) {
 	cfg := &Config{Socket: sock, APIKey: "k", Model: "m", Reasoning: "low", Search: true,
 		AllowedSenders: map[string]bool{}, MaxConcurrency: 4, HistoryTurns: 2}
 	sig := NewSignal(sock)
-	x := NewXAI(cfg)
+	x := NewOpenRouter(cfg)
 	x.url = ai.URL
 	bot := NewBot(context.Background(), cfg, sig, x)
 	bot.typingEvery = 50 * time.Millisecond
@@ -220,13 +220,12 @@ func TestMessageLogLine(t *testing.T) {
 }
 
 func TestReplyLogLine(t *testing.T) {
-	c := Completion{InputTokens: 1203, CachedTokens: 128, OutputTokens: 312}
-	cfg := &Config{PriceIn: 1.25, PriceCached: 0.20, PriceOut: 2.50}
-	got := replyLogLine("Alice", 3310*time.Millisecond, c, cfg)
+	c := Completion{InputTokens: 1203, CachedTokens: 128, OutputTokens: 312, Cost: 0.00215}
+	got := replyLogLine("Alice", 3310*time.Millisecond, c)
 	if want := "reply Alice 3.3s, tokens in/out: 1203/312 (10% cached), $0.002"; got != want {
 		t.Fatalf("got  %q\nwant %q", got, want)
 	}
-	if got := replyLogLine("Alice", time.Second, Completion{}, cfg); !strings.Contains(got, "(0% cached)") {
+	if got := replyLogLine("Alice", time.Second, Completion{}); !strings.Contains(got, "(0% cached)") {
 		t.Fatalf("no input tokens: %q", got)
 	}
 }
@@ -242,43 +241,43 @@ func TestLogTimestampOnlyWhenInteractive(t *testing.T) {
 }
 
 func TestSystemPromptIntroduction(t *testing.T) {
-	cfg := &Config{Model: "grok-test", ExtraPrompt: "base", Intro: defaultIntro, MaxConcurrency: 1, HistoryTurns: 1}
+	cfg := &Config{Model: "test-model", ExtraPrompt: "base", Intro: defaultIntro, MaxConcurrency: 1, HistoryTurns: 1}
 	sig := NewSignal("x")
 	sig.selfID.Store(self)
 	b := NewBot(context.Background(), cfg, sig, nil)
 
 	want := func(name string) string {
-		return `"hi, I'm ` + name + `, your open source assistant running grok-test (tools: none). I respond to @mentions and replies to my messages. See ` +
+		return `"hi, I'm ` + name + `, your open source assistant running test-model (tools: none). I respond to @mentions and replies to my messages. See ` +
 			`https://github.com/robdevops/signalbot/blob/main/README.md for details."`
 	}
 	if p := b.systemPrompt(); !strings.HasPrefix(p, basePrompt+"\nbase\n") || !strings.Contains(p, want("signalbot")) {
 		t.Fatalf("default name: %q", p)
 	}
-	b.names.addContacts([]Contact{{UUID: self, GivenName: "Botty"}})
+	b.names.replaceContacts([]Contact{{UUID: self, GivenName: "Botty"}})
 	if p := b.systemPrompt(); !strings.Contains(p, want("Botty")) {
 		t.Fatalf("profile name: %q", p)
 	}
 }
 
 func TestSystemPromptIntroOverride(t *testing.T) {
-	cfg := &Config{Model: "grok-test", ExtraPrompt: "base", MaxConcurrency: 1, HistoryTurns: 1}
+	cfg := &Config{Model: "test-model", ExtraPrompt: "base", MaxConcurrency: 1, HistoryTurns: 1}
 	sig := NewSignal("x")
 	sig.selfID.Store(self)
 	b := NewBot(context.Background(), cfg, sig, nil)
-	b.names.addContacts([]Contact{{UUID: self, GivenName: "Botty"}})
+	b.names.replaceContacts([]Contact{{UUID: self, GivenName: "Botty"}})
 
 	cfg.Intro = "yo, {name} here on {model} with {tools}"
 	p := b.systemPrompt()
-	if !strings.HasSuffix(p, `"yo, Botty here on grok-test with none"`) {
+	if !strings.HasSuffix(p, `"yo, Botty here on test-model with none"`) {
 		t.Fatalf("placeholders not substituted: %q", p)
 	}
 	cfg.Model = "deepseek/deepseek-v4.1-flash-1017"
 	if p := b.systemPrompt(); !strings.HasSuffix(p, `"yo, Botty here on deepseek-v4.1-flash-1017 with none"`) {
 		t.Fatalf("the provider prefix must be dropped from {model}: %q", p)
 	}
-	cfg.Model = "grok-test"
+	cfg.Model = "test-model"
 	cfg.Search = true
-	if p := b.systemPrompt(); !strings.HasSuffix(p, `"yo, Botty here on grok-test with web search"`) {
+	if p := b.systemPrompt(); !strings.HasSuffix(p, `"yo, Botty here on test-model with web search"`) {
 		t.Fatalf("{tools} must name web search when it is on: %q", p)
 	}
 	if strings.Contains(p, "open source assistant") {

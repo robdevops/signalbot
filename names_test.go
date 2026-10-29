@@ -47,7 +47,7 @@ func TestResolvePriority(t *testing.T) {
 		t.Fatalf("mention name: %q", got)
 	}
 	// username is the last resort, below the mention's own name
-	n.addContacts([]Contact{{UUID: alice, Username: "alice.user20"}})
+	n.replaceContacts([]Contact{{UUID: alice, Username: "alice.user20"}})
 	if got := n.Resolve(m); got != "alice.user20" {
 		t.Fatalf("username fallback: %q", got)
 	}
@@ -60,7 +60,7 @@ func TestResolvePriority(t *testing.T) {
 	}
 	var cs []Contact
 	json.Unmarshal([]byte(contactsJSON), &cs)
-	n.addContacts(cs)
+	n.replaceContacts(cs)
 	if got := n.Resolve(m); got != "Alice" {
 		t.Fatalf("givenName should win: %q", got)
 	}
@@ -71,7 +71,7 @@ func TestResolvePriority(t *testing.T) {
 }
 
 // "@bot say hi to @Alice" where the mention carries only an id: the prompt
-// sent to x.ai must contain the real name from listContacts.
+// sent to the model must contain the real name from listContacts.
 func TestMentionNameResolvedFromContacts(t *testing.T) {
 	bodies := make(chan string, 4)
 	gotBadParams := make(chan struct{}, 1)
@@ -79,7 +79,7 @@ func TestMentionNameResolvedFromContacts(t *testing.T) {
 	ai := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		b, _ := io.ReadAll(r.Body)
 		bodies <- string(b)
-		w.Write([]byte(`{"output":[{"type":"message","content":[{"type":"output_text","text":"hello @alice!"}]}]}`))
+		w.Write([]byte(`{"choices":[{"message":{"content":"hello @alice!"}}]}`))
 	}))
 	defer ai.Close()
 
@@ -125,7 +125,7 @@ func TestMentionNameResolvedFromContacts(t *testing.T) {
 
 	cfg := &Config{Socket: sock, APIKey: "k", Model: "m", AllowedSenders: map[string]bool{}, MaxConcurrency: 4, HistoryTurns: 2}
 	sig := NewSignal(sock)
-	x := NewXAI(cfg)
+	x := NewOpenRouter(cfg)
 	x.url = ai.URL
 	bot := NewBot(context.Background(), cfg, sig, x)
 	ctx, cancel := contextWithCancel()
@@ -138,7 +138,7 @@ func TestMentionNameResolvedFromContacts(t *testing.T) {
 			t.Fatalf("name not resolved in request: %s", b)
 		}
 	case <-time.After(5 * time.Second):
-		t.Fatal("no x.ai request")
+		t.Fatal("no model request")
 	}
 	select {
 	case p := <-sent:

@@ -80,8 +80,7 @@ func NewBot(ctx context.Context, cfg *Config, sig *Signal, ai Completer) *Bot {
 		dedupe:      map[string]time.Time{},
 		typingEvery: 10 * time.Second,
 	}
-	load := b.refreshSoon
-	sig.onConnect.Store(&load) // load names on startup and after every reconnect
+	sig.onConnect = b.refreshSoon // load names on startup and after every reconnect
 	return b
 }
 
@@ -126,10 +125,10 @@ func (r *Request) logLine() string {
 
 // replyLogLine is the one-line summary of a model reply, e.g.
 // "reply Alice 3.3s, tokens in/out: 1203/312 (10% cached), $0.002".
-func replyLogLine(name string, took time.Duration, c Completion, cfg *Config) string {
+func replyLogLine(name string, took time.Duration, c Completion) string {
 	cached := 100 * min(c.CachedTokens, c.InputTokens) / max(c.InputTokens, 1)
 	return fmt.Sprintf("reply %s %.1fs, tokens in/out: %d/%d (%d%% cached), $%.3f",
-		name, took.Seconds(), c.InputTokens, c.OutputTokens, cached, c.Cost(cfg))
+		name, took.Seconds(), c.InputTokens, c.OutputTokens, cached, c.Cost)
 }
 
 func fromSelf(env *Envelope, self string) bool {
@@ -272,11 +271,10 @@ func (b *Bot) Handle(env *Envelope) {
 	// Cheap inline rejection. Before the account id is known (the first moment
 	// after connecting) we cannot judge, so we let it through to the slow path.
 	if self := b.sig.SelfID(); self != "" && trigger(env, self, b.cfg.AllowedSenders) == "" {
-		// A message in a group that is not for the bot is dropped untouched:
-		// nothing is read from it or kept.
+		// Dropped untouched: nothing is read from it or kept. The one thing
+		// said is that a DM came from someone who may not use the bot, by id
+		// only, never the name or text.
 		if g := env.DataMessage.GroupInfo; (g == nil || g.GroupID == "") && !fromSelf(env, self) && !isAllowed(env, b.cfg.AllowedSenders) {
-			// A DM from someone who may not use the bot: say so, with the id
-			// only, never the name or text.
 			logf("%s ignored because not in SIGNAL_DM_USER_IDS",
 				cmp.Or(env.SourceUUID, env.Source, env.SourceNumber, "unknown sender"))
 		}
@@ -405,10 +403,10 @@ func (b *Bot) respond(req *Request) {
 	stopTyping()
 	took := time.Since(start)
 	if err != nil {
-		logf("%s error for %s after %.1fs: %v", b.cfg.Provider, req.Name, took.Seconds(), err)
+		logf("OpenRouter error for %s after %.1fs: %v", req.Name, took.Seconds(), err)
 		res = Completion{Text: "Sorry, I couldn't get an answer right now."}
 	} else {
-		logf("%s", replyLogLine(req.Name, took, res, b.cfg))
+		logf("%s", replyLogLine(req.Name, took, res))
 		gone := historyExpiry(start, req.Expires)
 		b.addHistory(req.Key, ChatMsg{Role: "user", Content: req.Prompt, Expires: gone}, ChatMsg{Role: "assistant", Content: res.Text, Expires: gone})
 	}
