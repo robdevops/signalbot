@@ -16,7 +16,7 @@ For what happens to your messages and data, see [PRIVACY.md](PRIVACY.md).
 - The same message repeated by the same sender in the same chat within 10 seconds is ignored
 - Honours disappearing messages: each message's expiry, derived from the chat's timer (`expiresInSeconds`), is stored with its history, and no message outlives 24 hours or that timer, whichever is shorter. Once a message expires, reads ignore it at once, it is dropped from the history, and the garbage collector reclaims its memory
 - Treats sender-controlled text as untrusted: display names and quotes are sanitised before reaching the model or the log, and a name two people claim is never linked
-- Configured from environment variables only; runs under systemd or Docker (hardened unit and image included; the image is pinned by digest and has no shell). Logs plain lines to stdout, with a timestamp only in a terminal (journald and Docker add their own)
+- Configured from environment variables only; runs under systemd or Docker (hardened unit and image included; the image is pinned by digest and has no shell). Logs one line per event to stdout at four levels (`LOG_LEVEL`: error, warn, info, debug), with a timestamp only in a terminal (journald and Docker add their own). When stdout is a journald stream (systemd's `JOURNAL_STREAM` matches it), each line starts with its syslog priority, such as `<3>` for an error, so journald records the level and `journalctl` colours it; elsewhere, including under Docker, a word such as `error:` marks the level
 
 ## The prompt
 

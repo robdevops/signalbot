@@ -18,6 +18,7 @@ type Config struct {
 	Intro          string // INTRO: {name}, {model} and {tools} are substituted
 	MaxConcurrency int
 	HistoryTurns   int
+	LogLevel       level
 }
 
 func env(key, def string) string {
@@ -70,6 +71,10 @@ func LoadConfig() (*Config, error) {
 	}
 	for _, s := range splitIDs(os.Getenv("SIGNAL_DM_USER_IDS")) {
 		c.AllowedSenders[s] = true
+	}
+	var ok bool
+	if c.LogLevel, ok = parseLevel(env("LOG_LEVEL", "")); !ok {
+		return nil, fmt.Errorf("LOG_LEVEL must be debug, info, warn or error")
 	}
 	if c.Socket == "" {
 		return nil, fmt.Errorf("SIGNALCLI_SOCKET is required")

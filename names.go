@@ -167,10 +167,10 @@ func (n *Names) Refresh(ctx context.Context, s *Signal) bool {
 
 	cs, err := s.ListContacts(ctx)
 	if err != nil {
-		logf("listContacts failed: %v", err)
+		warnf("listContacts failed: %v", err)
 		return true
 	}
-	logf("loaded %d contacts", len(cs))
+	debugf("loaded %d contacts", len(cs))
 	n.replaceContacts(cs)
 	return true
 }

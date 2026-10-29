@@ -94,7 +94,7 @@ func (b *Bot) Shutdown(d time.Duration) {
 		select {
 		case b.sem <- struct{}{}:
 		case <-timeout:
-			logf("shutdown timed out with replies still in flight")
+			warnf("shutdown timed out with replies still in flight")
 			return
 		}
 	}
@@ -243,7 +243,7 @@ func stripMentions(msg string, ms []Mention, self string, names *Names) string {
 		if m.UUID != self && m.Number != self {
 			name := "@" + names.Resolve(m)
 			if name == "@" {
-				logf("unresolved mention of %s", cmp.Or(m.UUID, m.Number))
+				debugf("unresolved mention of %s", cmp.Or(m.UUID, m.Number))
 				name = unnamedUser
 			}
 			repl = utf16.Encode([]rune(name))
@@ -275,7 +275,7 @@ func (b *Bot) Handle(env *Envelope) {
 		// said is that a DM came from someone who may not use the bot, by id
 		// only, never the name or text.
 		if g := env.DataMessage.GroupInfo; (g == nil || g.GroupID == "") && !fromSelf(env, self) && !isAllowed(env, b.cfg.AllowedSenders) {
-			logf("%s ignored because not in SIGNAL_DM_USER_IDS",
+			infof("%s ignored because not in SIGNAL_DM_USER_IDS",
 				cmp.Or(env.SourceUUID, env.Source, env.SourceNumber, "unknown sender"))
 		}
 		return
@@ -283,7 +283,7 @@ func (b *Bot) Handle(env *Envelope) {
 	select {
 	case b.sem <- struct{}{}:
 	default:
-		logf("at capacity (%d), dropping message", b.cfg.MaxConcurrency)
+		warnf("at capacity (%d), dropping message", b.cfg.MaxConcurrency)
 		return
 	}
 	go func() {
@@ -313,11 +313,11 @@ func (b *Bot) handle(env *Envelope) {
 		return
 	}
 	if b.duplicate(req) {
-		logf("ignored duplicate from %s", req.Name)
+		debugf("ignored duplicate from %s", req.Name)
 		return
 	}
 	b.remember(req)
-	logf("%s", req.logLine())
+	infof("%s", req.logLine())
 	b.respond(req)
 }
 
@@ -403,26 +403,26 @@ func (b *Bot) respond(req *Request) {
 	stopTyping()
 	took := time.Since(start)
 	if err != nil {
-		logf("OpenRouter error for %s after %.1fs: %v", req.Name, took.Seconds(), err)
+		errorf("OpenRouter error for %s after %.1fs: %v", req.Name, took.Seconds(), err)
 		res = Completion{Text: "Sorry, I couldn't get an answer right now."}
 	} else {
-		logf("%s", replyLogLine(req.Name, took, res))
+		infof("%s", replyLogLine(req.Name, took, res))
 		gone := historyExpiry(start, req.Expires)
 		b.addHistory(req.Key, ChatMsg{Role: "user", Content: req.Prompt, Expires: gone}, ChatMsg{Role: "assistant", Content: res.Text, Expires: gone})
 	}
 
 	if n := len([]rune(res.Text)); n > maxReplyRunes {
-		logf("reply to %s truncated from %d chars", req.Name, n)
+		warnf("reply to %s truncated from %d chars", req.Name, n)
 	}
 	parts := replyParts(res.Text, b.introName())
 	if len(parts) == 0 {
-		logf("empty reply to %s, nothing sent", req.Name)
+		warnf("empty reply to %s, nothing sent", req.Name)
 		return
 	}
 	known := b.knownNames(req.Key)
 	for _, part := range parts {
 		if err := b.sig.Send(req.Target, part, buildMentions(part, known)); err != nil {
-			logf("send to %s failed: %v", req.Name, err)
+			errorf("send to %s failed: %v", req.Name, err)
 			return
 		}
 	}
@@ -484,7 +484,7 @@ func (b *Bot) selfName() string {
 // ensureSelfName loads contacts if the bot's own name is not known yet.
 func (b *Bot) ensureSelfName() {
 	if b.selfName() == "" && b.refreshContacts() && b.selfName() == "" {
-		logf("own profile name not found; calling itself signalbot (INTRO can name it)")
+		warnf("own profile name not found; calling itself signalbot (INTRO can name it)")
 	}
 }
 

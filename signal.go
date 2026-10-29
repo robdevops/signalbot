@@ -122,7 +122,7 @@ func (s *Signal) Run(ctx context.Context, handle func(*Envelope)) {
 	for ctx.Err() == nil {
 		conn, err := s.dial()
 		if err != nil {
-			logf("signal-cli connect failed: %v; retrying in %s", err, backoff)
+			warnf("signal-cli connect failed: %v; retrying in %s", err, backoff)
 		} else {
 			began := time.Now()
 			s.serve(ctx, conn, handle)
@@ -147,7 +147,7 @@ func (s *Signal) serve(ctx context.Context, conn net.Conn, handle func(*Envelope
 	s.mu.Lock()
 	s.conn = conn
 	s.mu.Unlock()
-	logf("connected to signal-cli at %s", s.addr)
+	infof("connected to signal-cli at %s", s.addr)
 
 	defer context.AfterFunc(ctx, func() { conn.Close() })()
 	go func() {
@@ -155,12 +155,12 @@ func (s *Signal) serve(ctx context.Context, conn net.Conn, handle func(*Envelope
 		defer cancel()
 		id, err := s.listAccounts(rctx)
 		if err != nil {
-			logf("listAccounts failed: %v", err)
+			errorf("listAccounts failed: %v", err)
 			conn.Close()
 			return
 		}
 		s.selfID.Store(id)
-		logf("bot account %s", id)
+		infof("bot account %s", id)
 		if s.onConnect != nil {
 			s.onConnect()
 		}
@@ -172,7 +172,7 @@ func (s *Signal) serve(ctx context.Context, conn net.Conn, handle func(*Envelope
 		s.dispatch(sc.Bytes(), handle)
 	}
 	if err := sc.Err(); err != nil && ctx.Err() == nil {
-		logf("signal-cli read failed: %v; reconnecting", err) // a frame over maxLine is bufio.ErrTooLong
+		warnf("signal-cli read failed: %v; reconnecting", err) // a frame over maxLine is bufio.ErrTooLong
 	}
 	conn.Close()
 	s.mu.Lock()
@@ -187,7 +187,7 @@ func (s *Signal) serve(ctx context.Context, conn net.Conn, handle func(*Envelope
 func (s *Signal) dispatch(line []byte, handle func(*Envelope)) {
 	var m rpcMsg
 	if err := json.Unmarshal(line, &m); err != nil {
-		logf("bad JSON from signal-cli (%d bytes), ignored", len(line)) // not err: it can quote the frame
+		warnf("bad JSON from signal-cli (%d bytes), ignored", len(line)) // not err: it can quote the frame
 		return
 	}
 	switch {
@@ -304,7 +304,7 @@ func (s *Signal) Typing(t Target) {
 // sendTyping).
 func (s *Signal) handleUnmatched(m *rpcMsg) {
 	if m.Error != nil {
-		logf("signal-cli request %s failed: %s", m.ID, m.Error.Message)
+		errorf("signal-cli request %s failed: %s", m.ID, m.Error.Message)
 		return
 	}
 	var r struct {
@@ -317,7 +317,7 @@ func (s *Signal) handleUnmatched(m *rpcMsg) {
 	}
 	for _, res := range r.Results {
 		if res.Type != "" && res.Type != "SUCCESS" {
-			logf("signal-cli request %s not delivered: %s", m.ID, res.Type)
+			warnf("signal-cli request %s not delivered: %s", m.ID, res.Type)
 		}
 	}
 }
