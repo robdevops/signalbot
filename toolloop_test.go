@@ -106,9 +106,9 @@ func (f failAI) Complete(context.Context, string, []ChatMsg) (Completion, error)
 	return Completion{Text: "x"}, nil
 }
 
-// "/demo" is answered without the model, with a real mention of the sender in
+// "/example" is answered without the model, with a real mention of the sender in
 // a group, and leaves no history.
-func TestDemo(t *testing.T) {
+func TestExample(t *testing.T) {
 	sent := make(chan map[string]any, 2)
 	sock := fakeSignal(t, func(_ int, c net.Conn, r *bufio.Reader) {
 		for {
@@ -149,7 +149,7 @@ func TestDemo(t *testing.T) {
 			return nil
 		}
 	}
-	b.Handle(parse(t, strings.Replace(groupMention, "what is up", "/demo", 1)))
+	b.Handle(parse(t, strings.Replace(groupMention, "what is up", "/example", 1)))
 	p := recv()
 	msg := p["message"].(string)
 	if !strings.HasPrefix(msg, "Hi @Alice! I'm Botty.") || !strings.Contains(msg, "Run test-model with web search, get_forecast") {
@@ -159,12 +159,12 @@ func TestDemo(t *testing.T) {
 		t.Fatalf("mention %v, want 3:6:%s", p["mention"], alice)
 	}
 	if h := b.getHistory("g:" + group); len(h) != 0 {
-		t.Fatalf("/demo left history: %v", h)
+		t.Fatalf("/example left history: %v", h)
 	}
 
 	// In a DM there is no one to mention.
 	cfg.AllowedSenders = map[string]bool{alice: true}
-	b.Handle(parse(t, strings.Replace(dm, "Test DM", "/DEMO", 1)))
+	b.Handle(parse(t, strings.Replace(dm, "Test DM", "/EXAMPLE", 1)))
 	if msg := recv()["message"].(string); !strings.HasPrefix(msg, "Hi! I'm Botty.") {
 		t.Fatalf("DM message %q", msg)
 	}

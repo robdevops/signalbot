@@ -319,27 +319,27 @@ func (b *Bot) handle(env *Envelope) {
 		return
 	}
 	b.remember(req)
-	if strings.EqualFold(strings.TrimSpace(req.Text), "/demo") {
-		b.demo(req)
+	if strings.EqualFold(strings.TrimSpace(req.Text), "/example") {
+		b.example(req)
 		return
 	}
 	infof("%s", req.logLine())
 	b.respond(req)
 }
 
-// demo answers "/demo" without the model: what the bot can do, with a real
+// example answers "/example" without the model: what the bot can do, with a real
 // @mention of whoever asked.
-func (b *Bot) demo(req *Request) {
+func (b *Bot) example(req *Request) {
 	b.ensureSelfName()
-	text := demoText(req, b.introName(), modelName(b.cfg.Model), b.toolsText())
+	text := exampleText(req, b.introName(), modelName(b.cfg.Model), b.toolsText())
 	if err := b.sig.Send(req.Target, text, buildMentions(text, b.knownNames(req.Key))); err != nil {
 		errorf("send to %s failed: %v", req.Name, err)
 		return
 	}
-	infof("demo for %s", req.Name)
+	infof("example for %s", req.Name)
 }
 
-func demoText(req *Request, self, model, tools string) string {
+func exampleText(req *Request, self, model, tools string) string {
 	hi := "Hi!"
 	if req.Target.GroupID != "" && req.Display != "" {
 		hi = "Hi @" + req.Display + "!"
@@ -533,7 +533,7 @@ func modelName(model string) string {
 }
 
 // systemPrompt is the built-in prompt, plus SYSTEM_PROMPT, plus the intro.
-// toolsText lists the tools the model can use, for {tools} and /demo.
+// toolsText lists the tools the model can use, for {tools} and /example.
 func (b *Bot) toolsText() string {
 	var tools []string
 	if b.cfg.Search {
