@@ -477,7 +477,7 @@ func TestSystemPromptLayering(t *testing.T) {
 	}
 	cfg.ExtraPrompt = "Talk like a pirate."
 	p = b.systemPrompt()
-	if !strings.HasPrefix(p, basePrompt+"\nTalk like a pirate.\n") {
+	if !strings.HasPrefix(p, basePrompt+"\n") || !strings.Contains(p, "\nTalk like a pirate.\nIf asked to introduce yourself") {
 		t.Fatalf("SYSTEM_PROMPT must be appended to the built-in prompt, not replace it: %q", p)
 	}
 }

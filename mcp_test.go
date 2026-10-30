@@ -123,7 +123,7 @@ func (f *fakeMCP) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		case "fail":
 			result = `{"content":[{"type":"text","text":"it broke"}],"isError":true}`
 		case "pic":
-			result = `{"content":[{"type":"image","data":"x"},{"type":"text","text":"caption"}]}`
+			result = `{"content":[{"type":"image","data":"x"},{"type":"image","mimeType":"image/png","data":"` + tinyPNG() + `"},{"type":"text","text":"caption"}]}`
 		default:
 			result = `{"content":[{"type":"text","text":` + string(text) + `}]}`
 		}
@@ -156,20 +156,20 @@ func TestHTTPMCPTools(t *testing.T) {
 		if got := strings.Join(m.Names(), ","); got != "echo,fail,pic" {
 			t.Fatalf("sse=%v: tools %q (the second tools/list page must be read)", sse, got)
 		}
-		out, tool, err := m.Call(context.Background(), "fake__echo", `{"q":"weather"}`)
+		out, _, tool, err := m.Call(context.Background(), "fake__echo", `{"q":"weather"}`)
 		if err != nil || out != `echo {"q":"weather"}` || tool.Name != "echo" || tool.Server != "fake" {
 			t.Fatalf("sse=%v: echo = %q, %+v, %v", sse, out, tool, err)
 		}
-		if out, _, err := m.Call(context.Background(), "fake__fail", ""); err == nil || out != "error: it broke" {
+		if out, _, _, err := m.Call(context.Background(), "fake__fail", ""); err == nil || out != "error: it broke" {
 			t.Errorf("sse=%v: fail = %q, %v", sse, out, err)
 		}
-		if out, _, _ := m.Call(context.Background(), "fake__pic", "{}"); out != "[non-text content omitted]\ncaption" {
-			t.Errorf("sse=%v: pic = %q", sse, out)
+		if out, imgs, _, _ := m.Call(context.Background(), "fake__pic", "{}"); out != "[non-text content omitted]\n[image sent to the chat]\ncaption" || len(imgs) != 1 {
+			t.Errorf("sse=%v: pic = %q, %d images", sse, out, len(imgs))
 		}
-		if out, _, err := m.Call(context.Background(), "fake__nope", "{}"); err == nil || !strings.Contains(out, "no tool") {
+		if out, _, _, err := m.Call(context.Background(), "fake__nope", "{}"); err == nil || !strings.Contains(out, "no tool") {
 			t.Errorf("sse=%v: unknown tool = %q, %v", sse, out, err)
 		}
-		if out, _, err := m.Call(context.Background(), "fake__echo", "not json"); err == nil || !strings.Contains(out, "JSON object") {
+		if out, _, _, err := m.Call(context.Background(), "fake__echo", "not json"); err == nil || !strings.Contains(out, "JSON object") {
 			t.Errorf("sse=%v: bad arguments = %q, %v", sse, out, err)
 		}
 		if f.badCalls != 0 {
@@ -203,7 +203,7 @@ func TestMCPToolLists(t *testing.T) {
 		}
 	}
 	m, _ := startFake(t, &fakeMCP{}, "echo")
-	if _, _, err := m.Call(context.Background(), "fake__fail", "{}"); err == nil {
+	if _, _, _, err := m.Call(context.Background(), "fake__fail", "{}"); err == nil {
 		t.Fatal("a tool outside the whitelist was callable")
 	}
 }
@@ -215,7 +215,7 @@ func TestHTTPMCPSessionExpiry(t *testing.T) {
 	f.mu.Lock()
 	f.session = "rotated"
 	f.mu.Unlock()
-	if out, _, err := m.Call(context.Background(), "fake__echo", "{}"); err != nil || out != "echo {}" {
+	if out, _, _, err := m.Call(context.Background(), "fake__echo", "{}"); err != nil || out != "echo {}" {
 		t.Fatalf("after expiry: %q, %v", out, err)
 	}
 	if f.inits != 2 {
@@ -300,13 +300,13 @@ func TestStdioMCP(t *testing.T) {
 	}
 	defer func() { cancel(); m.Wait() }()
 
-	if out, _, err := m.Call(ctx, "local__env", "{}"); err != nil || out != "key= marker=1" {
+	if out, _, _, err := m.Call(ctx, "local__env", "{}"); err != nil || out != "key= marker=1" {
 		t.Fatalf("env = %q, %v", out, err)
 	}
 	m.Call(ctx, "local__exit", "{}")
 	deadline := time.Now().Add(10 * time.Second)
 	for {
-		out, _, err := m.Call(ctx, "local__env", "{}")
+		out, _, _, err := m.Call(ctx, "local__env", "{}")
 		if err == nil && out == "key= marker=1" {
 			break
 		}

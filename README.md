@@ -19,6 +19,7 @@ A small, [privacy-conscious](PRIVACY.md) chat bot that connects to a running [si
 - Answers replies to its own messages, and @mentions made in reply to someone else's, using the quoted message as context
 - Replies to DMs from senders listed in `SIGNAL_DM_USER_IDS`; ignores everything else
 - Short answers sized for Signal (one line if possible, never over its 2000-character limit); optional web search, [MCP](#mcp-tools) tools and reasoning effort
+- Draws line charts (for example, stock prices compared over a month) and sends them as images; MCP tools that return images can send them too
 - Short per-conversation memory for follow-up questions, forgotten after a day (sooner with a shorter _disappearing messages_ setting)
 - Shows a typing indicator (refreshed every 10s) while the bot thinks; chats run concurrently, so a slow answer never blocks the rest
 - The bot ignores everything not addressed to it: a message that doesn't mention it, reply to it, or arrive as a DM is passed over. It logs the tokens used and cost of each reply
@@ -28,6 +29,7 @@ A small, [privacy-conscious](PRIVACY.md) chat bot that connects to a running [si
 - Your group's brain trust: ask it to explain things, check facts or settle debates
 - Explain or translate any message by replying to it and tagging the bot
 - Connect MCP tools and data to your group chat
+- Ask for a chart: "@signalbot chart NVDA vs ACMR over the past month"
 - Modify the bot to add your own /commands (see `/example`)
 - A private assistant in your DMs
 - Just for the fun or convenience of a sassy LLM in your Signal groups or DMs

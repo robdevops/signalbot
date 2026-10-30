@@ -13,6 +13,8 @@ When the bot answers a message, it sends this to [OpenRouter](https://openrouter
 
 With web search on (`MODEL_SEARCH`), the model decides whether to search and writes the query itself. The query can contain anything the model was sent (see above), such as a name or a phrase from a message, and goes to the search service OpenRouter uses.
 
+Charts are drawn on the bot's own machine from the numbers the model passes in; nothing extra leaves it.
+
 With MCP tools configured, the model may call them. A call sends the arguments the model wrote, which can quote anything above, to that tool's MCP server, and the tool's result goes to OpenRouter with the next request.
 
 Every request tells OpenRouter to use only model providers that do not collect data (`data_collection: deny`). That is a request the bot cannot check or enforce, so read OpenRouter's policy and the model provider's.

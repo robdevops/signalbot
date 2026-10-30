@@ -6,6 +6,7 @@ import (
 	"context"
 	"crypto/tls"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -42,6 +43,7 @@ type Completion struct {
 	OutputTokens int
 	Cost         float64 // USD, as OpenRouter reports it; 0 if it did not
 	ToolCalls    []ToolCall
+	Images       [][]byte // charts and tool images to send with the reply
 }
 
 // Completer is a model API the bot can ask for a reply.
@@ -80,8 +82,9 @@ const (
 )
 
 // Complete sends the conversation and returns the reply text. When the model
-// calls MCP tools, it runs them and asks again, up to maxToolRounds requests.
-// Usage and cost are summed over all of them.
+// calls tools (the chart tool or MCP tools), it runs them and asks again, up
+// to maxToolRounds requests. Usage and cost are summed over all of them, and
+// images the tools make are returned for the reply.
 func (o *OpenRouter) Complete(ctx context.Context, system string, msgs []ChatMsg) (Completion, error) {
 	ctx, cancel := context.WithTimeout(ctx, replyBudget)
 	defer cancel()
@@ -96,8 +99,8 @@ func (o *OpenRouter) Complete(ctx context.Context, system string, msgs []ChatMsg
 		if err != nil {
 			return total, err
 		}
-		if len(c.ToolCalls) == 0 || o.tools == nil {
-			if total.Text = c.Text; total.Text == "" {
+		if len(c.ToolCalls) == 0 {
+			if total.Text = c.Text; total.Text == "" && len(total.Images) == 0 {
 				return total, fmt.Errorf("empty response")
 			}
 			return total, nil
@@ -110,16 +113,41 @@ func (o *OpenRouter) Complete(ctx context.Context, system string, msgs []ChatMsg
 		msgs = append(msgs, ChatMsg{Role: "assistant", Content: c.Text, ToolCalls: c.ToolCalls})
 		for _, tc := range c.ToolCalls {
 			start := time.Now()
-			out, t, err := o.tools.Call(ctx, tc.Function.Name, tc.Function.Arguments)
-			tool := cmp.Or(t.Name, "unknown") + " (" + cmp.Or(t.Server, "no server") + ")"
+			out, images, tool, err := o.runTool(ctx, tc)
 			if err != nil {
 				warnf("tool %s failed after %.1fs: %v", tool, time.Since(start).Seconds(), err)
 			} else {
 				infof("tool %s %.1fs", tool, time.Since(start).Seconds())
 			}
+			for _, img := range images {
+				if len(total.Images) < maxReplyImages {
+					total.Images = append(total.Images, img)
+				}
+			}
 			msgs = append(msgs, ChatMsg{Role: "tool", ToolCallID: tc.ID, Content: out})
 		}
 	}
+}
+
+// runTool runs one tool call: the built-in chart tool, or an MCP tool. tool
+// names it for the log.
+func (o *OpenRouter) runTool(ctx context.Context, tc ToolCall) (out string, images [][]byte, tool string, err error) {
+	if tc.Function.Name == chartTool {
+		s, err := parseChart(tc.Function.Arguments)
+		if err != nil {
+			return "error: " + err.Error(), nil, chartTool, err
+		}
+		img, err := renderChart(s)
+		if err != nil {
+			return "error: the chart could not be drawn", nil, chartTool, err
+		}
+		return s.summary(), [][]byte{img}, chartTool, nil
+	}
+	if o.tools == nil {
+		return "error: there is no tool named " + tc.Function.Name, nil, "unknown", errors.New("unknown tool")
+	}
+	out, images, t, err := o.tools.Call(ctx, tc.Function.Name, tc.Function.Arguments)
+	return out, images, cmp.Or(t.Name, "unknown") + " (" + cmp.Or(t.Server, "no server") + ")", err
 }
 
 // request makes one chat completions request. It asks OpenRouter to route
@@ -141,6 +169,9 @@ func (o *OpenRouter) request(ctx context.Context, msgs []ChatMsg) (Completion, e
 		// the deprecated "web" plugin, which searched on every request.
 		tools = append(tools, map[string]string{"type": "openrouter:web_search"})
 	}
+	tools = append(tools, map[string]any{"type": "function", "function": map[string]any{
+		"name": chartTool, "description": chartToolDescription, "parameters": chartToolSchema,
+	}})
 	if o.tools != nil {
 		for _, t := range o.tools.tools {
 			schema := t.Schema
@@ -152,9 +183,7 @@ func (o *OpenRouter) request(ctx context.Context, msgs []ChatMsg) (Completion, e
 			}})
 		}
 	}
-	if len(tools) > 0 {
-		body["tools"] = tools
-	}
+	body["tools"] = tools
 	payload, err := json.Marshal(body)
 	if err != nil {
 		return Completion{}, err

@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -260,17 +261,17 @@ func (m *MCP) Wait() {
 }
 
 // Call runs the tool the model named, with the JSON arguments it wrote, and
-// returns the text to give back to the model. err is for the log only, and
-// never holds the arguments or the result.
-func (m *MCP) Call(ctx context.Context, model, arguments string) (result string, t mcpTool, err error) {
+// returns the text to give back to the model and any images to send to the
+// chat. err is for the log only, and never holds the arguments or the result.
+func (m *MCP) Call(ctx context.Context, model, arguments string) (result string, images [][]byte, t mcpTool, err error) {
 	t, ok := m.byModel[model]
 	if !ok {
-		return "error: there is no tool named " + model, t, errors.New("unknown tool")
+		return "error: there is no tool named " + model, nil, t, errors.New("unknown tool")
 	}
 	args := map[string]any{}
 	if strings.TrimSpace(arguments) != "" {
 		if json.Unmarshal([]byte(arguments), &args) != nil {
-			return "error: the arguments were not a JSON object", t, errors.New("invalid arguments")
+			return "error: the arguments were not a JSON object", nil, t, errors.New("invalid arguments")
 		}
 	}
 	ctx, cancel := context.WithTimeout(ctx, mcpCallTimeout)
@@ -279,33 +280,39 @@ func (m *MCP) Call(ctx context.Context, model, arguments string) (result string,
 	if err != nil {
 		var re *rpcError
 		if errors.As(err, &re) {
-			return "error: " + clamp(re.Message, 500), t, fmt.Errorf("rpc error %d", re.Code)
+			return "error: " + clamp(re.Message, 500), nil, t, fmt.Errorf("rpc error %d", re.Code)
 		}
-		return "error: the tool could not be reached", t, err
+		return "error: the tool could not be reached", nil, t, err
 	}
 	var r struct {
 		Content []struct {
-			Type string `json:"type"`
-			Text string `json:"text"`
+			Type     string `json:"type"`
+			Text     string `json:"text"`
+			Data     string `json:"data"`     // base64, for an image
+			MimeType string `json:"mimeType"` // for an image
 		} `json:"content"`
 		IsError bool `json:"isError"`
 	}
 	if json.Unmarshal(res, &r) != nil {
-		return "error: the tool sent a malformed result", t, errors.New("malformed result")
+		return "error: the tool sent a malformed result", nil, t, errors.New("malformed result")
 	}
 	var parts []string
 	for _, c := range r.Content {
-		if c.Type == "text" {
+		switch img, err := base64.StdEncoding.DecodeString(c.Data); {
+		case c.Type == "text":
 			parts = append(parts, c.Text)
-		} else {
+		case c.Type == "image" && err == nil && sendableImage(img) && len(images) < maxReplyImages:
+			images = append(images, img)
+			parts = append(parts, "[image sent to the chat]")
+		default:
 			parts = append(parts, "[non-text content omitted]")
 		}
 	}
 	out := clamp(strings.Join(parts, "\n"), maxToolResultRunes)
 	if r.IsError {
-		return "error: " + out, t, errors.New("the tool reported an error")
+		return "error: " + out, nil, t, errors.New("the tool reported an error")
 	}
-	return out, t, nil
+	return out, images, t, nil
 }
 
 // --- stdio --------------------------------------------------------------

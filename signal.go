@@ -287,11 +287,16 @@ func (t Target) params() map[string]any {
 }
 
 // Send posts msg; mentions are signal-cli specs ("start:length:uuid") for @names in msg.
-func (s *Signal) Send(t Target, msg string, mentions []string) error {
+// Send sends msg, with mentions ("start:length:uuid") and attachments (data:
+// URIs, see imageDataURI).
+func (s *Signal) Send(t Target, msg string, mentions, attachments []string) error {
 	p := t.params()
 	p["message"] = msg
 	if len(mentions) > 0 {
 		p["mention"] = mentions
+	}
+	if len(attachments) > 0 {
+		p["attachments"] = attachments
 	}
 	return s.write(s.nextID.Add(1), "send", p)
 }

@@ -247,10 +247,10 @@ func TestSystemPromptIntroduction(t *testing.T) {
 	b := NewBot(context.Background(), cfg, sig, nil)
 
 	want := func(name string) string {
-		return `"hi, I'm ` + name + `, your open source assistant running test-model (tools: none). I respond to @mentions and replies to my messages. See ` +
+		return `"hi, I'm ` + name + `, your open source assistant running test-model (tools: charts). I respond to @mentions and replies to my messages. See ` +
 			`https://github.com/robdevops/signalbot/blob/main/README.md for details."`
 	}
-	if p := b.systemPrompt(); !strings.HasPrefix(p, basePrompt+"\nbase\n") || !strings.Contains(p, want("signalbot")) {
+	if p := b.systemPrompt(); !strings.HasPrefix(p, basePrompt+"\n") || !strings.Contains(p, "\nbase\n") || !strings.Contains(p, want("signalbot")) {
 		t.Fatalf("default name: %q", p)
 	}
 	b.names.replaceContacts([]Contact{{UUID: self, GivenName: "Botty"}})
@@ -268,16 +268,16 @@ func TestSystemPromptIntroOverride(t *testing.T) {
 
 	cfg.Intro = "yo, {name} here on {model} with {tools}"
 	p := b.systemPrompt()
-	if !strings.HasSuffix(p, `"yo, Botty here on test-model with none"`) {
+	if !strings.HasSuffix(p, `"yo, Botty here on test-model with charts"`) {
 		t.Fatalf("placeholders not substituted: %q", p)
 	}
 	cfg.Model = "deepseek/deepseek-v4.1-flash-1017"
-	if p := b.systemPrompt(); !strings.HasSuffix(p, `"yo, Botty here on deepseek-v4.1-flash-1017 with none"`) {
+	if p := b.systemPrompt(); !strings.HasSuffix(p, `"yo, Botty here on deepseek-v4.1-flash-1017 with charts"`) {
 		t.Fatalf("the provider prefix must be dropped from {model}: %q", p)
 	}
 	cfg.Model = "test-model"
 	cfg.Search = true
-	if p := b.systemPrompt(); !strings.HasSuffix(p, `"yo, Botty here on test-model with web search"`) {
+	if p := b.systemPrompt(); !strings.HasSuffix(p, `"yo, Botty here on test-model with web search, charts"`) {
 		t.Fatalf("{tools} must name web search when it is on: %q", p)
 	}
 	if strings.Contains(p, "open source assistant") {
@@ -303,11 +303,11 @@ func TestSystemPromptNamesTools(t *testing.T) {
 	b := NewBot(context.Background(), cfg, NewSignal("x"), nil)
 	b.toolNames, b.toolGroups = []string{"get_quote", "filings"}, "yahoo: get_quote; scout: filings"
 	p := b.systemPrompt()
-	if !strings.Contains(p, "\nYour tools: web search; MCP tools by server, yahoo: get_quote; scout: filings. If asked what tools you have, name them, grouped by server.") {
+	if !strings.Contains(p, "\nYour tools: web search; charts (make_chart); MCP tools by server, yahoo: get_quote; scout: filings. If asked what tools you have, name them, grouped by server.") {
 		t.Fatalf("prompt %q", p)
 	}
 	cfg.Search, b.toolNames, b.toolGroups = false, nil, ""
-	if strings.Contains(b.systemPrompt(), "Your tools") {
-		t.Fatal("tools line without any tools")
+	if p := b.systemPrompt(); !strings.Contains(p, "\nYour tools: charts (make_chart). If asked what tools you have, name them.\n") {
+		t.Fatalf("the chart tool is always there: %q", p)
 	}
 }

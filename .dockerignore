@@ -2,5 +2,6 @@
 # context, notably a .env holding the API key.
 *
 !go.mod
+!go.sum
 !*.go
 *_test.go

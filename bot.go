@@ -333,7 +333,7 @@ func (b *Bot) handle(env *Envelope) {
 func (b *Bot) example(req *Request) {
 	b.ensureSelfName()
 	text := exampleText(req, b.introName(), modelName(b.cfg.Model), b.toolsText())
-	if err := b.sig.Send(req.Target, text, buildMentions(text, b.knownNames(req.Key))); err != nil {
+	if err := b.sig.Send(req.Target, text, buildMentions(text, b.knownNames(req.Key)), nil); err != nil {
 		errorf("send to %s failed: %v", req.Name, err)
 		return
 	}
@@ -451,13 +451,24 @@ func (b *Bot) respond(req *Request) {
 		warnf("reply to %s truncated from %d chars", req.Name, n)
 	}
 	parts := replyParts(res.Text, b.introName())
+	var attachments []string
+	for i, img := range res.Images {
+		attachments = append(attachments, imageDataURI(img, fmt.Sprintf("image%d", i+1)))
+	}
 	if len(parts) == 0 {
-		warnf("empty reply to %s, nothing sent", req.Name)
-		return
+		if len(attachments) == 0 {
+			warnf("empty reply to %s, nothing sent", req.Name)
+			return
+		}
+		parts = []string{""} // the images alone
 	}
 	known := b.knownNames(req.Key)
-	for _, part := range parts {
-		if err := b.sig.Send(req.Target, part, buildMentions(part, known)); err != nil {
+	for i, part := range parts {
+		var att []string
+		if i == 0 {
+			att = attachments // with the first message
+		}
+		if err := b.sig.Send(req.Target, part, buildMentions(part, known), att); err != nil {
 			errorf("send to %s failed: %v", req.Name, err)
 			return
 		}
@@ -536,30 +547,23 @@ func modelName(model string) string {
 // systemPrompt is the built-in prompt, plus SYSTEM_PROMPT, plus the intro.
 // toolsText lists the tools the model can use, for {tools} and /example.
 func (b *Bot) toolsText() string {
-	var tools []string
+	tools := []string{"charts"}
 	if b.cfg.Search {
-		tools = append(tools, "web search")
+		tools = []string{"web search", "charts"}
 	}
-	tools = append(tools, b.toolNames...)
-	if len(tools) == 0 {
-		return "none"
-	}
-	return strings.Join(tools, ", ")
+	return strings.Join(append(tools, b.toolNames...), ", ")
 }
 
 func (b *Bot) systemPrompt() string {
 	intro := strings.NewReplacer("{name}", safeName(b.introName()), "{model}", modelName(b.cfg.Model), "{tools}", b.toolsText()).Replace(b.cfg.Intro)
-	p := basePrompt
-	if b.toolsText() != "none" {
-		tools := []string{}
-		if b.cfg.Search {
-			tools = append(tools, "web search")
-		}
-		if b.toolGroups != "" {
-			tools = append(tools, "MCP tools by server, "+b.toolGroups)
-		}
-		p += "\nYour tools: " + strings.Join(tools, "; ") + ". If asked what tools you have, name them, grouped by server."
+	tools, ask := []string{"charts (" + chartTool + ")"}, "name them"
+	if b.cfg.Search {
+		tools = append([]string{"web search"}, tools...)
 	}
+	if b.toolGroups != "" {
+		tools, ask = append(tools, "MCP tools by server, "+b.toolGroups), "name them, grouped by server"
+	}
+	p := basePrompt + "\nYour tools: " + strings.Join(tools, "; ") + ". If asked what tools you have, " + ask + "."
 	if b.cfg.ExtraPrompt != "" {
 		p += "\n" + b.cfg.ExtraPrompt
 	}
