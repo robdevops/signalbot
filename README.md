@@ -2,6 +2,17 @@
 
 A small, [privacy-conscious](PRIVACY.md) chat bot that connects to a running [signal-cli](https://github.com/AsamK/signal-cli) daemon over its socket and answers using a model from [OpenRouter](https://openrouter.ai).
 
+- [Features](#features)
+- [Use cases](#use-cases)
+- [Prerequisites](#prerequisites)
+- [Install](#install)
+  - [With systemd](#with-systemd)
+  - [With Docker](#with-docker)
+  - [Then](#then)
+- [Configuration](#configuration)
+  - [MCP tools](#mcp-tools)
+- [Troubleshooting](#troubleshooting)
+
 ## Features
 
 - The bot replies when it is @mentioned in a group; people it mentions are shown to the model by real name, and @names in its replies become real Signal mentions
