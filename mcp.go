@@ -8,10 +8,12 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"net/http"
 	"os"
 	"os/exec"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -28,15 +30,17 @@ const (
 )
 
 // mcpServerConfig is one entry of MCP_CONFIG's "mcpServers": a URL for a
-// remote server, or a command for a local one, and the tools the model may
-// use from it.
+// remote server, or a command for a local one. allowed_tools, when present,
+// offers the model only those tools; blocked_tools, when present, offers all
+// but those. Without either, every tool the server lists is offered.
 type mcpServerConfig struct {
-	URL     string            `json:"url"`
-	Headers map[string]string `json:"headers"`
-	Command string            `json:"command"`
-	Args    []string          `json:"args"`
-	Env     map[string]string `json:"env"`
-	Tools   []string          `json:"tools"`
+	URL          string            `json:"url"`
+	Headers      map[string]string `json:"headers"`
+	Command      string            `json:"command"`
+	Args         []string          `json:"args"`
+	Env          map[string]string `json:"env"`
+	AllowedTools []string          `json:"allowed_tools"` // nil: not in whitelist mode
+	BlockedTools []string          `json:"blocked_tools"`
 }
 
 func loadMCPConfig(path string) (map[string]mcpServerConfig, error) {
@@ -51,11 +55,8 @@ func loadMCPConfig(path string) (map[string]mcpServerConfig, error) {
 		return nil, fmt.Errorf("%s: %v", path, err)
 	}
 	for name, s := range f.Servers {
-		switch {
-		case (s.URL == "") == (s.Command == ""):
+		if (s.URL == "") == (s.Command == "") {
 			return nil, fmt.Errorf("MCP server %q needs a url or a command, not both or neither", name)
-		case len(s.Tools) == 0:
-			return nil, fmt.Errorf("MCP server %q lists no tools to allow", name)
 		}
 	}
 	return f.Servers, nil
@@ -105,7 +106,7 @@ type mcpTool struct {
 	Schema      json.RawMessage
 }
 
-// MCP holds the allowed tools of every configured server.
+// MCP holds the tools of every configured server that the model may call.
 type MCP struct {
 	tools   []mcpTool // sorted by Model
 	byModel map[string]mcpTool
@@ -121,10 +122,12 @@ func toolModelName(server, tool string) string {
 	return n[:min(len(n), 64)]
 }
 
-// StartMCP connects to every server and collects its allowed tools. A server
-// that cannot be reached is logged and left out; an allowed tool a reachable
-// server does not have, or two tools that end up with the same name, is an
-// error. Stdio servers are stopped when ctx ends.
+// StartMCP connects to every server and collects the tools its
+// allowed_tools and blocked_tools let through. A server that cannot be
+// reached is logged and left out. A tool named in either list that a
+// reachable server does not have, or two tools that end up with the same
+// name, is an error: a typo in blocked_tools would otherwise leave the tool
+// offered. Stdio servers are stopped when ctx ends.
 func StartMCP(ctx context.Context, servers map[string]mcpServerConfig) (*MCP, error) {
 	m := &MCP{byModel: map[string]mcpTool{}, conns: map[string]mcpConn{}}
 	names := make([]string, 0, len(servers))
@@ -145,14 +148,19 @@ func StartMCP(ctx context.Context, servers map[string]mcpServerConfig) (*MCP, er
 			errorf("MCP server %s unavailable, its tools are left out: %v", name, err)
 			continue
 		}
-		for _, want := range cfg.Tools {
-			t, ok := listed[want]
-			if !ok {
+		for _, want := range append(slices.Clone(cfg.AllowedTools), cfg.BlockedTools...) {
+			if _, ok := listed[want]; !ok {
 				return nil, fmt.Errorf("MCP server %q has no tool %q", name, want)
 			}
-			t.Server, t.Model = name, toolModelName(name, want)
+		}
+		for _, tn := range slices.Sorted(maps.Keys(listed)) {
+			if cfg.AllowedTools != nil && !slices.Contains(cfg.AllowedTools, tn) || slices.Contains(cfg.BlockedTools, tn) {
+				continue
+			}
+			t := listed[tn]
+			t.Server, t.Model = name, toolModelName(name, tn)
 			if _, dup := m.byModel[t.Model]; dup {
-				return nil, fmt.Errorf("MCP tool %q of server %q clashes with another tool's name", want, name)
+				return nil, fmt.Errorf("MCP tool %q of server %q clashes with another tool's name", tn, name)
 			}
 			m.byModel[t.Model] = t
 			m.tools = append(m.tools, t)
@@ -210,7 +218,7 @@ func startServer(ctx context.Context, conn mcpConn) (map[string]mcpTool, error) 
 	}
 }
 
-// Names lists the allowed tools by their servers' names, for {tools}.
+// Names lists the tools the model may call by their servers' names, for {tools}.
 func (m *MCP) Names() []string {
 	if m == nil {
 		return nil

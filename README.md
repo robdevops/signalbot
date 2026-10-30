@@ -138,16 +138,16 @@ The cost logged with each reply is the amount OpenRouter reports billing for it.
 
 ### MCP tools
 
-The model can call tools from [MCP](https://modelcontextprotocol.io) servers, remote (`url`) or local (`command`). Only the tools you list under `tools` are offered to it, because anyone who can address the bot can make it call them. Put the servers in a file, for example `/etc/signalbot-mcp.json`:
+The model can call tools from [MCP](https://modelcontextprotocol.io) servers, remote (`url`) or local (`command`). Anyone who can address the bot can make it call them, so choose what each server offers: `allowed_tools` offers only the tools listed, `blocked_tools` offers all but those, and without either every tool the server has is offered. Put the servers in a file, for example `/etc/signalbot-mcp.json`:
 
 ```json
 {"mcpServers": {
-  "weather": {"url": "https://example.com/mcp", "headers": {"Authorization": "Bearer …"}, "tools": ["get_forecast"]},
-  "files":   {"command": "uvx", "args": ["some-mcp-server"], "env": {"KEY": "value"}, "tools": ["read_file"]}
+  "weather": {"url": "https://example.com/mcp", "headers": {"Authorization": "Bearer …"}, "allowed_tools": ["get_forecast"]},
+  "files":   {"command": "uvx", "args": ["some-mcp-server"], "env": {"KEY": "value"}, "blocked_tools": ["delete_file"]}
 }}
 ```
 
-A server that can't be reached at startup is logged and left out. A listed tool the server doesn't have is a config error. Local servers get only `PATH`, `HOME` and their `env`, never the bot's own environment.
+A server that can't be reached at startup is logged and left out. A tool named in either list that the server doesn't have is a config error, so a typo can't leave a blocked tool offered. Local servers get only `PATH`, `HOME` and their `env`, never the bot's own environment.
 
 - **systemd:** keep the file root-only, uncomment the `LoadCredential=` and `Environment=MCP_CONFIG=` lines in `signalbot.service`, and restart. systemd hands the file to the service alone.
 - **Docker:** add `-v /etc/signalbot-mcp.json:/etc/signalbot-mcp.json:ro -e MCP_CONFIG=/etc/signalbot-mcp.json`. The image has no shell or runtimes, so only remote servers (`url`) work.
