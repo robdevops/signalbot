@@ -296,3 +296,18 @@ func TestSystemPromptIntroOverride(t *testing.T) {
 		t.Fatalf("newline in INTRO must be escaped, not literal: %q", p)
 	}
 }
+
+// The model is told its tools by name, so it can list them when asked.
+func TestSystemPromptNamesTools(t *testing.T) {
+	cfg := &Config{Model: "m", Search: true, MaxConcurrency: 1, HistoryTurns: 1}
+	b := NewBot(context.Background(), cfg, NewSignal("x"), nil)
+	b.toolNames, b.toolGroups = []string{"get_quote", "filings"}, "yahoo: get_quote; scout: filings"
+	p := b.systemPrompt()
+	if !strings.Contains(p, "\nYour tools: web search; MCP tools by server, yahoo: get_quote; scout: filings. If asked what tools you have, name them, grouped by server.") {
+		t.Fatalf("prompt %q", p)
+	}
+	cfg.Search, b.toolNames, b.toolGroups = false, nil, ""
+	if strings.Contains(b.systemPrompt(), "Your tools") {
+		t.Fatal("tools line without any tools")
+	}
+}

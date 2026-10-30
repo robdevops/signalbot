@@ -316,3 +316,22 @@ func TestStdioMCP(t *testing.T) {
 		time.Sleep(100 * time.Millisecond)
 	}
 }
+
+func TestMCPByServer(t *testing.T) {
+	a, b := httptest.NewServer(&fakeMCP{}), httptest.NewServer(&fakeMCP{})
+	defer a.Close()
+	defer b.Close()
+	m, err := StartMCP(context.Background(), map[string]mcpServerConfig{
+		"yahoo": {URL: a.URL, AllowedTools: []string{"echo", "pic"}},
+		"scout": {URL: b.URL, AllowedTools: []string{"fail"}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := m.ByServer(), "scout: fail; yahoo: echo, pic"; got != want {
+		t.Fatalf("got %q, want %q", got, want)
+	}
+	if (*MCP)(nil).ByServer() != "" {
+		t.Fatal("no MCP must give no list")
+	}
+}

@@ -62,7 +62,7 @@ func main() {
 		defer tools.Wait() // let stdio servers stop after connCtx ends
 	}
 	bot := NewBot(connCtx, cfg, sig, NewOpenRouter(cfg, tools))
-	bot.toolNames = tools.Names()
+	bot.toolNames, bot.toolGroups = tools.Names(), tools.ByServer()
 	infof("model %s, reasoning %s, search %v", cfg.Model, cfg.Reasoning, cfg.Search)
 	if names := tools.Names(); len(names) > 0 {
 		infof("MCP tools: %s", strings.Join(names, ", "))

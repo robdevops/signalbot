@@ -235,6 +235,23 @@ func (m *MCP) Names() []string {
 	return out
 }
 
+// ByServer lists the tools the model may call, grouped by server, as
+// "server: tool, tool; server: tool", for the system prompt.
+func (m *MCP) ByServer() string {
+	if m == nil {
+		return ""
+	}
+	var groups []string
+	for i, t := range m.tools { // sorted by server__tool, so grouped by server
+		if i == 0 || m.tools[i-1].Server != t.Server {
+			groups = append(groups, t.Server+": "+t.Name)
+		} else {
+			groups[len(groups)-1] += ", " + t.Name
+		}
+	}
+	return strings.Join(groups, "; ")
+}
+
 // Wait waits for stdio servers to stop after the context given to StartMCP ends.
 func (m *MCP) Wait() {
 	if m != nil {

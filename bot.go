@@ -69,6 +69,7 @@ type Bot struct {
 
 	typingEvery time.Duration
 	toolNames   []string // MCP tools the model may call, for {tools}
+	toolGroups  string   // the same, grouped by server, for the system prompt
 }
 
 func NewBot(ctx context.Context, cfg *Config, sig *Signal, ai Completer) *Bot {
@@ -549,6 +550,16 @@ func (b *Bot) toolsText() string {
 func (b *Bot) systemPrompt() string {
 	intro := strings.NewReplacer("{name}", safeName(b.introName()), "{model}", modelName(b.cfg.Model), "{tools}", b.toolsText()).Replace(b.cfg.Intro)
 	p := basePrompt
+	if b.toolsText() != "none" {
+		tools := []string{}
+		if b.cfg.Search {
+			tools = append(tools, "web search")
+		}
+		if b.toolGroups != "" {
+			tools = append(tools, "MCP tools by server, "+b.toolGroups)
+		}
+		p += "\nYour tools: " + strings.Join(tools, "; ") + ". If asked what tools you have, name them, grouped by server."
+	}
 	if b.cfg.ExtraPrompt != "" {
 		p += "\n" + b.cfg.ExtraPrompt
 	}
