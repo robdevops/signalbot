@@ -7,7 +7,7 @@ A small, [privacy-conscious](PRIVACY.md) chat bot that connects to a running [si
 - The bot replies when it is @mentioned in a group; people it mentions are shown to the model by real name, and @names in its replies become real Signal mentions
 - Answers replies to its own messages, and @mentions made in reply to someone else's, using the quoted message as context
 - Replies to DMs from senders listed in `SIGNAL_DM_USER_IDS`; ignores everything else
-- Short answers sized for Signal (one line if possible, never over its 2000-character limit); optional web search and reasoning effort
+- Short answers sized for Signal (one line if possible, never over its 2000-character limit); optional web search, [MCP](#mcp-tools) tools and reasoning effort
 - Short per-conversation memory for follow-up questions, forgotten after a day (sooner with a shorter _disappearing messages_ setting)
 - Shows a typing indicator (refreshed every 10s) while the bot thinks; chats run concurrently, so a slow answer never blocks the rest
 - The bot ignores everything not addressed to it: a message that doesn't mention it, reply to it, or arrive as a DM is passed over. It logs the tokens used and cost of each reply
@@ -93,7 +93,7 @@ Docker's journald driver records stderr at priority 3 (err) and stdout at 6 (inf
 
 ### Then
 
-Add the bot's account to a group and @mention it, reply to one of its messages, or DM it from an allowed sender.
+Add the bot's account to a group and @mention it, reply to one of its messages, or DM it from an allowed sender. Send it `/demo` to see what it can do; that reply never goes to the model.
 
 ## Configuration
 
@@ -110,10 +110,28 @@ Add the bot's account to a group and @mention it, reply to one of its messages, 
 | `MAX_CONCURRENCY` | `32` | Conversations in flight at once; messages beyond this are dropped |
 | `HISTORY_TURNS` | `10` | Exchanges remembered per chat |
 | `LOG_LEVEL` | `info` | `debug`, `info`, `warn` or `error` |
+| `MCP_CONFIG` | empty | Path of an MCP servers file; see [MCP tools](#mcp-tools) |
 
 The default `INTRO` is: `hi, I'm {name}, your open source assistant running {model} (tools: {tools}). I respond to @mentions and replies to my messages. See https://github.com/robdevops/signalbot/blob/main/README.md for details.`
 
 The cost logged with each reply is the amount OpenRouter reports billing for it.
+
+### MCP tools
+
+The model can call tools from [MCP](https://modelcontextprotocol.io) servers, remote (`url`) or local (`command`). Only the tools you list under `tools` are offered to it, because anyone who can address the bot can make it call them. Put the servers in a file, for example `/etc/signalbot-mcp.json`:
+
+```json
+{"mcpServers": {
+  "weather": {"url": "https://example.com/mcp", "headers": {"Authorization": "Bearer …"}, "tools": ["get_forecast"]},
+  "files":   {"command": "uvx", "args": ["some-mcp-server"], "env": {"KEY": "value"}, "tools": ["read_file"]}
+}}
+```
+
+A server that can't be reached at startup is logged and left out. A listed tool the server doesn't have is a config error. Local servers get only `PATH`, `HOME` and their `env`, never the bot's own environment.
+
+- **systemd:** keep the file root-only, uncomment the `LoadCredential=` and `Environment=MCP_CONFIG=` lines in `signalbot.service`, and restart. systemd hands the file to the service alone.
+- **Docker:** add `-v /etc/signalbot-mcp.json:/etc/signalbot-mcp.json:ro -e MCP_CONFIG=/etc/signalbot-mcp.json`. The image has no shell or runtimes, so only remote servers work there.
+- **Local servers under systemd** usually need the hardening loosened with a drop-in (`sudo systemctl edit signalbot`), for example `MemoryDenyWriteExecute=no` for Node, and `CacheDirectory=signalbot` with `Environment=HOME=/var/cache/signalbot` for npx or uvx caches.
 
 ## Troubleshooting
 

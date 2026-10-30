@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/signal"
 	"runtime/debug"
+	"strings"
 	"syscall"
 	"time"
 )
@@ -48,8 +49,24 @@ func main() {
 	defer closeConn()
 
 	sig := NewSignal(cfg.Socket)
-	bot := NewBot(connCtx, cfg, sig, NewOpenRouter(cfg))
+	var tools *MCP
+	if cfg.MCPConfig != "" {
+		servers, err := loadMCPConfig(cfg.MCPConfig)
+		if err == nil {
+			tools, err = StartMCP(connCtx, servers)
+		}
+		if err != nil {
+			errorf("config error: %v", err)
+			os.Exit(1)
+		}
+		defer tools.Wait() // let stdio servers stop after connCtx ends
+	}
+	bot := NewBot(connCtx, cfg, sig, NewOpenRouter(cfg, tools))
+	bot.toolNames = tools.Names()
 	infof("model %s, reasoning %s, search %v", cfg.Model, cfg.Reasoning, cfg.Search)
+	if names := tools.Names(); len(names) > 0 {
+		infof("MCP tools: %s", strings.Join(names, ", "))
+	}
 
 	go func() {
 		<-sigCtx.Done()

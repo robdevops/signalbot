@@ -13,6 +13,8 @@ When the bot answers a message, it sends this to [OpenRouter](https://openrouter
 
 With web search on (`MODEL_SEARCH`), the model decides whether to search and writes the query itself. The query can contain anything the model was sent (see above), such as a name or a phrase from a message, and goes to the search service OpenRouter uses.
 
+With MCP tools configured, the model may call them. A call sends the arguments the model wrote, which can quote anything above, to that tool's MCP server, and the tool's result goes to OpenRouter with the next request.
+
 Every request tells OpenRouter to use only model providers that do not collect data (`data_collection: deny`). That is a request the bot cannot check or enforce, so read OpenRouter's policy and the model provider's.
 
 ## What the bot keeps
@@ -27,6 +29,7 @@ Every request tells OpenRouter to use only model providers that do not collect d
 - **A message addressed to the bot:** a line with the kind (mention, reply or DM) and the sender's name and ID; after the answer, a line with the sender's name, time taken, tokens used and cost.
 - **Never the text of any message,** nor errors that quote one.
 - **A message not addressed to the bot:** nothing, not even a note that it arrived.
+- **An MCP tool call:** the tool's name, its server and how long it took; never the arguments or the result.
 - **A contact list load,** at `LOG_LEVEL=debug` only: a line with the number of contacts.
 - **A DM from someone not in `SIGNAL_DM_USER_IDS`:** their ID only, never a name or text.
 

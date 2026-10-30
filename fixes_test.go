@@ -167,7 +167,7 @@ func TestHandleBoundsGoroutines(t *testing.T) {
 	cfg := testCfg()
 	sig := NewSignal("unused")
 	sig.selfID.Store(self)
-	x := NewOpenRouter(cfg)
+	x := NewOpenRouter(cfg, nil)
 	x.url = ai.URL
 	b := NewBot(context.Background(), cfg, sig, x)
 
@@ -501,7 +501,7 @@ func TestCloseStopsNewReplies(t *testing.T) {
 	cfg := testCfg()
 	sig := NewSignal("x")
 	sig.selfID.Store(self)
-	x := NewOpenRouter(cfg)
+	x := NewOpenRouter(cfg, nil)
 	x.url = ai.URL
 	b := NewBot(context.Background(), cfg, sig, x)
 
@@ -567,7 +567,7 @@ func TestShutdownDrainsReplyBeforeClosingSocket(t *testing.T) {
 
 	cfg := testCfg()
 	sig := NewSignal(sock)
-	x := NewOpenRouter(cfg)
+	x := NewOpenRouter(cfg, nil)
 	x.url = ai.URL
 	b := NewBot(context.Background(), cfg, sig, x)
 	connCtx, closeConn := context.WithCancel(context.Background())
@@ -613,7 +613,7 @@ func TestReconnectsDoNotLeakGoroutines(t *testing.T) {
 // The HTTP client must refuse servers that cannot do TLS 1.3, while keeping
 // Go's default transport behaviour (proxy from the environment, HTTP/2).
 func TestClientRequiresTLS13(t *testing.T) {
-	x := NewOpenRouter(testCfg())
+	x := NewOpenRouter(testCfg(), nil)
 	tr := x.http.Transport.(*http.Transport)
 	if tr.Proxy == nil || !tr.ForceAttemptHTTP2 {
 		t.Fatal("lost the default transport's proxy support or HTTP/2")

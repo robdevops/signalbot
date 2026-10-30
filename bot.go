@@ -68,6 +68,7 @@ type Bot struct {
 	dedupe  map[string]time.Time
 
 	typingEvery time.Duration
+	toolNames   []string // MCP tools the model may call, for {tools}
 }
 
 func NewBot(ctx context.Context, cfg *Config, sig *Signal, ai Completer) *Bot {
@@ -106,10 +107,11 @@ type Request struct {
 	Key    string // conversation key
 	Prompt string
 
-	Kind   string // "mention", "reply" or "dm"
-	Sender string // display name and id, for the log
-	Name   string // display name, else the id: short form for the log
-	Text   string // message text with the bot mention stripped
+	Kind    string // "mention", "reply" or "dm"
+	Sender  string // display name and id, for the log
+	Name    string // display name, else the id: short form for the log
+	Display string // display name, "" if unknown
+	Text    string // message text with the bot mention stripped
 
 	Expires time.Duration // the chat's disappearing-messages timer, 0 if off
 
@@ -202,7 +204,7 @@ func Decide(env *Envelope, kind, self string, names *Names) *Request {
 		who = name + "(" + sender + ")"
 	}
 
-	req := &Request{Target: target, Key: key, Prompt: text, Kind: kind, Sender: who, Name: cmp.Or(name, sender), Text: raw,
+	req := &Request{Target: target, Key: key, Prompt: text, Kind: kind, Sender: who, Name: cmp.Or(name, sender), Display: name, Text: raw,
 		Expires: time.Duration(dm.ExpiresInSeconds) * time.Second}
 	if target.GroupID != "" {
 		req.Names = map[string]string{}
@@ -317,8 +319,41 @@ func (b *Bot) handle(env *Envelope) {
 		return
 	}
 	b.remember(req)
+	if strings.EqualFold(strings.TrimSpace(req.Text), "/demo") {
+		b.demo(req)
+		return
+	}
 	infof("%s", req.logLine())
 	b.respond(req)
+}
+
+// demo answers "/demo" without the model: what the bot can do, with a real
+// @mention of whoever asked.
+func (b *Bot) demo(req *Request) {
+	b.ensureSelfName()
+	text := demoText(req, b.introName(), modelName(b.cfg.Model), b.toolsText())
+	if err := b.sig.Send(req.Target, text, buildMentions(text, b.knownNames(req.Key))); err != nil {
+		errorf("send to %s failed: %v", req.Name, err)
+		return
+	}
+	infof("demo for %s", req.Name)
+}
+
+func demoText(req *Request, self, model, tools string) string {
+	hi := "Hi!"
+	if req.Target.GroupID != "" && req.Display != "" {
+		hi = "Hi @" + req.Display + "!"
+	}
+	if tools == "none" {
+		tools = "no tools"
+	}
+	return hi + " I'm " + self + ". Here's what I can do:\n" +
+		"- Answer when you @mention me, reply to one of my messages, or DM me (if you're on my list)\n" +
+		"- Use a message you quote as context\n" +
+		"- Remember our conversation for up to a day (less with disappearing messages)\n" +
+		"- Mention people by name in my replies\n" +
+		"- Run " + model + " with " + tools + "\n" +
+		"This reply didn't use the model."
 }
 
 // duplicate reports whether the same sender sent the same text to the same
@@ -498,12 +533,21 @@ func modelName(model string) string {
 }
 
 // systemPrompt is the built-in prompt, plus SYSTEM_PROMPT, plus the intro.
-func (b *Bot) systemPrompt() string {
-	tools := "none"
+// toolsText lists the tools the model can use, for {tools} and /demo.
+func (b *Bot) toolsText() string {
+	var tools []string
 	if b.cfg.Search {
-		tools = "web search"
+		tools = append(tools, "web search")
 	}
-	intro := strings.NewReplacer("{name}", safeName(b.introName()), "{model}", modelName(b.cfg.Model), "{tools}", tools).Replace(b.cfg.Intro)
+	tools = append(tools, b.toolNames...)
+	if len(tools) == 0 {
+		return "none"
+	}
+	return strings.Join(tools, ", ")
+}
+
+func (b *Bot) systemPrompt() string {
+	intro := strings.NewReplacer("{name}", safeName(b.introName()), "{model}", modelName(b.cfg.Model), "{tools}", b.toolsText()).Replace(b.cfg.Intro)
 	p := basePrompt
 	if b.cfg.ExtraPrompt != "" {
 		p += "\n" + b.cfg.ExtraPrompt
