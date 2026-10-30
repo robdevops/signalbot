@@ -12,6 +12,14 @@ A small, [privacy-conscious](PRIVACY.md) chat bot that connects to a running [si
 - Shows a typing indicator (refreshed every 10s) while the bot thinks; chats run concurrently, so a slow answer never blocks the rest
 - The bot ignores everything not addressed to it: a message that doesn't mention it, reply to it, or arrive as a DM is passed over. It logs the tokens used and cost of each reply
 
+## Use cases
+
+- Your group's brain trust: ask it to explain things, check facts or settle debates
+- Explain or translate any message by replying to it and tagging the bot
+- Connect MCP tools and data to your group chat
+- A private assistant in your DMs
+- Just for the fun or convenience of a sassy LLM in your Signal groups or DMs
+
 The messages the bot answers, and the names in them, are sent to OpenRouter and on to the model's provider. See [TECHNICAL.md](TECHNICAL.md) and [PRIVACY.md](PRIVACY.md) for details on how it works.
 
 ## Prerequisites
