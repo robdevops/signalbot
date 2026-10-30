@@ -41,6 +41,7 @@ type mcpServerConfig struct {
 	Env          map[string]string `json:"env"`
 	AllowedTools []string          `json:"allowed_tools"` // nil: not in whitelist mode
 	BlockedTools []string          `json:"blocked_tools"`
+	Disabled     bool              `json:"disabled"` // left out entirely
 }
 
 func loadMCPConfig(path string) (map[string]mcpServerConfig, error) {
@@ -55,6 +56,10 @@ func loadMCPConfig(path string) (map[string]mcpServerConfig, error) {
 		return nil, fmt.Errorf("%s: %v", path, err)
 	}
 	for name, s := range f.Servers {
+		if s.Disabled {
+			delete(f.Servers, name) // not started, and not checked, so it can be parked half-written
+			continue
+		}
 		if (s.URL == "") == (s.Command == "") {
 			return nil, fmt.Errorf("MCP server %q needs a url or a command, not both or neither", name)
 		}

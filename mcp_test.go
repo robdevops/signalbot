@@ -41,6 +41,14 @@ func TestLoadMCPConfig(t *testing.T) {
 			t.Errorf("%s: want an error", name)
 		}
 	}
+	// A disabled server is dropped unchecked, even if it is incomplete.
+	s, err = loadMCPConfig(writeConfig(t, `{"mcpServers":{"on":{"url":"u"},"off":{"disabled":true},"off2":{"url":"u","disabled":true}}}`))
+	if err != nil || len(s) != 1 || s["on"].URL != "u" {
+		t.Fatalf("disabled servers: %+v, %v", s, err)
+	}
+	if s, err := loadMCPConfig(writeConfig(t, `{"mcpServers":{"on":{"url":"u","disabled":false}}}`)); err != nil || len(s) != 1 {
+		t.Fatalf("disabled false: %+v, %v", s, err)
+	}
 	if _, err := loadMCPConfig(filepath.Join(t.TempDir(), "missing")); err == nil {
 		t.Error("a missing file must be an error")
 	}
