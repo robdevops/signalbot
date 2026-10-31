@@ -21,11 +21,11 @@ Out of scope: chat networks other than Signal, and providers other than OpenRout
    - the bot calls itself by its own profile name, or "signalbot" without one.
 4. **Answer an addressed message:**
    - show typing until the reply is ready;
-   - build the prompt: the base rules, `SYSTEM_PROMPT`, `INTRO`, the chat's history, the message (with the sender's name in groups and any quote, escaped and capped);
+   - build the prompt: the base rules, `MODEL_SYSTEM_PROMPT`, `INTRO`, the chat's history, the message (with the sender's name in groups and any quote, escaped and capped);
    - ask the model;
    - send the reply: strip the bot's own @name, link @Name to real mentions, split at 2,000 characters, and cap the whole reply.
 5. **Ask the model** through OpenRouter:
-   - with `data_collection: deny`, the `REASONING` effort, and TLS 1.3;
+   - with `data_collection: deny`, the `MODEL_REASONING` effort, and TLS 1.3;
    - a 429 or 5xx gets one retry, and an error body is reduced to its message;
    - the cost is logged;
    - the tool loop takes at most 5 rounds and 3 minutes per reply, and 4 pictures;
@@ -38,7 +38,8 @@ Out of scope: chat networks other than Signal, and providers other than OpenRout
    - names and quotes are made safe before they reach the model or the log;
    - message text is never logged, including in panics and error bodies;
    - all memory is capped.
-9. **Configure from environment variables,** log at four levels (journald priorities under systemd), and print the version with `-version`.
+9. **Configure from environment variables,** and print the version with `-version`.
+10. **Log** at four levels, all always written: with journald priorities under systemd, otherwise debug and info to stdout, warn and error to stderr. Message content is never logged. Each addressed message logs "received group chat" or "received dm" at info; a DM from a sender not in `SIGNAL_DM_USER_IDS` always logs the sender's ID.
 
 A message with no text (only a photo or sticker) has nothing to answer in the core. It's answered only if a feature adds something to it.
 
@@ -146,7 +147,7 @@ In `features.go`, `websearch`, `charts` and `mcp` stay in that order: it's the o
 - A time without an offset is in the bot's time zone. A monthly schedule from the 31st runs on the last day of shorter months.
 - Straight and curly quotes both work (phones type “ ”).
 - Each user has a cap, scheduling `/schedule` itself is refused, and the text is never logged.
-- Schedules are saved to `SCHEDULE_FILE` if it's set, so they survive a restart; otherwise they live in memory only (section 10).
+- Schedules are always saved, in `$STATE_DIRECTORY` (or the working directory when run by hand), so they survive a restart. The systemd unit gets `StateDirectory=signalbot`; the Docker image sets `STATE_DIRECTORY=/data` and the README mounts a volume there. If the bot can't write, it warns at startup and keeps schedules in memory.
 
 **If a feature can't be built on these ports, that's a design finding.** Either the port becomes more generic (and stays tied to its stage), or the feature takes on more of the work. A feature-shaped field is never the answer.
 
@@ -165,7 +166,7 @@ In `features.go`, `websearch`, `charts` and `mcp` stay in that order: it's the o
 
 ## 8. Guardrails (Go tests)
 - **Imports:** only `cmd/signalbot` imports features; features import only `internal/feature`, `internal/kit` and their own packages; kit imports no other internal package.
-- **No feature names in the core:** the core's source mentions no feature name or feature-only word (chart, donut, MCP, group context, `/example`, `/schedule`).
+- **No feature names in the core:** the core's source mentions no feature name or feature-only word (chart, MCP, group context, `/example`, `/schedule`).
 - **Zero features:** the core's own tests run with no features registered.
 - **Each feature alone:** each feature's tests run on `featuretest`, a fake host.
 - **Docs:** every setting read is in the README's configuration table.
@@ -181,20 +182,26 @@ In `features.go`, `websearch`, `charts` and `mcp` stay in that order: it's the o
    - TECHNICAL.md: the core spec, then one paragraph per feature;
    - CONTRIBUTING.md: the port rule and the guardrails;
    - README: the settings tables, `TZ`, `/schedule`, and the MCP `prompt` and `keywords` fields;
-   - PRIVACY.md: scheduled text is kept until deleted, and on disk only with `SCHEDULE_FILE`.
+   - PRIVACY.md: scheduled text is kept on disk until deleted.
 
-## 10. Behaviour changes, asked about before building
+## 10. Behaviour changes
+**Approved:**
 - Messages in one chat are answered one at a time, in order, with at most 4 waiting (section 2).
 - The tools line lists each MCP server as its own item, without "MCP tools by server", and always ends "If asked what tools you have, name them." Today it says "name them, grouped by server" when MCP tools exist.
 - MCP's `prompt` and `keywords` are new and optional: without them, nothing changes.
-- `/schedule` is new, and `TZ` sets its time zone. Recommended: schedules survive a restart only when `SCHEDULE_FILE` is set, off by default, so nothing reaches disk unless you choose it.
-- Log lines approved in the first recode: "model error" in place of "OpenRouter error", and the websearch feature logs "web search on" while the startup line drops `search …`.
+- `/schedule` is new, and `TZ` sets its time zone. Schedules are always saved, so they survive a restart (section 6).
+- The donut chart is renamed pie: the tool is `make_pie_chart`, still drawn as a ring with the total in the middle. Its description still mentions donuts.
+- Settings: `REASONING` becomes `MODEL_REASONING`, `SYSTEM_PROMPT` becomes `MODEL_SYSTEM_PROMPT`, and `LOG_LEVEL` is dropped.
+- Logging (section 1): every level is always written, with its journald priority under systemd, and otherwise debug and info to stdout, warn and error to stderr. Each addressed message is logged at info as "received group chat" or "received dm", with no name or content.
+- The websearch feature logs "web search on", and the startup line drops `search …`. The "OpenRouter error" line keeps today's wording.
 - When the model can't call tools, the core's warning says "tools are off" in place of naming web search, charts and MCP.
+
+**Proposed, not yet approved:** end the tools line with the full list of tools, not only those offered this turn, so "what tools do you have?" names charts and keyword-gated MCP servers too.
 
 ## 11. Expected size
 About +650 to +850 lines over 4,185, checked after the core (step 2):
 - one-shot timers, about 80;
 - the ports, the registry, the per-chat mailbox and the offering rule, about 220;
 - a package per feature;
-- the `schedule` feature, about 250: parsing, list, delete, help, repeats and the optional file;
+- the `schedule` feature, about 250: parsing, list, delete, help, repeats and saving;
 - MCP's `prompt` and `keywords`, about 30.
