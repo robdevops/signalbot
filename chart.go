@@ -66,7 +66,7 @@ var chartToolSchema = json.RawMessage(`{
       "properties": {
         "name": {"type": "string", "description": "Legend label, e.g. \"NVDA\" or \"Sydney\""},
         "axis": {"type": "string", "enum": ["left", "right"], "description": "Which Y axis the series uses (default left)"},
-        "points": {"type": "array", "minItems": 2, "maxItems": 1000, "description": "Oldest first. The last point must be the latest value: when the others are weekly or monthly, pull it from the most granular data available (e.g. daily) and add it as an extra final point", "items": {
+        "points": {"type": "array", "minItems": 2, "maxItems": 1000, "items": {
           "type": "object", "required": ["date", "value"],
           "properties": {"date": {"type": "string", "description": "YYYY-MM-DD"}, "value": {"type": "number"}}
         }}
