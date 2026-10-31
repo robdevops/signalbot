@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"github.com/robdevops/signalbot/internal/kit/mcp"
 	"github.com/robdevops/signalbot/internal/llm"
 	"strings"
 	"testing"
@@ -13,7 +14,7 @@ import (
 func TestChatCommandsConfig(t *testing.T) {
 	srv := &fakeMCP{}
 	m, s := startFake(t, srv, "echo")
-	m2, err := StartMCP(context.Background(), map[string]mcpServerConfig{"fake": {URL: s.URL, AllowedTools: []string{"echo", "pic"},
+	m2, err := StartMCP(context.Background(), map[string]mcpServerConfig{"fake": {Server: mcp.Server{URL: s.URL}, AllowedTools: []string{"echo", "pic"},
 		ChatCommands: map[string]chatCommand{
 			"Echo":     {Tool: "echo", RequireArg: true},
 			"/pic":     {Tool: "pic"},

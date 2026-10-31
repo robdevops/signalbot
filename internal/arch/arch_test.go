@@ -17,7 +17,7 @@ var root = filepath.Join("..", "..")
 // oversized lists the files and packages over the limits from before the
 // recode. An entry goes when its file or package is split; none may be added.
 var oversized = map[string]bool{
-	"bot.go": true, "bot_test.go": true, "mcp.go": true, "fixes_test.go": true, "images_test.go": true,
+	"bot.go": true, "bot_test.go": true, "fixes_test.go": true, "images_test.go": true,
 	"mcp_test.go": true, "toolloop_test.go": true, ".": true,
 }
 

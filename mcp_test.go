@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/robdevops/signalbot/internal/kit/mcp"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -91,7 +92,7 @@ func (f *fakeMCP) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		f.badCalls++
 		http.Error(w, "unknown session", http.StatusNotFound)
 		return
-	} else if r.Header.Get("MCP-Protocol-Version") != mcpProtocol {
+	} else if r.Header.Get("MCP-Protocol-Version") != mcp.Protocol {
 		http.Error(w, "no protocol version", http.StatusBadRequest)
 		return
 	}
@@ -102,7 +103,7 @@ func (f *fakeMCP) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	var result string
 	switch req.Method {
 	case "initialize":
-		result = `{"protocolVersion":"` + mcpProtocol + `","capabilities":{"tools":{}},"serverInfo":{"name":"fake","version":"1"}}`
+		result = `{"protocolVersion":"` + mcp.Protocol + `","capabilities":{"tools":{}},"serverInfo":{"name":"fake","version":"1"}}`
 	case "tools/list":
 		var p struct{ Cursor string }
 		json.Unmarshal(req.Params, &p)
@@ -142,7 +143,7 @@ func startFake(t *testing.T, f *fakeMCP, tools ...string) (*MCP, *httptest.Serve
 	t.Helper()
 	srv := httptest.NewServer(f)
 	t.Cleanup(srv.Close)
-	m, err := StartMCP(context.Background(), map[string]mcpServerConfig{"fake": {URL: srv.URL, AllowedTools: tools}})
+	m, err := StartMCP(context.Background(), map[string]mcpServerConfig{"fake": {Server: mcp.Server{URL: srv.URL}, AllowedTools: tools}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -193,7 +194,7 @@ func TestMCPToolLists(t *testing.T) {
 		{"both", []string{"echo", "fail"}, []string{"fail"}, "echo"},
 	} {
 		srv := httptest.NewServer(&fakeMCP{})
-		m, err := StartMCP(context.Background(), map[string]mcpServerConfig{"fake": {URL: srv.URL, AllowedTools: tc.allowed, BlockedTools: tc.blocked}})
+		m, err := StartMCP(context.Background(), map[string]mcpServerConfig{"fake": {Server: mcp.Server{URL: srv.URL}, AllowedTools: tc.allowed, BlockedTools: tc.blocked}})
 		srv.Close()
 		if err != nil {
 			t.Fatalf("%s: %v", tc.name, err)
@@ -226,23 +227,23 @@ func TestHTTPMCPSessionExpiry(t *testing.T) {
 func TestMCPStartupErrors(t *testing.T) {
 	srv := httptest.NewServer(&fakeMCP{})
 	defer srv.Close()
-	if _, err := StartMCP(context.Background(), map[string]mcpServerConfig{"fake": {URL: srv.URL, AllowedTools: []string{"echo", "typo"}}}); err == nil {
+	if _, err := StartMCP(context.Background(), map[string]mcpServerConfig{"fake": {Server: mcp.Server{URL: srv.URL}, AllowedTools: []string{"echo", "typo"}}}); err == nil {
 		t.Error("a whitelisted tool the server lacks must be an error")
 	}
-	if _, err := StartMCP(context.Background(), map[string]mcpServerConfig{"fake": {URL: srv.URL, BlockedTools: []string{"typo"}}}); err == nil {
+	if _, err := StartMCP(context.Background(), map[string]mcpServerConfig{"fake": {Server: mcp.Server{URL: srv.URL}, BlockedTools: []string{"typo"}}}); err == nil {
 		t.Error("a blacklisted tool the server lacks must be an error, or a typo would leave the real tool offered")
 	}
 	srv2 := httptest.NewServer(&fakeMCP{})
 	defer srv2.Close()
 	if _, err := StartMCP(context.Background(), map[string]mcpServerConfig{
-		"a.b": {URL: srv.URL, AllowedTools: []string{"echo"}},
-		"a_b": {URL: srv2.URL, AllowedTools: []string{"echo"}},
+		"a.b": {Server: mcp.Server{URL: srv.URL}, AllowedTools: []string{"echo"}},
+		"a_b": {Server: mcp.Server{URL: srv2.URL}, AllowedTools: []string{"echo"}},
 	}); err == nil {
 		t.Error("two tools with the same model name must be an error")
 	}
 	// An unreachable server is left out, and the bot still starts.
 	srv2.Close()
-	m, err := StartMCP(context.Background(), map[string]mcpServerConfig{"gone": {URL: srv2.URL, AllowedTools: []string{"echo"}}})
+	m, err := StartMCP(context.Background(), map[string]mcpServerConfig{"gone": {Server: mcp.Server{URL: srv2.URL}, AllowedTools: []string{"echo"}}})
 	if err != nil || len(m.Names()) != 0 {
 		t.Fatalf("unreachable server: %v, %v", m.Names(), err)
 	}
@@ -271,7 +272,7 @@ func TestMCPHelperProcess(t *testing.T) {
 		result := `{}`
 		switch req.Method {
 		case "initialize":
-			result = `{"protocolVersion":"` + mcpProtocol + `","capabilities":{"tools":{}},"serverInfo":{"name":"helper","version":"1"}}`
+			result = `{"protocolVersion":"` + mcp.Protocol + `","capabilities":{"tools":{}},"serverInfo":{"name":"helper","version":"1"}}`
 		case "tools/list":
 			result = `{"tools":[{"name":"env"},{"name":"exit"}]}`
 		case "tools/call":
@@ -292,8 +293,9 @@ func TestStdioMCP(t *testing.T) {
 	t.Setenv("OPENROUTER_API_KEY", "secret-key")
 	ctx, cancel := context.WithCancel(context.Background())
 	m, err := StartMCP(ctx, map[string]mcpServerConfig{"local": {
-		Command: os.Args[0], Args: []string{"-test.run=^TestMCPHelperProcess$"},
-		Env: map[string]string{"MCP_HELPER": "1"}, AllowedTools: []string{"env", "exit"},
+		Server: mcp.Server{Command: os.Args[0], Args: []string{"-test.run=^TestMCPHelperProcess$"},
+			Env: map[string]string{"MCP_HELPER": "1"}},
+		AllowedTools: []string{"env", "exit"},
 	}})
 	if err != nil {
 		t.Fatal(err)
@@ -322,8 +324,8 @@ func TestMCPByServer(t *testing.T) {
 	defer a.Close()
 	defer b.Close()
 	m, err := StartMCP(context.Background(), map[string]mcpServerConfig{
-		"yahoo": {URL: a.URL, AllowedTools: []string{"echo", "pic"}},
-		"scout": {URL: b.URL, AllowedTools: []string{"fail"}},
+		"yahoo": {Server: mcp.Server{URL: a.URL}, AllowedTools: []string{"echo", "pic"}},
+		"scout": {Server: mcp.Server{URL: b.URL}, AllowedTools: []string{"fail"}},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -333,14 +335,5 @@ func TestMCPByServer(t *testing.T) {
 	}
 	if (*MCP)(nil).ByServer() != "" {
 		t.Fatal("no MCP must give no list")
-	}
-}
-
-// One event split over several data: lines is joined with newlines.
-func TestReadSSEMultiLine(t *testing.T) {
-	stream := "event: message\ndata: {\"jsonrpc\":\"2.0\",\ndata: \"id\":7,\"result\":{\"ok\":true}}\n\n"
-	m, err := readSSE(strings.NewReader(stream), 7)
-	if err != nil || string(m.Result) != `{"ok":true}` {
-		t.Fatalf("got %+v, %v", m, err)
 	}
 }
