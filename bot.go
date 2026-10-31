@@ -9,6 +9,7 @@ import (
 	"github.com/robdevops/signalbot/internal/chat"
 	"github.com/robdevops/signalbot/internal/history"
 	"github.com/robdevops/signalbot/internal/kit/bound"
+	"github.com/robdevops/signalbot/internal/kit/img"
 	"github.com/robdevops/signalbot/internal/llm"
 	"maps"
 	"net/http"
@@ -166,7 +167,7 @@ func newRequest(m chat.Message) *Request {
 		switch {
 		case md.Kind == chat.Sticker:
 			req.Sticker = &md
-		case len(req.Images) < maxReplyImages:
+		case len(req.Images) < llm.MaxImages:
 			req.Images = append(req.Images, md)
 		}
 	}
@@ -343,7 +344,7 @@ func (b *Bot) images(req *Request) []string {
 		ctx, cancel := context.WithTimeout(b.ctx, 15*time.Second)
 		data, err := b.tr(req.Chat).Fetch(ctx, req.Chat, a)
 		cancel()
-		if err != nil || !sendableImage(data) {
+		if err != nil || !img.Sendable(data) {
 			logx.Warnf("could not fetch an image from %s: %v", req.Name, cmp.Or(err, errors.New("not an image")))
 			continue
 		}
@@ -361,7 +362,7 @@ func (b *Bot) sticker(req *Request) string {
 	ctx, cancel := context.WithTimeout(b.ctx, 15*time.Second)
 	defer cancel()
 	data, err := b.tr(req.Chat).Fetch(ctx, req.Chat, *req.Sticker)
-	if err != nil || !sendableImage(data) {
+	if err != nil || !img.Sendable(data) {
 		logx.Warnf("could not fetch a sticker from %s: %v", req.Name, cmp.Or(err, errors.New("not an image")))
 		return ""
 	}

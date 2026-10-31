@@ -1,6 +1,6 @@
 package signal
 
-import ()
+import "github.com/robdevops/signalbot/internal/kit/img"
 
 type Mention struct {
 	Name   string `json:"name"`
@@ -36,7 +36,7 @@ type Sticker struct {
 // else its thumbnail if that is, else nil.
 func (a Attachment) Image() *Attachment {
 	for _, c := range []*Attachment{&a, a.Thumbnail} {
-		if c == nil || c.ID == "" || c.Size > MaxImageBytes {
+		if c == nil || c.ID == "" || c.Size > img.MaxBytes {
 			continue
 		}
 		switch c.ContentType {
@@ -71,9 +71,6 @@ type Envelope struct {
 	SourceName   string       `json:"sourceName"`
 	DataMessage  *DataMessage `json:"dataMessage"`
 }
-
-// MaxImageBytes caps one image, sent or received.
-const MaxImageBytes = 5 << 20
 
 // Target addresses a chat: a group or a single recipient.
 type Target struct {

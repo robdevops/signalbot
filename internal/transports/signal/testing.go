@@ -1,7 +1,5 @@
 package signal
 
-import ()
-
 // SetSelf sets the bot's account id without asking signal-cli: for tests
 // and fakes.
 func (s *Client) SetSelf(id string) { s.selfID.Store(id) }

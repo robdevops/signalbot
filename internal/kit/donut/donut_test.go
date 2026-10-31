@@ -1,8 +1,9 @@
-package main
+package donut
 
 import (
 	"bytes"
-	"context"
+	"encoding/json"
+	"github.com/robdevops/signalbot/internal/kit/draw"
 	"image/png"
 	"math"
 	"os"
@@ -24,7 +25,7 @@ func TestParseDonut(t *testing.T) {
 	if s.Slices[0].Label != "Google search and other" || s.Slices[len(s.Slices)-1].Label != "Hedging gains losses" {
 		t.Fatalf("not largest first: %+v", s.Slices)
 	}
-	if got := s.centerText(); got != "$127.6B" {
+	if got := s.CenterText(); got != "$127.6B" {
 		t.Fatalf("centre %q", got)
 	}
 	sum := 0.0
@@ -34,12 +35,12 @@ func TestParseDonut(t *testing.T) {
 	if math.Abs(sum-100) > 1e-9 {
 		t.Fatalf("shares add to %v", sum)
 	}
-	if got := s.summary(); !strings.HasPrefix(got, chartNote+"Total $127.6B; shares: Google search and other 49.7%, Google cloud 24.1%") {
+	if got := s.Summary(); !strings.HasPrefix(got, "Total $127.6B; shares: Google search and other 49.7%, Google cloud 24.1%") {
 		t.Fatalf("summary %q", got)
 	}
 	c, _ := parseDonut(`{"title":"T","center":"Q3","slices":[{"label":"a","value":1},{"label":"b","value":3}]}`)
-	if c.centerText() != "Q3" {
-		t.Fatalf("centre override %q", c.centerText())
+	if c.CenterText() != "Q3" {
+		t.Fatalf("centre override %q", c.CenterText())
 	}
 }
 
@@ -60,24 +61,24 @@ func TestParseDonutErrors(t *testing.T) {
 }
 
 func TestWrapLabel(t *testing.T) {
-	f := face(chartFonts.regular, 26)
+	f := draw.Face(draw.Fonts.Regular, 26)
 	defer f.Close()
 	if got := wrapLabel(f, "Google cloud  24.1%", 510); len(got) != 1 {
 		t.Fatalf("short label wrapped: %q", got)
 	}
 	got := wrapLabel(f, "Google subscriptions platforms and devices  11.2%", 420)
-	if len(got) != 2 || textWidth(f, got[0]) > 420 || textWidth(f, got[1]) > 420 || !strings.HasSuffix(got[1], "11.2%") {
+	if len(got) != 2 || draw.TextWidth(f, got[0]) > 420 || draw.TextWidth(f, got[1]) > 420 || !strings.HasSuffix(got[1], "11.2%") {
 		t.Fatalf("wrap %q", got)
 	}
 	long := wrapLabel(f, strings.Repeat("word ", 40)+"9.9%", 300)
-	if len(long) != 2 || !strings.HasSuffix(long[1], "…") || textWidth(f, long[1]) > 300 {
+	if len(long) != 2 || !strings.HasSuffix(long[1], "…") || draw.TextWidth(f, long[1]) > 300 {
 		t.Fatalf("overlong label %q", long)
 	}
 }
 
 func TestRenderDonut(t *testing.T) {
 	s, _ := parseDonut(alphabetDonut)
-	out, err := renderDonut(s)
+	out, err := Render(s)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -93,14 +94,6 @@ func TestRenderDonut(t *testing.T) {
 	}
 }
 
-// The model calls the donut tool; the chart comes back as an image.
-func TestDonutToolInLoop(t *testing.T) {
-	res, err := chartTools()[1].Run(context.Background(), alphabetDonut)
-	if err != nil || len(res.Images) != 1 || res.Images[0].Caption != "GOOGL Q3 FY2026 revenue by type ($B)" || !strings.Contains(res.Text, "Total $127.6B") {
-		t.Fatalf("got %q, %d images, %v", res.Text, len(res.Images), err)
-	}
-}
-
 // The total is shortened, and a scale suffix on values that were already raw
 // is not applied twice.
 func TestDonutTotal(t *testing.T) {
@@ -113,8 +106,16 @@ func TestDonutTotal(t *testing.T) {
 		`"suffix":"kg","slices":[{"label":"a","value":12},{"label":"b","value":0.5}]`:                            "12.5kg",
 	} {
 		s, err := parseDonut(`{"title":"T",` + args + `}`)
-		if err != nil || s.centerText() != want {
-			t.Errorf("%s: got %q, want %q (%v)", args, s.centerText(), want, err)
+		if err != nil || s.CenterText() != want {
+			t.Errorf("%s: got %q, want %q (%v)", args, s.CenterText(), want, err)
 		}
 	}
+}
+
+func parseDonut(args string) (*Spec, error) {
+	var s Spec
+	if err := json.Unmarshal([]byte(args), &s); err != nil {
+		return nil, err
+	}
+	return &s, s.Validate()
 }

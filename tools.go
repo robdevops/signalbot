@@ -4,6 +4,8 @@ import (
 	"cmp"
 	"context"
 	"encoding/json"
+	"github.com/robdevops/signalbot/internal/kit/donut"
+	"github.com/robdevops/signalbot/internal/kit/linechart"
 	"slices"
 
 	"github.com/robdevops/signalbot/internal/llm"
@@ -57,11 +59,11 @@ func chartTools() []llm.Tool {
 				if err != nil {
 					return llm.Result{Text: "error: " + err.Error()}, err
 				}
-				img, err := renderChart(s)
+				img, err := linechart.Render(s)
 				if err != nil {
 					return llm.Result{Text: "error: the chart could not be drawn"}, err
 				}
-				return llm.Result{Text: s.summary(), Images: []llm.Image{{Data: img, Caption: chartCaption(s.Title, s.Subtitle)}}}, nil
+				return llm.Result{Text: chartNote + s.Summary(), Images: []llm.Image{{Data: img, Caption: chartCaption(s.Title, s.Subtitle)}}}, nil
 			}},
 		{Name: donutTool, Label: donutTool, Def: functionDef(donutTool, donutToolDescription, donutToolSchema),
 			Run: func(_ context.Context, args string) (llm.Result, error) {
@@ -69,11 +71,11 @@ func chartTools() []llm.Tool {
 				if err != nil {
 					return llm.Result{Text: "error: " + err.Error()}, err
 				}
-				img, err := renderDonut(s)
+				img, err := donut.Render(s)
 				if err != nil {
 					return llm.Result{Text: "error: the chart could not be drawn"}, err
 				}
-				return llm.Result{Text: s.summary(), Images: []llm.Image{{Data: img, Caption: chartCaption(s.Title, s.Subtitle)}}}, nil
+				return llm.Result{Text: chartNote + s.Summary(), Images: []llm.Image{{Data: img, Caption: chartCaption(s.Title, s.Subtitle)}}}, nil
 			}},
 	}
 }

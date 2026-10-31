@@ -9,6 +9,8 @@ import (
 	"errors"
 	"fmt"
 	"github.com/robdevops/signalbot/internal/kit/httpx"
+	"github.com/robdevops/signalbot/internal/kit/img"
+	"github.com/robdevops/signalbot/internal/llm"
 	"io"
 	"maps"
 	"net/http"
@@ -347,11 +349,11 @@ func (m *MCP) Call(ctx context.Context, model, arguments string) (result string,
 	}
 	var parts []string
 	for _, c := range r.Content {
-		switch img, err := base64.StdEncoding.DecodeString(c.Data); {
+		switch pic, err := base64.StdEncoding.DecodeString(c.Data); {
 		case c.Type == "text":
 			parts = append(parts, c.Text)
-		case c.Type == "image" && err == nil && sendableImage(img) && len(images) < maxReplyImages:
-			images = append(images, img)
+		case c.Type == "image" && err == nil && img.Sendable(pic) && len(images) < llm.MaxImages:
+			images = append(images, pic)
 			parts = append(parts, "[image sent to the chat]")
 		default:
 			parts = append(parts, "[non-text content omitted]")

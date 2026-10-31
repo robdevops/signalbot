@@ -17,8 +17,7 @@ var root = filepath.Join("..", "..")
 // oversized lists the files and packages over the limits from before the
 // recode. An entry goes when its file or package is split; none may be added.
 var oversized = map[string]bool{
-	"bot.go": true, "chart.go": true, "mcp.go": true, "signal.go": true, "openrouter.go": true,
-	"fixes_test.go": true, "bot_test.go": true, "images_test.go": true, "chart_test.go": true,
+	"bot.go": true, "bot_test.go": true, "mcp.go": true, "fixes_test.go": true, "images_test.go": true,
 	"mcp_test.go": true, "toolloop_test.go": true, ".": true,
 }
 
@@ -26,6 +25,16 @@ func TestFileSizes(t *testing.T) {
 	files, err := Files(root)
 	if err != nil {
 		t.Fatal(err)
+	}
+	// The list only shrinks: a file that was split, or fits now, comes off it.
+	sizes := map[string]int{}
+	for _, f := range files {
+		sizes[f.Path] = f.Lines
+	}
+	for name := range oversized {
+		if n, ok := sizes[name]; name != "." && (!ok || n <= FileLimit) {
+			t.Errorf("%s is listed as oversized but has %d lines: take it off the list", name, n)
+		}
 	}
 	for _, f := range files {
 		if oversized[f.Path] {
