@@ -2,6 +2,7 @@ package featuretest
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -67,6 +68,10 @@ func TestTimers(t *testing.T) {
 	}
 	if h.Fire(context.Background(), "b") {
 		t.Error("a cancelled timer ran")
+	}
+	h.TimerErr = errors.New("too many timers")
+	if _, err := h.At("c", now, fn); err != h.TimerErr || len(h.Timers()) != 1 {
+		t.Errorf("At at the cap: %v, %d timers", err, len(h.Timers()))
 	}
 }
 

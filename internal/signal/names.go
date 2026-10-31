@@ -40,8 +40,9 @@ type rankedName struct {
 type names struct {
 	mu          sync.Mutex
 	byID        map[string]rankedName
-	refreshedAt time.Time // when a load was last tried
-	loadedAt    time.Time // when one last worked
+	numbers     map[string]string // ACI to phone number, where both are known
+	refreshedAt time.Time         // when a load was last tried
+	loadedAt    time.Time         // when one last worked
 	minRefresh  time.Duration
 	loading     sync.Mutex  // held while the list loads, so a second caller waits for it
 	pending     atomic.Bool // a reload is already scheduled
@@ -52,7 +53,7 @@ type names struct {
 var ReloadGap = 15 * time.Second
 
 func newNames() names {
-	return names{byID: map[string]rankedName{}, minRefresh: ReloadGap}
+	return names{byID: map[string]rankedName{}, numbers: map[string]string{}, minRefresh: ReloadGap}
 }
 
 // Loading reports whether the contact list is loading. It is for the
@@ -90,16 +91,30 @@ func (k contact) best() rankedName {
 // set records a name for ids. The caller holds n.mu.
 func (n *names) set(r rankedName, ids ...string) {
 	for _, id := range ids {
-		if id == "" || r.rank < n.byID[id].rank {
-			continue
+		if id != "" && r.rank >= n.byID[id].rank {
+			makeRoom(n.byID, id)
+			n.byID[id] = r
 		}
-		if _, ok := n.byID[id]; !ok && len(n.byID) >= maxNames {
-			for k := range n.byID { // drop any one
-				delete(n.byID, k)
-				break
-			}
+	}
+}
+
+// link records that aci and number are the same person. The caller holds
+// n.mu.
+func (n *names) link(aci, number string) {
+	if aci == "" || number == "" {
+		return
+	}
+	makeRoom(n.numbers, aci)
+	n.numbers[aci] = number
+}
+
+// makeRoom drops any one entry of m if it is full and lacks key.
+func makeRoom[V any](m map[string]V, key string) {
+	if _, ok := m[key]; !ok && len(m) >= maxNames {
+		for k := range m {
+			delete(m, k)
+			break
 		}
-		n.byID[id] = r
 	}
 }
 
@@ -120,11 +135,12 @@ func (n *names) lookup(ids ...string) rankedName {
 func (n *names) replace(cs []contact) {
 	n.mu.Lock()
 	defer n.mu.Unlock()
-	n.byID = map[string]rankedName{}
+	n.byID, n.numbers = map[string]rankedName{}, map[string]string{}
 	for _, k := range cs {
 		if r := k.best(); r.rank > 0 {
 			n.set(r, k.UUID, k.Number)
 		}
+		n.link(k.UUID, k.Number)
 	}
 	n.loadedAt = time.Now()
 }
@@ -132,6 +148,14 @@ func (n *names) replace(cs []contact) {
 // Name is the best name known for a person by any of their IDs, made safe,
 // or "".
 func (c *Client) Name(ids ...string) string { return c.names.lookup(ids...).name }
+
+// Number is the phone number of the person with ACI aci, from the contact
+// list or a message they sent, or "".
+func (c *Client) Number(aci string) string {
+	c.names.mu.Lock()
+	defer c.names.mu.Unlock()
+	return c.names.numbers[aci]
+}
 
 // BotName is the bot's own profile name, or "signalbot" without one. It
 // never blocks; LoadNames loads it.
@@ -173,11 +197,12 @@ func (c *Client) stale(m Mention) bool {
 // unknown. It may call signal-cli, so it runs in the message's slot.
 func (c *Client) LoadNames(ctx context.Context, env *Envelope) {
 	self := c.ID()
+	c.names.mu.Lock()
 	if name := txt.SafeName(env.SourceName); name != "" {
-		c.names.mu.Lock()
 		c.names.set(rankedName{name, rankSeen}, env.SourceUUID, env.SourceNumber)
-		c.names.mu.Unlock()
 	}
+	c.names.link(env.SourceUUID, env.SourceNumber)
+	c.names.mu.Unlock()
 	need := c.Name(self) == ""
 	if d := env.DataMessage; d != nil {
 		for _, m := range d.Mentions {

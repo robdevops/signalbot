@@ -81,6 +81,23 @@ func (b *Bot) Deliver(msg feature.Message) {
 // mentions the bot, or that a hook acts on, is answered like any addressed
 // message; anything else the bot posts as written.
 func (b *Bot) delivered(msg feature.Message) {
+	// A feature may deliver before the bot first connects (timers don't):
+	// wait to be connected, and for the bot's own name, to see a mention of
+	// it.
+	ctx, cancel := context.WithTimeout(b.ctx, 10*time.Second)
+	defer cancel()
+	if b.sig.WaitID(ctx) == "" {
+		logx.Warnf("delivered message dropped: not connected to signal-cli after 10s")
+		return
+	}
+	b.sig.LoadNames(ctx, &signal.Envelope{})
+	// As from the sender in person, a DM from someone no longer allowed is
+	// dropped. The allowlist may hold their number or their ACI.
+	if allowed := b.cfg.AllowedSenders; msg.Chat.GroupID == "" &&
+		!allowed[msg.Sender] && !allowed[b.sig.Number(msg.Sender)] {
+		logx.Infof("delivered message from %s dropped because not in SIGNAL_DM_USER_IDS", cmp.Or(msg.Sender, "unknown sender"))
+		return
+	}
 	msg.Name = cmp.Or(msg.Name, b.sig.Name(msg.Sender))
 	key := msg.Chat.Key()
 	known := map[string]string{} // the group's members by name, to link @Name

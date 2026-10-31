@@ -225,6 +225,7 @@ func (h *harness) release() {
 // msg is a message to receive.
 type msg struct {
 	from, name, text string
+	number           string // the sender's number, if signal-cli knows it
 	group, atBot     bool
 	images           []string
 	quote            *quoted
@@ -259,6 +260,9 @@ func (h *harness) receive(m msg) {
 	}
 	d["attachments"] = atts
 	env := map[string]any{"source": m.from, "sourceUuid": m.from, "sourceName": m.name, "dataMessage": d}
+	if m.number != "" {
+		env["sourceNumber"] = m.number
+	}
 	frame, _ := json.Marshal(map[string]any{"jsonrpc": "2.0", "method": "receive", "params": map[string]any{"envelope": env}})
 	h.mu.Lock()
 	c := h.conn

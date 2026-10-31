@@ -1319,3 +1319,64 @@ func TestScenarioGoldenPromptNoFeatures(t *testing.T) {
 	h.ask(atBot("chart AAPL against the S&P 500 for a year"))
 	golden(t, "prompt_nofeatures.txt", h.lastRequest().System)
 }
+
+// --- /schedule ---------------------------------------------------------------------
+
+// A schedule made in a DM posts its text in the group at its time, as Alice
+// with the bot posting in her place, linking @Name and keeping it in the
+// group's history as hers. The text is never logged.
+func TestScenarioScheduleRunsInAGroup(t *testing.T) {
+	h := startBot(t, world{Contacts: map[string]string{idAlice: "Alice", idBob: "Bob"}})
+	at := time.Now().Add(2 * time.Second).Truncate(time.Second)
+	s := h.ask(fromAlice(`/schedule “lunch is ready @Bob” ` + at.Format("2006-01-02T15:04:05") + ` test GROUP`))
+	if want := "Scheduled for " + at.Format("Mon 2 Jan 2006 15:04 MST") + ", in Test group."; s.Recipient != idAlice || s.Message != want {
+		t.Fatalf("sent %+v, want %q", s, want)
+	}
+	if s := h.ask(fromAlice("/schedule list")); !strings.HasPrefix(s.Message, "Your schedules:\n1. \"lunch is ready @Bob\" ") {
+		t.Fatalf("list %q", s.Message)
+	}
+	s = h.nextSend()
+	if s.GroupID != idGroup || s.Message != "lunch is ready @Bob" {
+		t.Fatalf("sent %+v", s)
+	}
+	equal(t, "mentions", s.Mentions, []string{"15:4:" + idBob})
+	if time.Now().Before(at) {
+		t.Fatalf("posted before %v", at)
+	}
+	h.ask(atBot("who said what?"))
+	equal(t, "conversation", h.lastRequest().contents(), []string{"user: Alice: lunch is ready @Bob", "user: Alice: who said what?"})
+	if s := h.ask(fromAlice("/schedule LIST")); !strings.HasPrefix(s.Message, "You have no schedules.") { // not a repeat of the first
+		t.Fatalf("list %q", s.Message)
+	}
+	if n := len(h.requests()); n != 1 {
+		t.Fatalf("the model was asked %d times", n)
+	}
+}
+
+// Schedules are saved, so they survive a restart; /schedule works only in
+// a DM, and a group that doesn't match is refused with Alice's groups.
+func TestScenarioSchedulesSurviveARestart(t *testing.T) {
+	dir := t.TempDir()
+	h := startBot(t, world{StateDir: dir})
+	if s := h.ask(atBot(`/schedule "/example" 2099-01-01T09:00 every month`)); s.GroupID != idGroup || !strings.HasPrefix(s.Message, "Schedules are made in a DM with me.") {
+		t.Fatalf("sent %+v", s)
+	}
+	if s := h.ask(fromAlice(`/schedule "/example" 2099-01-01T09:00 every month chess club`)); s.Message != "We aren't in a group called chess club together. Your groups with me: Test group." {
+		t.Fatalf("sent %q", s.Message)
+	}
+	if s := h.ask(fromAlice(`/schedule "/example" 2099-01-01T09:00 every month`)); !strings.HasPrefix(s.Message, "Scheduled for Thu 1 Jan 2099 09:00 ") || !strings.HasSuffix(s.Message, ", then every month, here.") {
+		t.Fatalf("sent %q", s.Message)
+	}
+	h.shutdown()
+
+	h = startBot(t, world{StateDir: dir})
+	if s := h.ask(fromAlice("/schedule list")); !strings.HasPrefix(s.Message, "Your schedules:\n1. \"/example\" Thu 1 Jan 2099 09:00 ") {
+		t.Fatalf("list %q", s.Message)
+	}
+	if s := h.ask(fromAlice("/schedule del 1")); s.Message != `Deleted schedule 1: "/example".` {
+		t.Fatalf("sent %q", s.Message)
+	}
+	if n := len(h.requests()); n != 0 {
+		t.Fatalf("the model was asked %d times", n)
+	}
+}

@@ -247,3 +247,73 @@ func TestDeliver(t *testing.T) {
 		t.Fatalf("groups %v", gs)
 	}
 }
+
+// A message delivered as the bot starts waits until it is connected and
+// knows its own name, so a mention of the bot is seen.
+func TestDeliverWaitsToConnect(t *testing.T) {
+	h := start(t, options{waitID: true})
+	h.b.Deliver(feature.Message{Chat: feature.Chat{User: aliceID}, Sender: aliceID, Text: "@botty are you up?"})
+	h.eventually("the delivery to wait", func() bool { return len(h.b.slots) == 1 })
+	h.noSend()
+	close(h.id)
+	if s := h.nextSend(); s["message"] != "ok" {
+		t.Fatalf("sent %v", s)
+	}
+	equal(t, "model got", contents(h.requests()[0]), []string{"user: are you up?"})
+}
+
+// A delivered DM is dropped, as one from the sender in person would be,
+// once they are no longer in SIGNAL_DM_USER_IDS, whether it holds their ACI
+// or their number. Only their ID is logged. In a group, where anyone may
+// address the bot, it still posts.
+func TestDeliverDMNeedsTheAllowlist(t *testing.T) {
+	h := start(t, options{})
+	allowed := h.b.cfg.AllowedSenders // changed in place: the bot holds the map
+	h.b.Deliver(feature.Message{Chat: feature.Chat{User: bobID}, Sender: bobID, Text: "note to self"})
+	h.eventually("the drop logged", func() bool {
+		return strings.Contains(h.logs.String(), "<6>delivered message from "+bobID+" dropped because not in SIGNAL_DM_USER_IDS\n")
+	})
+	h.noSend()
+	h.b.Deliver(feature.Message{Chat: feature.Chat{GroupID: groupID}, Sender: bobID, Text: "hello all"})
+	if s := h.nextSend(); s["message"] != "hello all" || s["groupId"] != groupID {
+		t.Fatalf("sent %v", s)
+	}
+
+	// Allowed by number: her ACI is matched once a message shows both.
+	delete(allowed, aliceID)
+	allowed["+1555"] = true
+	h.ask(msg{from: aliceID, number: "+1555", name: "Alice", text: "hi"})
+	h.b.Deliver(feature.Message{Chat: feature.Chat{User: aliceID}, Sender: aliceID, Text: "water the plants"})
+	if s := h.nextSend(); s["message"] != "water the plants" {
+		t.Fatalf("sent %v", s)
+	}
+	delete(allowed, "+1555")
+	h.b.Deliver(feature.Message{Chat: feature.Chat{User: aliceID}, Sender: aliceID, Text: "water the plants again"})
+	h.eventually("the drop logged", func() bool {
+		return strings.Contains(h.logs.String(), "<6>delivered message from "+aliceID+" dropped because not in SIGNAL_DM_USER_IDS\n")
+	})
+	h.noSend()
+	if strings.Contains(h.logs.String(), "plants") || strings.Contains(h.logs.String(), "note to self") {
+		t.Fatalf("text logged:\n%s", h.logs)
+	}
+}
+
+// Timers start only once the bot first connects, so one due at startup
+// waits for signal-cli however long it takes to come up, rather than
+// delivering into a wait that gives up.
+func TestTimersWaitForTheFirstConnect(t *testing.T) {
+	h := start(t, options{waitID: true})
+	ran := make(chan struct{})
+	h.b.At("due", time.Now().Add(-time.Minute), func(context.Context, time.Time) { close(ran) })
+	select {
+	case <-ran:
+		t.Fatal("a timer ran before the bot connected")
+	case <-time.After(100 * time.Millisecond):
+	}
+	close(h.id)
+	select {
+	case <-ran:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the timer never ran")
+	}
+}

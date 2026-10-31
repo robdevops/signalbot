@@ -452,9 +452,7 @@ func (cv *canvas) line(c color.RGBA, width float64, pts ...float64) {
 	}
 }
 
-func (cv *canvas) rect(c color.RGBA, x, y, w, h float64) {
-	cv.fill(c, []float64{x, y, x + w, y, x + w, y + h, x, y + h})
-}
+func (cv *canvas) rect(c color.RGBA, x, y, w, h float64) { cv.fill(c, rectPoly(x, y, w, h)) }
 
 // text draws s with its baseline at y; align is 0 for left, 0.5 for centre
 // and 1 for right of x.
@@ -465,9 +463,32 @@ func (cv *canvas) text(f font.Face, c color.RGBA, x, y float64, align float64, s
 	d.DrawString(s)
 }
 
-// renderChart draws the chart as a 1280×800 PNG.
+// width and height are the size of every chart, in pixels.
+const width, height = 1280, 800
+
+// newCanvas is a blank chart with its title and subtitle drawn.
+func newCanvas(title, subtitle string) *canvas {
+	cv := &canvas{img: image.NewRGBA(image.Rect(0, 0, width, height))}
+	cv.rect(chartBG, 0, 0, width, height)
+	titleFace, subFace := face(chartFonts.bold, 34), face(chartFonts.regular, 22)
+	defer titleFace.Close()
+	defer subFace.Close()
+	cv.text(titleFace, chartTitle, 38, 46, 0, title)
+	if subtitle != "" {
+		cv.text(subFace, chartMuted, 38, 80, 0, subtitle)
+	}
+	return cv
+}
+
+// encode is the chart as a PNG.
+func (cv *canvas) encode() ([]byte, error) {
+	var buf bytes.Buffer
+	err := png.Encode(&buf, cv.img)
+	return buf.Bytes(), err
+}
+
+// renderChart draws the chart as a PNG.
 func renderChart(s *chartSpec) ([]byte, error) {
-	const W, H = 1280, 800
 	const left, top, bottom = 100.0, 125.0, 700.0
 	two, single := s.right.used, len(s.Series) == 1
 	right, labelX := 1000.0, 1030.0 // plot edge, end labels
@@ -477,18 +498,10 @@ func renderChart(s *chartSpec) ([]byte, error) {
 	case single:
 		right = 1140 // room for the current value beside the end dot
 	}
-	cv := &canvas{img: image.NewRGBA(image.Rect(0, 0, W, H))}
-	cv.rect(chartBG, 0, 0, W, H)
-
-	titleFace, subFace := face(chartFonts.bold, 34), face(chartFonts.regular, 22)
+	cv := newCanvas(s.Title, s.Subtitle)
 	axisFace, axisTitleFace := face(chartFonts.regular, 24), face(chartFonts.regular, 18)
-	for _, f := range []font.Face{titleFace, subFace, axisFace, axisTitleFace} {
-		defer f.Close()
-	}
-	cv.text(titleFace, chartTitle, 38, 46, 0, s.Title)
-	if s.Subtitle != "" {
-		cv.text(subFace, chartMuted, 38, 80, 0, s.Subtitle)
-	}
+	defer axisFace.Close()
+	defer axisTitleFace.Close()
 
 	from, to := s.Series[0].Points[0].t, s.Series[0].Points[0].t
 	values := map[*chartAxis][]float64{}
@@ -541,16 +554,11 @@ func renderChart(s *chartSpec) ([]byte, error) {
 	}
 
 	if single {
-		drawArea(cv, s, px, top, bottom, left, right)
+		drawArea(cv, s, px, bottom, left, right)
 	} else {
 		drawLines(cv, s, px, top, bottom, right, labelX, two)
 	}
-
-	var buf bytes.Buffer
-	if err := png.Encode(&buf, cv.img); err != nil {
-		return nil, err
-	}
-	return buf.Bytes(), nil
+	return cv.encode()
 }
 
 // drawLines draws two or more series, each with an end label.
@@ -586,12 +594,15 @@ func drawLines(cv *canvas, s *chartSpec, px func(time.Time) float64, top, bottom
 // period, red if it fell, with a translucent fill down to the bottom of the
 // plot, its high and low marked and a dot on its last point. It is styling
 // only; the model isn't told.
-func drawArea(cv *canvas, s *chartSpec, px func(time.Time) float64, top, bottom, left, right float64) {
-	sr, a := s.Series[0], s.left
-	pts := sr.Points
+func drawArea(cv *canvas, s *chartSpec, px func(time.Time) float64, bottom, left, right float64) {
+	a, pts := s.left, s.Series[0].Points
 	c := chartUp
 	if pts[len(pts)-1].Value < pts[0].Value {
 		c = chartDown
+	}
+	decimals := 2
+	if a.Mode == "change" {
+		decimals = 1
 	}
 	line := make([]float64, 0, 2*len(pts))
 	for _, p := range pts {
@@ -611,10 +622,6 @@ func drawArea(cv *canvas, s *chartSpec, px func(time.Time) float64, top, bottom,
 	}{{hi, "High", !a.Invert}, {lo, "Low", a.Invert}} {
 		p := pts[m.i]
 		x, y := px(p.t), a.y(p.Value)
-		decimals := 2
-		if a.Mode == "change" {
-			decimals = 1
-		}
 		lines := [2]string{m.word + " " + a.format(p.Value, decimals), p.t.Format("2 Jan 2006")}
 		cv.fill(chartTitle, circle(x, y, 6.5))
 		cv.fill(chartBG, circle(x, y, 4.5))
@@ -651,10 +658,6 @@ func drawArea(cv *canvas, s *chartSpec, px func(time.Time) float64, top, bottom,
 	cv.fill(c, circle(x, y, 5.5))
 	valueFace := face(chartFonts.bold, 20)
 	defer valueFace.Close()
-	decimals := 2
-	if a.Mode == "change" {
-		decimals = 1
-	}
 	y = min(max(y, 100), bottom-14) // keep both lines inside the image
 	cv.text(valueFace, c, x+14, y-2, 0, a.format(last.Value, decimals))
 	cv.text(markFace, chartMuted, x+14, y+20, 0, last.t.Format("2 Jan 2006"))

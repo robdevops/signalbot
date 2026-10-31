@@ -20,6 +20,7 @@ type Host struct {
 	Bot      feature.Info                                   // what Info returns for any chat
 	Fetch    func(m feature.Message, i int) ([]byte, error) // what Media returns; nil fails
 	Shared   []feature.Group                                // what Groups returns
+	TimerErr error                                          // if set, At fails with it, as the core does at its cap
 
 	mu        sync.Mutex
 	read      []string
@@ -73,6 +74,9 @@ func (h *Host) Tools(g feature.ToolGroup) {
 func (h *Host) At(name string, t time.Time, fn func(context.Context, time.Time)) (func(), error) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
+	if h.TimerErr != nil {
+		return nil, h.TimerErr
+	}
 	tm := &Timer{name, t, fn}
 	h.timers = append(h.timers, tm)
 	return func() { h.remove(tm) }, nil

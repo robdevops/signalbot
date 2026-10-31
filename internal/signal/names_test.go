@@ -58,6 +58,32 @@ func TestResolveRanks(t *testing.T) {
 	}
 }
 
+// A person's number is known from the contact list, or from a message they
+// sent, so an allowlist of numbers can be checked against an ACI. Each load
+// replaces them, and they are capped.
+func TestNumber(t *testing.T) {
+	c := New("x")
+	c.names.replace([]contact{{UUID: aliceID, Number: "+1555"}, {UUID: bobID}})
+	if c.Number(aliceID) != "+1555" || c.Number(bobID) != "" || c.Number("") != "" {
+		t.Fatalf("numbers %v", c.names.numbers)
+	}
+	c.names.refreshedAt = time.Now() // so LoadNames doesn't try to load
+	c.LoadNames(context.Background(), &Envelope{SourceUUID: bobID, SourceNumber: "+1666"})
+	if c.Number(bobID) != "+1666" {
+		t.Fatalf("numbers %v", c.names.numbers)
+	}
+	c.names.replace(nil)
+	if c.Number(aliceID) != "" {
+		t.Fatalf("numbers %v", c.names.numbers)
+	}
+	for i := range maxNames + 10 {
+		c.names.link(fmt.Sprint(i), "+1")
+	}
+	if len(c.names.numbers) != maxNames {
+		t.Fatalf("%d numbers kept", len(c.names.numbers))
+	}
+}
+
 // newClient is a client that loads the contact list at most every gap.
 func newClient(sock string, gap time.Duration) *Client {
 	defer func(old time.Duration) { ReloadGap = old }(ReloadGap)

@@ -62,11 +62,18 @@ func New(ctx context.Context, cfg *config.Config) *Bot {
 	return b
 }
 
-// Run runs the timers and handles every message signal-cli receives, until
-// the bot's context ends, then waits for what features run with Go.
+// Run handles every message signal-cli receives, and runs the timers once
+// it is first connected, until the bot's context ends, then waits for what
+// features run with Go. A timer due at startup so waits for signal-cli
+// however long it takes to come up, rather than delivering into nothing.
 func (b *Bot) Run() {
 	done := make(chan struct{})
-	go func() { defer close(done); b.timers.Run(b.timerCtx) }()
+	go func() {
+		defer close(done)
+		if b.sig.WaitID(b.timerCtx) != "" {
+			b.timers.Run(b.timerCtx)
+		}
+	}()
 	b.sig.Run(b.ctx, b.Handle)
 	b.stop()
 	<-done

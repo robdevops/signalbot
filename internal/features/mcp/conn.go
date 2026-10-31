@@ -58,19 +58,14 @@ type stdioConn struct {
 	done    chan struct{} // closed when the current process exits
 }
 
-// stdioEnv is the server's whole environment: PATH, HOME and its configured
-// env, never the bot's own, which holds the API key.
-func stdioEnv(extra map[string]string) []string {
-	env := []string{"PATH=" + os.Getenv("PATH"), "HOME=" + os.Getenv("HOME")}
-	for k, v := range extra {
-		env = append(env, k+"="+v)
-	}
-	return env
-}
-
 func (c *stdioConn) start(ctx context.Context) error {
 	cmd := exec.CommandContext(ctx, c.cfg.Command, c.cfg.Args...)
-	cmd.Env = stdioEnv(c.cfg.Env)
+	// Its whole environment: PATH, HOME and its configured env, never the
+	// bot's own, which holds the API key.
+	cmd.Env = []string{"PATH=" + os.Getenv("PATH"), "HOME=" + os.Getenv("HOME")}
+	for k, v := range c.cfg.Env {
+		cmd.Env = append(cmd.Env, k+"="+v)
+	}
 	cmd.Cancel = func() error { return cmd.Process.Signal(syscall.SIGTERM) }
 	cmd.WaitDelay = 5 * time.Second
 	stdin, err := cmd.StdinPipe()
@@ -140,10 +135,7 @@ func (c *stdioConn) supervise(ctx context.Context) {
 		backoff = min(backoff*2, 32*time.Second)
 		if err := c.start(ctx); err != nil {
 			logx.Warnf("MCP server %s failed to start: %v", c.name, err)
-			c.mu.Lock()
-			c.done = closedChan()
-			c.mu.Unlock()
-			continue
+			continue // c.done is still the exited process's, so it retries
 		}
 		ictx, cancel := context.WithTimeout(ctx, callTimeout)
 		if err := initialize(ictx, c, c.version); err != nil {
@@ -153,12 +145,6 @@ func (c *stdioConn) supervise(ctx context.Context) {
 		}
 		cancel()
 	}
-}
-
-func closedChan() chan struct{} {
-	ch := make(chan struct{})
-	close(ch)
-	return ch
 }
 
 func (c *stdioConn) dispatch(line []byte) {

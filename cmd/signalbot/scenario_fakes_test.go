@@ -74,6 +74,10 @@ type world struct {
 	// their arguments: echo_error with an error result, rpc_error with a
 	// JSON-RPC error.
 	BrokenMCP bool
+	// StateDir is the bot's state directory (STATE_DIRECTORY), where it
+	// saves what must survive a restart; a fresh one if "". Two bots given
+	// the same one are the same bot before and after a restart.
+	StateDir string
 }
 
 // harness is a running bot and its fakes.
@@ -155,6 +159,9 @@ type logLine struct {
 }
 
 func newHarness(t *testing.T, w world) *harness {
+	if w.StateDir == "" {
+		w.StateDir = t.TempDir()
+	}
 	h := &harness{t: t, w: w, contacts: map[string]string{}, handled: make(chan struct{}, 64)}
 	if !w.NoBotName {
 		h.contacts[idBot] = "Botty"
@@ -170,12 +177,14 @@ func newHarness(t *testing.T, w world) *harness {
 	return h
 }
 
-// env is the bot's settings: the scenario's, over the harness defaults.
+// env is the bot's settings: the scenario's, over the harness defaults,
+// with the state directory always w.StateDir.
 func (h *harness) env() map[string]string {
 	e := map[string]string{"MODEL": scenarioModel, "SIGNAL_DM_USER_IDS": idAlice}
 	for k, v := range h.w.Env {
 		e[k] = v
 	}
+	e["STATE_DIRECTORY"] = h.w.StateDir
 	return e
 }
 

@@ -11,12 +11,15 @@ A small, [privacy-conscious](PRIVACY.md) chat bot that connects to a running [si
   - [Then](#then)
 - [Configuration](#configuration)
   - [MCP tools](#mcp-tools)
+  - [Scheduling](#scheduling)
+  - [Logs](#logs)
 - [Troubleshooting](#troubleshooting)
 
 ## Features
 
 - Responds to @mentions, replies to its messages, and DMs from senders in `SIGNAL_DM_USER_IDS`
-- Tools: web search, built-in line and donut charts, and your own [MCP](#mcp-tools) tools
+- Tools: web search, built-in line and pie charts, and your own [MCP](#mcp-tools) tools
+- [`/schedule`](#scheduling) a message or command, once or repeating, in a DM or a group
 - Understands images and stickers (if the configured model supports vision)
 - Short per-conversation memory, for context. Frees from memory after 20 messages (HISTORY_TURNS), 24 hours, or when Signal's _disappearing messages_ timer expires, whichever comes first. Message content is never logged to disk.
 - Typing indicators
@@ -64,7 +67,7 @@ Then install the bot with systemd or with Docker.
 
 ### With systemd
 
-The bot runs as a dynamic user (`DynamicUser=yes`) in the `signal-cli` Unix group, which is how it reaches the socket.
+The bot runs as a dynamic user (`DynamicUser=yes`) in the `signal-cli` Unix group, which is how it reaches the socket. Its schedules are kept in its state directory (`StateDirectory=signalbot`, which is `/var/lib/private/signalbot` with a dynamic user), which systemd creates and passes to it as `$STATE_DIRECTORY`.
 
 1. Install Go 1.24+:
    ```
@@ -80,7 +83,7 @@ The bot runs as a dynamic user (`DynamicUser=yes`) in the `signal-cli` Unix grou
    sudo systemctl daemon-reload
    sudo systemctl enable --now signalbot
    ```
-3. Read the logs:
+3. Read the logs (see [Logs](#logs)):
    ```
    journalctl -fu signalbot
    journalctl -u signalbot -p warning   # warnings and errors only
@@ -90,9 +93,19 @@ The bot runs as a dynamic user (`DynamicUser=yes`) in the `signal-cli` Unix grou
 
 `--group-add` gives the container the `signal-cli` Unix group, which is how it reaches the socket. Run it with `sudo`, because Docker reads `--env-file` as the calling user and the file is root-only. Logs go to journald where available, otherwise to Docker's rotating `local` driver; `docker logs` reads both.
 
+Schedules are saved in `/data` in the container (`STATE_DIRECTORY=/data`), bind-mounted from the same host directory systemd would use. The container runs as user 65532, which must own it, or the bot exits asking for this:
+
+```
+sudo mkdir -p /var/lib/private/signalbot
+sudo chown 65532 /var/lib/private/signalbot
+```
+
+Use one install per host, systemd or Docker: the unit's dynamic user and the container's user 65532 can't share the directory.
+
 ```
 sudo docker build --build-arg VERSION=$(git describe --tags --always --dirty) -t signalbot .
-sudo docker run -d --name signalbot --restart=always --env-file /etc/signalbot.env -v /run/signal-cli:/run/signal-cli \
+sudo docker run -d --name signalbot --restart=always --env-file /etc/signalbot.env \
+  -v /run/signal-cli:/run/signal-cli -v /var/lib/private/signalbot:/data \
   --group-add "$(getent group signal-cli | cut -d: -f3)" \
   $(test -S /run/systemd/journal/socket && echo --log-driver=journald || echo --log-driver=local) \
   --read-only --cap-drop=ALL --security-opt=no-new-privileges --pids-limit=64 --memory=300m --memory-swap=300m --ulimit core=0 \
@@ -106,7 +119,7 @@ docker logs -f signalbot
 journalctl CONTAINER_NAME=signalbot -p err   # warnings and errors only, where Docker logs to journald
 ```
 
-Docker's journald driver records stderr at priority 3 (err) and stdout at 6 (info), so warnings and errors, which the bot writes to stderr, both show as errors there.
+Docker's journald driver records stderr at priority 3 (err) and stdout at 6 (info), so warnings and errors, which the bot writes to stderr, both show as errors there (see [Logs](#logs)).
 
 ### Then
 
@@ -128,6 +141,10 @@ Add the bot's account to a group and @mention it, reply to one of its messages, 
 | `HISTORY_TURNS` | `10` | Exchanges remembered per chat (`HISTORY_TURNS` × 2 messages) |
 | `GROUP_CONTEXT` | `true` | Remember group messages not addressed to the bot as context, so "what do you think @bot" works without replying to the message; they are never logged |
 | `MCP_CONFIG` | empty | Path of an MCP servers file; see [MCP tools](#mcp-tools) |
+| `STATE_DIRECTORY` | working directory | Where `/schedule` saves `schedules.json`. Set by systemd's `StateDirectory=signalbot` (`/var/lib/private/signalbot`) and by the Docker image (`/data`, which must be writable by user 65532) |
+| `TZ` | `UTC` in Docker, the host's under systemd | Time zone for `/schedule` times without an offset, e.g. `Australia/Sydney` |
+
+`REASONING` and `SYSTEM_PROMPT` are now `MODEL_REASONING` and `MODEL_SYSTEM_PROMPT`; the old names are ignored. `LOG_LEVEL` is gone: every level is always written (see [Logs](#logs)).
 
 The default `INTRO` is: `hi, I'm {name}, your open source assistant running {model} (tools: {tools}). I respond to @mentions and replies to my messages. See https://github.com/robdevops/signalbot/blob/main/README.md for details.`
 
@@ -164,6 +181,40 @@ Add `"disabled": true` to a server to leave it out without deleting it. A server
 - **systemd:** keep the file root-only, uncomment the `LoadCredential=` and `Environment=MCP_CONFIG=` lines in `signalbot.service`, and restart. systemd hands the file to the service alone.
 - **Docker:** add `-v /etc/signalbot-mcp.json:/etc/signalbot-mcp.json:ro -e MCP_CONFIG=/etc/signalbot-mcp.json`. The image has no shell or runtimes, so only remote servers (`url`) work.
 - **Local servers under systemd** usually need the hardening loosened with a drop-in (`sudo systemctl edit signalbot`), for example `MemoryDenyWriteExecute=no` for Node, and `CacheDirectory=signalbot` with `Environment=HOME=/var/cache/signalbot` for npx or uvx caches.
+
+### Scheduling
+
+In a DM with the bot, a sender in `SIGNAL_DM_USER_IDS` can schedule anything they could post themselves:
+
+```
+/schedule "<message or /command>" <ISO 8601 time> [every hour|day|week|month|quarter|year] [group name]
+/schedule list            your schedules, numbered
+/schedule del <number>    delete one
+/schedule help
+```
+
+For example `/schedule "@signalbot what's the weather today?" 2030-01-31T07:30 every day Family`. At each run the text acts as if you had just posted it, in the DM or the named group: plain text is posted by the bot as written (with @Name turned into real mentions), text that @mentions the bot gets its answer, and a `/command` runs.
+
+- The time is like `2030-01-31T09:00`, in the bot's time zone (`TZ`), or with an offset, like `2030-01-31T09:00+10:00`. A one-off in the past is refused; a repeating schedule that starts in the past first runs at its next time. A monthly schedule from the 31st runs on the last day of shorter months.
+- The group name is the rest of the line, with no quotes needed. It is matched among the groups you share with the bot, ignoring capitals, emoji and extra spaces, so `family` finds "🏡 Family 🎉". No match, or more than one, is refused with your groups listed. A schedule keeps the group's ID, so it survives a rename; if you leave the group its runs are dropped until you delete it.
+- Straight and curly quotes both work. A schedule can't run `/schedule`.
+- If the bot was down when a run was due, a repeating schedule skips it and a one-off up to an hour late still runs; an older one-off is dropped.
+- Schedules are saved in `schedules.json` in `STATE_DIRECTORY` until deleted. See [PRIVACY.md](PRIVACY.md).
+
+### Logs
+
+Each line has a journald priority, and every priority is always written:
+
+| Priority | Used for |
+|---|---|
+| `<2>` crit | errors that stop the bot, such as a bad config |
+| `<3>` err | errors, such as a failed model request |
+| `<4>` warning | warnings, such as a dropped message under load |
+| `<5>` notice | startup, connecting and reconnecting |
+| `<6>` info | each message answered ("received group chat" or "received dm", then the reply's time, tokens and cost), tool calls |
+| `<7>` debug | detail, such as contact list loads |
+
+Priorities 5–7 go to stdout and 2–4 to stderr. Under systemd the lines carry their `<N>` prefix, so `journalctl -p warning` filters by level. Under Docker the lines are plain, and only the stream tells levels apart. Message text is never logged.
 
 ## Troubleshooting
 

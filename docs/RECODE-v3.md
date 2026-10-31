@@ -96,6 +96,8 @@ The core's lifecycle has four stages. Each port is one stage; nothing else is a 
 - `Groups(ctx, user)`: the groups the bot shares with a user, with their names (signal-cli's `listGroups`).
 - `Go(fn)`: run `fn` for as long as the bot runs. Its ctx ends when the bot stops, which then waits for `fn` to return (MCP stops its local servers this way).
 
+*Added while building (step 3, for `mcp`): `Go`, and `Info.Version` (MCP's `clientInfo` in its handshake). Neither names a feature.*
+
 **Types**, each field being a stage's natural input or output:
 ```go
 type Action    struct{ Ignore bool; Answer, ToolChoice, Context string } // zero value: carry on
@@ -110,7 +112,7 @@ type Tool      struct{ Name, Description string; Schema json.RawMessage; Server 
 - **`Context`** is "keep this text in history", which the core does under its own expiry rules.
 - **`ToolsUsed`** is what the tool loop reports.
 - **A picture's `HistoryNote`** is set by the tool that made it; without one, the core records "[sent an image]". A reply with no text is sent with its pictures' captions, one per line.
-- **`ToolGroup`:** `Names` is what it adds to the intro's `{tools}`: `["web search"]`, `["charts"]`, or an MCP server's tool names. The core joins every group's names in feature order, and `{tools}` is "none" when the model can't call tools. Each MCP server's `Listing` shows its tools and its own `/commands`; after every server, MCP adds one group with only `Names`, every server's `/commands` sorted (no tools, listing or keywords, so always offered, offering nothing), so `{tools}` reads exactly as today. `Listing` is its item in the tools line, which the core ends with "If asked what tools you have:" and the same joined names, offered or not. `System` is a system-prompt line while the group is offered.
+- **`ToolGroup`:** `Names` is what it adds to the intro's `{tools}`: `["web search"]`, `["charts"]`, or, for each MCP server's group, that server's tool names only. The core joins every group's names in feature order, and `{tools}` is "none" when the model can't call tools. Each MCP server's `Listing` shows its tools and its own `/commands`. After every server, MCP adds one extra group with only `Names`, holding every server's `/commands` sorted (no tools, listing or keywords, so always offered, offering nothing), so `{tools}` reads exactly as today: all tools, then all commands. `Listing` is its item in the tools line, which the core ends with "If asked what tools you have:" and the same joined names, offered or not. `System` is a system-prompt line while the group is offered.
 - **Offering:** a group without `Keywords` is always offered. One with `Keywords` is offered when a message matches, and for the 2 replies after any reply that matched or used one of its tools. A `ToolChoice` offers only that tool.
 - **`Turn`** is the message being answered, in its chat.
 
@@ -140,7 +142,7 @@ At(name string, t time.Time, fn func(ctx context.Context, due time.Time)) (cance
 | `websearch` | `Tools` | OpenRouter's web search tool, `MODEL_SEARCH`, the "web search on" log line |
 | `groupctx` | `OnMessage` returning `Context` | `GROUP_CONTEXT`, the `[image]`/`[sticker]` notes |
 | `vision` | `OnTurn`, `Info`, `Media` | answering photo- or sticker-only messages, the image and sticker notes (using the labels the core loads), the "images aren't kept" history note |
-| `mcp` | `Tools` (one group per server), command helper returning `ToolChoice` | `MCP_CONFIG` and every server field: `url`, `headers`, `command`, `args`, `env`, `allowed_tools`, `blocked_tools`, `disabled`, `chat_commands` (`tool`, `require_arg`), and the new optional `prompt` and `keywords` (a server's own `instructions` are not used: they'd add text the server controls to every existing config's prompt); the "MCP tools:" and "chat commands:" startup lines |
+| `mcp` | `Tools` (one group per server), command helper returning `ToolChoice` | `MCP_CONFIG` and every server field: `url`, `headers`, `command`, `args`, `env`, `allowed_tools`, `blocked_tools`, `disabled`, `chat_commands` (`tool`, `require_arg`), and the new optional `prompt` and `keywords`. MCP server `instructions` are NOT used, only the user's `prompt`: they'd add text the server controls to every existing config's prompt; the "MCP tools:" and "chat commands:" startup lines |
 | `charts` | `Tools` with `Keywords`, `OnReply` | the chart tools and their keywords, each chart's caption and history note, dropping the model's text when a chart is sent |
 | `schedule` | command helper, `At`, `Deliver`, `Groups` | `/schedule` (below) |
 
@@ -206,7 +208,7 @@ In `features.go`, `websearch`, `charts` and `mcp` stay in that order: it's the o
 **Approved:**
 - Messages in one chat are answered one at a time, in order, with at most 4 waiting (section 2).
 - The tools line lists each MCP server as its own item, without "MCP tools by server". Today it ends "name them, grouped by server" when MCP tools exist; see the full list below.
-- MCP's `prompt` and `keywords` are new and optional: without them, nothing changes.
+- MCP's `prompt` and `keywords` are new and optional: without them, nothing changes. MCP server `instructions` (from the handshake) are NOT used: a server's system-prompt line is only the user's `prompt`.
 - `/schedule` is new, and `TZ` sets its time zone. Schedules are always saved, so they survive a restart (section 6).
 - The donut chart is renamed pie: the tool is `make_pie_chart`, still drawn as a ring with the total in the middle. Its description still mentions donuts.
 - Settings: `REASONING` becomes `MODEL_REASONING`, `SYSTEM_PROMPT` becomes `MODEL_SYSTEM_PROMPT`, and `LOG_LEVEL` is dropped.
@@ -223,3 +225,28 @@ About +650 to +850 lines over 4,185, checked after the core (step 2):
 - a package per feature;
 - the `schedule` feature, about 250: parsing, list, delete, help, repeats and saving;
 - MCP's `prompt` and `keywords`, about 30.
+
+## Built
+Steps 0–5 are done as planned; the sections above were synced with the code without changing the plan's history. Final sizes (`go run ./internal/arch/sizes`, non-test lines), against 4,185 at `e40dc5f`:
+
+| package | lines |
+|---|---:|
+| cmd/signalbot | 88 |
+| internal/bot | 587 |
+| internal/chats | 340 |
+| internal/config | 97 |
+| internal/feature | 224 |
+| internal/openrouter | 335 |
+| internal/signal | 1061 |
+| internal/timers | 131 |
+| internal/kit (httpx, img, logx, txt) | 243 |
+| internal/features/charts | 1081 |
+| internal/features/example | 40 |
+| internal/features/groupctx | 44 |
+| internal/features/mcp | 693 |
+| internal/features/schedule | 739 |
+| internal/features/vision | 94 |
+| internal/features/websearch | 25 |
+| **total** | **5822** |
+
+That is +1,637, over section 11's estimate, mostly in `schedule` (739 against about 250: group matching, clock changes, the missed-run rules and saving). The core is 2,863 lines, kit 243 and the features 2,716.
