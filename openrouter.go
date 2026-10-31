@@ -107,6 +107,7 @@ type Completion struct {
 	Cost         float64 // USD, as OpenRouter reports it; 0 if it did not
 	ToolCalls    []ToolCall
 	Images       [][]byte // charts and tool images to send with the reply
+	Captions     []string // each image's caption: a chart's title, or ""
 	Charted      bool     // a built-in chart tool drew one
 }
 
@@ -180,7 +181,7 @@ func (o *OpenRouter) Complete(ctx context.Context, system string, msgs []ChatMsg
 		msgs = append(msgs, ChatMsg{Role: "assistant", Content: c.Text, ToolCalls: c.ToolCalls})
 		for _, tc := range c.ToolCalls {
 			start := time.Now()
-			out, images, tool, err := o.runTool(ctx, tc)
+			out, images, caption, tool, err := o.runTool(ctx, tc)
 			if err != nil {
 				warnf("tool %s failed after %.1fs: %v", tool, time.Since(start).Seconds(), err)
 				debugf("tool %s arguments were %d bytes", tool, len(tc.Function.Arguments))
@@ -191,6 +192,7 @@ func (o *OpenRouter) Complete(ctx context.Context, system string, msgs []ChatMsg
 			for _, img := range images {
 				if len(total.Images) < maxReplyImages {
 					total.Images = append(total.Images, img)
+					total.Captions = append(total.Captions, caption)
 				}
 			}
 			msgs = append(msgs, ChatMsg{Role: "tool", ToolCallID: tc.ID, Content: out})
@@ -198,36 +200,36 @@ func (o *OpenRouter) Complete(ctx context.Context, system string, msgs []ChatMsg
 	}
 }
 
-// runTool runs one tool call: the built-in chart tool, or an MCP tool. tool
-// names it for the log.
-func (o *OpenRouter) runTool(ctx context.Context, tc ToolCall) (out string, images [][]byte, tool string, err error) {
+// runTool runs one tool call: a built-in chart tool, or an MCP tool. caption
+// is a chart's title; tool names it for the log.
+func (o *OpenRouter) runTool(ctx context.Context, tc ToolCall) (out string, images [][]byte, caption, tool string, err error) {
 	if tc.Function.Name == chartTool {
 		s, err := parseChart(tc.Function.Arguments)
 		if err != nil {
-			return "error: " + err.Error(), nil, chartTool, err
+			return "error: " + err.Error(), nil, "", chartTool, err
 		}
 		img, err := renderChart(s)
 		if err != nil {
-			return "error: the chart could not be drawn", nil, chartTool, err
+			return "error: the chart could not be drawn", nil, "", chartTool, err
 		}
-		return s.summary(), [][]byte{img}, chartTool, nil
+		return s.summary(), [][]byte{img}, s.Title, chartTool, nil
 	}
 	if tc.Function.Name == donutTool {
 		s, err := parseDonut(tc.Function.Arguments)
 		if err != nil {
-			return "error: " + err.Error(), nil, donutTool, err
+			return "error: " + err.Error(), nil, "", donutTool, err
 		}
 		img, err := renderDonut(s)
 		if err != nil {
-			return "error: the chart could not be drawn", nil, donutTool, err
+			return "error: the chart could not be drawn", nil, "", donutTool, err
 		}
-		return s.summary(), [][]byte{img}, donutTool, nil
+		return s.summary(), [][]byte{img}, s.Title, donutTool, nil
 	}
 	if o.tools == nil {
-		return "error: there is no tool named " + tc.Function.Name, nil, "unknown", errors.New("unknown tool")
+		return "error: there is no tool named " + tc.Function.Name, nil, "", "unknown", errors.New("unknown tool")
 	}
 	out, images, t, err := o.tools.Call(ctx, tc.Function.Name, tc.Function.Arguments)
-	return out, images, cmp.Or(t.Name, "unknown") + " (" + cmp.Or(t.Server, "no server") + ")", err
+	return out, images, "", cmp.Or(t.Name, "unknown") + " (" + cmp.Or(t.Server, "no server") + ")", err
 }
 
 // toolList is the tools offered to the model: web search, the chart tool

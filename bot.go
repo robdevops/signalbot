@@ -610,24 +610,25 @@ func (b *Bot) respond(req *Request) {
 		warnf("reply to %s truncated from %d chars", req.Name, n)
 	}
 	parts := replyParts(res.Text, b.introName())
-	var attachments []string
-	for i, img := range res.Images {
-		attachments = append(attachments, imageDataURI(img, fmt.Sprintf("image%d", i+1)))
+	if len(parts) == 0 && len(res.Images) == 0 {
+		warnf("empty reply to %s, nothing sent", req.Name)
+		return
 	}
-	if len(parts) == 0 {
-		if len(attachments) == 0 {
-			warnf("empty reply to %s, nothing sent", req.Name)
+	// Each image goes first in its own message, captioned with the chart's
+	// title, so the reply's text doesn't sit under the chart.
+	for i, img := range res.Images {
+		var caption string
+		if i < len(res.Captions) {
+			caption = res.Captions[i]
+		}
+		if err := b.sig.Send(req.Target, caption, nil, []string{imageDataURI(img, fmt.Sprintf("image%d", i+1))}); err != nil {
+			errorf("send to %s failed: %v", req.Name, err)
 			return
 		}
-		parts = []string{""} // the images alone
 	}
 	known := b.knownNames(req.Key)
-	for i, part := range parts {
-		var att []string
-		if i == 0 {
-			att = attachments // with the first message
-		}
-		if err := b.sig.Send(req.Target, part, buildMentions(part, known), att); err != nil {
+	for _, part := range parts {
+		if err := b.sig.Send(req.Target, part, buildMentions(part, known), nil); err != nil {
 			errorf("send to %s failed: %v", req.Name, err)
 			return
 		}

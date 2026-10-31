@@ -34,7 +34,7 @@ func TestParseDonut(t *testing.T) {
 	if math.Abs(sum-100) > 1e-9 {
 		t.Fatalf("shares add to %v", sum)
 	}
-	if got := s.summary(); !strings.HasPrefix(got, "Chart attached to your reply. Total $127.6B; shares: Google search and other 49.7%, Google cloud 24.1%") {
+	if got := s.summary(); !strings.HasPrefix(got, chartNote+"Total $127.6B; shares: Google search and other 49.7%, Google cloud 24.1%") {
 		t.Fatalf("summary %q", got)
 	}
 	c, _ := parseDonut(`{"title":"T","center":"Q3","slices":[{"label":"a","value":1},{"label":"b","value":3}]}`)
@@ -96,11 +96,11 @@ func TestRenderDonut(t *testing.T) {
 // The model calls the donut tool; the chart comes back as an image.
 func TestDonutToolInLoop(t *testing.T) {
 	o := NewOpenRouter(&Config{APIKey: "k", Model: "m"}, nil)
-	out, images, tool, err := o.runTool(context.Background(), ToolCall{Function: struct {
+	out, images, caption, tool, err := o.runTool(context.Background(), ToolCall{Function: struct {
 		Name      string `json:"name"`
 		Arguments string `json:"arguments"`
 	}{donutTool, alphabetDonut}})
-	if err != nil || tool != donutTool || len(images) != 1 || !strings.Contains(out, "Total $127.6B") {
+	if err != nil || tool != donutTool || caption != "GOOGL Q3 FY2026 revenue by type ($B)" || len(images) != 1 || !strings.Contains(out, "Total $127.6B") {
 		t.Fatalf("got %q, %d images, %v", out, len(images), err)
 	}
 }

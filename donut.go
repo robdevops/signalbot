@@ -106,7 +106,7 @@ func (s *donutSpec) summary() string {
 	for _, sl := range s.Slices {
 		parts = append(parts, sl.Label+" "+s.share(sl))
 	}
-	return "Chart attached to your reply. Total " + s.centerText() + "; shares: " + strings.Join(parts, ", ") + "."
+	return chartNote + "Total " + s.centerText() + "; shares: " + strings.Join(parts, ", ") + "."
 }
 
 // wrapLabel splits text into at most two lines no wider than width in face

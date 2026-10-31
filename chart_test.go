@@ -67,7 +67,7 @@ func TestParseChartChangeMode(t *testing.T) {
 	if p[0].Date != "2026-01-01" || p[0].Value != 0 || p[1].Value != 20 {
 		t.Fatalf("points not sorted or not rebased: %+v", p)
 	}
-	if got := s.summary(); got != "Chart attached to your reply. Final values: A 20.0%." {
+	if got := s.summary(); got != chartNote+"Final values: A 20.0%." {
 		t.Fatalf("summary %q", got)
 	}
 	v, _ := parseChart(`{"title":"T","axes":{"left":{"mode":"value","unit":"$"}},"series":[{"name":"A","points":[{"date":"2026-01-01","value":-1.5},{"date":"2026-01-02","value":2}]}]}`)
@@ -157,7 +157,7 @@ func TestChartTwoAxes(t *testing.T) {
 	if !s.right.used || s.Series[0].Points[1].Value != 120 || s.Series[1].Points[1].Value != -50 {
 		t.Fatalf("per-axis modes: %+v", s.Series)
 	}
-	if got := s.summary(); got != "Chart attached to your reply. Final values: A $120.0, B -50.0%." {
+	if got := s.summary(); got != chartNote+"Final values: A $120.0, B -50.0%." {
 		t.Fatalf("summary %q", got)
 	}
 	if _, err := renderChart(s); err != nil {

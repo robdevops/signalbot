@@ -208,7 +208,7 @@ func TestChartToolInLoop(t *testing.T) {
 		t.Fatalf("not a PNG: %v", err)
 	}
 	msgs := bodies[1]["messages"].([]any)
-	if got := msgs[len(msgs)-1].(map[string]any)["content"].(string); !strings.HasPrefix(got, "Chart attached to your reply. Final values: NVDA ") {
+	if got := msgs[len(msgs)-1].(map[string]any)["content"].(string); !strings.HasPrefix(got, chartNote+"Final values: NVDA ") {
 		t.Fatalf("tool result %q", got)
 	}
 }
@@ -218,11 +218,11 @@ type imageAI struct{ text string }
 
 func (a imageAI) Complete(context.Context, string, []ChatMsg) (Completion, error) {
 	img, _ := base64.StdEncoding.DecodeString(tinyPNG())
-	return Completion{Text: a.text, Images: [][]byte{img}}, nil
+	return Completion{Text: a.text, Images: [][]byte{img}, Captions: []string{"NVDA vs AMD"}}, nil
 }
 
-// Images in a reply go out as signal-cli data: URI attachments with the
-// first message, or alone when there is no text.
+// Each image in a reply goes first as its own signal-cli data: URI attachment,
+// captioned with the chart title; the reply's text follows in its own message.
 func TestReplyCarriesImages(t *testing.T) {
 	for _, text := range []string{"look", ""} {
 		sent := make(chan map[string]any, 2)
@@ -251,14 +251,24 @@ func TestReplyCarriesImages(t *testing.T) {
 		go sig.Run(ctx, b.Handle)
 		sig.WaitSelf(5 * time.Second)
 		b.Handle(parse(t, groupMention))
-		select {
-		case p := <-sent:
-			att, _ := p["attachments"].([]any)
-			if p["message"] != text || len(att) != 1 || !strings.HasPrefix(att[0].(string), "data:image/png;filename=image1.png;base64,") {
-				t.Errorf("text %q: message %q, attachments %v", text, p["message"], att)
+		next := func() map[string]any {
+			select {
+			case p := <-sent:
+				return p
+			case <-time.After(5 * time.Second):
+				t.Fatalf("text %q: no reply", text)
+				return nil
 			}
-		case <-time.After(5 * time.Second):
-			t.Errorf("text %q: no reply", text)
+		}
+		p := next()
+		att, _ := p["attachments"].([]any)
+		if p["message"] != "NVDA vs AMD" || len(att) != 1 || !strings.HasPrefix(att[0].(string), "data:image/png;filename=image1.png;base64,") {
+			t.Errorf("text %q: message %q, attachments %v", text, p["message"], att)
+		}
+		if text != "" {
+			if p := next(); p["message"] != text || p["attachments"] != nil {
+				t.Errorf("text %q: then %v", text, p)
+			}
 		}
 		cancel()
 	}
