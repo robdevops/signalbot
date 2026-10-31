@@ -139,7 +139,6 @@ func wrapLabel(f font.Face, text string, width float64) []string {
 // renderDonut draws the chart as a 1280×800 PNG.
 func renderDonut(s *donutSpec) ([]byte, error) {
 	const W, H = 1280, 800
-	const cx, cy, outer, inner = 330.0, 440.0, 215.0, 125.0
 	cv := &canvas{img: image.NewRGBA(image.Rect(0, 0, W, H))}
 	cv.rect(chartBG, 0, 0, W, H)
 
@@ -151,6 +150,21 @@ func renderDonut(s *donutSpec) ([]byte, error) {
 	if s.Subtitle != "" {
 		cv.text(subFace, chartMuted, 38, 80, 0, s.Subtitle)
 	}
+
+	// The donut grows from radius 215 up to 300 when the legend leaves room,
+	// and the two are centred together; a legend too wide wraps instead.
+	const margin, gap, swatch, minOuter, maxOuter = 40.0, 80.0, 40.0, 215.0, 300.0
+	labels := make([]string, len(s.Slices))
+	textW := 0.0
+	for i, sl := range s.Slices {
+		labels[i] = sl.Label + "  " + s.share(sl)
+		textW = max(textW, textWidth(legendFace, labels[i]))
+	}
+	outer := min(maxOuter, max(minOuter, (W-2*margin-gap-swatch-textW)/2))
+	textW = min(textW, W-2*margin-gap-swatch-2*outer)
+	inner := outer * 125 / 215
+	cx := (W-(2*outer+gap+swatch+textW))/2 + outer
+	const cy = 445.0
 
 	// Slices clockwise from 12 o'clock, then a white gap along each boundary.
 	angle := -math.Pi / 2
@@ -181,7 +195,7 @@ func renderDonut(s *donutSpec) ([]byte, error) {
 
 	// The total in the hole, shrunk until it fits.
 	center := s.centerText()
-	for size := 44.0; size >= 20; size -= 4 {
+	for size := math.Round(44 * outer / minOuter); size >= 20; size -= 4 {
 		f := face(chartFonts.bold, size)
 		w := textWidth(f, center)
 		if w <= 2*inner-30 || size <= 20 {
@@ -193,27 +207,27 @@ func renderDonut(s *donutSpec) ([]byte, error) {
 	}
 
 	// The legend, rows centred on the donut, long labels on two lines.
-	const lx, lineH, gap = 690.0, 32.0, 20.0
-	width := float64(W-40) - (lx + 40)
+	const lineH, rowGap = 32.0, 20.0
+	lx := cx + outer + gap
 	type row struct {
 		lines []string
 		i     int
 	}
 	var rows []row
 	height := 0.0
-	for i, sl := range s.Slices {
-		lines := wrapLabel(legendFace, sl.Label+"  "+s.share(sl), width)
+	for i := range s.Slices {
+		lines := wrapLabel(legendFace, labels[i], textW)
 		rows = append(rows, row{lines, i})
 		height += float64(len(lines)) * lineH
 	}
-	height += gap * float64(len(rows)-1)
+	height += rowGap * float64(len(rows)-1)
 	y := cy - height/2
 	for _, r := range rows {
 		cv.rect(chartPalette[r.i], lx, y+8, 16, 16)
 		for k, l := range r.lines {
-			cv.text(legendFace, chartTitle, lx+40, y+24+float64(k)*lineH, 0, l)
+			cv.text(legendFace, chartTitle, lx+swatch, y+24+float64(k)*lineH, 0, l)
 		}
-		y += float64(len(r.lines))*lineH + gap
+		y += float64(len(r.lines))*lineH + rowGap
 	}
 
 	var buf bytes.Buffer
