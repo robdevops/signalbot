@@ -314,3 +314,27 @@ func TestStickerLabel(t *testing.T) {
 		}
 	}
 }
+
+// groupPhoto is "@bot this is for you" with a photo, in a group, in
+// signal-cli 0.14's shape (ids made up).
+const groupPhoto = `{"envelope":{"source":"` + alice + `","sourceNumber":null,"sourceUuid":"` + alice + `","sourceName":"Alice","sourceDevice":1,"timestamp":4,` +
+	`"dataMessage":{"timestamp":4,"message":"￼ this is for you","expiresInSeconds":0,"isExpirationUpdate":false,"viewOnce":false,` +
+	`"mentions":[{"name":"` + self + `","number":null,"uuid":"` + self + `","start":0,"length":1}],` +
+	`"attachments":[{"contentType":"image/png","filename":null,"id":"photo3.png","size":49372,"width":534,"height":534,"caption":null,"isVoiceNote":false}],` +
+	`"groupInfo":{"groupId":"` + group + `","groupName":"g","revision":12,"type":"DELIVER"}}},"account":"` + self + `"}`
+
+// A photo captioned with an @mention in a group is fetched by group id and
+// shown to the model with the caption.
+func TestGroupPhotoWithMention(t *testing.T) {
+	b, ai, params, sent := photoBot(t, true)
+	b.Handle(parse(t, groupPhoto))
+	waitSent(t, sent)
+	if p := <-params; p["id"] != "photo3.png" || p["groupId"] != group || p["recipient"] != nil {
+		t.Fatalf("getAttachment params %v", p)
+	}
+	ai.mu.Lock()
+	defer ai.mu.Unlock()
+	if last := ai.msgs[len(ai.msgs)-1]; last.Content != "Alice: this is for you\n[1 image attached]" || len(last.Images) != 1 {
+		t.Fatalf("model got %q with %d images", last.Content, len(last.Images))
+	}
+}
