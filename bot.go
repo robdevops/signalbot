@@ -67,6 +67,7 @@ type Bot struct {
 
 	mu      sync.Mutex
 	history map[string][]ChatMsg
+	erasers map[string]eraser            // one timer per chat, for its next message to expire
 	known   map[string]map[string]string // chat key -> name -> uuid shown to the model
 	names   *Names
 	dedupe  map[string]time.Time
@@ -83,6 +84,7 @@ func NewBot(ctx context.Context, cfg *Config, sig *Signal, ai Completer) *Bot {
 		cfg: cfg, sig: sig, ai: ai, ctx: ctx,
 		sem:         make(chan struct{}, cfg.MaxConcurrency),
 		history:     map[string][]ChatMsg{},
+		erasers:     map[string]eraser{},
 		known:       map[string]map[string]string{},
 		names:       NewNames(),
 		dedupe:      map[string]time.Time{},
@@ -312,10 +314,16 @@ func (b *Bot) Handle(env *Envelope) {
 	// Cheap inline rejection. Before the account id is known (the first moment
 	// after connecting) we cannot judge, so we let it through to the slow path.
 	if self := b.sig.SelfID(); self != "" && trigger(env, self, b.cfg.AllowedSenders) == "" {
-		// Dropped untouched: nothing is read from it or kept. The one thing
-		// said is that a DM came from someone who may not use the bot, by id
-		// only, never the name or text.
-		if g := env.DataMessage.GroupInfo; (g == nil || g.GroupID == "") && !fromSelf(env, self) && !isAllowed(env, b.cfg.AllowedSenders) {
+		// Not for the bot, and never logged. A group message is remembered as
+		// context with GROUP_CONTEXT; anything else is dropped untouched. The
+		// one thing said is that a DM came from someone who may not use the
+		// bot, by id only, never the name or text.
+		switch g := env.DataMessage.GroupInfo; {
+		case g != nil && g.GroupID != "":
+			if b.cfg.GroupContext && !fromSelf(env, self) {
+				b.rememberChatter(env, self)
+			}
+		case !fromSelf(env, self) && !isAllowed(env, b.cfg.AllowedSenders):
 			infof("%s ignored because not in SIGNAL_DM_USER_IDS",
 				cmp.Or(env.SourceUUID, env.Source, env.SourceNumber, "unknown sender"))
 		}
@@ -393,6 +401,29 @@ func exampleText(req *Request, self, model, tools string) string {
 		"- Mention people by name in my replies\n" +
 		"- Run " + model + " with " + tools + "\n" +
 		"This reply didn't use the model."
+}
+
+// rememberChatter adds a group message that isn't for the bot to the group's
+// history, so a later "what do you think?" has the conversation to go on. It
+// is kept like any other message (HISTORY_TURNS, a day at most, sooner with
+// disappearing messages) and only text is kept: images are noted, not fetched.
+func (b *Bot) rememberChatter(env *Envelope, self string) {
+	dm := env.DataMessage
+	text := clamp(stripMentions(dm.Message, dm.Mentions, self, b.names), signalMaxChars)
+	if slices.ContainsFunc(dm.Attachments, func(a Attachment) bool { return a.image() != nil }) {
+		text = strings.TrimSpace(text + " [image]")
+	}
+	if dm.Sticker != nil {
+		text = strings.TrimSpace(text + " [sticker]")
+	}
+	if text == "" {
+		return
+	}
+	b.addHistory("g:"+dm.GroupInfo.GroupID, ChatMsg{
+		Role:    "user",
+		Content: cmp.Or(safeName(env.SourceName), "someone") + ": " + text,
+		Expires: historyExpiry(time.Now(), time.Duration(dm.ExpiresInSeconds)*time.Second),
+	})
 }
 
 // imageNote marks images in a prompt, e.g. "[1 image attached]".
@@ -766,14 +797,48 @@ func unexpired(h []ChatMsg, now time.Time) []ChatMsg {
 	})
 }
 
-// forget erases the chat's expired messages from memory.
+// eraser is a chat's pending timer and when it fires.
+type eraser struct {
+	timer *time.Timer
+	at    time.Time
+}
+
+// forget erases the chat's expired messages from memory, and sets the timer
+// for the next one.
 func (b *Bot) forget(key string) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
+	delete(b.erasers, key)
 	if h := unexpired(b.history[key], time.Now()); len(h) > 0 {
 		b.history[key] = h
 	} else {
 		delete(b.history, key)
+	}
+	b.scheduleErase(key)
+}
+
+// scheduleErase makes sure a timer will fire when the chat's earliest message
+// expires. One timer per chat, however many messages, so a busy group can't
+// pile up timers. Caller holds b.mu.
+func (b *Bot) scheduleErase(key string) {
+	var next time.Time
+	for _, m := range b.history[key] {
+		if !m.Expires.IsZero() && (next.IsZero() || m.Expires.Before(next)) {
+			next = m.Expires
+		}
+	}
+	e, ok := b.erasers[key]
+	switch {
+	case next.IsZero():
+		if ok {
+			e.timer.Stop()
+			delete(b.erasers, key)
+		}
+	case !ok || next.Before(e.at):
+		if ok {
+			e.timer.Stop()
+		}
+		b.erasers[key] = eraser{time.AfterFunc(time.Until(next), func() { b.forget(key) }), next}
 	}
 }
 
@@ -787,9 +852,7 @@ func (b *Bot) addHistory(key string, msgs ...ChatMsg) {
 	}
 	b.history[key] = h
 	// Erase the expired messages and let the garbage collector reclaim them.
-	if e := msgs[0].Expires; !e.IsZero() {
-		time.AfterFunc(time.Until(e), func() { b.forget(key) })
-	}
+	b.scheduleErase(key)
 }
 
 // makeRoom makes room for key in m, dropping an arbitrary entry once m holds
