@@ -3,8 +3,12 @@ package main
 import (
 	"cmp"
 	"context"
+	"encoding/base64"
+	"errors"
 	"fmt"
 	"maps"
+	"net/http"
+	"regexp"
 	"slices"
 	"sort"
 	"strconv"
@@ -63,11 +67,17 @@ type Bot struct {
 
 	mu      sync.Mutex
 	history map[string][]ChatMsg
+	erasers map[string]eraser            // one timer per chat, for its next message to expire
 	known   map[string]map[string]string // chat key -> name -> uuid shown to the model
+	charts  map[string]int               // chat key -> replies left with the chart tools on
 	names   *Names
 	dedupe  map[string]time.Time
 
 	typingEvery time.Duration
+	toolNames   []string // MCP tools the model may call, for {tools}
+	toolGroups  string   // the same, grouped by server, for the system prompt
+	vision      bool     // the model accepts images
+	toolCalls   bool     // the model can call tools (web search, charts, MCP)
 }
 
 func NewBot(ctx context.Context, cfg *Config, sig *Signal, ai Completer) *Bot {
@@ -75,10 +85,13 @@ func NewBot(ctx context.Context, cfg *Config, sig *Signal, ai Completer) *Bot {
 		cfg: cfg, sig: sig, ai: ai, ctx: ctx,
 		sem:         make(chan struct{}, cfg.MaxConcurrency),
 		history:     map[string][]ChatMsg{},
+		erasers:     map[string]eraser{},
 		known:       map[string]map[string]string{},
+		charts:      map[string]int{},
 		names:       NewNames(),
 		dedupe:      map[string]time.Time{},
 		typingEvery: 10 * time.Second,
+		toolCalls:   true,
 	}
 	sig.onConnect = b.refreshSoon // load names on startup and after every reconnect
 	return b
@@ -106,12 +119,15 @@ type Request struct {
 	Key    string // conversation key
 	Prompt string
 
-	Kind   string // "mention", "reply" or "dm"
-	Sender string // display name and id, for the log
-	Name   string // display name, else the id: short form for the log
-	Text   string // message text with the bot mention stripped
+	Kind    string // "mention", "reply" or "dm"
+	Sender  string // display name and id, for the log
+	Name    string // display name, else the id: short form for the log
+	Display string // display name, "" if unknown
+	Text    string // message text with the bot mention stripped
 
 	Expires time.Duration // the chat's disappearing-messages timer, 0 if off
+	Images  []Attachment  // images in or quoted by the message, fetched when answering
+	Sticker *Sticker      // a sticker sent as the message, fetched when answering
 
 	// Names the model has been shown in this message (name -> uuid), so
 	// "@Name" in its reply can become a real Signal mention. Groups only.
@@ -120,7 +136,18 @@ type Request struct {
 
 // logLine says who sent the request, never what they said.
 func (r *Request) logLine() string {
-	return r.Kind + " from " + r.Sender
+	line := r.Kind + " from " + r.Sender
+	switch n := len(r.Images); n {
+	case 0:
+	case 1:
+		line += " with 1 image"
+	default:
+		line += fmt.Sprintf(" with %d images", n)
+	}
+	if r.Sticker != nil {
+		line += " with a sticker"
+	}
+	return line
 }
 
 // replyLogLine is the one-line summary of a model reply, e.g.
@@ -145,7 +172,13 @@ func isAllowed(env *Envelope, allowed map[string]bool) bool {
 // cost nothing: no goroutine, no lock, no RPC.
 func trigger(env *Envelope, self string, allowed map[string]bool) string {
 	dm := env.DataMessage
-	if dm == nil || self == "" || strings.TrimSpace(dm.Message) == "" || fromSelf(env, self) {
+	if dm == nil || self == "" || fromSelf(env, self) {
+		return ""
+	}
+	// A photo or sticker alone (no text) counts too: in a DM, or as a reply
+	// to the bot.
+	if strings.TrimSpace(dm.Message) == "" && dm.Sticker == nil &&
+		!slices.ContainsFunc(dm.Attachments, func(a Attachment) bool { return a.image() != nil }) {
 		return ""
 	}
 	if dm.GroupInfo == nil || dm.GroupInfo.GroupID == "" {
@@ -176,7 +209,19 @@ func Decide(env *Envelope, kind, self string, names *Names) *Request {
 	}
 
 	text := stripMentions(dm.Message, dm.Mentions, self, names)
-	if text == "" {
+	// Images the model may see: the message's own, then the quoted message's
+	// (a thumbnail), at most maxReplyImages.
+	var images []Attachment
+	attached := dm.Attachments
+	if dm.Quote != nil {
+		attached = append(slices.Clone(attached), dm.Quote.Attachments...)
+	}
+	for _, a := range attached {
+		if img := a.image(); img != nil && len(images) < maxReplyImages {
+			images = append(images, *img)
+		}
+	}
+	if text == "" && len(images) == 0 && dm.Sticker == nil {
 		return nil
 	}
 	raw := text
@@ -202,8 +247,8 @@ func Decide(env *Envelope, kind, self string, names *Names) *Request {
 		who = name + "(" + sender + ")"
 	}
 
-	req := &Request{Target: target, Key: key, Prompt: text, Kind: kind, Sender: who, Name: cmp.Or(name, sender), Text: raw,
-		Expires: time.Duration(dm.ExpiresInSeconds) * time.Second}
+	req := &Request{Target: target, Key: key, Prompt: text, Kind: kind, Sender: who, Name: cmp.Or(name, sender), Display: name, Text: raw,
+		Expires: time.Duration(dm.ExpiresInSeconds) * time.Second, Images: images, Sticker: dm.Sticker}
 	if target.GroupID != "" {
 		req.Names = map[string]string{}
 		add := func(n, uuid string) {
@@ -271,10 +316,16 @@ func (b *Bot) Handle(env *Envelope) {
 	// Cheap inline rejection. Before the account id is known (the first moment
 	// after connecting) we cannot judge, so we let it through to the slow path.
 	if self := b.sig.SelfID(); self != "" && trigger(env, self, b.cfg.AllowedSenders) == "" {
-		// Dropped untouched: nothing is read from it or kept. The one thing
-		// said is that a DM came from someone who may not use the bot, by id
-		// only, never the name or text.
-		if g := env.DataMessage.GroupInfo; (g == nil || g.GroupID == "") && !fromSelf(env, self) && !isAllowed(env, b.cfg.AllowedSenders) {
+		// Not for the bot, and never logged. A group message is remembered as
+		// context with GROUP_CONTEXT; anything else is dropped untouched. The
+		// one thing said is that a DM came from someone who may not use the
+		// bot, by id only, never the name or text.
+		switch g := env.DataMessage.GroupInfo; {
+		case g != nil && g.GroupID != "":
+			if b.cfg.GroupContext && !fromSelf(env, self) {
+				b.rememberChatter(env, self)
+			}
+		case !fromSelf(env, self) && !isAllowed(env, b.cfg.AllowedSenders):
 			infof("%s ignored because not in SIGNAL_DM_USER_IDS",
 				cmp.Or(env.SourceUUID, env.Source, env.SourceNumber, "unknown sender"))
 		}
@@ -317,8 +368,111 @@ func (b *Bot) handle(env *Envelope) {
 		return
 	}
 	b.remember(req)
+	if strings.EqualFold(strings.TrimSpace(req.Text), "/example") {
+		b.example(req)
+		return
+	}
 	infof("%s", req.logLine())
 	b.respond(req)
+}
+
+// example answers "/example" without the model: what the bot can do, with a real
+// @mention of whoever asked.
+func (b *Bot) example(req *Request) {
+	b.ensureSelfName()
+	text := exampleText(req, b.introName(), modelName(b.cfg.Model), b.toolsText())
+	if err := b.sig.Send(req.Target, text, buildMentions(text, b.knownNames(req.Key)), nil); err != nil {
+		errorf("send to %s failed: %v", req.Name, err)
+		return
+	}
+	infof("example for %s", req.Name)
+}
+
+func exampleText(req *Request, self, model, tools string) string {
+	hi := "Hi!"
+	if req.Target.GroupID != "" && req.Display != "" {
+		hi = "Hi @" + req.Display + "!"
+	}
+	if tools == "none" {
+		tools = "no tools"
+	}
+	return hi + " I'm " + self + ". Here's what I can do:\n" +
+		"- Answer when you @mention me, reply to one of my messages, or DM me (if you're on my list)\n" +
+		"- Use a message you quote as context\n" +
+		"- Remember our conversation for up to a day (less with disappearing messages)\n" +
+		"- Mention people by name in my replies\n" +
+		"- Run " + model + " with " + tools + "\n" +
+		"This reply didn't use the model."
+}
+
+// rememberChatter adds a group message that isn't for the bot to the group's
+// history, so a later "what do you think?" has the conversation to go on. It
+// is kept like any other message (HISTORY_TURNS, a day at most, sooner with
+// disappearing messages) and only text is kept: images are noted, not fetched.
+func (b *Bot) rememberChatter(env *Envelope, self string) {
+	dm := env.DataMessage
+	text := clamp(stripMentions(dm.Message, dm.Mentions, self, b.names), signalMaxChars)
+	if slices.ContainsFunc(dm.Attachments, func(a Attachment) bool { return a.image() != nil }) {
+		text = strings.TrimSpace(text + " [image]")
+	}
+	if dm.Sticker != nil {
+		text = strings.TrimSpace(text + " [sticker]")
+	}
+	if text == "" {
+		return
+	}
+	b.addHistory("g:"+dm.GroupInfo.GroupID, ChatMsg{
+		Role:    "user",
+		Content: cmp.Or(safeName(env.SourceName), "someone") + ": " + text,
+		Expires: historyExpiry(time.Now(), time.Duration(dm.ExpiresInSeconds)*time.Second),
+	})
+}
+
+// notKept ends the history's marker for an image the model saw.
+const notKept = "; you see images only in the latest message, so to look again they must reply to it and mention you"
+
+// imageNote marks images in a prompt, e.g. "[1 image attached]".
+func imageNote(n int, what string) string {
+	if n == 1 {
+		return "[1 image " + what + "]"
+	}
+	return fmt.Sprintf("[%d images %s]", n, what)
+}
+
+// images fetches the request's images as data: URLs for the model, if it can
+// see images. One that cannot be fetched is skipped.
+func (b *Bot) images(req *Request) []string {
+	if !b.vision || len(req.Images) == 0 {
+		return nil
+	}
+	var urls []string
+	for _, a := range req.Images {
+		ctx, cancel := context.WithTimeout(b.ctx, 15*time.Second)
+		data, err := b.sig.GetAttachment(ctx, req.Target, a.ID)
+		cancel()
+		if err != nil || !sendableImage(data) {
+			warnf("could not fetch an image from %s: %v", req.Name, cmp.Or(err, errors.New("not an image")))
+			continue
+		}
+		urls = append(urls, "data:"+http.DetectContentType(data)+";base64,"+base64.StdEncoding.EncodeToString(data))
+	}
+	return urls
+}
+
+// sticker fetches the request's sticker as a data: URL for the model, if it
+// can see images, else "".
+func (b *Bot) sticker(req *Request) string {
+	if !b.vision {
+		return ""
+	}
+	ctx, cancel := context.WithTimeout(b.ctx, 15*time.Second)
+	defer cancel()
+	data, err := b.sig.GetSticker(ctx, *req.Sticker)
+	if err != nil || !sendableImage(data) {
+		warnf("could not fetch a sticker from %s: %v", req.Name, cmp.Or(err, errors.New("not an image")))
+		return ""
+	}
+	return "data:" + http.DetectContentType(data) + ";base64," + base64.StdEncoding.EncodeToString(data)
 }
 
 // duplicate reports whether the same sender sent the same text to the same
@@ -326,6 +480,12 @@ func (b *Bot) handle(env *Envelope) {
 func (b *Bot) duplicate(req *Request) bool {
 	window := dedupeWindow
 	key := req.Sender + "\x00" + req.Key + "\x00" + req.Text
+	for _, a := range req.Images { // two different photos are not duplicates
+		key += "\x00" + a.ID
+	}
+	if s := req.Sticker; s != nil {
+		key += fmt.Sprintf("\x00%s:%d", s.PackID, s.StickerID)
+	}
 	now := time.Now()
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -396,32 +556,87 @@ func (b *Bot) respond(req *Request) {
 	stopTyping := b.keepTyping(req.Target)
 	defer stopTyping() // also if something below panics
 	b.ensureSelfName()
-	msgs := append(b.getHistory(req.Key), ChatMsg{Role: "user", Content: req.Prompt})
+	// The history keeps only a marker for images, never the pictures, saying
+	// so, or the model concludes later that it can't see images at all.
+	prompt, seen := strings.TrimSpace(req.Prompt), b.images(req)
+	kept := prompt
+	switch {
+	case len(seen) > 0:
+		prompt += "\n" + imageNote(len(seen), "attached")
+		kept += "\n" + imageNote(len(seen), "attached"+notKept)
+	case len(req.Images) > 0:
+		prompt += "\n" + imageNote(len(req.Images), "attached, which you can't see with this model")
+		kept = prompt
+	}
+	if req.Sticker != nil {
+		ctx, cancel := context.WithTimeout(b.ctx, 10*time.Second)
+		label := b.sig.StickerLabel(ctx, *req.Sticker)
+		cancel()
+		if url := b.sticker(req); url != "" {
+			prompt += "\n[sticker attached" + label + "]"
+			kept += "\n[sticker attached" + label + notKept + "]"
+			seen = append(seen, url)
+		} else {
+			prompt += "\n[sticker attached" + label + ", which you can't see]"
+			kept += "\n[sticker attached" + label + ", which you can't see]"
+		}
+	}
+	prompt = strings.TrimSpace(prompt)
+	req.Prompt = strings.TrimSpace(kept)
+	msgs := append(b.getHistory(req.Key), ChatMsg{Role: "user", Content: prompt, Images: seen})
 
 	start := time.Now()
-	res, err := b.ai.Complete(b.ctx, b.systemPrompt(), msgs)
+	ctx, asked := b.ctx, wantsChart(req.Text)
+	chart := b.toolCalls && (asked || b.chartTurns(req.Key) > 0)
+	if chart {
+		ctx = withChart(ctx)
+	}
+	res, err := b.ai.Complete(ctx, b.systemPrompt(chart), msgs)
 	stopTyping()
 	took := time.Since(start)
+	var caption string
 	if err != nil {
 		errorf("OpenRouter error for %s after %.1fs: %v", req.Name, took.Seconds(), err)
 		res = Completion{Text: "Sorry, I couldn't get an answer right now."}
 	} else {
 		infof("%s", replyLogLine(req.Name, took, res))
+		// A chart is sent as one message captioned with its title, in place
+		// of the model's text.
+		if caption = chartCaptions(res); caption != "" {
+			res.Text = ""
+		}
+		if chart {
+			b.chartReplied(req.Key, asked || res.Charted)
+		}
 		gone := historyExpiry(start, req.Expires)
-		b.addHistory(req.Key, ChatMsg{Role: "user", Content: req.Prompt, Expires: gone}, ChatMsg{Role: "assistant", Content: res.Text, Expires: gone})
+		b.addHistory(req.Key, ChatMsg{Role: "user", Content: req.Prompt, Expires: gone}, ChatMsg{Role: "assistant", Content: sentImages(res) + res.Text, Expires: gone})
 	}
 
 	if n := len([]rune(res.Text)); n > maxReplyRunes {
 		warnf("reply to %s truncated from %d chars", req.Name, n)
 	}
 	parts := replyParts(res.Text, b.introName())
+	if caption != "" {
+		parts = []string{caption}
+	}
+	var attachments []string
+	for i, img := range res.Images {
+		attachments = append(attachments, imageDataURI(img, fmt.Sprintf("image%d", i+1)))
+	}
 	if len(parts) == 0 {
-		warnf("empty reply to %s, nothing sent", req.Name)
-		return
+		if len(attachments) == 0 {
+			warnf("empty reply to %s, nothing sent", req.Name)
+			return
+		}
+		parts = []string{""} // the images alone
 	}
 	known := b.knownNames(req.Key)
-	for _, part := range parts {
-		if err := b.sig.Send(req.Target, part, buildMentions(part, known)); err != nil {
+	for i, part := range parts {
+		var att []string
+		if i == 0 {
+			att = attachments // with the first message
+		}
+		if err := b.sig.Send(req.Target, part, buildMentions(part, known), att); err != nil {
 			errorf("send to %s failed: %v", req.Name, err)
 			return
 		}
@@ -498,13 +713,95 @@ func modelName(model string) string {
 }
 
 // systemPrompt is the built-in prompt, plus SYSTEM_PROMPT, plus the intro.
-func (b *Bot) systemPrompt() string {
-	tools := "none"
-	if b.cfg.Search {
-		tools = "web search"
+// toolsText lists the tools the model can use, for {tools} and /example.
+func (b *Bot) toolsText() string {
+	if !b.toolCalls {
+		return "none"
 	}
-	intro := strings.NewReplacer("{name}", safeName(b.introName()), "{model}", modelName(b.cfg.Model), "{tools}", tools).Replace(b.cfg.Intro)
+	tools := []string{"charts"}
+	if b.cfg.Search {
+		tools = []string{"web search", "charts"}
+	}
+	return strings.Join(append(tools, b.toolNames...), ", ")
+}
+
+// chartCaptions is the caption for a reply's charts, one per line, or ""
+// if it drew none.
+func chartCaptions(res Completion) string {
+	var caps []string
+	for _, c := range res.Captions {
+		if c != "" {
+			caps = append(caps, c)
+		}
+	}
+	return strings.Join(caps, "\n")
+}
+
+// sentImages notes in the history the charts and images a reply sent, which
+// the model would otherwise not know it did, e.g. "[sent the chart "NVDA"]".
+func sentImages(res Completion) string {
+	var note string
+	for i := range res.Images {
+		if i < len(res.Captions) && res.Captions[i] != "" {
+			note += "[sent the chart " + strconv.Quote(res.Captions[i]) + "]\n"
+		} else {
+			note += "[sent an image]\n"
+		}
+	}
+	return note
+}
+
+// chartFollowUps is how many replies after one that asked for or drew a chart
+// still offer the chart tools, for follow-ups like "show that for a month".
+const chartFollowUps = 2
+
+func (b *Bot) chartTurns(key string) int {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.charts[key]
+}
+
+// chartReplied counts a reply that offered the chart tools: one that asked
+// for or drew a chart restarts the count, any other uses one up.
+func (b *Bot) chartReplied(key string, fresh bool) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	switch {
+	case fresh:
+		makeRoom(b.charts, key, maxChats)
+		b.charts[key] = chartFollowUps
+	case b.charts[key] > 1:
+		b.charts[key]--
+	default:
+		delete(b.charts, key)
+	}
+}
+
+// wantsChart reports whether a message asks for a chart, so the chart tool
+// is offered only then.
+var wantsChart = regexp.MustCompile(`(?i)\b(chart(s|ed|ing)?|graph(s|ed|ing)?|plot(s|ted|ting)?|visuali[sz](e|es|ed|ing|ation|ations)|pies?|donuts?|doughnuts?)\b`).MatchString
+
+// systemPrompt is the prompt for one request; chart says whether the chart
+// tool is offered with it.
+func (b *Bot) systemPrompt(chart bool) string {
+	intro := strings.NewReplacer("{name}", safeName(b.introName()), "{model}", modelName(b.cfg.Model), "{tools}", b.toolsText()).Replace(b.cfg.Intro)
+	var tools []string
+	ask := "name them"
+	if b.toolCalls {
+		if b.cfg.Search {
+			tools = append(tools, "web search")
+		}
+		if chart {
+			tools = append(tools, "charts ("+chartTool+", "+donutTool+")")
+		}
+		if b.toolGroups != "" {
+			tools, ask = append(tools, "MCP tools by server, "+b.toolGroups), "name them, grouped by server"
+		}
+	}
 	p := basePrompt
+	if len(tools) > 0 {
+		p += "\nYour tools: " + strings.Join(tools, "; ") + ". If asked what tools you have, " + ask + "."
+	}
 	if b.cfg.ExtraPrompt != "" {
 		p += "\n" + b.cfg.ExtraPrompt
 	}
@@ -576,14 +873,49 @@ func unexpired(h []ChatMsg, now time.Time) []ChatMsg {
 	})
 }
 
-// forget erases the chat's expired messages from memory.
+// eraser is a chat's pending timer and when it fires.
+type eraser struct {
+	timer *time.Timer
+	at    time.Time
+}
+
+// forget erases the chat's expired messages from memory, and sets the timer
+// for the next one.
 func (b *Bot) forget(key string) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
+	delete(b.erasers, key)
 	if h := unexpired(b.history[key], time.Now()); len(h) > 0 {
 		b.history[key] = h
 	} else {
 		delete(b.history, key)
+		delete(b.charts, key) // nothing left to follow up on
+	}
+	b.scheduleErase(key)
+}
+
+// scheduleErase makes sure a timer will fire when the chat's earliest message
+// expires. One timer per chat, however many messages, so a busy group can't
+// pile up timers. Caller holds b.mu.
+func (b *Bot) scheduleErase(key string) {
+	var next time.Time
+	for _, m := range b.history[key] {
+		if !m.Expires.IsZero() && (next.IsZero() || m.Expires.Before(next)) {
+			next = m.Expires
+		}
+	}
+	e, ok := b.erasers[key]
+	switch {
+	case next.IsZero():
+		if ok {
+			e.timer.Stop()
+			delete(b.erasers, key)
+		}
+	case !ok || next.Before(e.at):
+		if ok {
+			e.timer.Stop()
+		}
+		b.erasers[key] = eraser{time.AfterFunc(time.Until(next), func() { b.forget(key) }), next}
 	}
 }
 
@@ -597,9 +929,7 @@ func (b *Bot) addHistory(key string, msgs ...ChatMsg) {
 	}
 	b.history[key] = h
 	// Erase the expired messages and let the garbage collector reclaim them.
-	if e := msgs[0].Expires; !e.IsZero() {
-		time.AfterFunc(time.Until(e), func() { b.forget(key) })
-	}
+	b.scheduleErase(key)
 }
 
 // makeRoom makes room for key in m, dropping an arbitrary entry once m holds

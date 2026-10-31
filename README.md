@@ -2,15 +2,32 @@
 
 A small, [privacy-conscious](PRIVACY.md) chat bot that connects to a running [signal-cli](https://github.com/AsamK/signal-cli) daemon over its socket and answers using a model from [OpenRouter](https://openrouter.ai).
 
+- [Features](#features)
+- [Use cases](#use-cases)
+- [Prerequisites](#prerequisites)
+- [Install](#install)
+  - [With systemd](#with-systemd)
+  - [With Docker](#with-docker)
+  - [Then](#then)
+- [Configuration](#configuration)
+  - [MCP tools](#mcp-tools)
+- [Troubleshooting](#troubleshooting)
+
 ## Features
 
-- The bot replies when it is @mentioned in a group; people it mentions are shown to the model by real name, and @names in its replies become real Signal mentions
-- Answers replies to its own messages, and @mentions made in reply to someone else's, using the quoted message as context
-- Replies to DMs from senders listed in `SIGNAL_DM_USER_IDS`; ignores everything else
-- Short answers sized for Signal (one line if possible, never over its 2000-character limit); optional web search and reasoning effort
-- Short per-conversation memory for follow-up questions, forgotten after a day (sooner with a shorter _disappearing messages_ setting)
-- Shows a typing indicator (refreshed every 10s) while the bot thinks; chats run concurrently, so a slow answer never blocks the rest
-- The bot ignores everything not addressed to it: a message that doesn't mention it, reply to it, or arrive as a DM is passed over. It logs the tokens used and cost of each reply
+- Responds to @mentions, replies to its messages, and DMs from senders in `SIGNAL_DM_USER_IDS`
+- Tools: web search, built-in line and donut charts, and your own [MCP](#mcp-tools) tools
+- Understands images and stickers (if the configured model supports vision)
+- Short per-conversation memory, for context. Frees from memory after 20 messages (HISTORY_TURNS), 24 hours, or when Signal's _disappearing messages_ timer expires, whichever comes first. Message content is never logged to disk.
+- Typing indicators
+
+## Use cases
+
+- Your group's brain trust: ask it to explain things, check facts or settle debates
+- Explain or translate any message or photo by replying to it and tagging the bot
+- Connect MCP tools, data, and charting to your group chat
+- Modify the bot to add your own /commands (see `/example`)
+- A private assistant in your DMs, or just the fun or convenience of a sassy LLM in your Signal groups
 
 The messages the bot answers, and the names in them, are sent to OpenRouter and on to the model's provider. See [TECHNICAL.md](TECHNICAL.md) and [PRIVACY.md](PRIVACY.md) for details on how it works.
 
@@ -93,7 +110,7 @@ Docker's journald driver records stderr at priority 3 (err) and stdout at 6 (inf
 
 ### Then
 
-Add the bot's account to a group and @mention it, reply to one of its messages, or DM it from an allowed sender.
+Add the bot's account to a group and @mention it, reply to one of its messages, or DM it from an allowed sender. Send it `/example` to see what it can do; that reply never goes to the model.
 
 ## Configuration
 
@@ -108,12 +125,31 @@ Add the bot's account to a group and @mention it, reply to one of its messages, 
 | `SYSTEM_PROMPT` | empty | Extra instructions, appended to the built-in prompt (which keeps answers short and Signal-sized) |
 | `INTRO` | built-in sentence | Overrides the self-introduction; `{name}`, `{model}` (without any OpenRouter `provider/` prefix) and `{tools}` (`web search`, or `none`) are substituted |
 | `MAX_CONCURRENCY` | `32` | Conversations in flight at once; messages beyond this are dropped |
-| `HISTORY_TURNS` | `10` | Exchanges remembered per chat |
+| `HISTORY_TURNS` | `10` | Exchanges remembered per chat (`HISTORY_TURNS` × 2 messages) |
+| `GROUP_CONTEXT` | `true` | Remember group messages not addressed to the bot as context, so "what do you think @bot" works without replying to the message; they are never logged |
 | `LOG_LEVEL` | `info` | `debug`, `info`, `warn` or `error` |
+| `MCP_CONFIG` | empty | Path of an MCP servers file; see [MCP tools](#mcp-tools) |
 
 The default `INTRO` is: `hi, I'm {name}, your open source assistant running {model} (tools: {tools}). I respond to @mentions and replies to my messages. See https://github.com/robdevops/signalbot/blob/main/README.md for details.`
 
 The cost logged with each reply is the amount OpenRouter reports billing for it.
+
+### MCP tools
+
+The model can call tools from [MCP](https://modelcontextprotocol.io) servers, remote (`url`) or local (`command`). Anyone who can address the bot can make it call them, so choose what each server offers: `allowed_tools` offers only the tools listed, `blocked_tools` offers all but those, and without either every tool the server has is offered. Put the servers in a file, for example `/etc/signalbot-mcp.json`:
+
+```json
+{"mcpServers": {
+  "weather": {"url": "https://example.com/mcp", "headers": {"Authorization": "Bearer …"}, "allowed_tools": ["get_forecast"]},
+  "files":   {"command": "uvx", "args": ["some-mcp-server"], "env": {"KEY": "value"}, "blocked_tools": ["delete_file"]}
+}}
+```
+
+Add `"disabled": true` to a server to leave it out without deleting it. A server that can't be reached at startup is logged and left out. A tool named in either list that the server doesn't have is a config error, so a typo can't leave a blocked tool offered. Local servers get only `PATH`, `HOME` and their `env`, never the bot's own environment.
+
+- **systemd:** keep the file root-only, uncomment the `LoadCredential=` and `Environment=MCP_CONFIG=` lines in `signalbot.service`, and restart. systemd hands the file to the service alone.
+- **Docker:** add `-v /etc/signalbot-mcp.json:/etc/signalbot-mcp.json:ro -e MCP_CONFIG=/etc/signalbot-mcp.json`. The image has no shell or runtimes, so only remote servers (`url`) work.
+- **Local servers under systemd** usually need the hardening loosened with a drop-in (`sudo systemctl edit signalbot`), for example `MemoryDenyWriteExecute=no` for Node, and `CacheDirectory=signalbot` with `Environment=HOME=/var/cache/signalbot` for npx or uvx caches.
 
 ## Troubleshooting
 

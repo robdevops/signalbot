@@ -19,6 +19,8 @@ type Config struct {
 	MaxConcurrency int
 	HistoryTurns   int
 	LogLevel       level
+	MCPConfig      string // MCP_CONFIG: path of the MCP servers file
+	GroupContext   bool   // GROUP_CONTEXT: remember group messages not addressed to the bot
 }
 
 func env(key, def string) string {
@@ -68,6 +70,8 @@ func LoadConfig() (*Config, error) {
 		Intro:          env("INTRO", defaultIntro),
 		MaxConcurrency: envInt("MAX_CONCURRENCY", 32),
 		HistoryTurns:   envInt("HISTORY_TURNS", 10),
+		MCPConfig:      env("MCP_CONFIG", ""),
+		GroupContext:   envBool("GROUP_CONTEXT", true),
 	}
 	for _, s := range splitIDs(os.Getenv("SIGNAL_DM_USER_IDS")) {
 		c.AllowedSenders[s] = true

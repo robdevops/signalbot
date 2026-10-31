@@ -4,11 +4,15 @@
 #   docker buildx imagetools inspect gcr.io/distroless/static-debian12:nonroot
 FROM golang:1.24.7-bookworm@sha256:b8bae5bd9ba9b1f89b635c91c24cc75cea335a16fb5076310f38566fc674b1ec AS build
 ARG VERSION=dev
-# The bot has no dependencies: forbid module and toolchain downloads, so the
-# build uses only what is in this image.
-ENV CGO_ENABLED=0 GOPROXY=off GOTOOLCHAIN=local
+# Never download a toolchain: build with the one in this image.
+ENV CGO_ENABLED=0 GOTOOLCHAIN=local
 WORKDIR /src
-COPY go.mod *.go ./
+# The one dependency (golang.org/x/image, for chart text) is downloaded once
+# and checked against go.sum; after that, the build is offline.
+COPY go.mod go.sum ./
+RUN go mod download
+ENV GOPROXY=off
+COPY *.go ./
 RUN go build -trimpath -ldflags "-s -w -X main.version=${VERSION}" -o /signalbot .
 
 # distroless/static: no shell or package manager, CA certificates for TLS to

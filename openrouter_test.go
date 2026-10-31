@@ -45,7 +45,7 @@ func TestOpenRouterRequestAndReply(t *testing.T) {
 	defer srv.Close()
 
 	cfg := &Config{APIKey: "or-key", Model: "x-ai/grok-4", Reasoning: "low", Search: true}
-	o := NewOpenRouter(cfg)
+	o := NewOpenRouter(cfg, nil)
 	o.url = srv.URL
 	res, err := o.Complete(context.Background(), "be brief", []ChatMsg{{Role: "user", Content: "hello"}})
 	if err != nil {
@@ -93,7 +93,7 @@ func TestOpenRouterOmitsOptionsWhenOff(t *testing.T) {
 	}))
 	defer srv.Close()
 	cfg := &Config{APIKey: "k", Model: "m", Reasoning: "none"}
-	o := NewOpenRouter(cfg)
+	o := NewOpenRouter(cfg, nil)
 	o.url = srv.URL
 	res, err := o.Complete(context.Background(), "s", nil)
 	if err != nil {
@@ -103,7 +103,7 @@ func TestOpenRouterOmitsOptionsWhenOff(t *testing.T) {
 		t.Error("reasoning sent although REASONING=none")
 	}
 	if _, ok := got["tools"]; ok {
-		t.Error("search tool sent although search is off")
+		t.Errorf("tools sent with search off and no chart asked for: %v", got["tools"])
 	}
 	if res.Cost != 0 {
 		t.Errorf("with no reported cost, Cost must be 0, got %v", res.Cost)
@@ -124,7 +124,7 @@ func TestOpenRouterErrors(t *testing.T) {
 		http.Error(w, `{"error":"bad key"}`, http.StatusUnauthorized)
 	}))
 	defer srv.Close()
-	o := NewOpenRouter(&Config{APIKey: "k", Model: "m"})
+	o := NewOpenRouter(&Config{APIKey: "k", Model: "m"}, nil)
 	o.url = srv.URL
 	if _, err := o.Complete(context.Background(), "s", nil); err == nil {
 		t.Fatal("a 401 must be an error")

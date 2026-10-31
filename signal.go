@@ -4,10 +4,12 @@ import (
 	"bufio"
 	"cmp"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"net"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -23,9 +25,40 @@ type Mention struct {
 }
 
 type Quote struct {
-	Author     string `json:"author"`
-	AuthorUUID string `json:"authorUuid"`
-	Text       string `json:"text"`
+	Author      string       `json:"author"`
+	AuthorUUID  string       `json:"authorUuid"`
+	Text        string       `json:"text"`
+	Attachments []Attachment `json:"attachments"`
+}
+
+// Attachment is a file on a message. A quote's attachments carry only a
+// small thumbnail of the original.
+type Attachment struct {
+	ContentType string      `json:"contentType"`
+	ID          string      `json:"id"`
+	Size        int         `json:"size"`
+	Thumbnail   *Attachment `json:"thumbnail"`
+}
+
+// Sticker names a sticker by its pack and its index in the pack.
+type Sticker struct {
+	PackID    string `json:"packId"`
+	StickerID int    `json:"stickerId"`
+}
+
+// image is the attachment itself if it is an image the model can be shown,
+// else its thumbnail if that is, else nil.
+func (a Attachment) image() *Attachment {
+	for _, c := range []*Attachment{&a, a.Thumbnail} {
+		if c == nil || c.ID == "" || c.Size > maxImageBytes {
+			continue
+		}
+		switch c.ContentType {
+		case "image/png", "image/jpeg", "image/gif", "image/webp":
+			return c
+		}
+	}
+	return nil
 }
 
 type GroupInfo struct {
@@ -34,10 +67,12 @@ type GroupInfo struct {
 }
 
 type DataMessage struct {
-	Message   string     `json:"message"`
-	Mentions  []Mention  `json:"mentions"`
-	Quote     *Quote     `json:"quote"`
-	GroupInfo *GroupInfo `json:"groupInfo"`
+	Message     string       `json:"message"`
+	Mentions    []Mention    `json:"mentions"`
+	Quote       *Quote       `json:"quote"`
+	GroupInfo   *GroupInfo   `json:"groupInfo"`
+	Attachments []Attachment `json:"attachments"`
+	Sticker     *Sticker     `json:"sticker"`
 
 	// ExpiresInSeconds is the chat's disappearing-messages timer, 0 if off.
 	ExpiresInSeconds int `json:"expiresInSeconds"`
@@ -287,11 +322,95 @@ func (t Target) params() map[string]any {
 }
 
 // Send posts msg; mentions are signal-cli specs ("start:length:uuid") for @names in msg.
-func (s *Signal) Send(t Target, msg string, mentions []string) error {
+// GetAttachment fetches an attachment's bytes from signal-cli by id, naming
+// the chat it arrived in: the group, or for a DM the person who sent it. The
+// bot never reads signal-cli's data directory itself.
+func (s *Signal) GetAttachment(ctx context.Context, t Target, id string) ([]byte, error) {
+	p := map[string]any{"id": id}
+	if t.GroupID != "" {
+		p["groupId"] = t.GroupID
+	} else {
+		p["recipient"] = t.User
+	}
+	resp, err := s.call(ctx, "getAttachment", p)
+	if err != nil {
+		return nil, err
+	}
+	var r struct {
+		Data string `json:"data"`
+	}
+	if err := json.Unmarshal(resp.Result, &r); err != nil {
+		return nil, errors.New("malformed getAttachment result")
+	}
+	return base64.StdEncoding.DecodeString(r.Data)
+}
+
+// GetSticker fetches a sticker's image (WebP, or APNG if animated) from
+// signal-cli, which downloads the packs of stickers it receives.
+func (s *Signal) GetSticker(ctx context.Context, st Sticker) ([]byte, error) {
+	resp, err := s.call(ctx, "getSticker", map[string]any{"packId": st.PackID, "stickerId": st.StickerID})
+	if err != nil {
+		return nil, err
+	}
+	var r struct {
+		Data string `json:"data"`
+	}
+	if err := json.Unmarshal(resp.Result, &r); err != nil {
+		return nil, errors.New("malformed getSticker result")
+	}
+	return base64.StdEncoding.DecodeString(r.Data)
+}
+
+// StickerLabel describes a sticker from its pack's details: its emoji and
+// the pack's title, e.g. `: 🕵️ from "My Daily Life"`, or "" if signal-cli
+// doesn't know the pack. Both come from whoever made the pack, so they are
+// trimmed and the title quoted.
+func (s *Signal) StickerLabel(ctx context.Context, st Sticker) string {
+	resp, err := s.call(ctx, "listStickerPacks", nil)
+	if err != nil {
+		return ""
+	}
+	var packs []struct {
+		PackID   string `json:"packId"`
+		Title    string `json:"title"`
+		Stickers []struct {
+			ID    int    `json:"id"`
+			Emoji string `json:"emoji"`
+		} `json:"stickers"`
+	}
+	if json.Unmarshal(resp.Result, &packs) != nil {
+		return ""
+	}
+	for _, p := range packs {
+		if p.PackID != st.PackID {
+			continue
+		}
+		label := ""
+		for _, sk := range p.Stickers {
+			if sk.ID == st.StickerID {
+				if e := clamp(safeName(sk.Emoji), 8); e != "" {
+					label = ": " + e
+				}
+			}
+		}
+		if t := safeName(p.Title); t != "" {
+			label += " from " + strconv.Quote(t)
+		}
+		return label
+	}
+	return ""
+}
+
+// Send sends msg, with mentions ("start:length:uuid") and attachments (data:
+// URIs, see imageDataURI).
+func (s *Signal) Send(t Target, msg string, mentions, attachments []string) error {
 	p := t.params()
 	p["message"] = msg
 	if len(mentions) > 0 {
 		p["mention"] = mentions
+	}
+	if len(attachments) > 0 {
+		p["attachments"] = attachments
 	}
 	return s.write(s.nextID.Add(1), "send", p)
 }

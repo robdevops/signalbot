@@ -8,6 +8,9 @@ Wants=network-online.target
 # signal-cli group (SupplementaryGroups), so nothing needs to know its uid.
 DynamicUser=yes
 EnvironmentFile=/etc/signalbot.env
+# MCP tools: the servers file, readable by this service only
+#LoadCredential=mcp.json:/etc/signalbot-mcp.json
+#Environment=MCP_CONFIG=%d/mcp.json
 ExecStart=/usr/local/bin/signalbot
 Restart=on-failure
 RestartSec=10s
