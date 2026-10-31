@@ -18,9 +18,8 @@ A small, [privacy-conscious](PRIVACY.md) chat bot that connects to a running [si
 - Responds to @mentions, replies to its messages, and DMs from senders in `SIGNAL_DM_USER_IDS`
 - Tools: web search, a built-in charting tool, and your own [MCP](#mcp-tools) tools
 - Understands images, Signal stickers and emojis (if the configured model supports it)
-- Short per-conversation memory, for context
+- Short per-conversation memory, for context. Frees from memory after 20 messages (HISTORY_TURNS), or 24 hours, or the _disappearing messages_ timer, whichever comes first. Message content is _never_ logged to disk.
 - Typing indicators
-- Respects any "disappearing messages" setting (messages are freed from memory). The bot never logs the content of any message
 
 ## Use cases
 
