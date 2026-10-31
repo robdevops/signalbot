@@ -36,7 +36,8 @@ var donutToolSchema = json.RawMessage(`{
 }`)
 
 const donutToolDescription = "Draw a donut chart of how a total splits into parts and attach it to your reply as an image. " +
-	"Use it for proportions. Pass the raw values: the percentages and total are computed for you."
+	"Use it for proportions. Pass the raw values: the percentages and total are computed for you. " +
+	"The chart is sent alone with its title as the caption, so write no other text: it would be discarded."
 
 type donutSlice struct {
 	Label string  `json:"label"`

@@ -82,7 +82,8 @@ var chartToolSchema = json.RawMessage(`{
 }`)
 
 const chartToolDescription = "Draw a line chart of one or more series over time, on one or two Y axes, and attach it to your reply as an image. " +
-	"Use it when a chart would help, e.g. to compare prices. Pass the raw values: in change mode the % change is computed for you."
+	"Use it when a chart would help, e.g. to compare prices. Pass the raw values: in change mode the % change is computed for you. " +
+	"The chart is sent alone with its title as the caption, so write no other text: it would be discarded."
 
 type chartPoint struct {
 	Date  string  `json:"date"`
