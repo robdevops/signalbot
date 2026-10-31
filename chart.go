@@ -127,8 +127,6 @@ func (s *chartSpec) axisOf(sr chartSeries) *chartAxis {
 	return s.left
 }
 
-// parseChart reads and checks the model's arguments. Errors are written for
-// the model, so it can fix its call.
 // chartNote opens a chart tool's result for the model.
 const chartNote = "Chart attached. It is sent captioned with its title in place of your text, which won't be shown, so reply with just \"Done\". "
 
@@ -189,6 +187,8 @@ func jsonType(k reflect.Kind) string {
 	}
 }
 
+// parseChart reads and checks the model's arguments. Errors are written for
+// the model, so it can fix its call.
 func parseChart(arguments string) (*chartSpec, error) {
 	var s chartSpec
 	if err := decodeArgs(chartTool, arguments, &s); err != nil {
