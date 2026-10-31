@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"slices"
 	"strings"
 	"time"
 )
@@ -19,10 +20,62 @@ type ChatMsg struct {
 	Content    string     `json:"content"`
 	ToolCalls  []ToolCall `json:"tool_calls,omitempty"`   // an assistant turn that calls tools
 	ToolCallID string     `json:"tool_call_id,omitempty"` // a tool's answer to that call
+	Images     []string   `json:"-"`                      // data: URLs shown to the model with Content
 
 	// Expires is when this message must be forgotten (disappearing messages);
 	// zero means it is kept until pushed out. Never sent to the model.
 	Expires time.Time `json:"-"`
+}
+
+// MarshalJSON sends a message with images as content parts: the text, then
+// each image.
+func (m ChatMsg) MarshalJSON() ([]byte, error) {
+	type plain ChatMsg // without this method
+	if len(m.Images) == 0 {
+		return json.Marshal(plain(m))
+	}
+	parts := []any{map[string]string{"type": "text", "text": m.Content}}
+	for _, u := range m.Images {
+		parts = append(parts, map[string]any{"type": "image_url", "image_url": map[string]string{"url": u}})
+	}
+	return json.Marshal(struct {
+		plain
+		Content []any `json:"content"`
+	}{plain(m), parts})
+}
+
+// SupportsImages asks OpenRouter whether the model accepts images. If it
+// cannot tell, the answer is no, and the failure is logged.
+func (o *OpenRouter) SupportsImages(ctx context.Context) bool {
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, o.modelsURL, nil)
+	req.Header.Set("Authorization", "Bearer "+o.cfg.APIKey)
+	resp, err := o.http.Do(req)
+	if err != nil {
+		warnf("could not check whether %s accepts images, so images are off: %v", o.cfg.Model, err)
+		return false
+	}
+	defer resp.Body.Close()
+	var r struct {
+		Data []struct {
+			ID           string `json:"id"`
+			Architecture struct {
+				InputModalities []string `json:"input_modalities"`
+			} `json:"architecture"`
+		} `json:"data"`
+	}
+	if resp.StatusCode != http.StatusOK || json.NewDecoder(io.LimitReader(resp.Body, 32<<20)).Decode(&r) != nil {
+		warnf("could not check whether %s accepts images, so images are off: status %d", o.cfg.Model, resp.StatusCode)
+		return false
+	}
+	for _, m := range r.Data {
+		if m.ID == o.cfg.Model {
+			return slices.Contains(m.Architecture.InputModalities, "image")
+		}
+	}
+	warnf("model %s is not in OpenRouter's model list, so images are off", o.cfg.Model)
+	return false
 }
 
 // ToolCall is the model asking to run a tool.
@@ -53,10 +106,11 @@ type Completer interface {
 
 // OpenRouter talks to OpenRouter's chat completions API.
 type OpenRouter struct {
-	cfg   *Config
-	url   string
-	http  *http.Client
-	tools *MCP // nil without MCP_CONFIG
+	cfg       *Config
+	url       string
+	modelsURL string
+	http      *http.Client
+	tools     *MCP // nil without MCP_CONFIG
 }
 
 // newHTTPClient is Go's default transport (proxy settings, timeouts, HTTP/2),
@@ -70,7 +124,8 @@ func newHTTPClient() *http.Client {
 // NewOpenRouter makes the client; tools, which may be nil, are the MCP tools
 // the model may call.
 func NewOpenRouter(cfg *Config, tools *MCP) *OpenRouter {
-	return &OpenRouter{cfg: cfg, url: "https://openrouter.ai/api/v1/chat/completions", http: newHTTPClient(), tools: tools}
+	return &OpenRouter{cfg: cfg, url: "https://openrouter.ai/api/v1/chat/completions",
+		modelsURL: "https://openrouter.ai/api/v1/models", http: newHTTPClient(), tools: tools}
 }
 
 const (

@@ -3,8 +3,11 @@ package main
 import (
 	"cmp"
 	"context"
+	"encoding/base64"
+	"errors"
 	"fmt"
 	"maps"
+	"net/http"
 	"slices"
 	"sort"
 	"strconv"
@@ -70,6 +73,7 @@ type Bot struct {
 	typingEvery time.Duration
 	toolNames   []string // MCP tools the model may call, for {tools}
 	toolGroups  string   // the same, grouped by server, for the system prompt
+	vision      bool     // the model accepts images
 }
 
 func NewBot(ctx context.Context, cfg *Config, sig *Signal, ai Completer) *Bot {
@@ -115,6 +119,7 @@ type Request struct {
 	Text    string // message text with the bot mention stripped
 
 	Expires time.Duration // the chat's disappearing-messages timer, 0 if off
+	Images  []Attachment  // images in or quoted by the message, fetched when answering
 
 	// Names the model has been shown in this message (name -> uuid), so
 	// "@Name" in its reply can become a real Signal mention. Groups only.
@@ -123,7 +128,15 @@ type Request struct {
 
 // logLine says who sent the request, never what they said.
 func (r *Request) logLine() string {
-	return r.Kind + " from " + r.Sender
+	line := r.Kind + " from " + r.Sender
+	switch n := len(r.Images); n {
+	case 0:
+	case 1:
+		line += " with 1 image"
+	default:
+		line += fmt.Sprintf(" with %d images", n)
+	}
+	return line
 }
 
 // replyLogLine is the one-line summary of a model reply, e.g.
@@ -148,7 +161,11 @@ func isAllowed(env *Envelope, allowed map[string]bool) bool {
 // cost nothing: no goroutine, no lock, no RPC.
 func trigger(env *Envelope, self string, allowed map[string]bool) string {
 	dm := env.DataMessage
-	if dm == nil || self == "" || strings.TrimSpace(dm.Message) == "" || fromSelf(env, self) {
+	if dm == nil || self == "" || fromSelf(env, self) {
+		return ""
+	}
+	// A photo alone (no text) counts too: in a DM, or as a reply to the bot.
+	if strings.TrimSpace(dm.Message) == "" && !slices.ContainsFunc(dm.Attachments, func(a Attachment) bool { return a.image() != nil }) {
 		return ""
 	}
 	if dm.GroupInfo == nil || dm.GroupInfo.GroupID == "" {
@@ -179,7 +196,19 @@ func Decide(env *Envelope, kind, self string, names *Names) *Request {
 	}
 
 	text := stripMentions(dm.Message, dm.Mentions, self, names)
-	if text == "" {
+	// Images the model may see: the message's own, then the quoted message's
+	// (a thumbnail), at most maxReplyImages.
+	var images []Attachment
+	attached := dm.Attachments
+	if dm.Quote != nil {
+		attached = append(slices.Clone(attached), dm.Quote.Attachments...)
+	}
+	for _, a := range attached {
+		if img := a.image(); img != nil && len(images) < maxReplyImages {
+			images = append(images, *img)
+		}
+	}
+	if text == "" && len(images) == 0 {
 		return nil
 	}
 	raw := text
@@ -206,7 +235,7 @@ func Decide(env *Envelope, kind, self string, names *Names) *Request {
 	}
 
 	req := &Request{Target: target, Key: key, Prompt: text, Kind: kind, Sender: who, Name: cmp.Or(name, sender), Display: name, Text: raw,
-		Expires: time.Duration(dm.ExpiresInSeconds) * time.Second}
+		Expires: time.Duration(dm.ExpiresInSeconds) * time.Second, Images: images}
 	if target.GroupID != "" {
 		req.Names = map[string]string{}
 		add := func(n, uuid string) {
@@ -357,11 +386,42 @@ func exampleText(req *Request, self, model, tools string) string {
 		"This reply didn't use the model."
 }
 
+// imageNote marks images in a prompt, e.g. "[1 image attached]".
+func imageNote(n int, what string) string {
+	if n == 1 {
+		return "[1 image " + what + "]"
+	}
+	return fmt.Sprintf("[%d images %s]", n, what)
+}
+
+// images fetches the request's images as data: URLs for the model, if it can
+// see images. One that cannot be fetched is skipped.
+func (b *Bot) images(req *Request) []string {
+	if !b.vision || len(req.Images) == 0 {
+		return nil
+	}
+	var urls []string
+	for _, a := range req.Images {
+		ctx, cancel := context.WithTimeout(b.ctx, 15*time.Second)
+		data, err := b.sig.GetAttachment(ctx, req.Target, a.ID)
+		cancel()
+		if err != nil || !sendableImage(data) {
+			warnf("could not fetch an image from %s: %v", req.Name, cmp.Or(err, errors.New("not an image")))
+			continue
+		}
+		urls = append(urls, "data:"+http.DetectContentType(data)+";base64,"+base64.StdEncoding.EncodeToString(data))
+	}
+	return urls
+}
+
 // duplicate reports whether the same sender sent the same text to the same
 // chat within the dedupe window, and records this one.
 func (b *Bot) duplicate(req *Request) bool {
 	window := dedupeWindow
 	key := req.Sender + "\x00" + req.Key + "\x00" + req.Text
+	for _, a := range req.Images { // two different photos are not duplicates
+		key += "\x00" + a.ID
+	}
 	now := time.Now()
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -432,7 +492,16 @@ func (b *Bot) respond(req *Request) {
 	stopTyping := b.keepTyping(req.Target)
 	defer stopTyping() // also if something below panics
 	b.ensureSelfName()
-	msgs := append(b.getHistory(req.Key), ChatMsg{Role: "user", Content: req.Prompt})
+	// The history keeps only a marker for images, never the pictures.
+	prompt, seen := req.Prompt, b.images(req)
+	switch {
+	case len(seen) > 0:
+		prompt = strings.TrimSpace(strings.TrimSpace(prompt) + "\n" + imageNote(len(seen), "attached"))
+	case len(req.Images) > 0:
+		prompt = strings.TrimSpace(strings.TrimSpace(prompt) + "\n" + imageNote(len(req.Images), "attached, which you can't see with this model"))
+	}
+	req.Prompt = prompt
+	msgs := append(b.getHistory(req.Key), ChatMsg{Role: "user", Content: prompt, Images: seen})
 
 	start := time.Now()
 	res, err := b.ai.Complete(b.ctx, b.systemPrompt(), msgs)

@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"cmp"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -23,9 +24,34 @@ type Mention struct {
 }
 
 type Quote struct {
-	Author     string `json:"author"`
-	AuthorUUID string `json:"authorUuid"`
-	Text       string `json:"text"`
+	Author      string       `json:"author"`
+	AuthorUUID  string       `json:"authorUuid"`
+	Text        string       `json:"text"`
+	Attachments []Attachment `json:"attachments"`
+}
+
+// Attachment is a file on a message. A quote's attachments carry only a
+// small thumbnail of the original.
+type Attachment struct {
+	ContentType string      `json:"contentType"`
+	ID          string      `json:"id"`
+	Size        int         `json:"size"`
+	Thumbnail   *Attachment `json:"thumbnail"`
+}
+
+// image is the attachment itself if it is an image the model can be shown,
+// else its thumbnail if that is, else nil.
+func (a Attachment) image() *Attachment {
+	for _, c := range []*Attachment{&a, a.Thumbnail} {
+		if c == nil || c.ID == "" || c.Size > maxImageBytes {
+			continue
+		}
+		switch c.ContentType {
+		case "image/png", "image/jpeg", "image/gif", "image/webp":
+			return c
+		}
+	}
+	return nil
 }
 
 type GroupInfo struct {
@@ -34,10 +60,11 @@ type GroupInfo struct {
 }
 
 type DataMessage struct {
-	Message   string     `json:"message"`
-	Mentions  []Mention  `json:"mentions"`
-	Quote     *Quote     `json:"quote"`
-	GroupInfo *GroupInfo `json:"groupInfo"`
+	Message     string       `json:"message"`
+	Mentions    []Mention    `json:"mentions"`
+	Quote       *Quote       `json:"quote"`
+	GroupInfo   *GroupInfo   `json:"groupInfo"`
+	Attachments []Attachment `json:"attachments"`
 
 	// ExpiresInSeconds is the chat's disappearing-messages timer, 0 if off.
 	ExpiresInSeconds int `json:"expiresInSeconds"`
@@ -287,6 +314,29 @@ func (t Target) params() map[string]any {
 }
 
 // Send posts msg; mentions are signal-cli specs ("start:length:uuid") for @names in msg.
+// GetAttachment fetches an attachment's bytes from signal-cli by id, naming
+// the chat it arrived in: the group, or for a DM the person who sent it. The
+// bot never reads signal-cli's data directory itself.
+func (s *Signal) GetAttachment(ctx context.Context, t Target, id string) ([]byte, error) {
+	p := map[string]any{"id": id}
+	if t.GroupID != "" {
+		p["groupId"] = t.GroupID
+	} else {
+		p["recipient"] = t.User
+	}
+	resp, err := s.call(ctx, "getAttachment", p)
+	if err != nil {
+		return nil, err
+	}
+	var r struct {
+		Data string `json:"data"`
+	}
+	if err := json.Unmarshal(resp.Result, &r); err != nil {
+		return nil, errors.New("malformed getAttachment result")
+	}
+	return base64.StdEncoding.DecodeString(r.Data)
+}
+
 // Send sends msg, with mentions ("start:length:uuid") and attachments (data:
 // URIs, see imageDataURI).
 func (s *Signal) Send(t Target, msg string, mentions, attachments []string) error {

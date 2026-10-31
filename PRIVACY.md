@@ -10,6 +10,7 @@ When the bot answers a message, it sends this to [OpenRouter](https://openrouter
 - the earlier messages in this chat that were addressed to the bot, with the bot's replies: at most `HISTORY_TURNS` exchanges, none older than a day. Other conversation in the group is never included, apart from a message quoted as described below;
 - the new message, with the display name of whoever sent it (in groups) and of anyone it @mentions;
 - the quoted text, when someone replies to one of the bot's messages, or mentions the bot in reply to someone else.
+- photos in the message, and the thumbnail of a quoted photo, when the model accepts images (the bot checks this at startup).
 
 With web search on (`MODEL_SEARCH`), the model decides whether to search and writes the query itself. The query can contain anything the model was sent (see above), such as a name or a phrase from a message, and goes to the search service OpenRouter uses.
 
@@ -21,7 +22,7 @@ Every request tells OpenRouter to use only model providers that do not collect d
 
 ## What the bot keeps
 
-- **History lives in memory only.** It is kept per chat, up to `HISTORY_TURNS` exchanges and 500 chats, for at most 24 hours, or until a shorter disappearing-messages timer runs out. A restart clears it, and the bot never writes it to disk.
+- **History lives in memory only.** It is kept per chat, up to `HISTORY_TURNS` exchanges and 500 chats, for at most 24 hours, or until a shorter disappearing-messages timer runs out. A restart clears it, and the bot never writes it to disk. Photos are not kept at all: the history notes that one was sent, and the bot fetches it from signal-cli only while answering.
 - **No swap or core dumps.** The included systemd unit and Docker command forbid both, so history cannot reach disk that way.
 - **Memory is freed, not wiped.** An expired message is dropped and Go's garbage collector reclaims its memory, but the bytes may linger until overwritten, and someone with root access to the host could read them from the running process.
 - **Names.** The bot keeps a copy of signal-cli's contact list (names and IDs) in memory, so it can show and mention people by name. It reloads the list at startup, after reconnecting, when a group changes, and at least daily when in use, replacing what it had, so people who leave a group are forgotten. It also keeps the name of anyone who sends it an addressed message. It never keeps what anyone wrote.
@@ -31,6 +32,7 @@ Every request tells OpenRouter to use only model providers that do not collect d
 - **A message addressed to the bot:** a line with the kind (mention, reply or DM) and the sender's name and ID; after the answer, a line with the sender's name, time taken, tokens used and cost.
 - **Never the text of any message,** nor errors that quote one.
 - **A message not addressed to the bot:** nothing, not even a note that it arrived.
+- **A message with photos:** how many, never the photos or their names.
 - **An MCP tool call:** the tool's name, its server and how long it took; never the arguments or the result.
 - **A contact list load,** at `LOG_LEVEL=debug` only: a line with the number of contacts.
 - **A DM from someone not in `SIGNAL_DM_USER_IDS`:** their ID only, never a name or text.
