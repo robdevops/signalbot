@@ -57,7 +57,7 @@ var chartToolSchema = json.RawMessage(`{
   "type": "object",
   "required": ["title", "series"],
   "properties": {
-    "title": {"type": "string", "description": "Short title, e.g. \"NVDA vs ACMR\""},
+    "title": {"type": "string", "description": "Short title ending with the period in words, e.g. \"NVDA vs ACMR, 1 month\" or \"NVDA, 5 years\"; it is also the message caption"},
     "subtitle": {"type": "string", "description": "e.g. \"% change over the past month, 30 Sep - 28 Oct 2026\""},
     "axes": {"type": "object", "description": "Settings for the left and right Y axes. Put series with a different unit or scale on the right axis. A chart that uses both axes must give each a title.",
       "properties": {"left": {"$ref": "#/$defs/axis"}, "right": {"$ref": "#/$defs/axis"}}},
