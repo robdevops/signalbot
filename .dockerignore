@@ -4,4 +4,7 @@
 !go.mod
 !go.sum
 !*.go
-*_test.go
+!cmd
+!internal
+**/*_test.go
+**/testdata

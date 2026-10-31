@@ -12,7 +12,7 @@ WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
 ENV GOPROXY=off
-COPY *.go ./
+COPY . ./
 RUN go build -trimpath -ldflags "-s -w -X main.version=${VERSION}" -o /signalbot .
 
 # distroless/static: no shell or package manager, CA certificates for TLS to
