@@ -74,10 +74,11 @@ type Bot struct {
 	dedupe  map[string]time.Time
 
 	typingEvery time.Duration
-	toolNames   []string // MCP tools the model may call, for {tools}
-	toolGroups  string   // the same, grouped by server, for the system prompt
-	vision      bool     // the model accepts images
-	toolCalls   bool     // the model can call tools (web search, charts, MCP)
+	toolNames   []string              // MCP tools the model may call, for {tools}
+	toolGroups  string                // the same, grouped by server, for the system prompt
+	commands    map[string]mcpCommand // chat commands, by name without the slash
+	vision      bool                  // the model accepts images
+	toolCalls   bool                  // the model can call tools (web search, charts, MCP)
 }
 
 func NewBot(ctx context.Context, cfg *Config, sig *Signal, ai Completer) *Bot {
@@ -126,6 +127,7 @@ type Request struct {
 	Text    string // message text with the bot mention stripped
 
 	Expires time.Duration // the chat's disappearing-messages timer, 0 if off
+	Tool    string        // a chat command's tool, which the model must call
 	Images  []Attachment  // images in or quoted by the message, fetched when answering
 	Sticker *Sticker      // a sticker sent as the message, fetched when answering
 
@@ -372,8 +374,35 @@ func (b *Bot) handle(env *Envelope) {
 		b.example(req)
 		return
 	}
+	if name, rest, ok := parseCommand(req.Text); ok {
+		if c, ok := b.commands[name]; ok {
+			if c.RequireArg && rest == "" {
+				b.sendText(req, "/"+name+" needs something after it.")
+				return
+			}
+			req.Tool = c.Tool
+			infof("chat command /%s from %s", name, req.Name)
+		}
+	}
 	infof("%s", req.logLine())
 	b.respond(req)
+}
+
+// parseCommand splits "/name rest" into the lowercased name and the rest.
+func parseCommand(text string) (name, rest string, ok bool) {
+	text = strings.TrimSpace(text)
+	if !strings.HasPrefix(text, "/") {
+		return "", "", false
+	}
+	name, rest, _ = strings.Cut(text[1:], " ")
+	return strings.ToLower(name), strings.TrimSpace(rest), name != ""
+}
+
+// sendText sends the bot's own text, not the model's, to req's chat.
+func (b *Bot) sendText(req *Request, text string) {
+	if err := b.sig.Send(req.Target, text, buildMentions(text, b.knownNames(req.Key)), nil); err != nil {
+		errorf("send to %s failed: %v", req.Name, err)
+	}
 }
 
 // example answers "/example" without the model: what the bot can do, with a real
@@ -587,8 +616,11 @@ func (b *Bot) respond(req *Request) {
 
 	start := time.Now()
 	ctx, asked := b.ctx, wantsChart(req.Text)
-	chart := b.toolCalls && (asked || b.chartTurns(req.Key) > 0)
-	if chart {
+	chart := req.Tool == "" && b.toolCalls && (asked || b.chartTurns(req.Key) > 0)
+	switch {
+	case req.Tool != "":
+		ctx = withTool(ctx, req.Tool)
+	case chart:
 		ctx = withChart(ctx)
 	}
 	res, err := b.ai.Complete(ctx, b.systemPrompt(chart), msgs)
@@ -722,7 +754,16 @@ func (b *Bot) toolsText() string {
 	if b.cfg.Search {
 		tools = []string{"web search", "charts"}
 	}
-	return strings.Join(append(tools, b.toolNames...), ", ")
+	return strings.Join(append(append(tools, b.toolNames...), b.commandNames()...), ", ")
+}
+
+// commandNames lists the chat commands as "/name", sorted.
+func (b *Bot) commandNames() []string {
+	var out []string
+	for _, n := range slices.Sorted(maps.Keys(b.commands)) {
+		out = append(out, "/"+n)
+	}
+	return out
 }
 
 // chartCaptions is the caption for a reply's charts, one per line, or ""
@@ -796,6 +837,9 @@ func (b *Bot) systemPrompt(chart bool) string {
 		}
 		if b.toolGroups != "" {
 			tools, ask = append(tools, "MCP tools by server, "+b.toolGroups), "name them, grouped by server"
+		}
+		if cmds := b.commandNames(); len(cmds) > 0 {
+			tools = append(tools, "chat commands "+strings.Join(cmds, ", "))
 		}
 	}
 	p := basePrompt

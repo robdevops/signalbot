@@ -35,15 +35,31 @@ const (
 // offers the model only those tools; blocked_tools, when present, offers all
 // but those. Without either, every tool the server lists is offered.
 type mcpServerConfig struct {
-	URL          string            `json:"url"`
-	Headers      map[string]string `json:"headers"`
-	Command      string            `json:"command"`
-	Args         []string          `json:"args"`
-	Env          map[string]string `json:"env"`
-	AllowedTools []string          `json:"allowed_tools"` // nil: not in whitelist mode
-	BlockedTools []string          `json:"blocked_tools"`
-	Disabled     bool              `json:"disabled"` // left out entirely
+	URL          string                 `json:"url"`
+	Headers      map[string]string      `json:"headers"`
+	Command      string                 `json:"command"`
+	Args         []string               `json:"args"`
+	Env          map[string]string      `json:"env"`
+	AllowedTools []string               `json:"allowed_tools"` // nil: not in whitelist mode
+	BlockedTools []string               `json:"blocked_tools"`
+	Disabled     bool                   `json:"disabled"` // left out entirely
+	ChatCommands map[string]chatCommand `json:"chat_commands"`
 }
+
+// chatCommand makes "/name ..." a turn in which the model must call tool.
+// With require_arg, a bare "/name" is answered by the bot, not the model.
+type chatCommand struct {
+	Tool       string `json:"tool"`
+	RequireArg bool   `json:"require_arg"`
+}
+
+// mcpCommand is a chat command ready to use: Tool is the model's name for it.
+type mcpCommand struct {
+	Tool       string
+	RequireArg bool
+}
+
+var commandName = regexp.MustCompile(`^[a-z0-9_-]{1,32}$`)
 
 func loadMCPConfig(path string) (map[string]mcpServerConfig, error) {
 	data, err := os.ReadFile(path)
@@ -117,7 +133,8 @@ type MCP struct {
 	tools   []mcpTool // sorted by Model
 	byModel map[string]mcpTool
 	conns   map[string]mcpConn
-	wg      sync.WaitGroup // stdio supervisors
+	cmds    map[string]mcpCommand // chat command name, without the slash
+	wg      sync.WaitGroup        // stdio supervisors
 }
 
 var unsafeToolChars = regexp.MustCompile(`[^A-Za-z0-9_-]`)
@@ -135,7 +152,7 @@ func toolModelName(server, tool string) string {
 // name, is an error: a typo in blocked_tools would otherwise leave the tool
 // offered. Stdio servers are stopped when ctx ends.
 func StartMCP(ctx context.Context, servers map[string]mcpServerConfig) (*MCP, error) {
-	m := &MCP{byModel: map[string]mcpTool{}, conns: map[string]mcpConn{}}
+	m := &MCP{byModel: map[string]mcpTool{}, conns: map[string]mcpConn{}, cmds: map[string]mcpCommand{}}
 	names := make([]string, 0, len(servers))
 	for n := range servers {
 		names = append(names, n)
@@ -171,6 +188,7 @@ func StartMCP(ctx context.Context, servers map[string]mcpServerConfig) (*MCP, er
 			m.byModel[t.Model] = t
 			m.tools = append(m.tools, t)
 		}
+		m.addCommands(name, cfg.ChatCommands)
 		m.conns[name] = conn
 		if s, ok := conn.(*stdioConn); ok {
 			m.wg.Add(1)
@@ -179,6 +197,32 @@ func StartMCP(ctx context.Context, servers map[string]mcpServerConfig) (*MCP, er
 	}
 	sort.Slice(m.tools, func(i, j int) bool { return m.tools[i].Model < m.tools[j].Model })
 	return m, nil
+}
+
+// addCommands takes a server's chat commands. One that can't be used (a bad
+// or taken name, or a tool the model isn't offered) is logged and skipped.
+func (m *MCP) addCommands(server string, cmds map[string]chatCommand) {
+	for _, n := range slices.Sorted(maps.Keys(cmds)) {
+		c, name := cmds[n], strings.ToLower(strings.TrimPrefix(n, "/"))
+		t, offered := m.byModel[toolModelName(server, c.Tool)]
+		_, taken := m.cmds[name]
+		switch {
+		case !commandName.MatchString(name) || name == "example" || taken:
+			warnf("MCP server %s: chat command %q is not a free name of letters, digits, _ or -; skipped", server, clamp(n, 40))
+		case !offered || t.Server != server:
+			warnf("MCP server %s: chat command /%s names tool %q, which isn't offered; skipped", server, name, clamp(c.Tool, 64))
+		default:
+			m.cmds[name] = mcpCommand{Tool: t.Model, RequireArg: c.RequireArg}
+		}
+	}
+}
+
+// Commands returns the usable chat commands by name, without the slash.
+func (m *MCP) Commands() map[string]mcpCommand {
+	if m == nil {
+		return nil
+	}
+	return m.cmds
 }
 
 // startServer connects, initializes and lists the server's tools by name.

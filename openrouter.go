@@ -88,6 +88,16 @@ func withChart(ctx context.Context) context.Context { return context.WithValue(c
 
 func chartWanted(ctx context.Context) bool { v, _ := ctx.Value(chartKey{}).(bool); return v }
 
+type forceKey struct{}
+
+// withTool restricts requests made with ctx to the one tool named, and makes
+// the model call it before answering: a chat command.
+func withTool(ctx context.Context, model string) context.Context {
+	return context.WithValue(ctx, forceKey{}, model)
+}
+
+func forcedTool(ctx context.Context) string { v, _ := ctx.Value(forceKey{}).(string); return v }
+
 // ToolCall is the model asking to run a tool.
 type ToolCall struct {
 	ID       string `json:"id"`
@@ -239,6 +249,14 @@ func (o *OpenRouter) toolList(ctx context.Context) []any {
 		return nil
 	}
 	var tools []any
+	if f := forcedTool(ctx); f != "" {
+		if o.tools != nil {
+			if t, ok := o.tools.byModel[f]; ok {
+				tools = append(tools, mcpToolDef(t))
+			}
+		}
+		return tools
+	}
 	if o.cfg.Search {
 		// A server tool the model calls only when it decides to search, unlike
 		// the deprecated "web" plugin, which searched on every request.
@@ -255,16 +273,21 @@ func (o *OpenRouter) toolList(ctx context.Context) []any {
 	}
 	if o.tools != nil {
 		for _, t := range o.tools.tools {
-			schema := t.Schema
-			if len(schema) == 0 {
-				schema = json.RawMessage(`{"type":"object"}`)
-			}
-			tools = append(tools, map[string]any{"type": "function", "function": map[string]any{
-				"name": t.Model, "description": t.Description, "parameters": schema,
-			}})
+			tools = append(tools, mcpToolDef(t))
 		}
 	}
 	return tools
+}
+
+// mcpToolDef is an MCP tool as the model is offered it.
+func mcpToolDef(t mcpTool) map[string]any {
+	schema := t.Schema
+	if len(schema) == 0 {
+		schema = json.RawMessage(`{"type":"object"}`)
+	}
+	return map[string]any{"type": "function", "function": map[string]any{
+		"name": t.Model, "description": t.Description, "parameters": schema,
+	}}
 }
 
 // request makes one chat completions request. It asks OpenRouter to route
@@ -282,6 +305,10 @@ func (o *OpenRouter) request(ctx context.Context, msgs []ChatMsg) (Completion, e
 	}
 	if tools := o.toolList(ctx); len(tools) > 0 {
 		body["tools"] = tools
+		// A chat command's tool is required until its result is in.
+		if f := forcedTool(ctx); f != "" && msgs[len(msgs)-1].Role != "tool" {
+			body["tool_choice"] = map[string]any{"type": "function", "function": map[string]string{"name": f}}
+		}
 	}
 	payload, err := json.Marshal(body)
 	if err != nil {
