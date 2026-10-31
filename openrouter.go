@@ -201,7 +201,7 @@ func (o *OpenRouter) Complete(ctx context.Context, system string, msgs []ChatMsg
 }
 
 // runTool runs one tool call: a built-in chart tool, or an MCP tool. caption
-// is a chart's title; tool names it for the log.
+// is a chart's title and subtitle; tool names it for the log.
 func (o *OpenRouter) runTool(ctx context.Context, tc ToolCall) (out string, images [][]byte, caption, tool string, err error) {
 	if tc.Function.Name == chartTool {
 		s, err := parseChart(tc.Function.Arguments)
@@ -212,7 +212,7 @@ func (o *OpenRouter) runTool(ctx context.Context, tc ToolCall) (out string, imag
 		if err != nil {
 			return "error: the chart could not be drawn", nil, "", chartTool, err
 		}
-		return s.summary(), [][]byte{img}, s.Title, chartTool, nil
+		return s.summary(), [][]byte{img}, chartCaption(s.Title, s.Subtitle), chartTool, nil
 	}
 	if tc.Function.Name == donutTool {
 		s, err := parseDonut(tc.Function.Arguments)
@@ -223,7 +223,7 @@ func (o *OpenRouter) runTool(ctx context.Context, tc ToolCall) (out string, imag
 		if err != nil {
 			return "error: the chart could not be drawn", nil, "", donutTool, err
 		}
-		return s.summary(), [][]byte{img}, s.Title, donutTool, nil
+		return s.summary(), [][]byte{img}, chartCaption(s.Title, s.Subtitle), donutTool, nil
 	}
 	if o.tools == nil {
 		return "error: there is no tool named " + tc.Function.Name, nil, "", "unknown", errors.New("unknown tool")

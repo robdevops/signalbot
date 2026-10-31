@@ -130,7 +130,16 @@ func (s *chartSpec) axisOf(sr chartSeries) *chartAxis {
 // parseChart reads and checks the model's arguments. Errors are written for
 // the model, so it can fix its call.
 // chartNote opens a chart tool's result for the model.
-const chartNote = "Chart attached, captioned with its title. Your text goes in a separate message after it: one short sentence on what stands out, without listing the data. "
+const chartNote = "Chart attached, captioned with its title and subtitle. Your text goes in a separate message after it: one short sentence on what stands out, without listing the data. "
+
+// chartCaption is the text sent with a chart: its title, and its subtitle on
+// a second line.
+func chartCaption(title, subtitle string) string {
+	if subtitle == "" {
+		return title
+	}
+	return title + "\n" + subtitle
+}
 
 // decodeArgs decodes a tool's arguments into v, with an error that tells the
 // model what to fix. Empty arguments are taken as {}, and arguments sent as a

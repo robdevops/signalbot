@@ -100,7 +100,7 @@ func TestDonutToolInLoop(t *testing.T) {
 		Name      string `json:"name"`
 		Arguments string `json:"arguments"`
 	}{donutTool, alphabetDonut}})
-	if err != nil || tool != donutTool || caption != "GOOGL Q3 FY2026 revenue by type ($B)" || len(images) != 1 || !strings.Contains(out, "Total $127.6B") {
+	if err != nil || tool != donutTool || caption != "GOOGL Q3 FY2026 revenue by type ($B)\nShare of total" || len(images) != 1 || !strings.Contains(out, "Total $127.6B") {
 		t.Fatalf("got %q, %d images, %v", out, len(images), err)
 	}
 }
