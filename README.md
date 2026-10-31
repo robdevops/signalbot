@@ -15,15 +15,12 @@ A small, [privacy-conscious](PRIVACY.md) chat bot that connects to a running [si
 
 ## Features
 
-- The bot replies when it is @mentioned in a group; people it mentions are shown to the model by real name, and @names in its replies become real Signal mentions
-- Answers replies to its own messages, and @mentions made in reply to someone else's, using the quoted message as context
-- Replies to DMs from senders listed in `SIGNAL_DM_USER_IDS`; ignores everything else
-- Short answers sized for Signal (one line if possible, never over its 2000-character limit); optional web search, [MCP](#mcp-tools) tools and reasoning effort
-- Sees photos and stickers sent to it, or photos quoted when it's tagged in a reply, if the model accepts images
-- Draws line charts, with up to two Y axes, either of which can be inverted (for example, stock prices compared over a month) and sends them as images; MCP tools that return images can send them too
-- Short per-conversation memory for follow-up questions, forgotten after a day (sooner with a shorter _disappearing messages_ setting)
-- Shows a typing indicator (refreshed every 10s) while the bot thinks; chats run concurrently, so a slow answer never blocks the rest
-- The bot ignores everything not addressed to it: a message that doesn't mention it, reply to it, or arrive as a DM is passed over. It logs the tokens used and cost of each reply
+- Responds to @mentions, replies to its messages, and DMs from senders in `SIGNAL_DM_USER_IDS`
+- Tools: web search, a built-in charting tool, and your own [MCP](#mcp-tools) tools
+- Understands images, Signal stickers and emojis (if the configured model supports it)
+- Short per-conversation memory, for context
+- Typing indicators
+- Never logs message content
 
 ## Use cases
 
