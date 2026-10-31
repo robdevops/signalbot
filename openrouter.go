@@ -201,7 +201,7 @@ func (o *OpenRouter) Complete(ctx context.Context, system string, msgs []ChatMsg
 }
 
 // runTool runs one tool call: a built-in chart tool, or an MCP tool. caption
-// is a chart's title and subtitle; tool names it for the log.
+// is a chart's title, with its subtitle if both fit on one line; tool names it for the log.
 func (o *OpenRouter) runTool(ctx context.Context, tc ToolCall) (out string, images [][]byte, caption, tool string, err error) {
 	if tc.Function.Name == chartTool {
 		s, err := parseChart(tc.Function.Arguments)

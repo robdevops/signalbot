@@ -332,11 +332,15 @@ func TestChartArgsDoubleEncoded(t *testing.T) {
 	}
 }
 
+// The caption keeps to one line: the subtitle only if it fits.
 func TestChartCaption(t *testing.T) {
-	if got := chartCaption("NVDA vs AMD", ""); got != "NVDA vs AMD" {
-		t.Fatalf("no subtitle: %q", got)
-	}
-	if got := chartCaption("NVDA vs AMD", "Past month"); got != "NVDA vs AMD — Past month" {
-		t.Fatalf("with subtitle: %q", got)
+	for _, c := range []struct{ title, sub, want string }{
+		{"NVDA vs AMD", "", "NVDA vs AMD"},
+		{"NVDA vs AMD", "Past month", "NVDA vs AMD — Past month"},
+		{"NVDA — 1 month", "Daily close, 30 Sep - 30 Oct 2026", "NVDA — 1 month"},
+	} {
+		if got := chartCaption(c.title, c.sub); got != c.want {
+			t.Errorf("%q, %q: got %q", c.title, c.sub, got)
+		}
 	}
 }

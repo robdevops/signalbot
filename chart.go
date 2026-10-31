@@ -130,15 +130,19 @@ func (s *chartSpec) axisOf(sr chartSeries) *chartAxis {
 // parseChart reads and checks the model's arguments. Errors are written for
 // the model, so it can fix its call.
 // chartNote opens a chart tool's result for the model.
-const chartNote = "Chart attached. It is sent captioned with its title and subtitle in place of your text, which won't be shown, so reply with just \"Done\". "
+const chartNote = "Chart attached. It is sent captioned with its title in place of your text, which won't be shown, so reply with just \"Done\". "
 
-// chartCaption is the text sent with a chart: its title and subtitle on one
-// line.
+// captionMax is about the characters that fit on one line under a chart in
+// Signal on a phone.
+const captionMax = 36
+
+// chartCaption is the text sent with a chart: "title — subtitle" if that fits
+// on one line, else the title.
 func chartCaption(title, subtitle string) string {
-	if subtitle == "" {
-		return title
+	if c := title + " — " + subtitle; subtitle != "" && len([]rune(c)) <= captionMax {
+		return c
 	}
-	return title + " — " + subtitle
+	return title
 }
 
 // decodeArgs decodes a tool's arguments into v, with an error that tells the
