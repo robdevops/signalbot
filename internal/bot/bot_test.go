@@ -5,7 +5,9 @@ import (
 	"fmt"
 	"github.com/robdevops/signalbot/internal/feature"
 	"os"
+	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -156,12 +158,16 @@ func TestMailbox(t *testing.T) {
 // command among them is answered on its own, in order.
 func TestWaitingMessagesInAGroup(t *testing.T) {
 	h := start(t, options{})
-	h.holdModel()
+	first := h.gate()
+	h.answer(first.answer("one"))
 	h.receive(atBot("compute xyz"))
 	h.eventually("the first request", func() bool { return len(h.requests()) == 1 })
 	h.receive(atBot("actually"))
 	h.receive(atBot("forget it"))
-	h.release()
+	h.waitFor(groupChat, 2)
+	first.open()
+	h.nextSend()
+	h.nextSend()
 	h.settle()
 	rs := h.requests()
 	if len(rs) != 2 {
@@ -262,24 +268,230 @@ func TestWaitingCommandOnItsOwn(t *testing.T) {
 			return feature.Action{}
 		})
 	}})
-	h.holdModel()
+	first := h.gate()
+	h.answer(first.answer("one"))
 	h.receive(dm("first"))
 	h.eventually("the first request", func() bool { return len(h.requests()) == 1 })
 	for _, s := range []string{"a", "/ping", "b"} {
 		h.receive(dm(s))
 	}
-	h.release()
-	h.settle()
+	h.waitFor(aliceChat, 3)
+	first.open()
 	var sent []string
-	for len(h.sent) > 0 {
+	for range 4 {
 		sent = append(sent, fmt.Sprint(h.nextSend()["message"]))
 	}
+	h.settle()
+	h.noSend()
 	rs := h.requests()
-	if len(rs) != 3 || len(sent) != 4 || sent[2] != "pong" {
+	if len(rs) != 3 || !slices.Equal(sent, []string{"one", "ok", "pong", "ok"}) {
 		t.Fatalf("%d requests, sent %q", len(rs), sent)
 	}
 	equal(t, "a alone", contents(rs[1])[2:], []string{"user: a"})
 	if got := contents(rs[2]); got[len(got)-1] != "user: b" {
 		t.Fatalf("b's turn %q", got)
 	}
+}
+
+// While a batch is being answered, 4 more messages can wait, and they are
+// answered together after it: no job left over takes a place in the mailbox.
+func TestFourWaitDuringABatch(t *testing.T) {
+	h := start(t, options{})
+	first, second := h.gate(), h.gate()
+	h.answer(first.answer("one"), second.answer("two"))
+	h.receive(dm("first"))
+	h.eventually("the first request", func() bool { return len(h.requests()) == 1 })
+	for _, s := range []string{"b", "c", "d", "e", "dropped"} {
+		h.receive(dm(s))
+	}
+	h.eventually("the full list", func() bool { return strings.Contains(h.logs.String(), "the chat's mailbox is full, dropping message") })
+	first.open()
+	h.eventually("the batch's request", func() bool { return len(h.requests()) == 2 })
+	h.waitFor(aliceChat, 0)
+	for _, s := range []string{"f", "g", "h", "i"} {
+		h.receive(dm(s))
+	}
+	h.waitFor(aliceChat, 4)
+	if n := strings.Count(h.logs.String(), "mailbox is full"); n != 1 {
+		t.Fatalf("%d drops; logs:\n%s", n, h.logs)
+	}
+	second.open()
+	for range 3 {
+		h.nextSend()
+	}
+	h.settle()
+	rs := h.requests()
+	if len(rs) != 3 {
+		t.Fatalf("%d requests", len(rs))
+	}
+	equal(t, "the first batch", contents(rs[1])[2:], []string{"user: b\nc\nd\ne"})
+	if got := contents(rs[2]); got[len(got)-1] != "user: f\ng\nh\ni" {
+		t.Fatalf("the second batch %q", got)
+	}
+}
+
+// A panic while handling one waiting message loses only that message.
+func TestPanicInABatch(t *testing.T) {
+	h := start(t, options{features: func(b *Bot) {
+		b.OnMessage(func(_ context.Context, m feature.Message) feature.Action {
+			if m.Text == "boom" {
+				panic("a feature bug")
+			}
+			return feature.Action{}
+		})
+	}})
+	first := h.gate()
+	h.answer(first.answer("one"))
+	h.receive(dm("first"))
+	h.eventually("the first request", func() bool { return len(h.requests()) == 1 })
+	for _, s := range []string{"b", "boom", "d"} {
+		h.receive(dm(s))
+	}
+	h.waitFor(aliceChat, 3)
+	first.open()
+	h.nextSend()
+	h.nextSend()
+	h.settle()
+	rs := h.requests()
+	if len(rs) != 2 || !strings.Contains(h.logs.String(), "internal error while handling a message") {
+		t.Fatalf("%d requests; logs:\n%s", len(rs), h.logs)
+	}
+	if got := contents(rs[1]); got[len(got)-1] != "user: b\nd" {
+		t.Fatalf("batch %q", got)
+	}
+}
+
+// Once shutdown begins, the rest of what was waiting is not started.
+func TestShutdownStopsWaiting(t *testing.T) {
+	h := start(t, options{features: func(b *Bot) {
+		b.OnMessage(func(_ context.Context, m feature.Message) feature.Action {
+			if m.Text == "/ping" {
+				return feature.Action{Answer: "pong"}
+			}
+			return feature.Action{}
+		})
+	}})
+	first, second := h.gate(), h.gate()
+	h.answer(first.answer("one"), second.answer("two"))
+	h.receive(dm("first"))
+	h.eventually("the first request", func() bool { return len(h.requests()) == 1 })
+	for _, s := range []string{"a", "/ping", "b"} {
+		h.receive(dm(s))
+	}
+	h.waitFor(aliceChat, 3)
+	first.open()
+	h.eventually("a's request", func() bool { return len(h.requests()) == 2 })
+	done := make(chan struct{})
+	go func() { defer close(done); h.b.Shutdown(5 * time.Second) }()
+	h.eventually("shutdown to begin", h.b.closing.Load)
+	second.open()
+	<-done
+	h.nextSend() // one
+	h.nextSend() // two
+	h.noSend()
+	if n := len(h.requests()); n != 2 {
+		t.Fatalf("%d requests", n)
+	}
+}
+
+// Waiting messages whose photos together pass 4 are answered in two turns,
+// so no turn carries more pictures than one message may.
+func TestWaitingPhotosSplit(t *testing.T) {
+	var media []int
+	h := start(t, options{features: func(b *Bot) {
+		b.OnTurn(func(_ context.Context, t feature.Turn) feature.Additions {
+			media = append(media, len(t.Media))
+			return feature.Additions{}
+		})
+	}})
+	first := h.gate()
+	h.answer(first.answer("one"))
+	h.receive(dm("first"))
+	h.eventually("the first request", func() bool { return len(h.requests()) == 1 })
+	a, b := dm("these"), dm("and these")
+	a.images, b.images = []string{"p1", "p2", "p3"}, []string{"p4", "p5"}
+	h.receive(a)
+	h.receive(b)
+	h.waitFor(aliceChat, 2)
+	first.open()
+	for range 3 {
+		h.nextSend()
+	}
+	h.settle()
+	if !slices.Equal(media, []int{0, 3, 2}) {
+		t.Fatalf("pictures per turn %v", media)
+	}
+}
+
+// Messages join a batch only while it stays within one message's pictures:
+// 4 images and one sticker, images first. One with neither text nor
+// pictures adds nothing.
+func TestBatchPictures(t *testing.T) {
+	photos := func(n int) feature.Message {
+		m := feature.Message{Text: "look", Chat: feature.Chat{User: aliceID}}
+		for i := range n {
+			m.Media = append(m.Media, feature.Media{ID: fmt.Sprint(i)})
+		}
+		return m
+	}
+	sticker := feature.Message{Chat: feature.Chat{User: aliceID}, Media: []feature.Media{{Pack: "p", Sticker: 1}}}
+	for _, c := range []struct {
+		batch []feature.Message
+		msg   feature.Message
+		want  bool
+	}{
+		{nil, photos(4), true},
+		{[]feature.Message{photos(2)}, photos(2), true},
+		{[]feature.Message{photos(3)}, photos(2), false},
+		{[]feature.Message{photos(4)}, sticker, true},
+		{[]feature.Message{sticker}, sticker, false},
+	} {
+		if got := fits(c.batch, c.msg); got != c.want {
+			t.Errorf("fits(%d messages, %d media) = %v", len(c.batch), len(c.msg.Media), got)
+		}
+	}
+	m := merge([]feature.Message{sticker, photos(2)})
+	if len(m.Media) != 3 || m.Media[2].Pack != "p" || m.Text != "look" {
+		t.Fatalf("merged %+v", m)
+	}
+	bare := feature.Message{Chat: feature.Chat{GroupID: groupID}, Name: "Alice"}
+	if m := merge([]feature.Message{bare, bare}); m.Text != "" || m.Media != nil {
+		t.Fatalf("bare mentions merged to %+v", m)
+	}
+	if m := merge([]feature.Message{bare, {Chat: bare.Chat, Name: "Bob", Text: "hi"}}); m.Text != "Bob: hi" {
+		t.Fatalf("merged %q", m.Text)
+	}
+}
+
+var (
+	aliceChat = feature.Chat{User: aliceID}.Key()
+	groupChat = feature.Chat{GroupID: groupID}.Key()
+)
+
+// gate holds one model answer until it is opened.
+type gate struct {
+	c    chan struct{}
+	once sync.Once
+}
+
+func (h *harness) gate() *gate {
+	g := &gate{c: make(chan struct{})}
+	h.t.Cleanup(g.open)
+	return g
+}
+
+func (g *gate) open() { g.once.Do(func() { close(g.c) }) }
+
+func (g *gate) answer(s string) func() (int, string) {
+	return func() (int, string) { <-g.c; return 200, reply(s) }
+}
+
+// waitFor waits until n messages are waiting in the chat.
+func (h *harness) waitFor(key string, n int) {
+	h.t.Helper()
+	h.eventually(fmt.Sprintf("%d waiting", n), func() bool {
+		h.b.waitMu.Lock()
+		defer h.b.waitMu.Unlock()
+		return len(h.b.waiting[key]) == n
+	})
 }

@@ -8,7 +8,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -181,36 +180,33 @@ func (b *Bot) post(key string, job func()) error {
 	return err
 }
 
-// queue adds an addressed message to its chat's waiting list, and a job
-// to its mailbox that answers everything waiting. A message that arrives
-// while the bot is answering an earlier one is answered with the others
-// that arrived meanwhile, so "actually" and "forget it" get one reply that
-// sees both. A job that finds the list empty does nothing.
+// queue adds an addressed message to its chat's waiting list. The first
+// message waiting posts the one job that answers the whole list, so a
+// message that arrives while the bot is answering an earlier one is
+// answered with the others that arrived meanwhile: "actually" and "forget
+// it" get one reply that sees both. At most chats.MaxQueue wait.
 func (b *Bot) queue(key string, env *signal.Envelope, self string) {
-	b.waitMu.Lock()
+	b.waitMu.Lock() // held across post, so a failed post never races the job
+	defer b.waitMu.Unlock()
+	w := b.waiting[key]
+	if len(w) >= chats.MaxQueue {
+		logx.Warnf("%v, dropping message", chats.ErrQueueFull)
+		return
+	}
 	if b.waiting == nil {
 		b.waiting = map[string][]*signal.Envelope{}
 	}
-	b.waiting[key] = append(b.waiting[key], env)
-	b.waitMu.Unlock()
-	if b.post(key, func() { b.answerWaiting(key, self) }) != nil {
-		b.waitMu.Lock()
-		w := b.waiting[key]
-		if i := slices.Index(w, env); i >= 0 {
-			w = slices.Delete(w, i, i+1)
-		}
-		if len(w) == 0 {
-			delete(b.waiting, key)
-		} else {
-			b.waiting[key] = w
-		}
-		b.waitMu.Unlock()
+	b.waiting[key] = append(w, env)
+	if len(w) == 0 && b.post(key, func() { b.answerWaiting(key, self) }) != nil {
+		delete(b.waiting, key)
 	}
 }
 
 // answerWaiting answers every message waiting in a chat, in order: one that
 // a hook acts on (a command, an answer, an ignore) on its own, and runs of
-// the rest together, as one turn.
+// the rest together, as one turn, each run within one message's picture
+// limits. A panic loses only the message or turn that caused it, and
+// nothing new starts once shutdown begins.
 func (b *Bot) answerWaiting(key, self string) {
 	b.waitMu.Lock()
 	envs := b.waiting[key]
@@ -218,46 +214,99 @@ func (b *Bot) answerWaiting(key, self string) {
 	b.waitMu.Unlock()
 	var batch []feature.Message
 	flush := func() {
-		if len(batch) > 0 {
-			b.respond(merge(batch), feature.Action{})
-			batch = nil
+		run := batch
+		batch = nil
+		if len(run) > 0 && !b.closing.Load() {
+			safely(func() { b.respond(merge(run), feature.Action{}) })
 		}
 	}
 	for _, env := range envs {
-		msg, ok := b.load(env, self)
-		if !ok {
-			continue
+		if b.closing.Load() {
+			return
 		}
-		if act := b.onMessage(b.ctx, msg); act != (feature.Action{}) {
-			flush()
-			b.respond(msg, act)
-			continue
-		}
-		batch = append(batch, msg)
+		safely(func() {
+			msg, ok := b.load(env, self)
+			if !ok {
+				return
+			}
+			if act := b.onMessage(b.ctx, msg); act != (feature.Action{}) {
+				flush()
+				if !b.closing.Load() {
+					b.respond(msg, act)
+				}
+				return
+			}
+			if !fits(batch, msg) {
+				flush()
+			}
+			batch = append(batch, msg)
+		})
 	}
 	flush()
 }
 
+// safely runs fn, logging a panic without its value rather than letting it
+// end the rest of the work.
+func safely(fn func()) {
+	defer logx.Recover("handling a message")
+	fn()
+}
+
+// pictures counts a message's images and stickers.
+func pictures(m feature.Message) (images, stickers int) {
+	for _, md := range m.Media {
+		if md.Pack != "" {
+			stickers++
+		} else {
+			images++
+		}
+	}
+	return images, stickers
+}
+
+// fits reports whether msg can join batch and the merged message still
+// carry what one message may: at most feature.MaxPictures images and one
+// sticker.
+func fits(batch []feature.Message, msg feature.Message) bool {
+	images, stickers := pictures(msg)
+	for _, x := range batch {
+		i, s := pictures(x)
+		images, stickers = images+i, stickers+s
+	}
+	return images <= feature.MaxPictures && stickers <= 1
+}
+
 // merge makes messages that arrived together one message: each as the model
 // would see it (in a group with its sender's name and any quote), a line
-// each, with all their pictures and stickers. One message is left as it is.
+// each, with their images and then their sticker. A message with neither
+// text nor pictures adds nothing, as it would have nothing to answer on its
+// own. One message is left as it is.
 func merge(msgs []feature.Message) feature.Message {
 	if len(msgs) == 1 {
 		return msgs[0]
 	}
 	m := msgs[len(msgs)-1]
 	var lines []string
-	m.Media = nil
+	var images, stickers []feature.Media
 	for _, x := range msgs {
+		if x.Text == "" && len(x.Media) == 0 {
+			continue
+		}
 		if l := prompt(x); l != "" {
 			lines = append(lines, l)
 		}
-		m.Media = append(m.Media, x.Media...)
+		for _, md := range x.Media {
+			if md.Pack != "" {
+				stickers = append(stickers, md)
+			} else {
+				images = append(images, md)
+			}
+		}
 		if x.Expires > 0 && (m.Expires == 0 || x.Expires < m.Expires) {
 			m.Expires = x.Expires
 		}
 	}
-	m.Text, m.Quote = strings.Join(lines, "\n"), nil
+	m.Text, m.Quote, m.Media = strings.Join(lines, "\n"), nil, append(images, stickers...)
 	if m.Chat.GroupID != "" {
 		m.Name = "" // each line already names its sender
 	}
