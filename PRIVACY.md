@@ -39,7 +39,7 @@ Every level, debug included, is always written; there is no setting to turn any 
 - **A tool call:** the tool's name and how long it took; never the arguments or the result.
 - **Schedules:** how many were loaded at startup, a run skipped or dropped, and how long each run took; never the text or who made it. A run dropped because its user left the group is logged without content.
 - **Names and IDs:** never anyone's name, and never anyone's ID except as above for a DM from someone not in `SIGNAL_DM_USER_IDS`. The bot logs its own account ID at startup.
-- **Debug lines:** the number of contacts loaded, that a repeated message was dropped, and a local MCP server's own error output (which the bot doesn't control).
+- **Debug lines:** the number of contacts loaded, that a repeated message was dropped, and a local MCP server's own error output, which the bot doesn't control, so each line has every name and ID the bot knows replaced with "redacted" ("Alice's" becomes "redacted's"), along with any UUID or phone number, before it is written.
 
 Logs go to the journal or Docker's log driver and are kept as long as your settings keep them.
 

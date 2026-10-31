@@ -21,6 +21,7 @@ type Host struct {
 	Fetch    func(m feature.Message, i int) ([]byte, error) // what Media returns; nil fails
 	Shared   []feature.Group                                // what Groups returns
 	TimerErr error                                          // if set, At fails with it, as the core does at its cap
+	Redactor func(string) string                            // what Redact does; nil leaves text as it is
 
 	mu        sync.Mutex
 	read      []string
@@ -114,6 +115,14 @@ func (h *Host) Deliver(m feature.Message) {
 }
 
 func (h *Host) Groups(context.Context, string) ([]feature.Group, error) { return h.Shared, nil }
+
+// Redact runs Redactor, if set.
+func (h *Host) Redact(text string) string {
+	if h.Redactor == nil {
+		return text
+	}
+	return h.Redactor(text)
+}
 
 // Go runs fn until Stop.
 func (h *Host) Go(fn func(context.Context)) {

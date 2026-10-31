@@ -3,9 +3,14 @@ package signal
 import (
 	"cmp"
 	"context"
+	"regexp"
+	"slices"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/robdevops/signalbot/internal/kit/logx"
 	"github.com/robdevops/signalbot/internal/kit/txt"
@@ -148,6 +153,55 @@ func (n *names) replace(cs []contact) {
 // Name is the best name known for a person by any of their IDs, made safe,
 // or "".
 func (c *Client) Name(ids ...string) string { return c.names.lookup(ids...).name }
+
+// Redact replaces each name the bot knows for anyone but itself with
+// "redacted", as a whole word and ignoring capitals, longest first, so
+// "Alice's" becomes "redacted's"; every UUID and phone number goes too. It
+// is for text the bot logs but doesn't control, scrubbed as it passes.
+func (c *Client) Redact(s string) string {
+	self := c.ID()
+	c.names.mu.Lock()
+	var known []string
+	for id, n := range c.names.byID {
+		if id != self && id != c.names.numbers[self] && utf8.RuneCountInString(n.name) >= 2 {
+			known = append(known, n.name)
+		}
+	}
+	c.names.mu.Unlock()
+	slices.SortFunc(known, func(a, b string) int { return len(b) - len(a) })
+	for _, name := range known {
+		s = redactWord(s, name)
+	}
+	return idPattern.ReplaceAllString(s, "redacted")
+}
+
+// idPattern is a UUID or a phone number.
+var idPattern = regexp.MustCompile(`(?i)\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b|\+[0-9]{7,15}\b`)
+
+// redactWord replaces each whole-word w in s, ignoring capitals.
+func redactWord(s, w string) string {
+	if !strings.Contains(strings.ToLower(s), strings.ToLower(w)) {
+		return s
+	}
+	var b strings.Builder
+	last := 0
+	for i := 0; i+len(w) <= len(s); {
+		_, size := utf8.DecodeRuneInString(s[i:])
+		before, _ := utf8.DecodeLastRuneInString(s[:i])
+		after, _ := utf8.DecodeRuneInString(s[i+len(w):])
+		if strings.EqualFold(s[i:i+len(w)], w) && (i == 0 || !wordRune(before)) && (i+len(w) == len(s) || !wordRune(after)) {
+			b.WriteString(s[last:i])
+			b.WriteString("redacted")
+			i += len(w)
+			last = i
+			continue
+		}
+		i += size
+	}
+	return b.String() + s[last:]
+}
+
+func wordRune(r rune) bool { return unicode.IsLetter(r) || unicode.IsDigit(r) || r == '_' }
 
 // Number is the phone number of the person with ACI aci, from the contact
 // list or a message they sent, or "".

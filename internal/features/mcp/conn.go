@@ -50,6 +50,7 @@ type rpcMsg struct {
 type stdioConn struct {
 	name, version string
 	cfg           server
+	redact        func(string) string // scrubs names and IDs from its output before it is logged
 
 	nextID  atomic.Int64
 	mu      sync.Mutex // guards stdin, pending and done
@@ -91,7 +92,7 @@ func (c *stdioConn) start(ctx context.Context) error {
 	go func() {
 		sc := bufio.NewScanner(stderr)
 		for sc.Scan() {
-			logx.Debugf("MCP server %s: %s", c.name, sc.Text())
+			logx.Debugf("MCP server %s: %s", c.name, c.redact(sc.Text()))
 		}
 	}()
 	go func() {

@@ -148,7 +148,7 @@ func start(ctx context.Context, h feature.Host, servers map[string]server) error
 		cfg := servers[name]
 		var c conn = &httpConn{url: cfg.URL, headers: cfg.Headers, client: httpx.Client(2), version: version}
 		if cfg.Command != "" {
-			c = &stdioConn{name: name, cfg: cfg, version: version}
+			c = &stdioConn{name: name, cfg: cfg, version: version, redact: h.Redact}
 		}
 		listed, sent, err := connect(ctx, c, version)
 		if err != nil {

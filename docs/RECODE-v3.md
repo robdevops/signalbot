@@ -94,6 +94,7 @@ The core's lifecycle has four stages. Each port is one stage; nothing else is a 
   - a command or a mention of the bot is handled like any addressed message;
   - anything else the bot posts as written, with @Name linked against the group's members (never an ambiguous name), and history keeps it as the sender's message, "<name>: <text>", not as something the bot chose to say.
 - `Groups(ctx, user)`: the groups the bot shares with a user, with their names (signal-cli's `listGroups`).
+- `Redact(text)`: text with every name and ID the bot knows for anyone but itself, and any UUID or phone number, replaced with "redacted", for logging text the bot doesn't control (a local MCP server's output).
 - `Go(fn)`: run `fn` for as long as the bot runs. Its ctx ends when the bot stops, which then waits for `fn` to return (MCP stops its local servers this way).
 
 *Added while building (step 3, for `mcp`): `Go`, and `Info.Version` (MCP's `clientInfo` in its handshake). Neither names a feature.*

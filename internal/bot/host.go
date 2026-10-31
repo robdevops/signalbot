@@ -58,6 +58,8 @@ func (b *Bot) Media(ctx context.Context, msg feature.Message, i int) ([]byte, er
 	return b.sig.Attachment(ctx, msg.Chat, msg.Media[i].ID)
 }
 
+func (b *Bot) Redact(text string) string { return b.sig.Redact(text) }
+
 func (b *Bot) Groups(ctx context.Context, user string) ([]feature.Group, error) {
 	gs, err := b.sig.Groups(ctx)
 	var out []feature.Group

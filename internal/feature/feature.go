@@ -163,6 +163,9 @@ type Host interface {
 	Deliver(msg Message)
 	// Groups lists the groups the bot shares with user.
 	Groups(ctx context.Context, user string) ([]Group, error)
+	// Redact replaces every name and ID of anyone but the bot in text with
+	// "redacted", for logging text the bot doesn't control.
+	Redact(text string) string
 	// Go runs fn for as long as the bot runs: its ctx ends when the bot
 	// stops, which then waits for fn to return.
 	Go(fn func(ctx context.Context))

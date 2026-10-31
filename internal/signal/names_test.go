@@ -199,3 +199,28 @@ func TestBotName(t *testing.T) {
 		t.Fatalf("profile name: %q", got)
 	}
 }
+
+// Redact scrubs every name the bot knows but its own, as whole words and
+// ignoring capitals, longest first, and every UUID and phone number.
+func TestRedact(t *testing.T) {
+	c := New("x")
+	c.self.Store(botID)
+	c.names.set(rankedName{"Alice", rankContact}, aliceID)
+	c.names.set(rankedName{"Alice Smith", rankContact}, "u-as")
+	c.names.set(rankedName{"Bob", rankSeen}, bobID)
+	c.names.set(rankedName{"José", rankGiven}, "u-j")
+	c.names.set(rankedName{"Botty", rankGiven}, botID)
+	for in, want := range map[string]string{
+		"Alice's file":                      "redacted's file",
+		"alice smith asked; ALICE agreed":   "redacted asked; redacted agreed",
+		"Malice and Bobby stay":             "Malice and Bobby stay",
+		"José, then Bob.":                   "redacted, then redacted.",
+		"Botty is the bot":                  "Botty is the bot",
+		"user " + aliceID + " at +15550001": "user redacted at redacted",
+		"":                                  "",
+	} {
+		if got := c.Redact(in); got != want {
+			t.Errorf("Redact(%q) = %q, want %q", in, got, want)
+		}
+	}
+}

@@ -462,6 +462,7 @@ func TestHelperProcess(t *testing.T) {
 		result := `{}`
 		switch req.Method {
 		case "initialize":
+			fmt.Fprintln(os.Stderr, "loaded Alice's notes")
 			result = `{"protocolVersion":"` + protocol + `","capabilities":{"tools":{}},"serverInfo":{"name":"helper","version":"1"},"instructions":"Local files."}`
 		case "tools/list":
 			result = `{"tools":[{"name":"env"},{"name":"exit"}]}`
@@ -486,6 +487,7 @@ func TestStdio(t *testing.T) {
 	ctx := context.Background()
 	self, _ := json.Marshal(os.Args[0])
 	h := featuretest.New()
+	h.Redactor = func(s string) string { return strings.ReplaceAll(s, "Alice", "redacted") }
 	h.Settings["MCP_CONFIG"] = writeConfig(t, `{"mcpServers":{"local":{"command":`+string(self)+
 		`,"args":["-test.run=^TestHelperProcess$"],"env":{"MCP_HELPER":"1"},"allowed_tools":["env","exit"]}}}`)
 	if err := Register(h); err != nil {
@@ -498,6 +500,15 @@ func TestStdio(t *testing.T) {
 	ts := tools(h)
 	if out, _, err := ts["local__env"].Run(ctx, "{}"); err != nil || out != "key= marker=1" {
 		t.Fatalf("env = %q, %v", out, err)
+	}
+	// Its own output is scrubbed as it passes, before it is logged.
+	for deadline := time.Now().Add(5 * time.Second); !strings.Contains(log.String(), "<7>MCP server local: loaded redacted's notes\n"); time.Sleep(10 * time.Millisecond) {
+		if time.Now().After(deadline) {
+			t.Fatalf("logs:\n%s", log.String())
+		}
+	}
+	if strings.Contains(log.String(), "Alice") {
+		t.Fatalf("a name reached the log:\n%s", log.String())
 	}
 	ts["local__exit"].Run(ctx, "{}")
 	deadline := time.Now().Add(10 * time.Second)
