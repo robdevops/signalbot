@@ -44,8 +44,8 @@ type server struct {
 	BlockedTools []string               `json:"blocked_tools"`
 	Disabled     bool                   `json:"disabled"` // left out entirely
 	ChatCommands map[string]chatCommand `json:"chat_commands"`
-	Prompt       string                 `json:"prompt"`   // a system-prompt line while its tools are offered
-	Keywords     []string               `json:"keywords"` // if set, its tools are offered only when a message has one of these words
+	Instructions *string                `json:"instructions"` // a system-prompt line while its tools are offered; unset: the server's own, "": none
+	Keywords     []string               `json:"keywords"`     // if set, its tools are offered only when a message has one of these words
 }
 
 // chatCommand makes "/name ..." a turn in which the model must call tool.
@@ -97,18 +97,25 @@ func load(path string) (map[string]server, error) {
 	return f.Servers, nil
 }
 
-// initialize performs the MCP handshake, as the bot's version. A server's
-// own instructions are not used: a server's prompt is its config's.
-func initialize(ctx context.Context, c conn, version string) error {
-	_, err := c.call(ctx, "initialize", map[string]any{
+// maxInstructions caps a server's own instructions in the system prompt.
+const maxInstructions = 1000
+
+// initialize performs the MCP handshake, as the bot's version, and returns
+// the instructions the server sent, if any.
+func initialize(ctx context.Context, c conn, version string) (string, error) {
+	res, err := c.call(ctx, "initialize", map[string]any{
 		"protocolVersion": protocol,
 		"capabilities":    map[string]any{},
 		"clientInfo":      map[string]string{"name": "signalbot", "version": version},
 	})
 	if err != nil {
-		return err
+		return "", err
 	}
-	return c.notify(ctx, "notifications/initialized", nil)
+	var r struct {
+		Instructions string `json:"instructions"`
+	}
+	json.Unmarshal(res, &r) // instructions are optional; a bad result shows up in tools/list
+	return strings.TrimSpace(r.Instructions), c.notify(ctx, "notifications/initialized", nil)
 }
 
 // tool is a tool as a server lists it.
@@ -143,7 +150,7 @@ func start(ctx context.Context, h feature.Host, servers map[string]server) error
 		if cfg.Command != "" {
 			c = &stdioConn{name: name, cfg: cfg, version: version}
 		}
-		listed, err := connect(ctx, c, version)
+		listed, sent, err := connect(ctx, c, version)
 		if err != nil {
 			logx.Errorf("MCP server %s unavailable, its tools are left out: %v", name, err)
 			continue
@@ -154,7 +161,7 @@ func start(ctx context.Context, h feature.Host, servers map[string]server) error
 			}
 		}
 		g := feature.ToolGroup{
-			System:   strings.TrimSpace(cfg.Prompt),
+			System:   instructions(cfg.Instructions, sent),
 			Keywords: keywords(cfg.Keywords),
 		}
 		models := map[string]string{} // the model's name for each offered tool, by the server's
@@ -205,6 +212,15 @@ func start(ctx context.Context, h feature.Host, servers map[string]server) error
 	return nil
 }
 
+// instructions is a server's system-prompt line: its config's
+// "instructions" if set (even to ""), otherwise the server's own, capped.
+func instructions(cfg *string, own string) string {
+	if cfg != nil {
+		return strings.TrimSpace(*cfg)
+	}
+	return txt.Clamp(own, maxInstructions)
+}
+
 // keywords is a pattern matching any of words as a whole word, ignoring
 // capitals; nil without words.
 func keywords(words []string) *regexp.Regexp {
@@ -244,16 +260,17 @@ func command(h feature.Host, server, n string, c chatCommand, models map[string]
 }
 
 // connect starts the server, initializes it, and lists its tools by name.
-func connect(ctx context.Context, c conn, version string) ([]tool, error) {
+func connect(ctx context.Context, c conn, version string) ([]tool, string, error) {
 	ctx2, cancel := context.WithTimeout(ctx, callTimeout)
 	defer cancel()
 	if s, ok := c.(*stdioConn); ok {
 		if err := s.start(ctx); err != nil {
-			return nil, err
+			return nil, "", err
 		}
 	}
-	if err := initialize(ctx2, c, version); err != nil {
-		return nil, err
+	own, err := initialize(ctx2, c, version)
+	if err != nil {
+		return nil, "", err
 	}
 	var tools []tool
 	cursor := ""
@@ -264,19 +281,19 @@ func connect(ctx context.Context, c conn, version string) ([]tool, error) {
 		}
 		res, err := c.call(ctx2, "tools/list", params)
 		if err != nil {
-			return nil, err
+			return nil, "", err
 		}
 		var page struct {
 			Tools      []tool `json:"tools"`
 			NextCursor string `json:"nextCursor"`
 		}
 		if err := json.Unmarshal(res, &page); err != nil {
-			return nil, fmt.Errorf("tools/list: %v", err)
+			return nil, "", fmt.Errorf("tools/list: %v", err)
 		}
 		tools = append(tools, page.Tools...)
 		if cursor = page.NextCursor; cursor == "" {
 			slices.SortFunc(tools, func(a, b tool) int { return strings.Compare(a.Name, b.Name) })
-			return slices.CompactFunc(tools, func(a, b tool) bool { return a.Name == b.Name }), nil
+			return slices.CompactFunc(tools, func(a, b tool) bool { return a.Name == b.Name }), own, nil
 		}
 	}
 }

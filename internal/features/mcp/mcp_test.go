@@ -173,11 +173,11 @@ func TestNoConfig(t *testing.T) {
 }
 
 func TestLoad(t *testing.T) {
-	good := `{"mcpServers":{"w":{"url":"https://x/mcp","headers":{"A":"b"},"allowed_tools":["t"],"prompt":"p","keywords":["k"]},"l":{"command":"x","args":["y"],"blocked_tools":["u"]}}}`
+	good := `{"mcpServers":{"w":{"url":"https://x/mcp","headers":{"A":"b"},"allowed_tools":["t"],"instructions":"p","keywords":["k"]},"l":{"command":"x","args":["y"],"blocked_tools":["u"]}}}`
 	s, err := load(writeConfig(t, good))
 	if err != nil || s["w"].URL != "https://x/mcp" || s["l"].Command != "x" || s["w"].Headers["A"] != "b" ||
 		len(s["w"].AllowedTools) != 1 || s["w"].BlockedTools != nil || s["l"].AllowedTools != nil || len(s["l"].BlockedTools) != 1 ||
-		s["w"].Prompt != "p" || !slices.Equal(s["w"].Keywords, []string{"k"}) {
+		s["w"].Instructions == nil || *s["w"].Instructions != "p" || !slices.Equal(s["w"].Keywords, []string{"k"}) {
 		t.Fatalf("got %+v, %v", s, err)
 	}
 	for name, bad := range map[string]string{
@@ -324,7 +324,7 @@ func TestToolGroups(t *testing.T) {
 	scoutMCP := &fakeMCP{instructions: "Use scout for everything."}
 	h, log, err := register(t, `{"mcpServers":{
 		"yahoo":{"url":"`+serve(t, &fakeMCP{instructions: "ignored"})+`","allowed_tools":["echo","pic"],
-			"prompt":"Use yahoo for prices.","keywords":["stock"," AAPL ",""]},
+			"instructions":"Use yahoo for prices.","keywords":["stock"," AAPL ",""]},
 		"scout":{"url":"`+serve(t, scoutMCP)+`","allowed_tools":["fail"],
 			"chat_commands":{"scout":{"tool":"fail"}}},
 		"plain":{"url":"`+serve(t, &fakeMCP{})+`","allowed_tools":["echo"],"keywords":[]}}}`,
@@ -345,7 +345,7 @@ func TestToolGroups(t *testing.T) {
 	}
 	if plain.Listing != "plain: echo" || plain.System != "" || plain.Keywords != nil ||
 		scout.Listing != "scout: fail, /scout" || !slices.Equal(scout.Names, []string{"fail"}) ||
-		scout.System != "" || scout.Keywords != nil ||
+		scout.System != "Use scout for everything." || scout.Keywords != nil || // the server's own instructions
 		yahoo.Listing != "yahoo: echo, pic" || !slices.Equal(yahoo.Names, []string{"echo", "pic"}) || yahoo.System != "Use yahoo for prices." {
 		t.Fatalf("groups %+v", gs)
 	}
@@ -491,8 +491,8 @@ func TestStdio(t *testing.T) {
 	if err := Register(h); err != nil {
 		t.Fatal(err)
 	}
-	defer h.Stop() // its stdin stays open, so this returns only once SIGTERM stops it
-	if gs := h.ToolGroups(); len(gs) != 1 || gs[0].System != "" {
+	defer h.Stop()                                                            // its stdin stays open, so this returns only once SIGTERM stops it
+	if gs := h.ToolGroups(); len(gs) != 1 || gs[0].System != "Local files." { // the server's own instructions
 		t.Fatalf("groups %+v", gs)
 	}
 	ts := tools(h)
@@ -519,5 +519,28 @@ func TestReadSSEMultiLine(t *testing.T) {
 	m, err := readSSE(strings.NewReader(stream), 7)
 	if err != nil || string(m.Result) != `{"ok":true}` {
 		t.Fatalf("got %+v, %v", m, err)
+	}
+}
+
+// A server's config instructions win over its own, even when empty; its
+// own are capped.
+func TestInstructions(t *testing.T) {
+	empty, mine := "", " Mine. "
+	long := strings.Repeat("x", maxInstructions+50)
+	for _, c := range []struct {
+		cfg       *string
+		own, want string
+	}{
+		{nil, "Theirs.", "Theirs."},
+		{&mine, "Theirs.", "Mine."},
+		{&empty, "Theirs.", ""},
+		{nil, "", ""},
+	} {
+		if got := instructions(c.cfg, c.own); got != c.want {
+			t.Errorf("instructions(%v, %q) = %q, want %q", c.cfg, c.own, got, c.want)
+		}
+	}
+	if got := []rune(instructions(nil, long)); len(got) != maxInstructions+1 || got[maxInstructions] != '…' {
+		t.Errorf("capped to %d runes", len(got))
 	}
 }

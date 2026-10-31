@@ -160,23 +160,41 @@ The model can call tools from [MCP](https://modelcontextprotocol.io) servers, re
     "url": "https://example.com/mcp",
     "headers": {"Authorization": "Bearer …"},
     "allowed_tools": ["get_forecast", "get_alerts"],
+    "instructions": "Use the weather tools for any forecast, and give temperatures in °C.",
+    "keywords": ["weather", "forecast", "rain", "temperature"],
     "chat_commands": {
       "forecast": {"tool": "get_forecast", "require_arg": true},
       "alerts": {"tool": "get_alerts"}
     }
   },
-  "files": {"command": "uvx", "args": ["some-mcp-server"], "env": {"KEY": "value"}, "blocked_tools": ["delete_file"]}
+  "files": {
+    "command": "uvx",
+    "args": ["some-mcp-server"],
+    "env": {"KEY": "value"},
+    "blocked_tools": ["delete_file"],
+    "disabled": true
+  }
 }}
 ```
+
+| Key | What it does |
+|---|---|
+| `url`, `headers` | a remote server (Streamable HTTP or SSE), with optional HTTP headers |
+| `command`, `args`, `env` | a local server, run with only `PATH`, `HOME` and its `env` |
+| `allowed_tools` / `blocked_tools` | offer only these tools, or every tool but these |
+| `instructions` | a line added to the system prompt while the server's tools are offered (see below) |
+| `keywords` | offer the server's tools only when a message has one of these words (see below) |
+| `chat_commands` | slash commands for a tool: `tool` names it, `require_arg` makes a bare command get a usage reply |
+| `disabled` | leave the server out without deleting it |
 
 `chat_commands` turn a server's tools into slash commands: `/forecast sydney this weekend` asks the model, offered only that tool and made to call it. With `require_arg`, a bare `/forecast` gets a usage reply from the bot without asking the model.
 
 Two optional fields shape how a server's tools are offered:
 
-- `prompt` is a line added to the system prompt while the server's tools are offered, for example `"prompt": "Use the weather tools for any forecast, and give temperatures in °C."`. Without it, nothing is added: the server's own `instructions` (from its MCP handshake) are not used.
-- `keywords` offers the server's tools only when a message contains one of the words, ignoring capitals and matching whole words only, and for the 2 replies after one that matched or used its tools. For example `"keywords": ["weather", "forecast", "rain"]`. Without it, the tools are always offered. A chat command always gets its tool.
+- `instructions` is a line added to the system prompt while the server's tools are offered. MCP servers can send their own `instructions` when the bot connects (the MCP spec's hint for the system prompt); without this key those are used, capped at 1,000 characters. Set it to replace them, or to `""` to use none.
+- `keywords` offers the server's tools only when a message contains one of the words, ignoring capitals and matching whole words only, and for the 2 replies after one that matched or used its tools. Without it, the tools are always offered. A chat command always gets its tool.
 
-Add `"disabled": true` to a server to leave it out without deleting it. A server that can't be reached at startup is logged and left out. A tool named in either list that the server doesn't have is a config error, so a typo can't leave a blocked tool offered. Local servers get only `PATH`, `HOME` and their `env`, never the bot's own environment.
+A server that can't be reached at startup is logged and left out. A tool named in either list that the server doesn't have is a config error, so a typo can't leave a blocked tool offered. Local servers get only `PATH`, `HOME` and their `env`, never the bot's own environment.
 
 - **systemd:** keep the file root-only, uncomment the `LoadCredential=` and `Environment=MCP_CONFIG=` lines in `signalbot.service`, and restart. systemd hands the file to the service alone.
 - **Docker:** add `-v /etc/signalbot-mcp.json:/etc/signalbot-mcp.json:ro -e MCP_CONFIG=/etc/signalbot-mcp.json`. The image has no shell or runtimes, so only remote servers (`url`) work.

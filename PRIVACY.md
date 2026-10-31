@@ -6,7 +6,7 @@ What happens to your messages when this bot is in a chat. For how the bot is bui
 
 When the bot answers a message, it sends this to [OpenRouter](https://openrouter.ai), which passes it to the model's provider:
 
-- its instructions (the built-in prompt, plus `MODEL_SYSTEM_PROMPT`, `INTRO` and any MCP server's `prompt`);
+- its instructions (the built-in prompt, plus `MODEL_SYSTEM_PROMPT`, `INTRO` and any MCP server's `instructions`);
 - the chat's recent messages, with the bot's replies: at most `HISTORY_TURNS` × 2 messages, none older than a day. In a group this is the whole conversation, including messages not addressed to the bot, so it can answer "what do you think?" about something just said; set `GROUP_CONTEXT=false` to keep only the messages addressed to it;
 - the new message, with the display name of whoever sent it (in groups) and of anyone it @mentions;
 - the quoted text, when someone replies to one of the bot's messages, or mentions the bot in reply to someone else.

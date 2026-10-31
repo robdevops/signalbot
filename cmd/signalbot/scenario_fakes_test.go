@@ -691,7 +691,7 @@ func (h *harness) startMCP() {
 	if h.w.MCP {
 		entries = append(entries,
 			`"stocks":{"url":"`+urls["stocks"]+`","chat_commands":{"quote":{"tool":"get_quote","require_arg":true}}}`,
-			`"weather":{"url":"`+urls["weather"]+`","chat_commands":{"forecast":{"tool":"get_forecast"}}}`)
+			`"weather":{"url":"`+urls["weather"]+`","instructions":"Ask which city if none is given.","chat_commands":{"forecast":{"tool":"get_forecast"}}}`)
 	}
 	if h.w.BrokenMCP {
 		entries = append(entries, `"broken":{"url":"`+urls["broken"]+`"}`)
@@ -722,10 +722,10 @@ func (h *harness) mcpHandler(server string, tools []fakeMCPTool) http.Handler {
 		result := `{}`
 		switch req.Method {
 		case "initialize":
-			// Its own instructions never reach the prompt: a server's prompt
-			// is its config's, and these servers have none.
+			// Its own instructions reach the prompt unless the config sets
+			// its own: "stocks" uses these, "weather" overrides them.
 			result = `{"protocolVersion":"2025-06-18","capabilities":{"tools":{}},"serverInfo":{"name":"` + server + `","version":"1"},` +
-				`"instructions":"Always answer in French."}`
+				`"instructions":"Use ` + server + ` for ` + server + ` questions."}`
 		case "tools/list":
 			var list []map[string]any
 			for _, t := range tools {

@@ -138,7 +138,7 @@ func (c *stdioConn) supervise(ctx context.Context) {
 			continue // c.done is still the exited process's, so it retries
 		}
 		ictx, cancel := context.WithTimeout(ctx, callTimeout)
-		if err := initialize(ictx, c, c.version); err != nil {
+		if _, err := initialize(ictx, c, c.version); err != nil {
 			logx.Warnf("MCP server %s failed to initialize: %v", c.name, err)
 		} else {
 			backoff = time.Second
@@ -242,7 +242,7 @@ func (c *httpConn) call(ctx context.Context, method string, params any) (json.Ra
 		c.mu.Lock()
 		c.session, c.ready = "", false
 		c.mu.Unlock()
-		if err := initialize(ctx, c, c.version); err != nil {
+		if _, err := initialize(ctx, c, c.version); err != nil {
 			return nil, err
 		}
 		res, err = c.roundTrip(ctx, method, params)

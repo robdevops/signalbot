@@ -142,7 +142,7 @@ At(name string, t time.Time, fn func(ctx context.Context, due time.Time)) (cance
 | `websearch` | `Tools` | OpenRouter's web search tool, `MODEL_SEARCH`, the "web search on" log line |
 | `groupctx` | `OnMessage` returning `Context` | `GROUP_CONTEXT`, the `[image]`/`[sticker]` notes |
 | `vision` | `OnTurn`, `Info`, `Media` | answering photo- or sticker-only messages, the image and sticker notes (using the labels the core loads), the "images aren't kept" history note |
-| `mcp` | `Tools` (one group per server), command helper returning `ToolChoice` | `MCP_CONFIG` and every server field: `url`, `headers`, `command`, `args`, `env`, `allowed_tools`, `blocked_tools`, `disabled`, `chat_commands` (`tool`, `require_arg`), and the new optional `prompt` and `keywords`. MCP server `instructions` are NOT used, only the user's `prompt`: they'd add text the server controls to every existing config's prompt; the "MCP tools:" and "chat commands:" startup lines |
+| `mcp` | `Tools` (one group per server), command helper returning `ToolChoice` | `MCP_CONFIG` and every server field: `url`, `headers`, `command`, `args`, `env`, `allowed_tools`, `blocked_tools`, `disabled`, `chat_commands` (`tool`, `require_arg`), and the new optional `instructions` (the MCP spec's own term; else the server's handshake `instructions`, capped at 1,000 characters; `""` for none) and `keywords`; the "MCP tools:" and "chat commands:" startup lines |
 | `charts` | `Tools` with `Keywords`, `OnReply` | the chart tools and their keywords, each chart's caption and history note, dropping the model's text when a chart is sent |
 | `schedule` | command helper, `At`, `Deliver`, `Groups` | `/schedule` (below) |
 
@@ -201,14 +201,14 @@ In `features.go`, `websearch`, `charts` and `mcp` stay in that order: it's the o
 5. Docs:
    - TECHNICAL.md: the core spec, then one paragraph per feature;
    - CONTRIBUTING.md: the port rule and the guardrails;
-   - README: the settings tables (renamed and dropped settings), `TZ`, `/schedule`, the MCP `prompt` and `keywords` fields, the log priorities, and the Docker `-v …:/data` mount;
+   - README: the settings tables (renamed and dropped settings), `TZ`, `/schedule`, the MCP `instructions` and `keywords` fields, the log priorities, and the Docker `-v …:/data` mount;
    - PRIVACY.md: what the bot logs now ("received dm"/"received group chat", debug always written), and that schedules keep the user's ID, the group's ID, the time and the text on disk until deleted.
 
 ## 10. Behaviour changes
 **Approved:**
 - Messages in one chat are answered one at a time, in order, with at most 4 waiting (section 2).
 - The tools line lists each MCP server as its own item, without "MCP tools by server". Today it ends "name them, grouped by server" when MCP tools exist; see the full list below.
-- MCP's `prompt` and `keywords` are new and optional: without them, nothing changes. MCP server `instructions` (from the handshake) are NOT used: a server's system-prompt line is only the user's `prompt`.
+- MCP's `instructions` and `keywords` are new and optional. Without `instructions` in the config, a server's own handshake `instructions` (capped at 1,000 characters) go into the system prompt while its tools are offered; `"instructions": ""` turns them off. Without `keywords`, tools are offered as before.
 - `/schedule` is new, and `TZ` sets its time zone. Schedules are always saved, so they survive a restart (section 6).
 - The donut chart is renamed pie: the tool is `make_pie_chart`, still drawn as a ring with the total in the middle. Its description still mentions donuts.
 - Settings: `REASONING` becomes `MODEL_REASONING`, `SYSTEM_PROMPT` becomes `MODEL_SYSTEM_PROMPT`, and `LOG_LEVEL` is dropped.
@@ -224,7 +224,7 @@ About +650 to +850 lines over 4,185, checked after the core (step 2):
 - the ports, the registry, the per-chat mailbox and the offering rule, about 220;
 - a package per feature;
 - the `schedule` feature, about 250: parsing, list, delete, help, repeats and saving;
-- MCP's `prompt` and `keywords`, about 30.
+- MCP's `instructions` and `keywords`, about 30.
 
 ## Built
 Steps 0–5 are done as planned; the sections above were synced with the code without changing the plan's history. Final sizes (`go run ./internal/arch/sizes`, non-test lines), against 4,185 at `e40dc5f`:
