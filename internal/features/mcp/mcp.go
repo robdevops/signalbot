@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"github.com/robdevops/signalbot/internal/kit/img"
-	mcpc "github.com/robdevops/signalbot/internal/kit/mcp"
 	"maps"
 	"os"
 	"regexp"
@@ -31,7 +30,7 @@ const (
 // offers the model only those tools; blocked_tools, when present, offers all
 // but those. Without either, every tool the server lists is offered.
 type mcpServerConfig struct {
-	mcpc.Server
+	Server
 	AllowedTools []string               `json:"allowed_tools"` // nil: not in whitelist mode
 	BlockedTools []string               `json:"blocked_tools"`
 	Disabled     bool                   `json:"disabled"` // left out entirely
@@ -90,7 +89,7 @@ type mcpTool struct {
 type MCP struct {
 	list    []mcpTool // sorted by Model
 	byModel map[string]mcpTool
-	clients map[string]*mcpc.Client
+	clients map[string]*Client
 	cmds    map[string]mcpCommand // chat command name, without the slash
 	wg      sync.WaitGroup        // stdio supervisors
 }
@@ -110,7 +109,7 @@ func toolModelName(server, tool string) string {
 // name, is an error: a typo in blocked_tools would otherwise leave the tool
 // offered. Stdio servers are stopped when ctx ends.
 func StartMCP(ctx context.Context, servers map[string]mcpServerConfig, version string) (*MCP, error) {
-	m := &MCP{byModel: map[string]mcpTool{}, clients: map[string]*mcpc.Client{}, cmds: map[string]mcpCommand{}}
+	m := &MCP{byModel: map[string]mcpTool{}, clients: map[string]*Client{}, cmds: map[string]mcpCommand{}}
 	names := make([]string, 0, len(servers))
 	for n := range servers {
 		names = append(names, n)
@@ -118,14 +117,10 @@ func StartMCP(ctx context.Context, servers map[string]mcpServerConfig, version s
 	sort.Strings(names)
 	for _, name := range names {
 		cfg := servers[name]
-		c, err := mcpc.Dial(ctx, name, cfg.Server, version)
-		var list []mcpc.Tool
+		c, err := Dial(ctx, name, cfg.Server, version)
+		var listed map[string]mcpTool
 		if err == nil {
-			list, err = c.Tools(ctx)
-		}
-		listed := map[string]mcpTool{}
-		for _, t := range list {
-			listed[t.Name] = mcpTool{Name: t.Name, Description: t.Description, Schema: t.Schema}
+			listed, err = c.Tools(ctx)
 		}
 		if err != nil {
 			logx.Errorf("MCP server %s unavailable, its tools are left out: %v", name, err)
@@ -235,16 +230,26 @@ func (m *MCP) Call(ctx context.Context, model, arguments string) (result string,
 			return "error: the arguments were not a JSON object", nil, t, errors.New("invalid arguments")
 		}
 	}
-	r, err := m.clients[t.Server].Call(ctx, t.Name, args)
-	if errors.Is(err, mcpc.ErrMalformed) {
-		return "error: the tool sent a malformed result", nil, t, errors.New("malformed result")
-	}
+	ctx, cancel := context.WithTimeout(ctx, CallTimeout)
+	defer cancel()
+	res, err := m.clients[t.Server].conn.call(ctx, "tools/call", map[string]any{"name": t.Name, "arguments": args})
 	if err != nil {
-		var re *mcpc.RPCError
+		var re *RPCError
 		if errors.As(err, &re) {
 			return "error: " + txt.Clamp(re.Message, 500), nil, t, fmt.Errorf("rpc error %d", re.Code)
 		}
 		return "error: the tool could not be reached", nil, t, err
+	}
+	var r struct {
+		Content []struct {
+			Type string `json:"type"`
+			Text string `json:"text"`
+			Data string `json:"data"` // base64, for an image
+		} `json:"content"`
+		IsError bool `json:"isError"`
+	}
+	if json.Unmarshal(res, &r) != nil {
+		return "error: the tool sent a malformed result", nil, t, errors.New("malformed result")
 	}
 	var parts []string
 	for _, c := range r.Content {

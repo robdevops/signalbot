@@ -12,9 +12,10 @@ import (
 	"net/http"
 	"strings"
 	"sync"
-
-	"github.com/robdevops/signalbot/internal/kit/mcp"
 )
+
+// protocol is the MCP version the fake speaks.
+const protocol = "2025-06-18"
 
 // Server is a Streamable HTTP MCP server with three tools: echo returns its
 // arguments, fail reports an error, and pic returns an image.
@@ -45,7 +46,7 @@ func (f *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		f.badCalls++
 		http.Error(w, "unknown session", http.StatusNotFound)
 		return
-	} else if r.Header.Get("MCP-Protocol-Version") != mcp.Protocol {
+	} else if r.Header.Get("MCP-Protocol-Version") != protocol {
 		http.Error(w, "no protocol version", http.StatusBadRequest)
 		return
 	}
@@ -56,7 +57,7 @@ func (f *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	var result string
 	switch req.Method {
 	case "initialize":
-		result = `{"protocolVersion":"` + mcp.Protocol + `","capabilities":{"tools":{}},"serverInfo":{"name":"fake","version":"1"}}`
+		result = `{"protocolVersion":"` + protocol + `","capabilities":{"tools":{}},"serverInfo":{"name":"fake","version":"1"}}`
 	case "tools/list":
 		var p struct{ Cursor string }
 		json.Unmarshal(req.Params, &p)

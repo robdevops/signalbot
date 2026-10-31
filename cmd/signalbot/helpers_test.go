@@ -2,8 +2,8 @@ package main
 
 import (
 	"context"
+	"github.com/robdevops/signalbot/internal/features/mcp/mcptest"
 	"github.com/robdevops/signalbot/internal/kit/img"
-	"github.com/robdevops/signalbot/internal/kit/mcp/mcptest"
 	"maps"
 	"net/http/httptest"
 	"os"

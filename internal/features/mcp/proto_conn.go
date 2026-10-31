@@ -1,5 +1,3 @@
-// Package mcp is a client for Model Context Protocol servers: local ones
-// run as a command over stdio, and remote ones over Streamable HTTP.
 package mcp
 
 import (

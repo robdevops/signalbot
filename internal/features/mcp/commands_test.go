@@ -5,8 +5,7 @@ import (
 	"github.com/robdevops/signalbot/internal/chat"
 	"github.com/robdevops/signalbot/internal/feature"
 	"github.com/robdevops/signalbot/internal/feature/featuretest"
-	mcpc "github.com/robdevops/signalbot/internal/kit/mcp"
-	"github.com/robdevops/signalbot/internal/kit/mcp/mcptest"
+	"github.com/robdevops/signalbot/internal/features/mcp/mcptest"
 	"net/http/httptest"
 	"testing"
 )
@@ -16,7 +15,7 @@ import (
 func TestChatCommandsConfig(t *testing.T) {
 	srv := &mcptest.Server{}
 	m, s := startFake(t, srv, "echo")
-	m2, err := StartMCP(context.Background(), map[string]mcpServerConfig{"fake": {Server: mcpc.Server{URL: s.URL}, AllowedTools: []string{"echo", "pic"},
+	m2, err := StartMCP(context.Background(), map[string]mcpServerConfig{"fake": {Server: Server{URL: s.URL}, AllowedTools: []string{"echo", "pic"},
 		ChatCommands: map[string]chatCommand{
 			"Echo":     {Tool: "echo", RequireArg: true},
 			"/pic":     {Tool: "pic"},

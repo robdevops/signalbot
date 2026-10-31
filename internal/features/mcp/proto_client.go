@@ -26,27 +26,6 @@ type Server struct {
 	Env     map[string]string `json:"env"`
 }
 
-// Tool is a tool a server offers.
-type Tool struct {
-	Name        string
-	Description string
-	Schema      json.RawMessage
-}
-
-// Content is one item of a tool's result: text, or an image as base64.
-type Content struct {
-	Type     string `json:"type"`
-	Text     string `json:"text"`
-	Data     string `json:"data"`
-	MimeType string `json:"mimeType"`
-}
-
-// Result is what a tool call returned.
-type Result struct {
-	Content []Content `json:"content"`
-	IsError bool      `json:"isError"`
-}
-
 // Client is a connection to one server.
 type Client struct {
 	conn  conn
@@ -84,11 +63,11 @@ func (c *Client) Supervise(ctx context.Context) {
 	}
 }
 
-// Tools lists every tool the server offers, following its pages.
-func (c *Client) Tools(ctx context.Context) ([]Tool, error) {
+// Tools lists every tool the server offers by name, following its pages.
+func (c *Client) Tools(ctx context.Context) (map[string]mcpTool, error) {
 	ctx, cancel := context.WithTimeout(ctx, CallTimeout)
 	defer cancel()
-	var tools []Tool
+	tools := map[string]mcpTool{}
 	cursor := ""
 	for {
 		params := map[string]any{}
@@ -111,28 +90,10 @@ func (c *Client) Tools(ctx context.Context) ([]Tool, error) {
 			return nil, fmt.Errorf("tools/list: %v", err)
 		}
 		for _, t := range page.Tools {
-			tools = append(tools, Tool{Name: t.Name, Description: t.Description, Schema: t.InputSchema})
+			tools[t.Name] = mcpTool{Name: t.Name, Description: t.Description, Schema: t.InputSchema}
 		}
 		if cursor = page.NextCursor; cursor == "" {
 			return tools, nil
 		}
 	}
-}
-
-// ErrMalformed is a result that isn't valid JSON.
-var ErrMalformed = fmt.Errorf("malformed result")
-
-// Call runs a tool. An error from the server comes back as an *RPCError.
-func (c *Client) Call(ctx context.Context, tool string, args map[string]any) (Result, error) {
-	ctx, cancel := context.WithTimeout(ctx, CallTimeout)
-	defer cancel()
-	raw, err := c.conn.call(ctx, "tools/call", map[string]any{"name": tool, "arguments": args})
-	if err != nil {
-		return Result{}, err
-	}
-	var r Result
-	if json.Unmarshal(raw, &r) != nil {
-		return Result{}, ErrMalformed
-	}
-	return r, nil
 }
