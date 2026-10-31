@@ -594,11 +594,17 @@ func (b *Bot) respond(req *Request) {
 	res, err := b.ai.Complete(ctx, b.systemPrompt(chart), msgs)
 	stopTyping()
 	took := time.Since(start)
+	var caption string
 	if err != nil {
 		errorf("OpenRouter error for %s after %.1fs: %v", req.Name, took.Seconds(), err)
 		res = Completion{Text: "Sorry, I couldn't get an answer right now."}
 	} else {
 		infof("%s", replyLogLine(req.Name, took, res))
+		// A chart is sent as one message captioned with its title, in place
+		// of the model's text.
+		if caption = chartCaptions(res); caption != "" {
+			res.Text = ""
+		}
 		if chart {
 			b.chartReplied(req.Key, asked || res.Charted)
 		}
@@ -610,25 +616,27 @@ func (b *Bot) respond(req *Request) {
 		warnf("reply to %s truncated from %d chars", req.Name, n)
 	}
 	parts := replyParts(res.Text, b.introName())
-	if len(parts) == 0 && len(res.Images) == 0 {
-		warnf("empty reply to %s, nothing sent", req.Name)
-		return
+	if caption != "" {
+		parts = []string{caption}
 	}
-	// Each image goes first in its own message, captioned with the chart's
-	// title, so the reply's text doesn't sit under the chart.
+	var attachments []string
 	for i, img := range res.Images {
-		var caption string
-		if i < len(res.Captions) {
-			caption = res.Captions[i]
-		}
-		if err := b.sig.Send(req.Target, caption, nil, []string{imageDataURI(img, fmt.Sprintf("image%d", i+1))}); err != nil {
-			errorf("send to %s failed: %v", req.Name, err)
+		attachments = append(attachments, imageDataURI(img, fmt.Sprintf("image%d", i+1)))
+	}
+	if len(parts) == 0 {
+		if len(attachments) == 0 {
+			warnf("empty reply to %s, nothing sent", req.Name)
 			return
 		}
+		parts = []string{""} // the images alone
 	}
 	known := b.knownNames(req.Key)
-	for _, part := range parts {
-		if err := b.sig.Send(req.Target, part, buildMentions(part, known), nil); err != nil {
+	for i, part := range parts {
+		var att []string
+		if i == 0 {
+			att = attachments // with the first message
+		}
+		if err := b.sig.Send(req.Target, part, buildMentions(part, known), att); err != nil {
 			errorf("send to %s failed: %v", req.Name, err)
 			return
 		}
@@ -715,6 +723,18 @@ func (b *Bot) toolsText() string {
 		tools = []string{"web search", "charts"}
 	}
 	return strings.Join(append(tools, b.toolNames...), ", ")
+}
+
+// chartCaptions is the caption for a reply's charts, one per line, or ""
+// if it drew none.
+func chartCaptions(res Completion) string {
+	var caps []string
+	for _, c := range res.Captions {
+		if c != "" {
+			caps = append(caps, c)
+		}
+	}
+	return strings.Join(caps, "\n")
 }
 
 // sentImages notes in the history the charts and images a reply sent, which

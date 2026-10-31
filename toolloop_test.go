@@ -213,18 +213,23 @@ func TestChartToolInLoop(t *testing.T) {
 	}
 }
 
-// imageAI replies with text and one image.
-type imageAI struct{ text string }
+// imageAI replies with text and one image, captioned if it is a chart.
+type imageAI struct{ text, caption string }
 
 func (a imageAI) Complete(context.Context, string, []ChatMsg) (Completion, error) {
 	img, _ := base64.StdEncoding.DecodeString(tinyPNG())
-	return Completion{Text: a.text, Images: [][]byte{img}, Captions: []string{"NVDA vs AMD"}}, nil
+	return Completion{Text: a.text, Images: [][]byte{img}, Captions: []string{a.caption}}, nil
 }
 
-// Each image in a reply goes first as its own signal-cli data: URI attachment,
-// captioned with the chart title; the reply's text follows in its own message.
+// A reply is one message: a chart with its caption in place of the model's
+// text, or an MCP image with the text, or the image alone.
 func TestReplyCarriesImages(t *testing.T) {
-	for _, text := range []string{"look", ""} {
+	for _, tc := range []struct{ text, caption, want string }{
+		{"Done", "NVDA vs AMD", "NVDA vs AMD"},
+		{"look", "", "look"},
+		{"", "", ""},
+	} {
+		text := tc.text
 		sent := make(chan map[string]any, 2)
 		sock := fakeSignal(t, func(_ int, c net.Conn, r *bufio.Reader) {
 			for {
@@ -246,7 +251,7 @@ func TestReplyCarriesImages(t *testing.T) {
 			}
 		})
 		sig := NewSignal(sock)
-		b := NewBot(context.Background(), testCfg(), sig, imageAI{text})
+		b := NewBot(context.Background(), testCfg(), sig, imageAI{text, tc.caption})
 		ctx, cancel := context.WithCancel(context.Background())
 		go sig.Run(ctx, b.Handle)
 		sig.WaitSelf(5 * time.Second)
@@ -262,13 +267,13 @@ func TestReplyCarriesImages(t *testing.T) {
 		}
 		p := next()
 		att, _ := p["attachments"].([]any)
-		if p["message"] != "NVDA vs AMD" || len(att) != 1 || !strings.HasPrefix(att[0].(string), "data:image/png;filename=image1.png;base64,") {
+		if p["message"] != tc.want || len(att) != 1 || !strings.HasPrefix(att[0].(string), "data:image/png;filename=image1.png;base64,") {
 			t.Errorf("text %q: message %q, attachments %v", text, p["message"], att)
 		}
-		if text != "" {
-			if p := next(); p["message"] != text || p["attachments"] != nil {
-				t.Errorf("text %q: then %v", text, p)
-			}
+		select {
+		case p := <-sent:
+			t.Errorf("text %q: a second message %v", text, p)
+		case <-time.After(200 * time.Millisecond):
 		}
 		cancel()
 	}
