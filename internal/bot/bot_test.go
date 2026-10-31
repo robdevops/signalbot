@@ -1,7 +1,9 @@
 package bot
 
 import (
+	"context"
 	"fmt"
+	"github.com/robdevops/signalbot/internal/feature"
 	"os"
 	"strings"
 	"testing"
@@ -142,10 +144,33 @@ func TestMailbox(t *testing.T) {
 	h.release()
 	h.settle()
 	rs := h.requests()
-	if len(rs) != 6 {
+	if len(rs) != 3 {
 		t.Fatalf("%d requests", len(rs))
 	}
-	equal(t, "the second sees the first", contents(rs[2]), []string{"user: first", "assistant: one", "user: second"})
+	// The four that fitted in the mailbox are answered together, after the
+	// first, seeing it.
+	equal(t, "the waiting ones together", contents(rs[2]), []string{"user: first", "assistant: one", "user: second\n3\n4\n5"})
+}
+
+// In a group, messages answered together keep their senders' names; a
+// command among them is answered on its own, in order.
+func TestWaitingMessagesInAGroup(t *testing.T) {
+	h := start(t, options{})
+	h.holdModel()
+	h.receive(atBot("compute xyz"))
+	h.eventually("the first request", func() bool { return len(h.requests()) == 1 })
+	h.receive(atBot("actually"))
+	h.receive(atBot("forget it"))
+	h.release()
+	h.settle()
+	rs := h.requests()
+	if len(rs) != 2 {
+		t.Fatalf("%d requests", len(rs))
+	}
+	got := contents(rs[1])
+	if last := got[len(got)-1]; last != "user: Alice: actually\nAlice: forget it" {
+		t.Fatalf("batched turn %q", last)
+	}
 }
 
 func TestAtCapacity(t *testing.T) {
@@ -224,4 +249,37 @@ func TestShutdownDrains(t *testing.T) {
 	h.receive(dm("too late"))
 	h.noSend()
 	h.eventually("timers to stop", func() bool { _, err := h.b.At("late", time.Now(), nil); return err != nil })
+}
+
+// A message a hook acts on is answered on its own, in order, between the
+// runs of waiting messages answered together.
+func TestWaitingCommandOnItsOwn(t *testing.T) {
+	h := start(t, options{features: func(b *Bot) {
+		b.OnMessage(func(_ context.Context, m feature.Message) feature.Action {
+			if m.Text == "/ping" {
+				return feature.Action{Answer: "pong"}
+			}
+			return feature.Action{}
+		})
+	}})
+	h.holdModel()
+	h.receive(dm("first"))
+	h.eventually("the first request", func() bool { return len(h.requests()) == 1 })
+	for _, s := range []string{"a", "/ping", "b"} {
+		h.receive(dm(s))
+	}
+	h.release()
+	h.settle()
+	var sent []string
+	for len(h.sent) > 0 {
+		sent = append(sent, fmt.Sprint(h.nextSend()["message"]))
+	}
+	rs := h.requests()
+	if len(rs) != 3 || len(sent) != 4 || sent[2] != "pong" {
+		t.Fatalf("%d requests, sent %q", len(rs), sent)
+	}
+	equal(t, "a alone", contents(rs[1])[2:], []string{"user: a"})
+	if got := contents(rs[2]); got[len(got)-1] != "user: b" {
+		t.Fatalf("b's turn %q", got)
+	}
 }

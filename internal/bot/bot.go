@@ -8,6 +8,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -29,6 +31,8 @@ type Bot struct {
 	chats    *chats.Store
 	timers   *timers.Timers
 	slots    chan struct{} // one per message being handled
+	waitMu   sync.Mutex
+	waiting  map[string][]*signal.Envelope // addressed messages queued per chat, answered together
 	ctx      context.Context
 	stop     context.CancelFunc // stops the timers
 	timerCtx context.Context
@@ -114,7 +118,7 @@ func (b *Bot) Handle(env *signal.Envelope) {
 	key := env.Chat().Key()
 	if self := b.sig.ID(); self != "" {
 		if b.route(env, self) {
-			b.post(key, func() { b.received(env, self) })
+			b.queue(key, env, self)
 		}
 		return
 	}
@@ -154,7 +158,7 @@ func (b *Bot) route(env *signal.Envelope, self string) bool {
 
 // post queues job in the chat's mailbox, taking a slot for the chat's
 // worker if it has none. Queued work is skipped once shutdown begins.
-func (b *Bot) post(key string, job func()) {
+func (b *Bot) post(key string, job func()) error {
 	err := b.chats.Post(key, func() {
 		if !b.closing.Load() {
 			job()
@@ -174,10 +178,103 @@ func (b *Bot) post(key string, job func()) {
 	case err != nil:
 		logx.Warnf("%v, dropping message", err)
 	}
+	return err
+}
+
+// queue adds an addressed message to its chat's waiting list, and a job
+// to its mailbox that answers everything waiting. A message that arrives
+// while the bot is answering an earlier one is answered with the others
+// that arrived meanwhile, so "actually" and "forget it" get one reply that
+// sees both. A job that finds the list empty does nothing.
+func (b *Bot) queue(key string, env *signal.Envelope, self string) {
+	b.waitMu.Lock()
+	if b.waiting == nil {
+		b.waiting = map[string][]*signal.Envelope{}
+	}
+	b.waiting[key] = append(b.waiting[key], env)
+	b.waitMu.Unlock()
+	if b.post(key, func() { b.answerWaiting(key, self) }) != nil {
+		b.waitMu.Lock()
+		w := b.waiting[key]
+		if i := slices.Index(w, env); i >= 0 {
+			w = slices.Delete(w, i, i+1)
+		}
+		if len(w) == 0 {
+			delete(b.waiting, key)
+		} else {
+			b.waiting[key] = w
+		}
+		b.waitMu.Unlock()
+	}
+}
+
+// answerWaiting answers every message waiting in a chat, in order: one that
+// a hook acts on (a command, an answer, an ignore) on its own, and runs of
+// the rest together, as one turn.
+func (b *Bot) answerWaiting(key, self string) {
+	b.waitMu.Lock()
+	envs := b.waiting[key]
+	delete(b.waiting, key)
+	b.waitMu.Unlock()
+	var batch []feature.Message
+	flush := func() {
+		if len(batch) > 0 {
+			b.respond(merge(batch), feature.Action{})
+			batch = nil
+		}
+	}
+	for _, env := range envs {
+		msg, ok := b.load(env, self)
+		if !ok {
+			continue
+		}
+		if act := b.onMessage(b.ctx, msg); act != (feature.Action{}) {
+			flush()
+			b.respond(msg, act)
+			continue
+		}
+		batch = append(batch, msg)
+	}
+	flush()
+}
+
+// merge makes messages that arrived together one message: each as the model
+// would see it (in a group with its sender's name and any quote), a line
+// each, with all their pictures and stickers. One message is left as it is.
+func merge(msgs []feature.Message) feature.Message {
+	if len(msgs) == 1 {
+		return msgs[0]
+	}
+	m := msgs[len(msgs)-1]
+	var lines []string
+	m.Media = nil
+	for _, x := range msgs {
+		if l := prompt(x); l != "" {
+			lines = append(lines, l)
+		}
+		m.Media = append(m.Media, x.Media...)
+		if x.Expires > 0 && (m.Expires == 0 || x.Expires < m.Expires) {
+			m.Expires = x.Expires
+		}
+	}
+	m.Text, m.Quote = strings.Join(lines, "\n"), nil
+	if m.Chat.GroupID != "" {
+		m.Name = "" // each line already names its sender
+	}
+	return m
 }
 
 // received handles an addressed message in its chat's slot.
 func (b *Bot) received(env *signal.Envelope, self string) {
+	if msg, ok := b.load(env, self); ok {
+		b.respond(msg, b.onMessage(b.ctx, msg))
+	}
+}
+
+// load turns an addressed message into what features see, in its chat's
+// slot: names loaded, sticker labels filled in. It logs that it arrived,
+// and reports false for a repeat.
+func (b *Bot) load(env *signal.Envelope, self string) (feature.Message, bool) {
 	b.sig.LoadNames(b.ctx, env)
 	msg := b.sig.Message(env, self, b.cfg.AllowedSenders)
 	key := msg.Chat.Key()
@@ -196,7 +293,7 @@ func (b *Bot) received(env *signal.Envelope, self string) {
 	}
 	if b.chats.Repeat(key, id) {
 		logx.Debugf("ignored duplicate from %s", cmp.Or(msg.Name, msg.Sender))
-		return
+		return msg, false
 	}
 	for i := range msg.Media {
 		if m := &msg.Media[i]; m.Pack != "" {
@@ -205,7 +302,7 @@ func (b *Bot) received(env *signal.Envelope, self string) {
 			cancel()
 		}
 	}
-	b.respond(msg, b.onMessage(b.ctx, msg))
+	return msg, true
 }
 
 // onMessage runs the OnMessage hooks in order. The first Action that is
