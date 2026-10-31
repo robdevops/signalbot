@@ -20,9 +20,6 @@ import (
 	"github.com/robdevops/signalbot/internal/kit/logx"
 )
 
-// maxImages caps the images shown with one message.
-const maxImages = 4
-
 // notKept ends the history's note for an image the model saw.
 const notKept = "; you see images only in the latest message, so to look again they must reply to it and mention you"
 
@@ -43,7 +40,7 @@ func add(ctx context.Context, h feature.Host, m chat.Message) feature.Additions 
 		switch {
 		case md.Kind == chat.Sticker:
 			sticker = &md
-		case len(images) < maxImages:
+		case len(images) < img.MaxPerMessage:
 			images = append(images, md)
 		}
 	}

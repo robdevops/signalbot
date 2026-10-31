@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"github.com/robdevops/signalbot/internal/kit/img"
 	"github.com/robdevops/signalbot/internal/kit/mcp/mcptest"
 	"maps"
 	"net/http/httptest"
@@ -108,7 +109,7 @@ func decide(env *signal.Envelope, allowed map[string]bool) *request {
 				switch {
 				case md.Kind == chat.Sticker:
 					r.Sticker = &md
-				case len(r.Images) < llm.MaxImages:
+				case len(r.Images) < img.MaxPerMessage:
 					r.Images = append(r.Images, md)
 				}
 			}

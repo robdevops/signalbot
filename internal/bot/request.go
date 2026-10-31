@@ -3,6 +3,7 @@ package bot
 import (
 	"cmp"
 	"fmt"
+	"github.com/robdevops/signalbot/internal/kit/img"
 	"strconv"
 	"strings"
 	"time"
@@ -61,7 +62,7 @@ func newRequest(m chat.Message) *Request {
 		switch {
 		case md.Kind == chat.Sticker:
 			req.Sticker = &md
-		case len(req.Images) < llm.MaxImages:
+		case len(req.Images) < img.MaxPerMessage:
 			req.Images = append(req.Images, md)
 		}
 	}

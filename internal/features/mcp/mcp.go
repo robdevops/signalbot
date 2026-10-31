@@ -22,8 +22,6 @@ import (
 )
 
 const (
-	// maxImages caps the images one tool call returns for the reply.
-	maxImages = 4
 	// maxToolResultRunes caps what one tool call adds to the conversation.
 	maxToolResultRunes = 16 << 10
 )
@@ -253,7 +251,7 @@ func (m *MCP) Call(ctx context.Context, model, arguments string) (result string,
 		switch pic, err := base64.StdEncoding.DecodeString(c.Data); {
 		case c.Type == "text":
 			parts = append(parts, c.Text)
-		case c.Type == "image" && err == nil && img.Sendable(pic) && len(images) < maxImages:
+		case c.Type == "image" && err == nil && img.Sendable(pic) && len(images) < img.MaxPerMessage:
 			images = append(images, pic)
 			parts = append(parts, "[image sent to the chat]")
 		default:

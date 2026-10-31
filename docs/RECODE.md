@@ -189,7 +189,7 @@ type Host interface {
    5. `groupctx`
    6. `vision`
    7. `charts`
-6. **Docs:**
+6. ~~**Docs:**~~ (done)
    - TECHNICAL.md covers the core and adapters, with a paragraph per feature linking to its package, whose doc comment describes it;
    - CONTRIBUTING.md states the rules;
    - the README config table is grouped by owner.
@@ -225,6 +225,15 @@ The work goes in one PR per step, or "pr and merge" whenever asked.
   - `names.go` 188, `main.go` 94, `log.go` 91, `config.go` 90, `mentions.go` 81, `journal_*` 32
 - **After:** reported in the final PR with the same measure, by `go run ./internal/arch/sizes`. It leaves out tests, `internal/arch` and the `*test` helper packages, and shows core, adapters, kit and features apart, with the total and its change from 4,185.
 - **Expected:** a total about the same or up to ~300 higher (the ports, `chat` types and router), with the core well under half of the total.
+- **Actual:** 5,615 lines (+1,430, +34%), over the estimate. Most of it is structure: 61 files instead of 13, so 384 more package and import lines, 225 more blank lines and 209 more comment lines. Code itself grew by 660 lines (+20%): the ports, the neutral chat types, the registry and the adapter glue. The core (`bot`, `chat`, `history`, `llm`, `config`, `feature`) is 1,376 lines, 25% of the total.
+
+  | Part | Lines |
+  |---|---:|
+  | Core | 1,376 |
+  | Signal adapter and provider | 1,401 |
+  | Kit | 1,794 |
+  | Features | 936 |
+  | `cmd/signalbot` | 113 |
 
 ## Simplifications that change behaviour
 Anything that would change what users see or how the bot is configured is listed with its line saving, and I ask before applying it. That covers wording, defaults, settings, limits, log lines and reply layout. The new `MODEL_API_URL` and `MODEL_API_KEY` settings are additions, and existing settings keep working. The "at least one network" check replaces "SIGNALCLI_SOCKET is required" with the same effect for current setups. Simplifications that keep behaviour the same go ahead, and the tests show it.

@@ -17,3 +17,7 @@ func Sendable(data []byte) bool {
 
 // MaxBytes caps one image, sent or received.
 const MaxBytes = 5 << 20
+
+// MaxPerMessage caps the images taken from one message, or sent with one
+// reply.
+const MaxPerMessage = 4

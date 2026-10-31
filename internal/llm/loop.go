@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/robdevops/signalbot/internal/kit/img"
 	"slices"
 	"time"
 
@@ -17,8 +18,6 @@ const (
 	MaxRounds = 5
 	// Budget bounds one whole reply, tool rounds included.
 	Budget = 3 * time.Minute
-	// MaxImages caps the pictures sent with one reply.
-	MaxImages = 4
 )
 
 // Loop is a Completer over a Model: when the model calls tools, it runs
@@ -70,9 +69,9 @@ func (l Loop) Complete(ctx context.Context, r Request) (Completion, error) {
 				logx.Infof("tool %s %.1fs", label, time.Since(start).Seconds())
 				total.Used = append(total.Used, tc.Function.Name)
 			}
-			for _, img := range res.Images {
-				if len(total.Images) < MaxImages {
-					total.Images = append(total.Images, img)
+			for _, pic := range res.Images {
+				if len(total.Images) < img.MaxPerMessage {
+					total.Images = append(total.Images, pic)
 				}
 			}
 			msgs = append(msgs, Message{Role: "tool", ToolCallID: tc.ID, Content: res.Text})
