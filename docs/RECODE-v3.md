@@ -116,11 +116,15 @@ At(name string, t time.Time, fn func(ctx context.Context)) (cancel func())
 ```
 - **One-shot:** a timer runs once and is removed. A feature that repeats sets its next timer when one runs, so the core needs no cron.
 - **One goroutine** keeps every timer in a min-heap and wakes only when one is due, so idle costs nothing.
-- **Each run takes a worker slot,** like a message. If none is free, the run is skipped with one warning.
+- **A timer's callback takes no slot:** it only does cheap work, such as setting the next timer and delivering a message. The delivered message takes a slot like any other. If the bot is busy, that one run is dropped with a warning, but a repeating schedule keeps going.
 - **Caps:** the core caps the total number of timers.
 - **Time zone:** the local one. Go reads `TZ` itself (UTC in the container), and the distroless image ships tzdata, so no code is needed.
 - **Logs:** the timer's name and how long the run took. Errors are logged.
-- **Memory only:** timers are lost on restart, and a run missed while the bot was down isn't replayed. A feature that saves its own (`/schedule`) sets them again at startup.
+- **Memory only:** timers are lost on restart. A feature that saves its own (`/schedule`) sets them again at startup.
+- **Missed runs:** a run due while the bot was down, asleep or busy is caught up from the clock:
+  - a recurring schedule skips its missed runs, and its next time is the next one still in the future, always calculated from the clock, not from a late run;
+  - a one-shot less than an hour late runs now; an older one is dropped and logged.
+- **Sleep and clock jumps:** Go's timers fire late after a suspend rather than not at all. The rules above apply.
 
 ## 6. Features, added one at a time on the ports
 | Feature | Ports | Owns |
