@@ -17,18 +17,18 @@ var update = flag.Bool("update", false, "rewrite the golden files")
 func TestGoldenSystemPrompt(t *testing.T) {
 	cfg := &Config{Model: "deepseek/deepseek-v4.1-flash-1017", Search: true, MaxConcurrency: 1, HistoryTurns: 10,
 		Intro: defaultIntro, ExtraPrompt: "Answer in British English."}
-	sig := signal.New("x")
-	sig.SetSelf(self)
-	b := NewBot(context.Background(), cfg, sig, nil)
-	b.names.set("Botty", rankContact, self)
+	sig := signal.NewAdapter("x", cfg.AllowedSenders)
+	sig.Client().SetSelf(self)
+	b := NewBot(context.Background(), cfg, nil, sig)
+	adapterOf(b).SetContacts([]signal.Contact{{UUID: self, GivenName: "Botty"}})
 	b.toolNames, b.toolGroups = []string{"get_quote", "filings"}, "yahoo: get_quote; scout: filings"
 	b.commands = map[string]mcpCommand{"quote": {Tool: "yahoo__get_quote", RequireArg: true}}
 	cases := map[string]string{
-		"prompt_chart.txt": b.systemPrompt(true),
-		"prompt_plain.txt": b.systemPrompt(false),
+		"prompt_chart.txt": b.prompt(true),
+		"prompt_plain.txt": b.prompt(false),
 	}
 	b.toolCalls = false
-	cases["prompt_notools.txt"] = b.systemPrompt(false)
+	cases["prompt_notools.txt"] = b.prompt(false)
 	for name, got := range cases {
 		path := filepath.Join("testdata", name)
 		if *update {

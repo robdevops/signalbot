@@ -25,12 +25,12 @@ func (panicAI) Complete(ctx context.Context, system string, msgs []ChatMsg) (Com
 // can hold message text), must not kill the bot, and must free the slot.
 func TestPanicWhileAnsweringIsContained(t *testing.T) {
 	cfg := testCfg()
-	sig := signal.New("x")
-	sig.SetSelf(self)
-	b := NewBot(context.Background(), cfg, sig, panicAI{})
+	sig := signal.NewAdapter("x", cfg.AllowedSenders)
+	sig.Client().SetSelf(self)
+	b := NewBot(context.Background(), cfg, panicAI{}, sig)
 	logs := logxtest.Capture(t)
 
-	b.Handle(parse(t, strings.Replace(groupMention, "what is up", secretText, 1)))
+	deliver(b, parse(t, strings.Replace(groupMention, "what is up", secretText, 1)))
 	deadline := time.Now().Add(5 * time.Second)
 	for !strings.Contains(logs.String(), "internal error") {
 		if time.Now().After(deadline) {

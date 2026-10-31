@@ -17,14 +17,14 @@ func TestGroupChatterIsContext(t *testing.T) {
 	b, ai, _, sent := photoBot(t, false)
 	b.cfg.GroupContext = true
 	logs := logxtest.Capture(t)
-	b.Handle(parse(t, strings.Replace(groupPlain, "Group test", "the moon is made of cheese", 1)))
-	if h := b.getHistory("g:" + group); len(h) != 1 || h[0].Content != "Alice: the moon is made of cheese" || h[0].Expires.IsZero() {
+	deliver(b, parse(t, strings.Replace(groupPlain, "Group test", "the moon is made of cheese", 1)))
+	if h := b.getHistory("signal:g:" + group); len(h) != 1 || h[0].Content != "Alice: the moon is made of cheese" || h[0].Expires.IsZero() {
 		t.Fatalf("history %+v", h)
 	}
 	if logs.String() != "" {
 		t.Fatalf("chatter was logged: %q", logs.String())
 	}
-	b.Handle(parse(t, strings.Replace(groupMention, "what is up", "what do you think?", 1)))
+	deliver(b, parse(t, strings.Replace(groupMention, "what is up", "what do you think?", 1)))
 	waitSent(t, sent)
 	ai.mu.Lock()
 	defer ai.mu.Unlock()
@@ -39,9 +39,9 @@ func TestGroupChatterNotes(t *testing.T) {
 	b, _, params, _ := photoBot(t, true)
 	b.cfg.GroupContext = true
 	photo := strings.Replace(dmPhoto, `"attachments"`, `"groupInfo":{"groupId":"`+group+`","type":"DELIVER"},"attachments"`, 1)
-	b.Handle(parse(t, photo))
-	b.Handle(parse(t, `{"envelope":{"source":"`+alice+`","sourceUuid":"`+alice+`","sourceName":"Alice","dataMessage":{"message":null,"groupInfo":{"groupId":"`+group+`","type":"UPDATE"}}},"account":"`+self+`"}`))
-	h := b.getHistory("g:" + group)
+	deliver(b, parse(t, photo))
+	deliver(b, parse(t, `{"envelope":{"source":"`+alice+`","sourceUuid":"`+alice+`","sourceName":"Alice","dataMessage":{"message":null,"groupInfo":{"groupId":"`+group+`","type":"UPDATE"}}},"account":"`+self+`"}`))
+	h := b.getHistory("signal:g:" + group)
 	if len(h) != 1 || h[0].Content != "Alice: [image]" {
 		t.Fatalf("history %+v", h)
 	}
@@ -55,8 +55,8 @@ func TestGroupChatterNotes(t *testing.T) {
 func TestGroupContextOff(t *testing.T) {
 	b, _, _, _ := photoBot(t, false)
 	b.cfg.GroupContext = false
-	b.Handle(parse(t, groupPlain))
-	if h := b.getHistory("g:" + group); len(h) != 0 {
+	deliver(b, parse(t, groupPlain))
+	if h := b.getHistory("signal:g:" + group); len(h) != 0 {
 		t.Fatalf("chatter kept with GROUP_CONTEXT off: %+v", h)
 	}
 }
@@ -64,7 +64,7 @@ func TestGroupContextOff(t *testing.T) {
 // However many messages a chat holds, it has at most one expiry timer, and
 // it is set for the earliest message to expire.
 func TestOneEraserPerChat(t *testing.T) {
-	b := NewBot(context.Background(), testCfg(), signal.New("x"), nil)
+	b := NewBot(context.Background(), testCfg(), nil, signal.NewAdapter("x", testCfg().AllowedSenders))
 	b.cfg.HistoryTurns = 100
 	now := time.Now()
 	for i := 0; i < 50; i++ {

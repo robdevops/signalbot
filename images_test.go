@@ -116,14 +116,14 @@ func photoBot(t *testing.T, vision bool) (*Bot, *recordingAI, chan map[string]an
 	})
 	cfg := testCfg()
 	cfg.AllowedSenders = map[string]bool{alice: true}
-	sig := signal.New(sock)
+	sig := signal.NewAdapter(sock, cfg.AllowedSenders)
 	ai := &recordingAI{}
-	b := NewBot(context.Background(), cfg, sig, ai)
+	b := NewBot(context.Background(), cfg, ai, sig)
 	b.vision = vision
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
-	go sig.Run(ctx, b.Handle)
-	sig.WaitSelf(5 * time.Second)
+	go b.Run(ctx)
+	sig.Client().WaitSelf(5 * time.Second)
 	return b, ai, params, sent
 }
 
@@ -141,7 +141,7 @@ func waitSent(t *testing.T, sent chan string) {
 func TestPhotoShownToModel(t *testing.T) {
 	b, ai, params, sent := photoBot(t, true)
 	logs := logxtest.Capture(t)
-	b.Handle(parse(t, dmPhoto))
+	deliver(b, parse(t, dmPhoto))
 	waitSent(t, sent)
 	if p := <-params; p["id"] != "photo1.png" || p["recipient"] != alice || p["groupId"] != nil {
 		t.Fatalf("getAttachment params %v", p)
@@ -152,7 +152,7 @@ func TestPhotoShownToModel(t *testing.T) {
 	if last.Content != "[1 image attached]" || len(last.Images) != 1 || !strings.HasPrefix(last.Images[0], "data:image/png;base64,") {
 		t.Fatalf("model got %q with %d images", last.Content, len(last.Images))
 	}
-	h := b.getHistory("u:" + alice)
+	h := b.getHistory("signal:u:" + alice)
 	if len(h) != 2 || h[0].Content != "[1 image attached"+notKept+"]" || h[0].Images != nil {
 		t.Fatalf("history %+v", h)
 	}
@@ -164,7 +164,7 @@ func TestPhotoShownToModel(t *testing.T) {
 // A quoted photo in a group is fetched by group id.
 func TestQuotedPhotoFetchedByGroup(t *testing.T) {
 	b, _, params, sent := photoBot(t, true)
-	b.Handle(parse(t, quotedPhoto))
+	deliver(b, parse(t, quotedPhoto))
 	waitSent(t, sent)
 	if p := <-params; p["id"] != "thumb1.jpg" || p["groupId"] != group || p["recipient"] != nil {
 		t.Fatalf("getAttachment params %v", p)
@@ -175,7 +175,7 @@ func TestQuotedPhotoFetchedByGroup(t *testing.T) {
 // see the image.
 func TestPhotoWithoutVision(t *testing.T) {
 	b, ai, params, sent := photoBot(t, false)
-	b.Handle(parse(t, dmPhoto))
+	deliver(b, parse(t, dmPhoto))
 	waitSent(t, sent)
 	if len(params) != 0 {
 		t.Fatal("an image was fetched for a model that cannot see it")
@@ -232,7 +232,7 @@ const dmQuotedPhoto = `{"envelope":{"source":"` + alice + `","sourceNumber":null
 
 func TestDMQuotedPhoto(t *testing.T) {
 	b, ai, params, sent := photoBot(t, true)
-	b.Handle(parse(t, dmQuotedPhoto))
+	deliver(b, parse(t, dmQuotedPhoto))
 	waitSent(t, sent)
 	if p := <-params; p["id"] != "thumb2.png" || p["recipient"] != alice {
 		t.Fatalf("getAttachment params %v", p)
@@ -251,7 +251,7 @@ const dmSticker = `{"envelope":{"source":"` + alice + `","sourceNumber":null,"so
 
 func TestStickerTriggers(t *testing.T) {
 	r := decide(parse(t, dmSticker), map[string]bool{alice: true})
-	if r == nil || r.Sticker == nil || r.Sticker.PackID != "00aabbccddeeff00" || r.Sticker.StickerID != 2 {
+	if r == nil || r.Sticker == nil || r.Sticker.ID != "00aabbccddeeff00:2" {
 		t.Fatalf("a DM sticker must be answered: %+v", r)
 	}
 	if !strings.HasSuffix(r.logLine(), " with a sticker") {
@@ -267,7 +267,7 @@ func TestStickerTriggers(t *testing.T) {
 // the model; without one, the model is told it can't see it.
 func TestStickerShownToModel(t *testing.T) {
 	b, ai, params, sent := photoBot(t, true)
-	b.Handle(parse(t, dmSticker))
+	deliver(b, parse(t, dmSticker))
 	waitSent(t, sent)
 	if p := <-params; p["packId"] != "00aabbccddeeff00" || p["stickerId"] != float64(2) {
 		t.Fatalf("getSticker params %v", p)
@@ -280,7 +280,7 @@ func TestStickerShownToModel(t *testing.T) {
 	}
 
 	b, ai, params, sent = photoBot(t, false)
-	b.Handle(parse(t, dmSticker))
+	deliver(b, parse(t, dmSticker))
 	waitSent(t, sent)
 	if len(params) != 0 {
 		t.Fatal("a sticker was fetched for a model that cannot see it")
@@ -337,7 +337,7 @@ const groupPhoto = `{"envelope":{"source":"` + alice + `","sourceNumber":null,"s
 // shown to the model with the caption.
 func TestGroupPhotoWithMention(t *testing.T) {
 	b, ai, params, sent := photoBot(t, true)
-	b.Handle(parse(t, groupPhoto))
+	deliver(b, parse(t, groupPhoto))
 	waitSent(t, sent)
 	if p := <-params; p["id"] != "photo3.png" || p["groupId"] != group || p["recipient"] != nil {
 		t.Fatalf("getAttachment params %v", p)

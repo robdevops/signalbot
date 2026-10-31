@@ -141,13 +141,13 @@ func TestExample(t *testing.T) {
 	})
 	cfg := testCfg()
 	cfg.Model, cfg.Search = "x/test-model", true
-	sig := signal.New(sock)
-	b := NewBot(context.Background(), cfg, sig, failAI{t})
+	sig := signal.NewAdapter(sock, cfg.AllowedSenders)
+	b := NewBot(context.Background(), cfg, failAI{t}, sig)
 	b.toolNames = []string{"get_forecast"}
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	go sig.Run(ctx, b.Handle)
-	sig.WaitSelf(5 * time.Second)
+	go b.Run(ctx)
+	sig.Client().WaitSelf(5 * time.Second)
 
 	recv := func() map[string]any {
 		t.Helper()
@@ -159,7 +159,7 @@ func TestExample(t *testing.T) {
 			return nil
 		}
 	}
-	b.Handle(parse(t, strings.Replace(groupMention, "what is up", "/example", 1)))
+	deliver(b, parse(t, strings.Replace(groupMention, "what is up", "/example", 1)))
 	p := recv()
 	msg := p["message"].(string)
 	if !strings.HasPrefix(msg, "Hi @Alice! I'm Botty.") || !strings.Contains(msg, "Run test-model with web search, charts, get_forecast") {
@@ -168,13 +168,13 @@ func TestExample(t *testing.T) {
 	if ms, _ := p["mention"].([]any); len(ms) != 1 || ms[0] != "3:6:"+alice {
 		t.Fatalf("mention %v, want 3:6:%s", p["mention"], alice)
 	}
-	if h := b.getHistory("g:" + group); len(h) != 0 {
+	if h := b.getHistory("signal:g:" + group); len(h) != 0 {
 		t.Fatalf("/example left history: %v", h)
 	}
 
 	// In a DM there is no one to mention.
-	cfg.AllowedSenders = map[string]bool{alice: true}
-	b.Handle(parse(t, strings.Replace(dm, "Test DM", "/EXAMPLE", 1)))
+	cfg.AllowedSenders[alice] = true
+	deliver(b, parse(t, strings.Replace(dm, "Test DM", "/EXAMPLE", 1)))
 	if msg := recv()["message"].(string); !strings.HasPrefix(msg, "Hi! I'm Botty.") {
 		t.Fatalf("DM message %q", msg)
 	}
@@ -256,12 +256,12 @@ func TestReplyCarriesImages(t *testing.T) {
 				}
 			}
 		})
-		sig := signal.New(sock)
-		b := NewBot(context.Background(), testCfg(), sig, imageAI{text, tc.caption})
+		sig := signal.NewAdapter(sock, nil)
+		b := NewBot(context.Background(), testCfg(), imageAI{text, tc.caption}, sig)
 		ctx, cancel := context.WithCancel(context.Background())
-		go sig.Run(ctx, b.Handle)
-		sig.WaitSelf(5 * time.Second)
-		b.Handle(parse(t, groupMention))
+		go b.Run(ctx)
+		sig.Client().WaitSelf(5 * time.Second)
+		deliver(b, parse(t, groupMention))
 		next := func() map[string]any {
 			select {
 			case p := <-sent:
@@ -329,15 +329,15 @@ func TestToolListOffers(t *testing.T) {
 // all for a model that can't call them.
 func TestSystemPromptTools(t *testing.T) {
 	cfg := &Config{Model: "m", Search: true, MaxConcurrency: 1, HistoryTurns: 1}
-	b := NewBot(context.Background(), cfg, signal.New("x"), nil)
-	if p := b.systemPrompt(false); !strings.Contains(p, "\nYour tools: web search. If asked") {
+	b := NewBot(context.Background(), cfg, nil, signal.NewAdapter("x", cfg.AllowedSenders))
+	if p := b.prompt(false); !strings.Contains(p, "\nYour tools: web search. If asked") {
 		t.Errorf("without a chart: %q", p)
 	}
-	if p := b.systemPrompt(true); !strings.Contains(p, "\nYour tools: web search; charts (make_chart, make_donut_chart). If asked") {
+	if p := b.prompt(true); !strings.Contains(p, "\nYour tools: web search; charts (make_chart, make_donut_chart). If asked") {
 		t.Errorf("with a chart: %q", p)
 	}
 	b.toolCalls = false
-	if p := b.systemPrompt(true); strings.Contains(p, "Your tools") || b.toolsText() != "none" {
+	if p := b.prompt(true); strings.Contains(p, "Your tools") || b.toolsText() != "none" {
 		t.Errorf("a model without tool calls was told of tools: %q, %q", p, b.toolsText())
 	}
 }
@@ -345,7 +345,7 @@ func TestSystemPromptTools(t *testing.T) {
 // After a message asks for a chart or a reply draws one, the chart tools stay
 // on for 2 more replies in that chat, for follow-ups.
 func TestChartFollowUps(t *testing.T) {
-	b := NewBot(context.Background(), testCfg(), signal.New("x"), nil)
+	b := NewBot(context.Background(), testCfg(), nil, signal.NewAdapter("x", testCfg().AllowedSenders))
 	reply := func(key, text string, drew bool) bool {
 		asked := wantsChart(text)
 		chart := asked || b.chartTurns(key) > 0

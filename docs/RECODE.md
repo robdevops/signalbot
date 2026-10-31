@@ -63,7 +63,7 @@ type Outgoing struct{ Chat ChatID; Text string; Images []Image } // Image: data 
 
 type Transport interface {
     Kind() string                                  // "signal": the ChatID prefix
-    Run(ctx context.Context, handle func(Message)) // reconnects itself; delivers unaddressed group messages too
+    Run(ctx context.Context, handle func(Incoming)) // reconnects itself; delivers unaddressed group messages too
     Send(ctx context.Context, m Outgoing) error    // splits at its own limit, turns known "@Name" into mentions
     Typing(chat ChatID)
     Fetch(ctx context.Context, chat ChatID, m Media) ([]byte, error)
@@ -72,6 +72,8 @@ type Transport interface {
     Forget(chat ChatID) // drop per-chat state (Signal: known names for mentions) when the core erases the chat
 }
 ```
+
+**`Incoming` and `Load`.** A transport hands over an `Incoming`: chat, group, and whether the bot is addressed, judged cheaply on the reader goroutine. It also carries `Load`, which builds the full `Message`. The core calls `Load` only after taking a concurrency slot, because building the message may call the network: waiting for the account ID, reloading contacts for an unknown mention, fetching sticker labels. This keeps today's rule that ignored messages cost nothing and no sender can cause unbounded work.
 
 **What a transport delivers.** Addressed messages, and unaddressed messages from groups only. A DM from a sender who isn't allowed is dropped inside the transport and never reaches the core. Every adapter has a test for this privacy rule, matching today's behaviour.
 
@@ -172,8 +174,8 @@ type Host interface {
      - Docker builds from the packages (`f6cfc57`);
      - the signal-cli client and `kit/txt` (`c547f58`).
    - Next:
-     1. the golden prompt test against today's code; `internal/chat`, and the client moved to `internal/transports/signal`;
-     2. the adapter takes over names, message decisions, known names and mentions, emits `chat.Message`, and gets `Describe()`. `bot` works only on `chat` types, with the router;
+     1. ~~the golden prompt test against today's code; `internal/chat`, and the client moved to `internal/transports/signal`~~ (done);
+     2. ~~the adapter takes over names, message decisions, known names and mentions, emits `chat.Message`, and gets `Describe()`. `bot` works only on `chat` types, with the router~~ (done; `kit/txt` gained `Split` and `AtNames`, and `kit/bound` holds the bounded-map helper);
      3. `history` out of `bot`; `kit/txt.Split`;
      4. `llm` with the tool loop, and `llm/openai`. `MODEL_API_URL` and `MODEL_API_KEY` are new settings, added with it;
      5. main moves to `cmd/signalbot`, and Docker builds `./cmd/signalbot`.

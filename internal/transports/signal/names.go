@@ -1,13 +1,12 @@
-package main
+package signal
 
 import (
 	"context"
+	"github.com/robdevops/signalbot/internal/kit/bound"
 	"sync"
 	"time"
 
 	"github.com/robdevops/signalbot/internal/kit/logx"
-
-	"github.com/robdevops/signalbot/internal/transports/signal"
 
 	"github.com/robdevops/signalbot/internal/kit/txt"
 )
@@ -22,7 +21,7 @@ const (
 
 // displayName prefers the given name (the account owner's contact name, then
 // the person's own profile name), else the username.
-func displayName(c signal.Contact) (name string, rank int) {
+func displayName(c Contact) (name string, rank int) {
 	for _, r := range []rankedName{{c.GivenName, rankContact}, {c.Profile.GivenName, rankGiven}, {c.Username, rankUsername}} {
 		if name := txt.Safe(r.name); name != "" {
 			return name, r.rank
@@ -63,14 +62,14 @@ const maxNames = 5000
 func (n *Names) set(name string, rank int, ids ...string) {
 	for _, id := range ids {
 		if id != "" && rank >= n.byID[id].rank {
-			makeRoom(n.byID, id, maxNames)
+			bound.MakeRoom(n.byID, id, maxNames)
 			n.byID[id] = rankedName{name, rank}
 		}
 	}
 }
 
 // Learn records the sender's profile name from an incoming envelope.
-func (n *Names) Learn(env *signal.Envelope) {
+func (n *Names) Learn(env *Envelope) {
 	if name := txt.Safe(env.SourceName); name != "" {
 		n.mu.Lock()
 		defer n.mu.Unlock()
@@ -80,7 +79,7 @@ func (n *Names) Learn(env *signal.Envelope) {
 
 // replaceContacts swaps the whole cache for signal-cli's current list, so
 // people who left their groups are forgotten.
-func (n *Names) replaceContacts(cs []signal.Contact) {
+func (n *Names) replaceContacts(cs []Contact) {
 	n.mu.Lock()
 	defer n.mu.Unlock()
 	n.byID = map[string]rankedName{}
@@ -116,7 +115,7 @@ const unnamedUser = "[unnamed user]"
 
 // realMentionName is the name signal-cli put in the mention, unless that is
 // just the id. The sender chose it, so it is sanitised before use.
-func realMentionName(m signal.Mention) string {
+func realMentionName(m Mention) string {
 	if m.Name != m.UUID && m.Name != m.Number {
 		return txt.Safe(m.Name)
 	}
@@ -126,7 +125,7 @@ func realMentionName(m signal.Mention) string {
 // Resolve returns the best name for a mention, or "" if none is known: a
 // contact, profile or sender name, then the name signal-cli put in the
 // mention (unless it is just an id), then a username.
-func (n *Names) Resolve(m signal.Mention) string {
+func (n *Names) Resolve(m Mention) string {
 	r := n.lookup(m.UUID, m.Number)
 	if mn := realMentionName(m); r.rank < rankSeen && mn != "" {
 		return mn
@@ -137,7 +136,7 @@ func (n *Names) Resolve(m signal.Mention) string {
 // needsRefresh reports whether the contact list should be (re)loaded for this
 // mention: we have never loaded it, it is over a day old, or we have no real
 // name for the person.
-func (n *Names) needsRefresh(m signal.Mention) bool {
+func (n *Names) needsRefresh(m Mention) bool {
 	n.mu.Lock()
 	never := n.refreshedAt.IsZero()
 	stale := !n.loadedAt.IsZero() && time.Since(n.loadedAt) > maxNamesAge
@@ -147,7 +146,7 @@ func (n *Names) needsRefresh(m signal.Mention) bool {
 
 // Refresh loads signal-cli contacts, at most once per minRefresh, and reports
 // whether it tried.
-func (n *Names) Refresh(ctx context.Context, s *signal.Client) bool {
+func (n *Names) Refresh(ctx context.Context, s *Client) bool {
 	// A caller that arrives mid-load waits, and then finds the cache fresh.
 	n.loading.Lock()
 	defer n.loading.Unlock()

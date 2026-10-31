@@ -74,7 +74,7 @@ func TestChatCommandForcesTool(t *testing.T) {
 func TestChatCommandRequiresArg(t *testing.T) {
 	b, ai, _, sent := photoBot(t, false)
 	b.commands = map[string]mcpCommand{"quote": {Tool: "fake__echo", RequireArg: true}}
-	b.Handle(parse(t, strings.Replace(dm, "Test DM", "/quote", 1)))
+	deliver(b, parse(t, strings.Replace(dm, "Test DM", "/quote", 1)))
 	select {
 	case got := <-sent:
 		if got != "/quote needs something after it." {
@@ -89,7 +89,7 @@ func TestChatCommandRequiresArg(t *testing.T) {
 	if called {
 		t.Fatal("the model was asked")
 	}
-	b.Handle(parse(t, strings.Replace(dm, "Test DM", "/quote apple", 1)))
+	deliver(b, parse(t, strings.Replace(dm, "Test DM", "/quote apple", 1)))
 	waitSent(t, sent)
 	ai.mu.Lock()
 	defer ai.mu.Unlock()

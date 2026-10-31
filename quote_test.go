@@ -1,6 +1,9 @@
 package main
 
 import (
+	"context"
+
+	"github.com/robdevops/signalbot/internal/chat"
 	"strings"
 	"testing"
 
@@ -19,10 +22,15 @@ func mentionQuoting(quoted string) string {
 // Tagging the bot into someone else's message shares that message with the
 // bot, so the model sees it, attributed to its author.
 func TestQuotedMessageOfSomeoneElseIsPassedAsContext(t *testing.T) {
-	env := parse(t, mentionQuoting("lunch at noon?"))
-	names := NewNames()
-	names.replaceContacts([]signal.Contact{{UUID: bob, GivenName: "Bob"}})
-	r := Decide(env, trigger(env, self, nil), self, names)
+	a := signal.NewAdapter("x", nil)
+	a.Client().SetSelf(self)
+	a.SetContacts([]signal.Contact{{UUID: bob, GivenName: "Bob"}})
+	var r *Request
+	a.Inject(parse(t, mentionQuoting("lunch at noon?")), func(in chat.Incoming) {
+		if m, ok := in.Load(context.Background()); ok {
+			r = newRequest(m)
+		}
+	})
 	want := "Alice: [Replying to a message by \"Bob\": \"lunch at noon?\"]\nwhat is up"
 	if r == nil || r.Prompt != want {
 		t.Fatalf("prompt = %q, want %q", r.Prompt, want)

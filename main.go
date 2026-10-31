@@ -46,7 +46,7 @@ func main() {
 	connCtx, closeConn := context.WithCancel(context.Background())
 	defer closeConn()
 
-	sig := signal.New(cfg.Socket)
+	sig := signal.NewAdapter(cfg.Socket, cfg.AllowedSenders)
 	var tools *MCP
 	if cfg.MCPConfig != "" {
 		servers, err := loadMCPConfig(cfg.MCPConfig)
@@ -60,7 +60,7 @@ func main() {
 		defer tools.Wait() // let stdio servers stop after connCtx ends
 	}
 	ai := NewOpenRouter(cfg, tools)
-	bot := NewBot(connCtx, cfg, sig, ai)
+	bot := NewBot(connCtx, cfg, ai, sig)
 	bot.toolNames, bot.toolGroups = tools.Names(), tools.ByServer()
 	images, toolCalls := ai.Capabilities(connCtx)
 	bot.vision, bot.toolCalls, ai.noTools = images, toolCalls, !toolCalls
@@ -87,6 +87,6 @@ func main() {
 		bot.Shutdown(8 * time.Second) // under Docker's default 10s stop timeout
 		closeConn()
 	}()
-	sig.Run(connCtx, bot.Handle)
+	bot.Run(connCtx)
 	logx.Infof("stopped")
 }

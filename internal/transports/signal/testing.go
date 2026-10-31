@@ -11,3 +11,6 @@ func (s *Client) Network() string { return s.network() }
 
 // Dispatch handles one frame as if read from the socket: for tests.
 func (s *Client) Dispatch(line []byte, handle func(*Envelope)) { s.dispatch(line, handle) }
+
+// SetContacts replaces the known contacts as listContacts would: for tests.
+func (a *Adapter) SetContacts(cs []Contact) { a.names.replaceContacts(cs) }

@@ -1,4 +1,4 @@
-package main
+package signal
 
 import (
 	"reflect"
@@ -34,11 +34,13 @@ func TestBuildMentions(t *testing.T) {
 }
 
 func TestDecideCollectsNamesForGroupsOnly(t *testing.T) {
-	r := decide(parse(t, groupMention), nil)
-	if r.Names["alice"] != alice {
-		t.Fatalf("sender name missing: %v", r.Names)
+	a := testAdapter(map[string]bool{alice: true})
+	decide(t, a, parse(t, groupMention))
+	if a.knownNames(groupChat(group))["alice"] != alice {
+		t.Fatalf("sender name missing: %v", a.known)
 	}
-	if d := decide(parse(t, dm), map[string]bool{alice: true}); d.Names != nil {
-		t.Fatalf("DMs should not collect names: %v", d.Names)
+	decide(t, a, parse(t, dm))
+	if a.knownNames(userChat(alice)) != nil {
+		t.Fatalf("DMs should not collect names: %v", a.known)
 	}
 }
