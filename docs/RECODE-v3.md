@@ -155,7 +155,7 @@ In `features.go`, `websearch`, `charts` and `mcp` stay in that order: it's the o
 - A schedule keeps the group's ID, so it survives a rename. If the user has left the group, that run is dropped and logged, and the schedule stays in `/schedule list` until deleted.
 - A time without an offset is in the bot's time zone. A monthly schedule from the 31st runs on the last day of shorter months, and a yearly one from 29 February runs on 28 February in other years. A past start is accepted for a repeating schedule, which first runs at the next time still to come; a one-shot in the past is refused.
 - Straight and curly quotes both work (phones type “ ”).
-- Each user has a cap, scheduling `/schedule` itself is refused, and the text is never logged.
+- Scheduling `/schedule` itself is refused, and the text is never logged. There's no per-user cap: only users in `SIGNAL_DM_USER_IDS` can schedule.
 - Schedules are always saved as JSON (standard library, no new dependencies) in `$STATE_DIRECTORY`, or the working directory when run by hand. Each save writes a temporary file and renames it over the old one.
 - The systemd unit gets `StateDirectory=signalbot` (`/var/lib/private/signalbot` with `DynamicUser`). The Docker image sets `STATE_DIRECTORY=/data`, and the README bind-mounts that same host directory there. If `/data` isn't readable and writable, the bot exits with a message asking for `chown 65532 /var/lib/private/signalbot`. One install per host: the unit's dynamic user and the container's user 65532 can't share the directory.
 
