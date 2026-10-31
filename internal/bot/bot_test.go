@@ -2,9 +2,11 @@ package bot
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"github.com/robdevops/signalbot/internal/feature"
 	"os"
+	"regexp"
 	"slices"
 	"strings"
 	"sync"
@@ -423,6 +425,43 @@ func TestWaitingPhotosSplit(t *testing.T) {
 	}
 }
 
+// A sender's name never offers a keyword-gated tool group, alone or in a
+// batch: only what was typed counts.
+func TestKeywordsIgnoreNames(t *testing.T) {
+	h := start(t, options{tools: true, features: func(b *Bot) {
+		b.Tools(feature.ToolGroup{Names: []string{"lookups"}, Listing: "lookups", Keywords: regexp.MustCompile(`(?i)\blookup\b`),
+			Tools: []feature.Tool{{Name: "do_lookup", Schema: json.RawMessage(`{"type":"object"}`),
+				Run: func(context.Context, string) (string, []feature.Picture, error) { return "", nil, nil }}}})
+	}})
+	first := h.gate()
+	h.answer(first.answer("one"))
+	h.receive(msg{from: aliceID, name: "Lookup", text: "\uFFFC hello", group: true, atBot: true})
+	h.eventually("the first request", func() bool { return len(h.requests()) == 1 })
+	h.receive(msg{from: aliceID, name: "Lookup", text: "\uFFFC how are you", group: true, atBot: true})
+	h.receive(msg{from: bobID, name: "Bob", text: "\uFFFC fine", group: true, atBot: true})
+	h.waitFor(groupChat, 2)
+	first.open()
+	h.nextSend()
+	h.nextSend()
+	h.settle()
+	rs := h.requests()
+	if len(rs) != 2 {
+		t.Fatalf("%d requests", len(rs))
+	}
+	for i, r := range rs {
+		if _, ok := r["tools"]; ok {
+			t.Errorf("request %d offered tools: %v", i, r["tools"])
+		}
+	}
+	if got := contents(rs[1]); got[len(got)-1] != "user: Lookup: how are you\nBob: fine" {
+		t.Fatalf("batch %q", got)
+	}
+	h.ask(atBot("do a lookup"))
+	if _, ok := h.requests()[2]["tools"]; !ok {
+		t.Fatal("a typed keyword offered no tools")
+	}
+}
+
 // Messages join a batch only while it stays within one message's pictures:
 // 4 images and one sticker, images first. One with neither text nor
 // pictures adds nothing.
@@ -450,16 +489,20 @@ func TestBatchPictures(t *testing.T) {
 			t.Errorf("fits(%d messages, %d media) = %v", len(c.batch), len(c.msg.Media), got)
 		}
 	}
-	m := merge([]feature.Message{sticker, photos(2)})
+	m, _ := merge([]feature.Message{sticker, photos(2)})
 	if len(m.Media) != 3 || m.Media[2].Pack != "p" || m.Text != "look" {
 		t.Fatalf("merged %+v", m)
 	}
 	bare := feature.Message{Chat: feature.Chat{GroupID: groupID}, Name: "Alice"}
-	if m := merge([]feature.Message{bare, bare}); m.Text != "" || m.Media != nil {
-		t.Fatalf("bare mentions merged to %+v", m)
+	if m, text := merge([]feature.Message{bare, bare}); m.Text != "" || text != "" || m.Media != nil {
+		t.Fatalf("bare mentions merged to %+v, %q", m, text)
 	}
-	if m := merge([]feature.Message{bare, {Chat: bare.Chat, Name: "Bob", Text: "hi"}}); m.Text != "Bob: hi" {
-		t.Fatalf("merged %q", m.Text)
+	// The model sees each sender's name; the message's text, which tool
+	// keywords match, is only what was typed.
+	quote := &feature.Quote{Author: "Carol", Text: "a lookup of it"}
+	m, text := merge([]feature.Message{bare, {Chat: bare.Chat, Name: "Bob", Text: "hi", Quote: quote}, {Chat: bare.Chat, Name: "Alice", Text: "and you?"}})
+	if m.Text != "hi\nand you?" || text != "Bob: [Replying to a message by \"Carol\": \"a lookup of it\"]\nhi\nAlice: and you?" {
+		t.Fatalf("merged %q, model sees %q", m.Text, text)
 	}
 }
 

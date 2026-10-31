@@ -108,7 +108,7 @@ func register(h feature.Host, loc *time.Location, now func() time.Time) error {
 }
 
 // commands are the command and its aliases, all the same command.
-var commands = []string{"schedule", "timer", "reminder"}
+var commands = []string{"schedule", "timer", "reminder", "job"}
 
 // usable checks that dir can be listed and written to.
 func usable(dir string) error {
@@ -301,7 +301,7 @@ func (s *store) help() string {
 		"- A monthly schedule from the 31st runs on the last day of shorter months.\n" +
 		"/schedule list: your schedules, numbered\n" +
 		"/schedule del <number>: delete one\n" +
-		"/timer and /reminder work the same as /schedule."
+		"/timer, /reminder and /job work the same as /schedule."
 }
 
 // add makes a schedule from args.

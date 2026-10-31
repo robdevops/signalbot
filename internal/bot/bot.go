@@ -217,7 +217,7 @@ func (b *Bot) answerWaiting(key, self string) {
 		run := batch
 		batch = nil
 		if len(run) > 0 && !b.closing.Load() {
-			safely(func() { b.respond(merge(run), feature.Action{}) })
+			safely(func() { m, text := merge(run); b.respond(m, feature.Action{}, text) })
 		}
 	}
 	for _, env := range envs {
@@ -232,7 +232,7 @@ func (b *Bot) answerWaiting(key, self string) {
 			if act := b.onMessage(b.ctx, msg); act != (feature.Action{}) {
 				flush()
 				if !b.closing.Load() {
-					b.respond(msg, act)
+					b.respond(msg, act, prompt(msg))
 				}
 				return
 			}
@@ -276,17 +276,19 @@ func fits(batch []feature.Message, msg feature.Message) bool {
 	return images <= feature.MaxPictures && stickers <= 1
 }
 
-// merge makes messages that arrived together one message: each as the model
-// would see it (in a group with its sender's name and any quote), a line
-// each, with their images and then their sticker. A message with neither
-// text nor pictures adds nothing, as it would have nothing to answer on its
-// own. One message is left as it is.
-func merge(msgs []feature.Message) feature.Message {
+// merge makes messages that arrived together one message, with their
+// images and then their sticker, and returns it with the text the model
+// sees: each message as it would see it (in a group with its sender's name
+// and any quote), a line each. The message's own Text is only what was
+// typed, a line each, so tool keywords never match a name or a quote. A
+// message with neither text nor pictures adds nothing, as it would have
+// nothing to answer on its own. One message is left as it is.
+func merge(msgs []feature.Message) (feature.Message, string) {
 	if len(msgs) == 1 {
-		return msgs[0]
+		return msgs[0], prompt(msgs[0])
 	}
 	m := msgs[len(msgs)-1]
-	var lines []string
+	var lines, typed []string
 	var images, stickers []feature.Media
 	for _, x := range msgs {
 		if x.Text == "" && len(x.Media) == 0 {
@@ -294,6 +296,9 @@ func merge(msgs []feature.Message) feature.Message {
 		}
 		if l := prompt(x); l != "" {
 			lines = append(lines, l)
+		}
+		if x.Text != "" {
+			typed = append(typed, x.Text)
 		}
 		for _, md := range x.Media {
 			if md.Pack != "" {
@@ -306,17 +311,17 @@ func merge(msgs []feature.Message) feature.Message {
 			m.Expires = x.Expires
 		}
 	}
-	m.Text, m.Quote, m.Media = strings.Join(lines, "\n"), nil, append(images, stickers...)
+	m.Text, m.Quote, m.Media = strings.Join(typed, "\n"), nil, append(images, stickers...)
 	if m.Chat.GroupID != "" {
 		m.Name = "" // each line already names its sender
 	}
-	return m
+	return m, strings.Join(lines, "\n")
 }
 
 // received handles an addressed message in its chat's slot.
 func (b *Bot) received(env *signal.Envelope, self string) {
 	if msg, ok := b.load(env, self); ok {
-		b.respond(msg, b.onMessage(b.ctx, msg))
+		b.respond(msg, b.onMessage(b.ctx, msg), prompt(msg))
 	}
 }
 

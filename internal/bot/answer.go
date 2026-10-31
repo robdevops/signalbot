@@ -35,8 +35,10 @@ const (
 )
 
 // respond acts on an addressed message: as act says, else by asking the
-// model and sending its reply.
-func (b *Bot) respond(msg feature.Message, act feature.Action) {
+// model and sending its reply. text is the message as the model sees it,
+// prompt(msg) for one message; tools are offered by msg.Text alone, what
+// was typed, never a sender's name or a quote.
+func (b *Bot) respond(msg feature.Message, act feature.Action, text string) {
 	switch {
 	case act.Ignore:
 		return
@@ -49,7 +51,6 @@ func (b *Bot) respond(msg feature.Message, act feature.Action) {
 	stop := b.sig.Typing(msg.Chat)
 	defer stop() // also if something below panics
 	key, turn := msg.Chat.Key(), feature.Turn{Message: msg}
-	text := prompt(msg)
 	kept, added := text, false
 	var systems, images []string
 	for _, fn := range b.turns {

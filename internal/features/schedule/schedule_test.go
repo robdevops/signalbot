@@ -254,7 +254,7 @@ func TestRefusals(t *testing.T) {
 		t.Fatalf("got %q", got)
 	}
 	for _, text := range []string{"/schedule list", "/SCHEDULE", "@Botty /schedule del 1", "@signalbot  @botty /schedule help",
-		"/timer list", "@Botty /reminder help", "/Reminder"} {
+		"/timer list", "@Botty /reminder help", "/Reminder", "/job del 1"} {
 		if got := w.dm(`/schedule "` + text + `" 2030-02-01T09:00`); got != "A schedule can't make schedules." {
 			t.Errorf("%s: got %q", text, got)
 		}
@@ -487,18 +487,18 @@ func TestDockerDirectory(t *testing.T) {
 	}
 }
 
-// /timer and /reminder are the same command as /schedule.
+// /timer, /reminder and /job are the same command as /schedule.
 func TestAliases(t *testing.T) {
 	w := newWorld(t).start()
-	for _, cmd := range []string{"/timer", "/reminder"} {
+	for _, cmd := range []string{"/timer", "/reminder", "/job"} {
 		if got := w.dm(cmd + ` "hi" 2030-02-01T09:00`); !strings.HasPrefix(got, "Scheduled for ") {
 			t.Fatalf("%s: got %q", cmd, got)
 		}
 	}
-	if got := w.dm("/reminder list"); !strings.Contains(got, "1.") || !strings.Contains(got, "2.") {
+	if got := w.dm("/reminder list"); !strings.Contains(got, "1.") || !strings.Contains(got, "3.") {
 		t.Fatalf("list: %q", got)
 	}
-	if got := w.dm("/timer help"); !strings.Contains(got, "/timer and /reminder work the same as /schedule.") {
+	if got := w.dm("/timer help"); !strings.Contains(got, "/timer, /reminder and /job work the same as /schedule.") {
 		t.Fatalf("help: %q", got)
 	}
 }

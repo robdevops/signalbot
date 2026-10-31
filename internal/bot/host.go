@@ -122,7 +122,7 @@ func (b *Bot) delivered(msg feature.Message) {
 	text, mentioned := signal.StripAt(msg.Text, b.sig.BotName(), signal.DefaultName)
 	msg.Text, msg.Addressed = text, true
 	if act := b.onMessage(b.ctx, msg); act != (feature.Action{}) || mentioned {
-		b.respond(msg, act)
+		b.respond(msg, act, prompt(msg))
 		return
 	}
 	b.send(msg, msg.Text, nil, known)
