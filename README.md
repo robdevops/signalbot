@@ -1,6 +1,6 @@
 # signalbot
 
-A small, [privacy-conscious](PRIVACY.md) chat bot that connects to a running [signal-cli](https://github.com/AsamK/signal-cli) daemon over its socket and answers using a model from [OpenRouter](https://openrouter.ai).
+A small, [privacy-conscious](PRIVACY.md) chat bot that connects to a running [signal-cli](https://github.com/AsamK/signal-cli) daemon over its socket and answers using a model from [OpenRouter](https://openrouter.ai), from [another provider](#other-providers) such as a local Ollama, or with [no model](#no-model) at all, answering only commands.
 
 - [Features](#features)
 - [Use cases](#use-cases)
@@ -10,6 +10,8 @@ A small, [privacy-conscious](PRIVACY.md) chat bot that connects to a running [si
   - [With Docker](#with-docker)
   - [Then](#then)
 - [Configuration](#configuration)
+  - [Other providers](#other-providers)
+  - [No model](#no-model)
   - [MCP tools](#mcp-tools)
   - [Scheduling](#scheduling)
   - [Logs](#logs)
@@ -32,7 +34,7 @@ A small, [privacy-conscious](PRIVACY.md) chat bot that connects to a running [si
 - Modify the bot to add your own /commands (see `/example`)
 - A private assistant in your DMs, or just the fun or convenience of a sassy LLM in your Signal groups
 
-The messages the bot answers, and the names in them, are sent to OpenRouter and on to the model's provider. See [TECHNICAL.md](TECHNICAL.md) and [PRIVACY.md](PRIVACY.md) for details on how it works.
+The messages the bot answers, and the names in them, are sent to the model's API (OpenRouter, unless you [choose another](#other-providers)) and on to the model's provider. See [TECHNICAL.md](TECHNICAL.md) and [PRIVACY.md](PRIVACY.md) for details on how it works.
 
 ## Prerequisites
 
@@ -56,7 +58,7 @@ git clone https://github.com/robdevops/signalbot.git
 cd signalbot
 ```
 
-Create the config. The file holds your API key, so it is root-only; edit it, setting `OPENROUTER_API_KEY` and `SIGNAL_DM_USER_IDS`:
+Create the config. The file holds your API key, so it is root-only; edit it, setting `MODEL_API_KEY` (your [OpenRouter](https://openrouter.ai) key; see [Other providers](#other-providers) and [No model](#no-model) for the alternatives) and `SIGNAL_DM_USER_IDS`:
 
 ```
 sudo install -m 660 .env.example /etc/signalbot.env
@@ -130,10 +132,11 @@ Add the bot's account to a group and @mention it, reply to one of its messages, 
 | Variable | Default | Description |
 |---|---|---|
 | `SIGNALCLI_SOCKET` | required | Unix socket path, or `host:port` for TCP |
-| `OPENROUTER_API_KEY` | required | [OpenRouter](https://openrouter.ai) API key |
-| `MODEL` | `deepseek/deepseek-v4.1-flash-1017` | OpenRouter model name, as `provider/model` |
-| `MODEL_REASONING` | `low` | Reasoning effort, e.g. `low`, `medium`, `high` (`none` to omit) |
-| `MODEL_SEARCH` | `true` | Lets the model search the web (OpenRouter's web search tool) when it decides to; searches are billed. Accepts `true`/`false`, `yes`/`no`, `on`/`off`, `1`/`0` |
+| `MODEL_API_KEY` | empty | API key for the model's API, such as your [OpenRouter](https://openrouter.ai) key; none is sent when empty. With neither this nor `MODEL_API_URL` the bot has [no model](#no-model) |
+| `MODEL_API_URL` | `https://openrouter.ai/api/v1` | Base URL of an OpenAI-compatible chat completions API; see [Other providers](#other-providers) |
+| `MODEL` | `deepseek/deepseek-v4.1-flash-1017` | The model's name at the API: on OpenRouter as `provider/model` |
+| `MODEL_REASONING` | `low` | Reasoning effort, e.g. `low`, `medium`, `high` (`none` to omit). Sent as OpenRouter's `reasoning.effort`, or elsewhere as `reasoning_effort` |
+| `MODEL_SEARCH` | `true` | Lets the model search the web (OpenRouter's web search tool) when it decides to; searches are billed. Only on OpenRouter: on another API it is left out, with a warning. Accepts `true`/`false`, `yes`/`no`, `on`/`off`, `1`/`0` |
 | `SIGNAL_DM_USER_IDS` | empty | UUIDs/numbers allowed to DM the bot, separated by commas or whitespace |
 | `MODEL_SYSTEM_PROMPT` | empty | Extra instructions, appended to the built-in prompt (which keeps answers short and Signal-sized) |
 | `INTRO` | built-in sentence | Overrides the self-introduction; `{name}`, `{model}` (without any OpenRouter `provider/` prefix) and `{tools}` (the names of the tools, or `none`) are substituted |
@@ -144,11 +147,34 @@ Add the bot's account to a group and @mention it, reply to one of its messages, 
 | `STATE_DIRECTORY` | working directory | Where `/schedule` saves `schedules.json`. Set by systemd's `StateDirectory=signalbot` (`/var/lib/private/signalbot`) and by the Docker image (`/data`, which must be writable by user 65532) |
 | `TZ` | `UTC` in Docker, the host's under systemd | Time zone for `/schedule` times without an offset, e.g. `Australia/Sydney` |
 
-`REASONING` and `SYSTEM_PROMPT` are now `MODEL_REASONING` and `MODEL_SYSTEM_PROMPT`; the old names are ignored. `LOG_LEVEL` is gone: every level is always written (see [Logs](#logs)).
+`OPENROUTER_API_KEY` is now `MODEL_API_KEY`, and `REASONING` and `SYSTEM_PROMPT` are now `MODEL_REASONING` and `MODEL_SYSTEM_PROMPT`; the old names are ignored. `LOG_LEVEL` is gone: every level is always written (see [Logs](#logs)).
 
 The default `INTRO` is: `hi, I'm {name}, your open source assistant running {model} (tools: {tools}). I respond to @mentions and replies to my messages. See https://github.com/robdevops/signalbot/blob/main/README.md for details.`
 
-The cost logged with each reply is the amount OpenRouter reports billing for it.
+The cost logged with each reply is the amount OpenRouter reports billing for it. An API that reports no cost gets none logged.
+
+### Other providers
+
+The bot speaks OpenAI's chat completions format, which most providers and local servers offer: OpenAI, Ollama, LM Studio, vLLM, llama.cpp, Groq, Together, Mistral, DeepSeek, and the compatible endpoints of Gemini and Anthropic. Set `MODEL_API_URL` to the API's base URL (the part before `/chat/completions`), `MODEL` to the model's name there, and `MODEL_API_KEY` if it needs one. For example, a local [Ollama](https://ollama.com), which needs no key:
+
+```
+MODEL_API_URL=http://localhost:11434/v1
+MODEL=qwen3
+MODEL_REASONING=none
+```
+
+What differs from OpenRouter:
+
+- OpenRouter's extras are sent only to OpenRouter: the request not to use providers that collect data, and the request for the cost. Read your provider's own data policy.
+- `MODEL_REASONING` goes as the standard `reasoning_effort`. Some APIs reject it for a model that doesn't reason; set `none` to leave it out.
+- Only OpenRouter's model list says what a model supports, so elsewhere images are off and tools stay on, as the startup log says. A model that can't call tools may then fail when offered them: set `MODEL_SEARCH=false` and leave out `MCP_CONFIG` if so (the chart tools are offered only when a message asks for a chart).
+- OpenRouter's web search runs only on OpenRouter; elsewhere it is left out, with a warning at startup.
+- An `https://` API must offer TLS 1.3. A local one can be plain `http://`.
+- Under Docker, `localhost` is the container itself: reach a server on the host with `--add-host=host.docker.internal:host-gateway` and `MODEL_API_URL=http://host.docker.internal:11434/v1`, with the server listening on the Docker bridge address as well as 127.0.0.1 (for Ollama, `OLLAMA_HOST=172.17.0.1:11434`, which the host and its containers can both reach), or with its port firewalled. Ollama has no authentication, so `OLLAMA_HOST=0.0.0.0` lets anyone who can reach the port use it (PRIVACY RISK).
+
+### No model
+
+With neither `MODEL_API_KEY` nor `MODEL_API_URL` set, the bot runs without a model, and its startup log says "no model: only commands are answered". Commands still work: `/example`, `/schedule` and its aliases, and scheduled plain text is posted as written; `/example` then lists only what the bot does without a model. Anything else addressed to it, a mention, a reply or a DM, gets no reply, no typing indicator and no model request. Nothing is kept in history, not even group context, and MCP servers aren't started.
 
 ### MCP tools
 
@@ -236,6 +262,8 @@ Each line has a journald priority, and every priority is always written:
 Priorities 5–7 go to stdout and 2–4 to stderr. Under systemd the lines carry their `<N>` prefix, so `journalctl -p warning` filters by level. Under Docker the lines are plain, and only the stream tells levels apart. Message text is never logged, and neither is anyone's name or ID, except the ID of someone not in `SIGNAL_DM_USER_IDS` who DMs the bot.
 
 ## Troubleshooting
+
+**The bot answers only commands, and ignores mentions and DMs.** It has no model: the startup log says "no model: only commands are answered" (a notice, which `journalctl -p warning` hides). Set `MODEL_API_KEY`, or `MODEL_API_URL` for a provider that needs no key. `OPENROUTER_API_KEY` is now `MODEL_API_KEY`, and the old name is ignored.
 
 **Permission denied on the socket.** Whatever connects to `/run/signal-cli/socket` must be in the `signal-cli` Unix group, and the socket must be group-writable (`ls -l /run/signal-cli/socket` should show `srwxrwx---` and the group `signal-cli`). Common causes:
 

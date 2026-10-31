@@ -5,7 +5,7 @@ The bot is a small core and features on top. [TECHNICAL.md](TECHNICAL.md) descri
 ```
 cmd/signalbot/          main.go (wiring), features.go (one line per feature)
 internal/signal/        the signal-cli client, names and mentions
-internal/openrouter/    the model client and the tool loop
+internal/model/         the model client (OpenRouter or another chat completions API) and the tool loop
 internal/chats/         per-chat state: history, dedupe, mention names, the mailbox
 internal/timers/        one-shot timers
 internal/config/        settings from the environment
@@ -50,7 +50,7 @@ And by convention:
 
 - **Zero features:** the core's own tests run with no features registered.
 - **Each feature alone:** each feature's tests run on `featuretest`, a fake host.
-- **Scenarios:** `cmd/signalbot/scenario_test.go` drives the whole bot through a fake signal-cli socket and a fake OpenRouter, and checks no message text reaches the log. The golden prompts in `cmd/signalbot/testdata` pin the system prompt byte for byte (`go test ./cmd/signalbot -run Golden -update` rewrites them).
+- **Scenarios:** `cmd/signalbot/scenario_test.go` drives the whole bot through a fake signal-cli socket and a fake model API (OpenRouter's, or another provider's), and checks no message text reaches the log. The golden prompts in `cmd/signalbot/testdata` pin the system prompt byte for byte (`go test ./cmd/signalbot -run Golden -update` rewrites them).
 - **Sizes:** `go run ./internal/arch/sizes` reports lines per package; CI reports them on each PR, not enforced.
 - **Never log message text,** including in errors and panics. `logx` escapes line breaks; don't log what a user wrote.
 - Tests use only the names Alice and Bob.

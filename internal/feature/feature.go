@@ -112,7 +112,9 @@ type ToolGroup struct {
 }
 
 // Tool is a function tool, run by the bot (Schema and Run), or a server tool
-// run by OpenRouter itself (Server only, such as "openrouter:<name>").
+// run by the model's provider itself (Server only, as "<provider>:<name>",
+// such as "openrouter:<name>"). A server tool is offered only when the
+// model's API is that provider's.
 type Tool struct {
 	Name, Description string
 	Schema            json.RawMessage
@@ -125,7 +127,7 @@ type Tool struct {
 type Info struct {
 	Name       string   // the bot's name in the chat
 	Version    string   // the bot's version; "" if unknown
-	Model      string   // the model's OpenRouter ID, as "provider/model"
+	Model      string   // the model's ID, such as "provider/model" on OpenRouter; "" with no model
 	Images     bool     // the model takes images
 	CallsTools bool     // the model can call tools
 	Tools      []string // every tool group's Names in feature order; none when it can't call tools

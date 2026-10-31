@@ -1,6 +1,6 @@
-// Package openrouter asks the model through OpenRouter's chat completions
-// API, and runs the tool loop.
-package openrouter
+// Package model asks the model through a chat completions API in OpenAI's
+// format, OpenRouter's by default, and runs the tool loop.
+package model
 
 import (
 	"bytes"
@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"slices"
 	"strings"
 	"time"
@@ -34,21 +35,48 @@ const (
 // retryDelay is the wait before a retry.
 var retryDelay = time.Second
 
-// BaseURL is OpenRouter's API, read when a client is made. Tests point it at
-// a fake.
-var BaseURL = "https://openrouter.ai/api/v1"
+// OpenRouterHost is the host name of OpenRouter's API, read when a client
+// is made: only that API (in any case, on any port) gets OpenRouter's
+// extras, model list and server tools. Tests point it at a fake.
+var OpenRouterHost = "openrouter.ai"
 
-// Client talks to OpenRouter.
+// Client talks to the model's API.
 type Client struct {
 	key, model, reasoning, base string
+	openRouter                  bool // the API is OpenRouter's
 	http                        *http.Client
 }
 
-// New makes the client, keeping one idle connection per reply that can run
-// at once.
+// New makes the client of cfg.APIURL, keeping one idle connection per reply
+// that can run at once.
 func New(cfg *config.Config) *Client {
-	return &Client{key: cfg.APIKey, model: cfg.Model, reasoning: cfg.Reasoning,
-		base: BaseURL, http: httpx.Client(cfg.MaxConcurrency)}
+	u, err := url.Parse(cfg.APIURL)
+	return &Client{key: cfg.APIKey, model: cfg.Model, reasoning: cfg.Reasoning, base: cfg.APIURL,
+		openRouter: err == nil && strings.EqualFold(u.Hostname(), OpenRouterHost), http: httpx.Client(cfg.MaxConcurrency)}
+}
+
+// provider is the name server tools use for the API: "openrouter" for
+// OpenRouter's, else "" (none known).
+func (c *Client) provider() string {
+	if c.openRouter {
+		return "openrouter"
+	}
+	return ""
+}
+
+// Usable is the tools the API can run: every function tool, and a server
+// tool ("provider:name") only on the provider it names. Each one left out
+// is logged.
+func (c *Client) Usable(tools []feature.Tool) []feature.Tool {
+	var out []feature.Tool
+	for _, t := range tools {
+		if prefix, _, _ := strings.Cut(t.Server, ":"); t.Server != "" && (prefix != c.provider() || prefix == "") {
+			logx.Warnf("tool %s left out: it runs only on %s's API", t.Server, prefix)
+			continue
+		}
+		out = append(out, t)
+	}
+	return out
 }
 
 // Request is one question for the model.
@@ -102,12 +130,13 @@ type answer struct {
 	calls                 []toolCall
 	input, cached, output int
 	cost                  float64
+	costed                bool // the API reported the cost
 }
 
 // Ask asks the model and returns its reply. When the model calls function
 // tools it runs them and asks again, up to maxRounds requests in budget,
-// keeping up to MaxPictures pictures from them. The cost of every request
-// is summed and logged.
+// keeping up to MaxPictures pictures from them. The tokens of every request
+// are summed and logged, with the cost when the API reports it.
 func (c *Client) Ask(ctx context.Context, r Request) (feature.Reply, error) {
 	ctx, cancel := context.WithTimeout(ctx, budget)
 	defer cancel()
@@ -141,6 +170,7 @@ func (c *Client) Ask(ctx context.Context, r Request) (feature.Reply, error) {
 	for round := 1; ; round++ {
 		a, err := c.request(ctx, msgs, defs, choice)
 		total.input, total.cached, total.output, total.cost = total.input+a.input, total.cached+a.cached, total.output+a.output, total.cost+a.cost
+		total.costed = total.costed || a.costed
 		if err != nil {
 			return reply, err
 		}
@@ -153,8 +183,12 @@ func (c *Client) Ask(ctx context.Context, r Request) (feature.Reply, error) {
 				return reply, errors.New("empty response") // not the body: it can hold the conversation
 			}
 			cached := 100 * min(total.cached, total.input) / max(total.input, 1)
-			logx.Infof("reply %.1fs, tokens in/out: %d/%d (%d%% cached), $%.3f",
-				time.Since(start).Seconds(), total.input, total.output, cached, total.cost)
+			cost := ""
+			if total.costed {
+				cost = fmt.Sprintf(", $%.3f", total.cost)
+			}
+			logx.Infof("reply %.1fs, tokens in/out: %d/%d (%d%% cached)%s",
+				time.Since(start).Seconds(), total.input, total.output, cached, cost)
 			return reply, nil
 		}
 		msgs = append(msgs, message{Role: "assistant", Content: a.text, ToolCalls: a.calls})
@@ -197,17 +231,21 @@ func run(ctx context.Context, t feature.Tool, args string) (out string, pics []f
 	return t.Run(ctx, args)
 }
 
-// request makes one chat completions request. It routes only to providers
-// that don't collect the data, and asks for the cost to be reported.
+// request makes one chat completions request. On OpenRouter it routes only
+// to providers that don't collect the data, and asks for the cost to be
+// reported.
 func (c *Client) request(ctx context.Context, msgs []message, tools []any, choice string) (answer, error) {
-	body := map[string]any{
-		"model":    c.model,
-		"messages": msgs,
-		"provider": map[string]string{"data_collection": "deny"},
-		"usage":    map[string]bool{"include": true},
-	}
-	if c.reasoning != "" && c.reasoning != "none" {
-		body["reasoning"] = map[string]string{"effort": c.reasoning}
+	body := map[string]any{"model": c.model, "messages": msgs}
+	effort := c.reasoning != "" && c.reasoning != "none"
+	switch {
+	case c.openRouter:
+		body["provider"] = map[string]string{"data_collection": "deny"}
+		body["usage"] = map[string]bool{"include": true}
+		if effort {
+			body["reasoning"] = map[string]string{"effort": c.reasoning}
+		}
+	case effort:
+		body["reasoning_effort"] = c.reasoning // the standard parameter
 	}
 	if len(tools) > 0 {
 		body["tools"] = tools
@@ -231,9 +269,9 @@ func (c *Client) request(ctx context.Context, msgs []message, tools []any, choic
 			} `json:"message"`
 		} `json:"choices"`
 		Usage struct {
-			PromptTokens        int     `json:"prompt_tokens"`
-			CompletionTokens    int     `json:"completion_tokens"`
-			Cost                float64 `json:"cost"`
+			PromptTokens        int      `json:"prompt_tokens"`
+			CompletionTokens    int      `json:"completion_tokens"`
+			Cost                *float64 `json:"cost"` // OpenRouter's
 			PromptTokensDetails struct {
 				CachedTokens int `json:"cached_tokens"`
 			} `json:"prompt_tokens_details"`
@@ -243,7 +281,10 @@ func (c *Client) request(ctx context.Context, msgs []message, tools []any, choic
 		return answer{}, errors.New("malformed response") // not the error: it can quote the body
 	}
 	a := answer{input: r.Usage.PromptTokens, cached: r.Usage.PromptTokensDetails.CachedTokens,
-		output: r.Usage.CompletionTokens, cost: r.Usage.Cost}
+		output: r.Usage.CompletionTokens, costed: r.Usage.Cost != nil}
+	if a.costed {
+		a.cost = *r.Usage.Cost
+	}
 	if len(r.Choices) > 0 {
 		a.text = strings.TrimSpace(r.Choices[0].Message.Content)
 		a.calls = r.Choices[0].Message.ToolCalls
@@ -258,7 +299,7 @@ func (c *Client) post(ctx context.Context, payload []byte) ([]byte, error) {
 	defer cancel()
 	for attempt := 1; ; attempt++ {
 		req, _ := http.NewRequestWithContext(ctx, http.MethodPost, c.base+"/chat/completions", bytes.NewReader(payload))
-		req.Header.Set("Authorization", "Bearer "+c.key)
+		c.authorize(req)
 		req.Header.Set("Content-Type", "application/json")
 		resp, err := c.http.Do(req)
 		if err == nil {
@@ -267,7 +308,7 @@ func (c *Client) post(ctx context.Context, payload []byte) ([]byte, error) {
 			if resp.StatusCode == http.StatusOK {
 				return data, nil
 			}
-			err = fmt.Errorf("OpenRouter status %d: %s", resp.StatusCode, errorText(data))
+			err = fmt.Errorf("status %d: %s", resp.StatusCode, errorText(data))
 			if resp.StatusCode != http.StatusTooManyRequests && resp.StatusCode < 500 {
 				return nil, err
 			}
@@ -279,6 +320,13 @@ func (c *Client) post(ctx context.Context, payload []byte) ([]byte, error) {
 		case <-ctx.Done():
 		case <-time.After(retryDelay):
 		}
+	}
+}
+
+// authorize adds the API key to req, if there is one.
+func (c *Client) authorize(req *http.Request) {
+	if c.key != "" {
+		req.Header.Set("Authorization", "Bearer "+c.key)
 	}
 }
 
@@ -298,13 +346,18 @@ func errorText(data []byte) string {
 }
 
 // Capabilities reads from OpenRouter's model list whether the model takes
-// images and can call tools. If it can't tell, images are off (sending them
-// would fail every such message) and tools stay on, and it says so.
+// images and can call tools. If it can't tell, as on any other API, images
+// are off (sending them would fail every such message) and tools stay on,
+// and it says so.
 func (c *Client) Capabilities(ctx context.Context) (images, tools bool) {
+	if !c.openRouter {
+		logx.Noticef("only OpenRouter's model list says what a model supports, so images are off and tools on")
+		return false, true
+	}
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, c.base+"/models", nil)
-	req.Header.Set("Authorization", "Bearer "+c.key)
+	c.authorize(req)
 	resp, err := c.http.Do(req)
 	if err != nil {
 		logx.Warnf("could not check what %s supports, so images are off: %v", c.model, err)

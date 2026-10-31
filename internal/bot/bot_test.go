@@ -122,7 +122,7 @@ func TestModelError(t *testing.T) {
 	if s["message"] != sorry {
 		t.Fatalf("sent %v", s)
 	}
-	if logs := h.logs.String(); !strings.Contains(logs, "<3>OpenRouter error after ") || strings.Contains(logs, "Alice") || !strings.Contains(logs, "Input flagged") || strings.Contains(logs, "secret") {
+	if logs := h.logs.String(); !strings.Contains(logs, "<3>model error after ") || strings.Contains(logs, "Alice") || !strings.Contains(logs, "Input flagged") || strings.Contains(logs, "secret") {
 		t.Fatalf("logs:\n%s", logs)
 	}
 	r, _ := h.ask(dm("try again"))

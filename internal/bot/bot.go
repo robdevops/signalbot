@@ -17,7 +17,7 @@ import (
 	"github.com/robdevops/signalbot/internal/config"
 	"github.com/robdevops/signalbot/internal/feature"
 	"github.com/robdevops/signalbot/internal/kit/logx"
-	"github.com/robdevops/signalbot/internal/openrouter"
+	"github.com/robdevops/signalbot/internal/model"
 	"github.com/robdevops/signalbot/internal/signal"
 	"github.com/robdevops/signalbot/internal/timers"
 )
@@ -26,7 +26,7 @@ import (
 type Bot struct {
 	cfg      *config.Config
 	sig      *signal.Client
-	ai       *openrouter.Client
+	ai       *model.Client // nil with no model
 	chats    *chats.Store
 	timers   *timers.Timers
 	slots    chan struct{} // one per message being handled
@@ -51,12 +51,18 @@ type Bot struct {
 var _ feature.Host = (*Bot)(nil)
 
 // New makes the bot and reads what the model can do, so features know it
-// when they register. Work in progress ends with ctx, which should outlive
-// the shutdown signal so that Shutdown can let replies finish.
+// when they register. With no model, only what a hook answers is answered.
+// Work in progress ends with ctx, which should outlive the shutdown signal
+// so that Shutdown can let replies finish.
 func New(ctx context.Context, cfg *config.Config) *Bot {
-	b := &Bot{cfg: cfg, sig: signal.New(cfg.Socket), ai: openrouter.New(cfg), chats: chats.New(cfg.HistoryTurns),
+	b := &Bot{cfg: cfg, sig: signal.New(cfg.Socket), chats: chats.New(cfg.HistoryTurns),
 		timers: timers.New(), slots: make(chan struct{}, cfg.MaxConcurrency), ctx: ctx}
 	b.timerCtx, b.stop = context.WithCancel(ctx)
+	if cfg.NoModel {
+		logx.Noticef("no model: only commands are answered")
+		return b
+	}
+	b.ai = model.New(cfg)
 	b.images, b.callsTools = b.ai.Capabilities(ctx)
 	logx.Noticef("model %s, reasoning %s, images %v, tools %v", cfg.Model, cfg.Reasoning, b.images, b.callsTools)
 	if !b.callsTools {
@@ -148,7 +154,7 @@ func (b *Bot) route(env *signal.Envelope, self string) bool {
 		}
 	case len(b.messages) > 0:
 		msg := b.sig.Message(env, self, allowed)
-		if a := b.onMessage(b.ctx, msg); a.Context != "" && !a.Ignore {
+		if a := b.onMessage(b.ctx, msg); a.Context != "" && !a.Ignore && b.ai != nil { // with no model, nothing would read it
 			b.chats.Add(msg.Chat.Key(), time.Now(), msg.Expires, chats.Entry{Role: "user", Content: a.Context})
 		}
 	}

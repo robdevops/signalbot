@@ -6,6 +6,7 @@ package main
 
 import (
 	"context"
+	"net/url"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -13,13 +14,13 @@ import (
 	"github.com/robdevops/signalbot/internal/bot"
 	"github.com/robdevops/signalbot/internal/config"
 	"github.com/robdevops/signalbot/internal/kit/logx"
-	"github.com/robdevops/signalbot/internal/openrouter"
+	"github.com/robdevops/signalbot/internal/model"
 	"github.com/robdevops/signalbot/internal/signal"
 )
 
 // settingNames is every environment variable the bot reads; each scenario
 // starts with all of them cleared.
-var settingNames = []string{"SIGNALCLI_SOCKET", "OPENROUTER_API_KEY", "MODEL", "MODEL_SEARCH", "MODEL_REASONING",
+var settingNames = []string{"SIGNALCLI_SOCKET", "MODEL_API_URL", "MODEL_API_KEY", "MODEL", "MODEL_SEARCH", "MODEL_REASONING",
 	"SIGNAL_DM_USER_IDS", "MODEL_SYSTEM_PROMPT", "INTRO", "MAX_CONCURRENCY", "HISTORY_TURNS",
 	"MCP_CONFIG", "GROUP_CONTEXT", "JOURNAL_STREAM"}
 
@@ -34,20 +35,31 @@ func startBot(t *testing.T, w world) *harness {
 		t.Setenv(k, "")
 	}
 	env := h.env()
-	env["SIGNALCLI_SOCKET"], env["OPENROUTER_API_KEY"], env["MCP_CONFIG"] = h.signalSock, "test-key", h.mcpConfig
+	env["SIGNALCLI_SOCKET"], env["MCP_CONFIG"] = h.signalSock, h.mcpConfig
+	switch {
+	case w.NoModel:
+	case w.OtherProvider:
+		env["MODEL_API_URL"] = h.modelURL
+	default:
+		env["MODEL_API_URL"], env["MODEL_API_KEY"] = h.modelURL, "test-key"
+	}
 	for k, v := range env {
 		t.Setenv(k, v)
 	}
 
 	// Every log line goes to the harness, prefixed with its priority. The
-	// hooks point the bot at the fakes, and say when it has read a frame.
+	// hooks make the fake model API OpenRouter's unless it is another
+	// provider's, and say when the bot has read a frame.
 	restore := logx.SetOutput(h, h, true)
-	url, gap := openrouter.BaseURL, signal.ReloadGap
-	openrouter.BaseURL, signal.ReloadGap = h.modelURL, contactReloadGap // so a scenario can see contacts reload
+	host, gap := model.OpenRouterHost, signal.ReloadGap
+	if u, _ := url.Parse(h.modelURL); !w.OtherProvider {
+		model.OpenRouterHost = u.Hostname()
+	}
+	signal.ReloadGap = contactReloadGap // so a scenario can see contacts reload
 	signal.Handled = func() { h.handled <- struct{}{} }
 	t.Cleanup(func() { // runs last
 		restore()
-		openrouter.BaseURL, signal.ReloadGap, signal.Handled = url, gap, nil
+		model.OpenRouterHost, signal.ReloadGap, signal.Handled = host, gap, nil
 	})
 
 	// What main does.

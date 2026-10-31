@@ -1,7 +1,7 @@
 package main
 
 // Behaviour scenarios: messages in on a fake signal-cli, then what the bot
-// sends back, what a fake OpenRouter receives and what is logged. They use
+// sends back, what a fake model API receives and what is logged. They use
 // only the harness (scenario_fakes_test.go), never the bot's own code, so
 // they pass unchanged on any version of the bot that behaves the same;
 // scenario_start_test.go wires each version up. docs/SCENARIOS.md maps the
@@ -681,7 +681,7 @@ func TestScenarioModelError(t *testing.T) {
 	if s := h.ask(fromAlice("tell me the launch codes")); s.Message != "Sorry, I couldn't get an answer right now." {
 		t.Fatalf("sent %q", s.Message)
 	}
-	if l, ok := h.logged("OpenRouter error", "Input flagged"); !ok || l.Pri != 3 {
+	if l, ok := h.logged("model error", "Input flagged"); !ok || l.Pri != 3 {
 		t.Fatalf("no error line: %v", h.logLines())
 	}
 	h.ask(fromAlice("a second try at it"))
@@ -725,6 +725,9 @@ func TestScenarioModelRequestSettings(t *testing.T) {
 	}
 	if u, _ := b["usage"].(map[string]any); u["include"] != true {
 		t.Fatalf("usage %v", b["usage"])
+	}
+	if _, ok := b["reasoning_effort"]; ok {
+		t.Fatalf("reasoning_effort sent to OpenRouter: %v", b["reasoning_effort"])
 	}
 	equal(t, "tools", h.lastRequest().Tools, []string{"openrouter:web_search"})
 	if _, ok := b["plugins"]; ok {
@@ -784,6 +787,98 @@ func TestScenarioModelNotListed(t *testing.T) {
 	}
 	if l, ok := h.logged("images are off"); !ok || l.Pri != 4 {
 		t.Fatalf("no warning: %v", h.logLines())
+	}
+}
+
+// --- other providers, and no model ----------------------------------------------------
+
+// Another provider, at MODEL_API_URL with no key: a mention is answered with
+// a plain request (no OpenRouter extras, reasoning as reasoning_effort, no
+// key), no model list is read, so images are off and tools on, and
+// OpenRouter's web search is left out with a warning.
+func TestScenarioOtherProvider(t *testing.T) {
+	h := startBot(t, world{OtherProvider: true, Vision: true})
+	if s := h.ask(atBot("what is up")); s.Message != "ok" || s.GroupID != idGroup {
+		t.Fatalf("sent %+v", s)
+	}
+	r := h.lastRequest()
+	equal(t, "conversation", r.contents(), []string{"user: Alice: what is up"})
+	for _, k := range []string{"provider", "usage", "reasoning", "tools"} {
+		if _, ok := r.Body[k]; ok {
+			t.Fatalf("%s sent: %v", k, r.Body[k])
+		}
+	}
+	if r.Body["reasoning_effort"] != "low" || r.Model != scenarioModel {
+		t.Fatalf("reasoning_effort %v, model %q", r.Body["reasoning_effort"], r.Model)
+	}
+	if !strings.Contains(r.System, "(tools: charts)") {
+		t.Fatalf("system %q", r.System)
+	}
+	if n := h.modelLists(); n != 0 {
+		t.Fatalf("the model list was read %d times", n)
+	}
+	if l, ok := h.logged("tool openrouter:web_search left out"); !ok || l.Pri != 4 {
+		t.Fatalf("no warning: %v", h.logLines())
+	}
+	if _, ok := h.logged("web search on"); ok {
+		t.Fatalf("web search logged as on: %v", h.logLines())
+	}
+	if l, ok := h.logged("images are off and tools on"); !ok || l.Pri != 5 {
+		t.Fatalf("no notice: %v", h.logLines())
+	}
+	m := fromAlice("")
+	m.Attachments = []attached{photo("photo1.png")}
+	h.ask(m)
+	if r := h.lastRequest(); r.last().Content != "[1 image attached, which you can't see with this model]" || len(r.last().Images) != 0 {
+		t.Fatalf("model got %q with %d images", r.last().Content, len(r.last().Images))
+	}
+}
+
+// With no model, the bot answers only commands: a mention or a DM gets no
+// reply, no typing and no model request, group chatter isn't kept, MCP
+// connects to no server, and a scheduled plain text is still posted.
+func TestScenarioNoModel(t *testing.T) {
+	h := startBot(t, world{NoModel: true, MCP: true, Contacts: map[string]string{idAlice: "Alice", idBob: "Bob"}})
+	if l, ok := h.logged("no model: only commands are answered"); !ok || l.Pri != 5 {
+		t.Fatalf("no notice: %v", h.logLines())
+	}
+	if _, ok := h.logged("MCP off: no model"); !ok {
+		t.Fatalf("no MCP line: %v", h.logLines())
+	}
+	if _, ok := h.logged("web search on"); ok {
+		t.Fatalf("web search logged as on: %v", h.logLines())
+	}
+	s := h.ask(atBot("/example"))
+	if !strings.HasPrefix(s.Message, "Hi @Alice! I'm Botty. ") || !strings.Contains(s.Message, "\n- Run no model, so I answer only commands\n") ||
+		strings.Contains(s.Message, "@mention me") || strings.Contains(s.Message, "Remember") || strings.Contains(s.Message, "quote") {
+		t.Fatalf("sent %q", s.Message)
+	}
+	h.ignored(inGroup("the moon is made of cheese"))
+	h.ignored(atBot("what is the moon made of?"))
+	h.ignored(fromAlice("hello?"))
+	h.ignored(fromAlice("/quote AAPL")) // MCP's chat commands aren't registered
+	if typing := h.callsTo("sendTyping"); len(typing) != 0 {
+		t.Fatalf("typing %v", typing)
+	}
+
+	at := time.Now().Add(2 * time.Second).Truncate(time.Second)
+	if s := h.ask(fromAlice(`/schedule "lunch is ready @Bob" ` + at.Format("2006-01-02T15:04:05") + ` test group`)); !strings.HasPrefix(s.Message, "Scheduled for ") {
+		t.Fatalf("sent %q", s.Message)
+	}
+	s = h.nextSend()
+	if s.GroupID != idGroup || s.Message != "lunch is ready @Bob" {
+		t.Fatalf("sent %+v", s)
+	}
+	equal(t, "mentions", s.Mentions, []string{"15:4:" + idBob})
+	h.noMoreSends()
+	if n, lists := len(h.requests()), h.modelLists(); n != 0 || lists != 0 {
+		t.Fatalf("%d model requests, %d model lists", n, lists)
+	}
+	if calls := h.toolCalls(); len(calls) != 0 {
+		t.Fatalf("MCP calls %v", calls)
+	}
+	if _, ok := h.logged("MCP tools:"); ok {
+		t.Fatalf("MCP connected: %v", h.logLines())
 	}
 }
 

@@ -20,8 +20,10 @@ const DefaultIntro = "hi, I'm {name}, your open source assistant running {model}
 // Config is the core's settings.
 type Config struct {
 	Socket         string          // SIGNALCLI_SOCKET: a unix socket path, or host:port
-	APIKey         string          // OPENROUTER_API_KEY
-	Model          string          // MODEL, as "provider/model"
+	APIURL         string          // MODEL_API_URL: the chat completions API's base URL
+	APIKey         string          // MODEL_API_KEY; "" sends none
+	NoModel        bool            // neither MODEL_API_URL nor MODEL_API_KEY is set: only commands are answered
+	Model          string          // MODEL: the model's ID at the API, such as "provider/model" on OpenRouter
 	Reasoning      string          // MODEL_REASONING: the reasoning effort, "none" to leave it out
 	SystemPrompt   string          // MODEL_SYSTEM_PROMPT: added to the built-in prompt
 	Intro          string          // INTRO
@@ -67,11 +69,15 @@ func Read() []string {
 	return out
 }
 
+// DefaultAPIURL is OpenRouter's API, used when MODEL_API_URL is unset.
+const DefaultAPIURL = "https://openrouter.ai/api/v1"
+
 // Load reads the core's settings.
 func Load() (*Config, error) {
 	c := &Config{
 		Socket:         Env("SIGNALCLI_SOCKET", ""),
-		APIKey:         Env("OPENROUTER_API_KEY", ""),
+		APIURL:         strings.TrimRight(Env("MODEL_API_URL", ""), "/"),
+		APIKey:         Env("MODEL_API_KEY", ""),
 		Model:          Env("MODEL", "deepseek/deepseek-v4.1-flash-1017"),
 		Reasoning:      strings.ToLower(Env("MODEL_REASONING", "low")),
 		SystemPrompt:   Env("MODEL_SYSTEM_PROMPT", ""),
@@ -90,8 +96,11 @@ func Load() (*Config, error) {
 	if c.Socket == "" {
 		return nil, errors.New("SIGNALCLI_SOCKET is required")
 	}
-	if c.APIKey == "" {
-		return nil, errors.New("OPENROUTER_API_KEY is required")
+	// A key alone is OpenRouter's; a URL alone is a provider that needs no
+	// key, such as a local one.
+	c.NoModel = c.APIURL == "" && c.APIKey == ""
+	if c.APIURL == "" {
+		c.APIURL = DefaultAPIURL
 	}
 	return c, nil
 }

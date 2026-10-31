@@ -54,6 +54,24 @@ func TestExampleWithoutTools(t *testing.T) {
 	}
 }
 
+// With no model, it says so where it names the model, and promises nothing
+// only the model does: answering mentions, quoted context, memory.
+func TestExampleWithNoModel(t *testing.T) {
+	h := featuretest.New()
+	h.Bot = feature.Info{Name: "Botty"}
+	if err := Register(h); err != nil {
+		t.Fatal(err)
+	}
+	m := feature.Message{Chat: feature.Chat{User: "u-bob"}, Text: "/example", Addressed: true}
+	want := "Hi! I'm Botty. Here's what I can do:\n" +
+		"- Mention people by name in my replies\n" +
+		"- Run no model, so I answer only commands\n" +
+		"This reply didn't use the model."
+	if a := h.Message(context.Background(), m); a.Answer != want {
+		t.Fatalf("got %q", a.Answer)
+	}
+}
+
 // Only "/example" itself, addressed, is answered; anything else carries on.
 func TestExampleIgnoresOtherMessages(t *testing.T) {
 	h := host(t)

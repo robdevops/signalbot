@@ -1,4 +1,4 @@
-package openrouter
+package model
 
 import (
 	"context"
@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"sync"
 	"testing"
@@ -82,7 +83,15 @@ func calls(names ...string) served {
 
 func quote(s string) string { b, _ := json.Marshal(s); return string(b) }
 
+// start is a client of a fake OpenRouter that gives answers.
 func start(t *testing.T, answers ...served) (*Client, *model, *logx.Buffer) {
+	t.Helper()
+	return startAt(t, true, answers...)
+}
+
+// startAt is a client of a fake API, OpenRouter's if openRouter, that gives
+// answers.
+func startAt(t *testing.T, openRouter bool, answers ...served) (*Client, *model, *logx.Buffer) {
 	t.Helper()
 	var logs logx.Buffer
 	t.Cleanup(logx.SetOutput(&logs, &logs, false))
@@ -90,21 +99,36 @@ func start(t *testing.T, answers ...served) (*Client, *model, *logx.Buffer) {
 	m := &model{answers: answers}
 	srv := httptest.NewServer(m)
 	t.Cleanup(srv.Close)
-	return client(t, srv.URL), m, &logs
+	return client(t, srv.URL, openRouter), m, &logs
 }
 
-// client is a client of the API at url.
-func client(t *testing.T, url string) *Client {
-	defer func(old string) { BaseURL = old }(BaseURL)
-	BaseURL = url
-	return New(&config.Config{APIKey: "or-key", Model: "x/model", Reasoning: "low", MaxConcurrency: 8})
+// client is a client of the API at base, OpenRouter's if openRouter.
+func client(t *testing.T, base string, openRouter bool) *Client {
+	defer func(old string) { OpenRouterHost = old }(OpenRouterHost)
+	if u, _ := url.Parse(base); openRouter {
+		OpenRouterHost = u.Hostname()
+	}
+	return New(&config.Config{APIURL: base, APIKey: "or-key", Model: "x/model", Reasoning: "low", MaxConcurrency: 8})
 }
 
 func TestNewClient(t *testing.T) {
-	c := New(&config.Config{MaxConcurrency: 40})
+	c := New(&config.Config{APIURL: config.DefaultAPIURL, MaxConcurrency: 40})
 	tr := c.http.Transport.(*http.Transport)
 	if tr.MaxIdleConnsPerHost != 40 || tr.TLSClientConfig.MinVersion != tls.VersionTLS13 {
 		t.Fatalf("idle %d, TLS %x", tr.MaxIdleConnsPerHost, tr.TLSClientConfig.MinVersion)
+	}
+	if !c.openRouter || c.provider() != "openrouter" {
+		t.Error("the default API is not OpenRouter's")
+	}
+	for _, u := range []string{"https://OpenRouter.ai/api/v1", "https://openrouter.ai:443/api/v1"} {
+		if c := New(&config.Config{APIURL: u}); !c.openRouter {
+			t.Errorf("%s is not taken for OpenRouter", u)
+		}
+	}
+	for _, u := range []string{"http://localhost:11434/v1", "https://api.openai.com/v1", "https://openrouter.ai.example.com/api/v1", "::bad"} {
+		if c := New(&config.Config{APIURL: u}); c.openRouter || c.provider() != "" {
+			t.Errorf("%s is taken for OpenRouter", u)
+		}
 	}
 }
 
@@ -135,6 +159,9 @@ func TestRequestAndReply(t *testing.T) {
 			t.Errorf("%s sent with no tools", k)
 		}
 	}
+	if _, ok := b["reasoning_effort"]; ok {
+		t.Error("reasoning_effort sent to OpenRouter, which takes the reasoning object")
+	}
 	if l := logs.String(); !strings.Contains(l, "tokens in/out: 100/20 (40% cached), $0.004") {
 		t.Errorf("cost not logged: %q", l)
 	}
@@ -162,9 +189,9 @@ func TestRetries(t *testing.T) {
 		{"5xx then ok", []served{{status: 502, body: "x"}, text("ok")}, 2, ""},
 		{"429 then ok", []served{{status: 429, body: "x"}, text("ok")}, 2, ""},
 		{"network error then ok", []served{{body: "hangup"}, text("ok")}, 2, ""},
-		{"5xx twice", []served{{status: 503, body: `{"error":{"message":"down"}}`}}, 2, "OpenRouter status 503: down"},
-		{"4xx is not retried", []served{{status: 400, body: moderation}}, 1, "OpenRouter status 400: Input flagged"},
-		{"unreadable error", []served{{status: 401, body: "nope"}}, 1, "OpenRouter status 401: (unreadable error body)"},
+		{"5xx twice", []served{{status: 503, body: `{"error":{"message":"down"}}`}}, 2, "status 503: down"},
+		{"4xx is not retried", []served{{status: 400, body: moderation}}, 1, "status 400: Input flagged"},
+		{"unreadable error", []served{{status: 401, body: "nope"}}, 1, "status 401: (unreadable error body)"},
 		{"empty", []served{{body: `{"choices":[{"message":{"content":"  "}}]}`}}, 1, "empty response"},
 		{"no choices", []served{{body: `{"choices":[]}`}}, 1, "empty response"},
 		{"malformed", []served{{body: `not json ` + secret}}, 1, "malformed response"},
@@ -310,7 +337,7 @@ func TestBudget(t *testing.T) {
 	slow := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { <-release }))
 	defer slow.Close()
 	defer close(release)
-	c := client(t, slow.URL)
+	c := client(t, slow.URL, true)
 	if _, err := c.Ask(ctx, Request{Text: "hi"}); err == nil {
 		t.Fatal("no error")
 	}
@@ -345,5 +372,91 @@ func TestCapabilities(t *testing.T) {
 				t.Errorf("auth %q", a)
 			}
 		})
+	}
+}
+
+// Another API gets a plain request: no OpenRouter extras, reasoning as the
+// standard reasoning_effort, and no key when there is none.
+func TestOtherAPIRequest(t *testing.T) {
+	c, m, logs := startAt(t, false, text("hi"))
+	c.key = ""
+	if r, err := c.Ask(context.Background(), Request{System: "be brief", Text: "hello"}); err != nil || r.Text != "hi" {
+		t.Fatalf("got %+v, %v", r, err)
+	}
+	b := m.requests()[0]
+	for _, k := range []string{"provider", "usage", "reasoning", "tools", "tool_choice"} {
+		if _, ok := b[k]; ok {
+			t.Errorf("%s sent: %v", k, b[k])
+		}
+	}
+	if b["reasoning_effort"] != "low" || b["model"] != "x/model" {
+		t.Errorf("reasoning_effort %v, model %v", b["reasoning_effort"], b["model"])
+	}
+	if a := m.authorization(); a != "" {
+		t.Errorf("auth %q with no key", a)
+	}
+	if l := logs.String(); !strings.Contains(l, "reply ") {
+		t.Errorf("logged %q", l)
+	}
+
+	c, m, _ = startAt(t, false, text("hi"))
+	c.reasoning = "none"
+	if _, err := c.Ask(context.Background(), Request{Text: "hello"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := m.requests()[0]["reasoning_effort"]; ok {
+		t.Error("reasoning_effort sent with none")
+	}
+	if a := m.authorization(); a != "Bearer or-key" {
+		t.Errorf("auth %q", a)
+	}
+}
+
+// The cost is logged only when the API reports it.
+func TestCostOnlyWhenReported(t *testing.T) {
+	c, _, logs := startAt(t, false, served{body: `{"choices":[{"message":{"content":"hi"}}],"usage":{"prompt_tokens":20,"completion_tokens":3}}`})
+	if _, err := c.Ask(context.Background(), Request{Text: "hello"}); err != nil {
+		t.Fatal(err)
+	}
+	if l := logs.String(); !strings.Contains(l, "tokens in/out: 20/3") || strings.Contains(l, "$") {
+		t.Errorf("logged %q", l)
+	}
+}
+
+// A server tool is usable only on the provider its prefix names; any other
+// is left out with a warning naming it. Function tools are always usable.
+func TestUsable(t *testing.T) {
+	fn := feature.Tool{Name: "echo", Run: func(context.Context, string) (string, []feature.Picture, error) { return "", nil, nil }}
+	search, other := feature.Tool{Server: "openrouter:server_tool"}, feature.Tool{Server: "elsewhere:server_tool"}
+
+	c, _, logs := start(t)
+	if got := c.Usable([]feature.Tool{search, fn, other}); len(got) != 2 || got[0].Server != search.Server || got[1].Name != "echo" {
+		t.Errorf("on OpenRouter got %+v", got)
+	}
+	if l := logs.String(); l != "tool elsewhere:server_tool left out: it runs only on elsewhere's API\n" {
+		t.Errorf("logged %q", l)
+	}
+
+	c, _, logs = startAt(t, false)
+	if got := c.Usable([]feature.Tool{search, fn}); len(got) != 1 || got[0].Name != "echo" {
+		t.Errorf("elsewhere got %+v", got)
+	}
+	if l := logs.String(); l != "tool openrouter:server_tool left out: it runs only on openrouter's API\n" {
+		t.Errorf("logged %q", l)
+	}
+}
+
+// Only OpenRouter has a model list: elsewhere images are off and tools on,
+// with one startup line and no request.
+func TestOtherAPICapabilities(t *testing.T) {
+	c, m, logs := startAt(t, false, served{status: 500})
+	if images, tools := c.Capabilities(context.Background()); images || !tools {
+		t.Errorf("images %v, tools %v", images, tools)
+	}
+	if n := len(m.requests()); n != 0 {
+		t.Errorf("%d requests", n)
+	}
+	if l := logs.String(); strings.Count(l, "\n") != 1 || !strings.Contains(l, "images are off and tools on") {
+		t.Errorf("logged %q", l)
 	}
 }

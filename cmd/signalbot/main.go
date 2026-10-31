@@ -1,4 +1,5 @@
-// Command signalbot answers Signal messages with a model on OpenRouter.
+// Command signalbot answers Signal messages with a model, on OpenRouter or
+// another chat completions API, or only commands with no model.
 package main
 
 import (

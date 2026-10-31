@@ -16,6 +16,7 @@ func TestWebSearchOnByDefault(t *testing.T) {
 	var out, errw logx.Buffer
 	defer logx.SetOutput(&out, &errw, true)()
 	h := featuretest.New()
+	h.Bot = feature.Info{Model: "x/test-model", CallsTools: true, Tools: []string{"web search"}}
 	if err := Register(h); err != nil {
 		t.Fatal(err)
 	}
@@ -40,6 +41,7 @@ func TestWebSearchOff(t *testing.T) {
 		var out, errw logx.Buffer
 		restore := logx.SetOutput(&out, &errw, true)
 		h := featuretest.New()
+		h.Bot = feature.Info{Model: "x/test-model"}
 		h.Settings["MODEL_SEARCH"] = v
 		if err := Register(h); err != nil {
 			t.Fatal(err)
@@ -47,6 +49,43 @@ func TestWebSearchOff(t *testing.T) {
 		restore()
 		if g := h.ToolGroups(); len(g) != 0 || out.String() != "" {
 			t.Errorf("MODEL_SEARCH=%s: groups %+v, log %q", v, g, out.String())
+		}
+	}
+}
+
+// With no model, nothing is offered and nothing logged.
+func TestWebSearchWithNoModel(t *testing.T) {
+	var out, errw logx.Buffer
+	defer logx.SetOutput(&out, &errw, true)()
+	h := featuretest.New()
+	if err := Register(h); err != nil {
+		t.Fatal(err)
+	}
+	if g := h.ToolGroups(); len(g) != 0 || out.String() != "" {
+		t.Fatalf("groups %+v, log %q", g, out.String())
+	}
+}
+
+// When the host drops the tool (another API), "web search on" isn't logged.
+// A model that calls no tools lists none, and the line is logged as before.
+func TestWebSearchDroppedByHost(t *testing.T) {
+	for _, tc := range []struct {
+		info feature.Info
+		on   bool
+	}{
+		{feature.Info{Model: "x/test-model", CallsTools: true}, false},
+		{feature.Info{Model: "x/test-model"}, true},
+	} {
+		var out, errw logx.Buffer
+		restore := logx.SetOutput(&out, &errw, true)
+		h := featuretest.New()
+		h.Bot = tc.info
+		if err := Register(h); err != nil {
+			t.Fatal(err)
+		}
+		restore()
+		if on := strings.Contains(out.String(), "web search on"); on != tc.on {
+			t.Errorf("%+v: log %q", tc.info, out.String())
 		}
 	}
 }

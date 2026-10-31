@@ -1,7 +1,7 @@
 package main
 
 // The fakes behind the behaviour scenarios, and the harness API the scenarios
-// use: a fake signal-cli on a unix socket, a fake OpenRouter, fake MCP
+// use: a fake signal-cli on a unix socket, a fake model API, fake MCP
 // servers and a captured log. Nothing here names the bot's code, so this file
 // and scenario_test.go stay as they are when the bot is rewritten; only
 // scenario_start_test.go, which wires the bot to these fakes, changes.
@@ -61,6 +61,11 @@ type world struct {
 	NoModelList bool
 	// ModelNotListed leaves the bot's model out of the model list.
 	ModelNotListed bool
+	// NoModel gives the bot no model: neither the model API's URL nor a key.
+	NoModel bool
+	// OtherProvider makes the fake model API another provider's, not
+	// OpenRouter's, which needs no key: the bot is given its URL and no key.
+	OtherProvider bool
 	// NoBotName leaves the bot's own profile name out of the contact list;
 	// otherwise the bot is called "Botty".
 	NoBotName bool
@@ -94,6 +99,7 @@ type harness struct {
 	failSends bool
 	replies   []modelReply   // queued model replies; then "ok"
 	reqs      []modelRequest // every chat completions request
+	lists     int            // model list requests
 	mcpCalls  []string       // "server/tool arguments" for every MCP tool call
 	logs      []logLine
 	partial   []byte          // a log line still being written
@@ -102,7 +108,7 @@ type harness struct {
 	sendsRead int             // sends returned by nextSend
 
 	signalSock string // the fake signal-cli's socket
-	modelURL   string // the fake OpenRouter's base URL
+	modelURL   string // the fake model API's base URL
 	mcpConfig  string // the MCP_CONFIG file, if w.MCP
 
 	// Set by startBot.
@@ -123,7 +129,7 @@ type sentMsg struct {
 	Mentions, Attachments       []string
 }
 
-// modelReply is what the fake OpenRouter answers one request with: Text, a
+// modelReply is what the fake model API answers one request with: Text, a
 // call of Tool with Args, or an error Status with Body. A tool call's id is
 // "call_N" for the Nth request. Hold, if set, delays the answer until it is
 // closed (see hold).
@@ -493,13 +499,24 @@ func (h *harness) waitFor(what string, ok func() bool) {
 	}
 }
 
-// --- OpenRouter -----------------------------------------------------------------
+// --- the model API ---------------------------------------------------------------
 
+// startModel starts the fake model API: OpenRouter's, which takes the key
+// "test-key", or with w.OtherProvider another provider's, which takes none.
 func (h *harness) startModel() {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Header.Get("Authorization") != "Bearer test-key" {
+		want := "Bearer test-key"
+		if h.w.OtherProvider {
+			want = ""
+		}
+		if r.Header.Get("Authorization") != want {
 			http.Error(w, `{"error":{"message":"no auth"}}`, http.StatusUnauthorized)
 			return
+		}
+		if r.Method == http.MethodGet {
+			h.mu.Lock()
+			h.lists++
+			h.mu.Unlock()
 		}
 		if r.Method == http.MethodGet && h.w.NoModelList {
 			http.Error(w, `{"error":{"message":"unavailable"}}`, http.StatusServiceUnavailable)
@@ -635,6 +652,13 @@ func (h *harness) queue(replies ...modelReply) {
 		h.secrets = append(h.secrets, secretForms(r.Text)...)
 		h.secrets = append(h.secrets, secretForms(r.Args)...)
 	}
+}
+
+// modelLists is how many times the model list was asked for.
+func (h *harness) modelLists() int {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.lists
 }
 
 // requests is every chat completions request so far.

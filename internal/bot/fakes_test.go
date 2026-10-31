@@ -9,6 +9,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -17,7 +18,7 @@ import (
 
 	"github.com/robdevops/signalbot/internal/config"
 	"github.com/robdevops/signalbot/internal/kit/logx"
-	"github.com/robdevops/signalbot/internal/openrouter"
+	"github.com/robdevops/signalbot/internal/model"
 )
 
 const (
@@ -27,7 +28,7 @@ const (
 	groupID = "Z3JvdXA="
 )
 
-// harness is a bot wired to a fake signal-cli socket and a fake OpenRouter.
+// harness is a bot wired to a fake signal-cli socket and a fake model API.
 type harness struct {
 	t    *testing.T
 	b    *Bot
@@ -41,6 +42,7 @@ type harness struct {
 	answers []func() (int, string) // queued model answers; then "ok"
 	hold    chan struct{}          // while set, the model waits on it
 	tools   bool                   // the model can call tools
+	lists   int                    // model list requests
 	sent    chan map[string]any    // "send" params, in order
 	id      chan struct{}          // if set, listAccounts waits until it is closed
 }
@@ -53,6 +55,7 @@ type call struct {
 // options for start.
 type options struct {
 	tools    bool
+	otherAPI bool // the fake model API is not taken for OpenRouter's
 	waitID   bool // the bot's ID stays unknown until the test closes h.id
 	features func(*Bot)
 	cfg      func(*config.Config)
@@ -94,16 +97,19 @@ func start(t *testing.T, o options) *harness {
 	srv := httptest.NewServer(http.HandlerFunc(h.model))
 	t.Cleanup(srv.Close)
 
-	cfg := &config.Config{Socket: sock, APIKey: "k", Model: "test/test-model", Reasoning: "low", Intro: config.DefaultIntro,
+	cfg := &config.Config{Socket: sock, APIURL: srv.URL, APIKey: "k", Model: "test/test-model", Reasoning: "low", Intro: config.DefaultIntro,
 		AllowedSenders: map[string]bool{aliceID: true}, MaxConcurrency: 4, HistoryTurns: 10}
 	if o.cfg != nil {
 		o.cfg(cfg)
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	url := openrouter.BaseURL
-	openrouter.BaseURL = srv.URL
+	host := model.OpenRouterHost
+	u, _ := url.Parse(srv.URL)
+	if !o.otherAPI {
+		model.OpenRouterHost = u.Hostname() // the fake is OpenRouter
+	}
 	h.b = New(ctx, cfg)
-	openrouter.BaseURL = url
+	model.OpenRouterHost = host
 	if o.features != nil {
 		o.features(h.b)
 	}
@@ -155,9 +161,12 @@ func (h *harness) serve(c net.Conn) {
 	}
 }
 
-// model is the fake OpenRouter.
+// model is the fake model API, OpenRouter's unless otherAPI.
 func (h *harness) model(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodGet {
+		h.mu.Lock()
+		h.lists++
+		h.mu.Unlock()
 		params := `[]`
 		if h.tools {
 			params = `["tools"]`

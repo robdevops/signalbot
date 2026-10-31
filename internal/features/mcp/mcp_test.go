@@ -17,6 +17,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -41,7 +42,7 @@ func register(t *testing.T, config string, before ...func(*featuretest.Host)) (*
 	var log logx.Buffer
 	t.Cleanup(logx.SetOutput(&log, &log, true))
 	h := featuretest.New()
-	h.Bot.CallsTools = true
+	h.Bot.Model, h.Bot.CallsTools = "x/test-model", true
 	h.Settings["MCP_CONFIG"] = writeConfig(t, config)
 	for _, fn := range before {
 		fn(h)
@@ -169,6 +170,20 @@ func TestNoConfig(t *testing.T) {
 	}
 	if r := h.EnvRead(); !slices.Equal(r, []string{"MCP_CONFIG"}) {
 		t.Fatalf("read %v", r)
+	}
+}
+
+// With no model, no server is started, and the log says so.
+func TestNoModel(t *testing.T) {
+	var started atomic.Bool
+	srv := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { started.Store(true) }))
+	t.Cleanup(srv.Close)
+	h, log, err := register(t, `{"mcpServers":{"w":{"url":"`+srv.URL+`"}}}`, func(h *featuretest.Host) { h.Bot = feature.Info{} })
+	if err != nil || len(h.ToolGroups()) != 0 || started.Load() {
+		t.Fatalf("groups %+v, %v, started %v", h.ToolGroups(), err, started.Load())
+	}
+	if l := log.String(); l != "<4>MCP off: no model\n" {
+		t.Fatalf("log %q", l)
 	}
 }
 
@@ -467,7 +482,7 @@ func TestHelperProcess(t *testing.T) {
 		case "tools/list":
 			result = `{"tools":[{"name":"env"},{"name":"exit"}]}`
 		case "tools/call":
-			text, _ := json.Marshal("key=" + os.Getenv("OPENROUTER_API_KEY") + " marker=" + os.Getenv("MCP_HELPER"))
+			text, _ := json.Marshal("key=" + os.Getenv("MODEL_API_KEY") + " marker=" + os.Getenv("MCP_HELPER"))
 			result = `{"content":[{"type":"text","text":` + string(text) + `}]}`
 		}
 		fmt.Printf(`{"jsonrpc":"2.0","id":%d,"result":%s}`+"\n", *req.ID, result)
@@ -483,10 +498,11 @@ func TestHelperProcess(t *testing.T) {
 func TestStdio(t *testing.T) {
 	var log logx.Buffer
 	defer logx.SetOutput(&log, &log, true)()
-	t.Setenv("OPENROUTER_API_KEY", "secret-key")
+	t.Setenv("MODEL_API_KEY", "secret-key")
 	ctx := context.Background()
 	self, _ := json.Marshal(os.Args[0])
 	h := featuretest.New()
+	h.Bot.Model = "x/test-model"
 	h.Redactor = func(s string) string { return strings.ReplaceAll(s, "Alice", "redacted") }
 	h.Settings["MCP_CONFIG"] = writeConfig(t, `{"mcpServers":{"local":{"command":`+string(self)+
 		`,"args":["-test.run=^TestHelperProcess$"],"env":{"MCP_HELPER":"1"},"allowed_tools":["env","exit"]}}}`)

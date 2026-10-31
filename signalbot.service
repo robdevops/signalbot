@@ -54,7 +54,7 @@ ProcSubset=pid
 ProtectProc=invisible
 RestrictNamespaces=yes
 
-# Network: the signal-cli socket, plus HTTPS to LLM
+# Network: the signal-cli socket, plus the model's API
 RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
 
 # Resources

@@ -317,3 +317,92 @@ func TestTimersWaitForTheFirstConnect(t *testing.T) {
 		t.Fatal("the timer never ran")
 	}
 }
+
+// With no model, only what a hook answers is answered: anything else gets
+// no reply, no typing and no model request, and nothing is kept in history.
+func TestNoModel(t *testing.T) {
+	h := start(t, options{tools: true, cfg: func(c *config.Config) { c.NoModel = true }, features: func(b *Bot) {
+		if info := b.Info(feature.Chat{}); info.Model != "" || info.Images || info.CallsTools {
+			t.Errorf("info at registration %+v", info)
+		}
+		b.Tools(feature.ToolGroup{Names: []string{"served"}, Tools: []feature.Tool{{Server: "elsewhere:served"}}})
+		b.OnMessage(func(_ context.Context, m feature.Message) feature.Action {
+			switch {
+			case !m.Addressed:
+				return feature.Action{Context: "kept?"}
+			case m.Text == "/hi":
+				return feature.Action{Answer: "hello"}
+			case m.Text == "/tool":
+				return feature.Action{ToolChoice: "a_tool"}
+			}
+			return feature.Action{}
+		})
+		b.OnTurn(func(context.Context, feature.Turn) feature.Additions {
+			t.Error("OnTurn ran")
+			return feature.Additions{}
+		})
+	}})
+	h.receive(chatter("the moon is made of cheese"))
+	h.receive(atBot("what's new?"))
+	h.receive(dm("hello there"))
+	h.receive(dm("/tool"))
+	h.receive(dm("/hi"))
+	if s := h.nextSend(); s["message"] != "hello" {
+		t.Fatalf("sent %v", s)
+	}
+	h.b.Deliver(feature.Message{Chat: feature.Chat{GroupID: groupID}, Sender: aliceID, Name: "Alice", Text: "lunch is ready"})
+	if s := h.nextSend(); s["message"] != "lunch is ready" {
+		t.Fatalf("sent %v", s)
+	}
+	h.b.Deliver(feature.Message{Chat: feature.Chat{GroupID: groupID}, Sender: aliceID, Name: "Alice", Text: "@Botty are you there?"})
+	h.settle()
+	h.noSend()
+	h.mu.Lock()
+	lists := h.lists
+	h.mu.Unlock()
+	if n := len(h.requests()); n != 0 || lists != 0 {
+		t.Fatalf("%d model requests, %d model lists", n, lists)
+	}
+	if typing := h.calledWith("sendTyping"); len(typing) != 0 {
+		t.Fatalf("typing %v", typing)
+	}
+	for _, key := range []string{feature.Chat{GroupID: groupID}.Key(), feature.Chat{User: aliceID}.Key()} {
+		if hist := h.b.chats.History(key); len(hist) != 0 {
+			t.Fatalf("history %v", hist)
+		}
+	}
+	if logs := h.logs.String(); !strings.Contains(logs, "<5>no model: only commands are answered\n") || strings.Contains(logs, "<5>model ") || strings.Contains(logs, "left out") {
+		t.Fatalf("logs:\n%s", logs)
+	}
+}
+
+// On an API other than OpenRouter's there is no model list to read, so
+// images are off and tools on; a server tool for another provider is left
+// out with a warning, and a group left with no tools is dropped.
+func TestOtherAPI(t *testing.T) {
+	h := start(t, options{otherAPI: true, features: func(b *Bot) {
+		if info := b.Info(feature.Chat{}); info.Model != "test/test-model" || info.Images || !info.CallsTools {
+			t.Errorf("info at registration %+v", info)
+		}
+		b.Tools(feature.ToolGroup{Names: []string{"served"}, Listing: "served", Tools: []feature.Tool{{Server: "openrouter:served"}}})
+		g := group("alpha", "a_tool", nil)
+		g.Tools = append(g.Tools, feature.Tool{Server: "openrouter:other"})
+		b.Tools(g)
+	}})
+	r, _ := h.ask(dm("hello"))
+	equal(t, "tools", toolNames(r), []string{"a_tool"})
+	if sys := system(r); !strings.Contains(sys, "(tools: alpha)") || strings.Contains(sys, "served") {
+		t.Fatalf("system %q", sys)
+	}
+	if _, ok := r["provider"]; ok {
+		t.Fatalf("provider sent: %v", r["provider"])
+	}
+	h.mu.Lock()
+	lists := h.lists
+	h.mu.Unlock()
+	logs := h.logs.String()
+	if lists != 0 || !strings.Contains(logs, "<4>tool openrouter:served left out") || !strings.Contains(logs, "<4>tool openrouter:other left out") ||
+		!strings.Contains(logs, "images are off and tools on") {
+		t.Fatalf("%d model lists; logs:\n%s", lists, logs)
+	}
+}

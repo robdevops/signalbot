@@ -14,7 +14,7 @@ import (
 	"github.com/robdevops/signalbot/internal/kit/img"
 	"github.com/robdevops/signalbot/internal/kit/logx"
 	"github.com/robdevops/signalbot/internal/kit/txt"
-	"github.com/robdevops/signalbot/internal/openrouter"
+	"github.com/robdevops/signalbot/internal/model"
 	"github.com/robdevops/signalbot/internal/signal"
 )
 
@@ -35,9 +35,10 @@ const (
 )
 
 // respond acts on an addressed message: as act says, else by asking the
-// model and sending its reply. text is the message as the model sees it,
-// prompt(msg) for one message; tools are offered by msg.Text alone, what
-// was typed, never a sender's name or a quote.
+// model and sending its reply; with no model, only an Answer is sent. text
+// is the message as the model sees it, prompt(msg) for one message; tools
+// are offered by msg.Text alone, what was typed, never a sender's name or a
+// quote.
 func (b *Bot) respond(msg feature.Message, act feature.Action, text string) {
 	switch {
 	case act.Ignore:
@@ -45,6 +46,8 @@ func (b *Bot) respond(msg feature.Message, act feature.Action, text string) {
 	case act.Answer != "":
 		b.send(msg, act.Answer, nil, b.chats.Names(msg.Chat.Key()))
 		return
+	case b.ai == nil:
+		return // no model: no typing, no reply
 	case msg.Text == "" && len(b.turns) == 0:
 		return // nothing to answer
 	}
@@ -68,7 +71,7 @@ func (b *Bot) respond(msg feature.Message, act feature.Action, text string) {
 	}
 	offered, tools := b.offer(key, msg.Text, act.ToolChoice)
 	start := time.Now() // history expires from here, not from when it is stored
-	reply, err := b.ai.Ask(b.ctx, openrouter.Request{
+	reply, err := b.ai.Ask(b.ctx, model.Request{
 		System:     b.system(offered, systems),
 		History:    b.chats.History(key),
 		Text:       strings.TrimSpace(text),
@@ -78,7 +81,7 @@ func (b *Bot) respond(msg feature.Message, act feature.Action, text string) {
 	})
 	stop()
 	if err != nil {
-		logx.Errorf("OpenRouter error after %.1fs: %v", time.Since(start).Seconds(), err)
+		logx.Errorf("model error after %.1fs: %v", time.Since(start).Seconds(), err)
 		b.send(msg, sorry, nil, b.chats.Names(key))
 		return
 	}

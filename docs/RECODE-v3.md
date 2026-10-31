@@ -6,7 +6,7 @@
 - **The core never mirrors a feature,** including features long removed. Delete any feature and the core doesn't change.
 - **Plain Go, no ceremony.** Use concrete types and structs freely. Add an interface only where there are two real implementations, or a test needs a fake. Define each type once and use it everywhere, rather than copying it per package. When a function needs many inputs, pass a typed struct, never a map or a long list of positional arguments. Avoid wrappers and adapters that only pass calls through.
 
-Out of scope: chat networks other than Signal, and providers other than OpenRouter. The ports don't preclude them; they get their own plan if wanted.
+Out of scope: chat networks other than Signal. The ports don't preclude them; they get their own plan if wanted. *Added later: providers other than OpenRouter, through any chat completions API in OpenAI's format (`MODEL_API_URL`), and running with no model (section 1, item 5, and section 10).*
 
 ## 1. Core spec: what the bot does with no features
 1. **Receive:** read signal-cli's JSON-RPC socket, and reconnect with backoff if it drops. The bot's own messages are ignored.
@@ -22,14 +22,18 @@ Out of scope: chat networks other than Signal, and providers other than OpenRout
 4. **Answer an addressed message:**
    - show typing until the reply is ready;
    - build the prompt: the base rules, `MODEL_SYSTEM_PROMPT`, `INTRO`, the chat's history, the message (with the sender's name in groups and any quote, escaped and capped);
-   - ask the model. If it fails, log the "OpenRouter error" line, reply "Sorry, I couldn't get an answer right now.", and add nothing to history;
+   - ask the model. If it fails, log the "model error" line, reply "Sorry, I couldn't get an answer right now.", and add nothing to history;
    - send the reply: strip the bot's own @name, link @Name to real mentions, split at 2,000 characters, and cap the whole reply.
-5. **Ask the model** through OpenRouter:
-   - with `data_collection: deny`, the `MODEL_REASONING` effort, and TLS 1.3;
+5. **Ask the model** through a chat completions API in OpenAI's format at `MODEL_API_URL`, OpenRouter's by default, with `MODEL_API_KEY` if set:
+   - TLS 1.3 for `https://`;
+   - on OpenRouter (host `openrouter.ai`), with `data_collection: deny`, the `MODEL_REASONING` effort as `reasoning.effort`, and `usage.include` for the cost; elsewhere with none of these, only `reasoning_effort` unless `MODEL_REASONING` is `none`;
    - a network error, 429 or 5xx gets one retry, and an error body is reduced to its message;
-   - the cost is logged;
+   - the tokens are logged, and the cost when the API reports it;
    - the tool loop takes at most 5 rounds and 3 minutes per reply, and 4 pictures;
-   - at startup, the model's capabilities (images, tools) are read, and tools are offered only if it can call them. If the check fails or the model isn't listed, images are off and tools stay on.
+   - at startup, the model's capabilities (images, tools) are read from OpenRouter's model list, and tools are offered only if it can call them. If the check fails, the model isn't listed, or the API isn't OpenRouter's (one startup line says so), images are off and tools stay on;
+   - a server tool (`provider:name`) is offered only when the API is that provider's (`openrouter` for OpenRouter); otherwise it is left out with one startup warning naming it, and a tool group left with no tools is dropped. The core never names a server tool.
+
+   **With no model** (neither `MODEL_API_URL` nor `MODEL_API_KEY` set), startup logs "no model: only commands are answered" and no capabilities are read: `Info.Model` is "", and images and tool calling are off. A message a hook answers is answered, and a delivered plain text is posted; anything else addressed gets no reply, no typing and no model request, so `OnTurn`, `OnReply` and tool groups are never used. No history is kept at all: no turns, no `Context`, no delivered text.
 6. **Remember:** a short history per chat (`HISTORY_TURNS`). Each entry is dropped after 24 hours, or sooner when the chat's disappearing-messages timer runs out. It lives in memory only. When a chat's history is gone, everything kept about that chat goes too.
 7. **Run timers** (section 5).
 8. **Stay safe under load:**
@@ -55,7 +59,7 @@ A message with no text (only a photo or sticker) has nothing to answer in the co
 ```
 cmd/signalbot/          main.go (wiring), features.go (one line per feature)
 internal/signal/        the signal-cli client, names and mentions
-internal/openrouter/    the model client and the tool loop
+internal/model/         the model client (OpenRouter or another chat completions API) and the tool loop
 internal/chats/         per-chat state: history, dedupe, mention names, the mailbox
 internal/timers/        one-shot timers
 internal/config/        settings from the environment, each name recorded for the docs test
@@ -86,7 +90,7 @@ The core's lifecycle has four stages. Each port is one stage; nothing else is a 
 
 **Services the host offers:**
 - `Env`: a feature's own settings, recorded for the docs test.
-- `Info`: the bot's name in a chat, its version, the model, whether it takes images and can call tools, and the names of the tools. All but the name and the tools are known when features register.
+- `Info`: the bot's name in a chat, its version, the model ("" with no model), whether it takes images and can call tools, and the names of the tools. All but the name and the tools are known when features register.
 - `Media(ctx, msg, i)`: the bytes of a message's attachment. The core fills in each item's label (a sticker's emoji and pack) when it loads the message.
 - `Deliver(Message)`: act on a message as if its sender had just posted it in its chat, through the chat's mailbox. Inside the message's slot:
   - in a group, the sender must still be a member (signal-cli's `listGroups`); otherwise it's dropped and logged at info, with no content;
@@ -108,7 +112,7 @@ type Picture   struct{ Data []byte; Caption, HistoryNote string }
 type ToolGroup struct{ Names []string; Listing, System string; Tools []Tool; Keywords *regexp.Regexp }
 type Tool      struct{ Name, Description string; Schema json.RawMessage; Server string; Run func(ctx context.Context, args string) (string, []Picture, error) }
 ```
-- **`Tool`:** a function tool has `Schema` and `Run`, which returns text and any pictures (each with its caption and history note). A server tool, run by OpenRouter itself, has only `Server` (for example `openrouter:web_search`). A `ToolChoice` is required through `tool_choice` until that tool's result is in, then released.
+- **`Tool`:** a function tool has `Schema` and `Run`, which returns text and any pictures (each with its caption and history note). A server tool, run by the model's provider itself, has only `Server`, as `provider:name` (for example `openrouter:web_search`), and is offered only when the model's API is that provider's. A `ToolChoice` is required through `tool_choice` until that tool's result is in, then released.
 - **`ToolChoice`** is the model API's own concept, not a chat-command field.
 - **`Context`** is "keep this text in history", which the core does under its own expiry rules.
 - **`ToolsUsed`** is what the tool loop reports.
@@ -140,7 +144,7 @@ At(name string, t time.Time, fn func(ctx context.Context, due time.Time)) (cance
 | Feature | Ports | Owns |
 |---|---|---|
 | `example` | command helper | `/example` |
-| `websearch` | `Tools` | OpenRouter's web search tool, `MODEL_SEARCH`, the "web search on" log line |
+| `websearch` | `Tools`, `Info` | OpenRouter's web search tool (left out by the core on another API, not offered with no model), `MODEL_SEARCH`, the "web search on" log line (only when the core kept the tool) |
 | `groupctx` | `OnMessage` returning `Context` | `GROUP_CONTEXT`, the `[image]`/`[sticker]` notes |
 | `vision` | `OnTurn`, `Info`, `Media` | answering photo- or sticker-only messages, the image and sticker notes (using the labels the core loads), the "images aren't kept" history note |
 | `mcp` | `Tools` (one group per server), command helper returning `ToolChoice` | `MCP_CONFIG` and every server field: `url`, `headers`, `command`, `args`, `env`, `allowed_tools`, `blocked_tools`, `disabled`, `chat_commands` (`tool`, `require_arg`), and the new optional `instructions` (the MCP spec's own term; else the server's handshake `instructions`, capped at 1,000 characters; `""` for none) and `keywords`; the "MCP tools:" and "chat commands:" startup lines |
@@ -214,10 +218,18 @@ In `features.go`, `websearch`, `charts` and `mcp` stay in that order: it's the o
 - The donut chart is renamed pie: the tool is `make_pie_chart`, still drawn as a ring with the total in the middle. Its description still mentions donuts.
 - Settings: `REASONING` becomes `MODEL_REASONING`, `SYSTEM_PROMPT` becomes `MODEL_SYSTEM_PROMPT`, and `LOG_LEVEL` is dropped.
 - Logging (section 1): journald priorities 2–7, always written, with the `<N>` prefix only under journald; 5–7 to stdout and 2–4 to stderr. Each addressed message is logged at info as "received group chat" or "received dm", with no name or content, and no other line names anyone (only a dropped DM's sender ID).
-- The websearch feature logs "web search on", and the startup line drops `search …`. The "OpenRouter error" line keeps today's wording.
+- The websearch feature logs "web search on", and the startup line drops `search …`. The "OpenRouter error" line keeps today's wording (until it becomes "model error", below).
 - When the model can't call tools, the core's warning says "tools are off" in place of naming web search, charts and MCP; it replaces today's separate "chat commands are off" warning too.
 - The tools line ends with the full list of tools, not only those offered this turn: "If asked what tools you have:" and the same names as `{tools}` (web search, charts, every MCP tool and `/command`). So "what tools do you have?" names everything, including keyword-gated tools.
 - Chat commands are listed in their MCP server's item in the tools line, not in a separate "chat commands" item. `{tools}` itself is unchanged.
+
+**Approved later (a configurable provider, and running with no model):**
+- `internal/openrouter` is renamed `internal/model`, with the same API and no interface.
+- `OPENROUTER_API_KEY` becomes `MODEL_API_KEY`, with no fallback, and is no longer required. `MODEL_API_URL` is new, defaulting to `https://openrouter.ai/api/v1`.
+- OpenRouter's extras (`provider.data_collection`, `usage.include`, the `reasoning` object) go only to OpenRouter; elsewhere reasoning goes as `reasoning_effort`, unless `none`. Only OpenRouter's model list is read; elsewhere images are off and tools on, with one startup line. Server tools are offered only to the provider their prefix names, otherwise left out with one startup warning naming the tool.
+- "OpenRouter error" becomes "model error" in the log, and an API error reads "status N: message". The cost is logged only when the API reports it.
+- With neither `MODEL_API_KEY` nor `MODEL_API_URL`, the bot runs with no model (section 1, item 5): only commands and scheduled plain text are answered, nothing is kept in history, `mcp` connects to no server and logs "MCP off: no model", `websearch` offers nothing and logs nothing, and `/example` says "no model" where it names the model and leaves out what only the model does.
+- For OpenRouter users nothing else changes: the same requests, prompts and golden files.
 
 ## 11. Expected size
 About +650 to +850 lines over 4,185, checked after the core (step 2):
@@ -237,7 +249,7 @@ Steps 0–5 are done as planned; the sections above were synced with the code wi
 | internal/chats | 340 |
 | internal/config | 97 |
 | internal/feature | 224 |
-| internal/openrouter | 335 |
+| internal/openrouter (now internal/model) | 335 |
 | internal/signal | 1061 |
 | internal/timers | 131 |
 | internal/kit (httpx, img, logx, txt) | 243 |

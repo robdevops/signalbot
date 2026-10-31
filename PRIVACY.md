@@ -4,7 +4,7 @@ What happens to your messages when this bot is in a chat. For how the bot is bui
 
 ## What leaves your machine
 
-When the bot answers a message, it sends this to [OpenRouter](https://openrouter.ai), which passes it to the model's provider:
+When the bot answers a message, it sends this to the model's API: [OpenRouter](https://openrouter.ai) by default, which passes it to the model's provider, or the API you set in `MODEL_API_URL` (see [other providers](README.md#other-providers)). With [no model](README.md#no-model), nothing is sent anywhere:
 
 - its instructions (the built-in prompt, plus `MODEL_SYSTEM_PROMPT`, `INTRO` and any MCP server's `instructions`);
 - the chat's recent messages, with the bot's replies: at most `HISTORY_TURNS` × 2 messages, none older than a day. In a group this is the whole conversation, including messages not addressed to the bot, so it can answer "what do you think?" about something just said; set `GROUP_CONTEXT=false` to keep only the messages addressed to it;
@@ -12,16 +12,17 @@ When the bot answers a message, it sends this to [OpenRouter](https://openrouter
 - the quoted text, when someone replies to one of the bot's messages, or mentions the bot in reply to someone else.
 - photos or a sticker in the message (a sticker also by its emoji and pack title), and the thumbnail of a quoted photo, when the model accepts images (the bot checks this at startup).
 
-With web search on (`MODEL_SEARCH`), the model decides whether to search and writes the query itself. The query can contain anything the model was sent (see above), such as a name or a phrase from a message, and goes to the search service OpenRouter uses.
+With web search on (`MODEL_SEARCH`), the model decides whether to search and writes the query itself. The query can contain anything the model was sent (see above), such as a name or a phrase from a message, and goes to the search service OpenRouter uses. Web search runs only on OpenRouter.
 
 Charts are drawn on the bot's own machine from the numbers the model passes in; nothing extra leaves it.
 
-With MCP tools configured, the model may call them. A call sends the arguments the model wrote, which can quote anything above, to that tool's MCP server, and the tool's result goes to OpenRouter with the next request.
+With MCP tools configured, the model may call them. A call sends the arguments the model wrote, which can quote anything above, to that tool's MCP server, and the tool's result goes to the model's API with the next request.
 
-Every request tells OpenRouter to use only model providers that do not collect data (`data_collection: deny`). That is a request the bot cannot check or enforce, so read OpenRouter's policy and the model provider's.
+Every request to OpenRouter tells it to use only model providers that do not collect data (`data_collection: deny`). That is a request the bot cannot check or enforce, so read OpenRouter's policy and the model provider's. Other APIs get no such request, since it is OpenRouter's own; read their data policy. A local server, such as Ollama on the same machine, keeps everything on it.
 
 ## What the bot keeps
 
+- **With no model, no history at all.** The bot keeps no messages, not even group context, since nothing would read them.
 - **History lives in memory only.** It is kept per chat, up to `HISTORY_TURNS` exchanges and 500 chats, for at most 24 hours, or until a shorter disappearing-messages timer runs out. A restart clears it, and the bot never writes it to disk. In groups it holds messages not addressed to the bot too (their text only), unless `GROUP_CONTEXT=false`. Photos are not kept at all: the history notes that one was sent, and the bot fetches a photo from signal-cli only while answering a message that includes it.
 - **No swap or core dumps.** The included systemd unit and Docker command forbid both, so history cannot reach disk that way.
 - **Memory is freed, not wiped.** An expired message is dropped and Go's garbage collector reclaims its memory, but the bytes may linger until overwritten, and someone with root access to the host could read them from the running process.
@@ -32,7 +33,7 @@ Every request tells OpenRouter to use only model providers that do not collect d
 
 Every level, debug included, is always written; there is no setting to turn any of it down.
 
-- **A message addressed to the bot:** "received group chat" or "received dm", with no name, ID or text; after the answer, a line with the time taken, tokens used and cost, again with no name or ID.
+- **A message addressed to the bot:** "received group chat" or "received dm", with no name, ID or text; after the answer, a line with the time taken, tokens used and cost (when the API reports it), again with no name or ID.
 - **Never the text of any message,** nor errors that quote one.
 - **A message not addressed to the bot:** nothing, not even a note that it arrived.
 - **A DM from someone not in `SIGNAL_DM_USER_IDS`:** their ID, every time, never a name or text. The same goes for a scheduled run in the DM of a user since removed from the list.

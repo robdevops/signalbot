@@ -59,10 +59,14 @@ var unsafeToolChars = regexp.MustCompile(`[^A-Za-z0-9_-]`)
 
 // Register starts the servers in MCP_CONFIG, if set, and offers their tools
 // on h. They run as long as the bot: when it stops, local servers get
-// SIGTERM and the bot waits for them.
+// SIGTERM and the bot waits for them. With no model, none is started.
 func Register(h feature.Host) error {
 	path := h.Env("MCP_CONFIG", "")
 	if path == "" {
+		return nil
+	}
+	if h.Info(feature.Chat{}).Model == "" {
+		logx.Warnf("MCP off: no model")
 		return nil
 	}
 	servers, err := load(path)

@@ -2,12 +2,12 @@
 
 Step 1 of [RECODE-v3.md](RECODE-v3.md) pins the bot's behaviour at `e40dc5f` with
 behaviour scenarios that touch only the edges: messages in on a fake signal-cli
-socket, then what the bot sends back, what a fake OpenRouter receives, and the log.
+socket, then what the bot sends back, what a fake model API receives, and the log.
 
 All of them are in `cmd/signalbot` (package main), since step 3 moved them there from the module root:
 
 - `scenario_test.go`: the scenarios and the two golden prompt tests. They use only the harness.
-- `scenario_fakes_test.go`: the fakes and the harness API (fake signal-cli, fake OpenRouter, two fake MCP servers plus an optional third whose tools fail, the captured log). It names nothing in the bot's code.
+- `scenario_fakes_test.go`: the fakes and the harness API (fake signal-cli, a fake model API that is OpenRouter's or another provider's, two fake MCP servers plus an optional third whose tools fail, the captured log). It names nothing in the bot's code.
 - `scenario_start_test.go`: `startBot`, which wires one version of the bot to the fakes. It is the only file that names the bot's code, and the only one rewritten for the new core.
 - `testdata/prompt_full.txt` and `testdata/prompt_nofeatures.txt`: the golden system prompts. `go test ./cmd/signalbot -run Golden -update` rewrites them.
 
@@ -158,5 +158,5 @@ TestScenarioHistoryAcrossTurns, TestScenarioHistoryIsPerChat, TestScenarioHistor
 - **The 15-second contact reload limit.** `startBot` lowers it to `contactReloadGap` (50ms), so a scenario can see a reload after a group change, or after an unknown mention once it has waited out the gap. A burst of group changes costing one reload depends on that timing, so it isn't asserted.
 - **Typing every 10 seconds.** Only the first typing indicator, before the reply, and that none follows the reply, are asserted.
 - **Day-long limits** (contacts over a day old, the 24-hour history cap, the dedupe window ending) need the clock moved; they stay unit tests.
-- **Log wording.** Scenarios check only lines with no approved change: the stranger's id with "not in SIGNAL_DM_USER_IDS", "OpenRouter error", "at capacity", "truncated", the cost, "tools are off", "images are off", "signal-cli read failed", signal-cli's error text, and each line's priority. "mention from Alice(id)" is not pinned, as it becomes "received group chat".
+- **Log wording.** Scenarios check only lines with no approved change: the stranger's id with "not in SIGNAL_DM_USER_IDS", "OpenRouter error" (now "model error", approved with `MODEL_API_URL`), "at capacity", "truncated", the cost, "tools are off", "images are off", "signal-cli read failed", signal-cli's error text, and each line's priority. "mention from Alice(id)" is not pinned, as it becomes "received group chat".
 - **At `e40dc5f` with `LOG_LEVEL=debug`,** an unaddressed group message that mentions someone whose name the bot doesn't know logs "unresolved mention of <id>" at debug. The spec says an unaddressed message is never logged, so TestScenarioUnaddressedMessagesAreNeverLogged uses a known name. The new core, which always writes debug, must not log it.

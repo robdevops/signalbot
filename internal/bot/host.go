@@ -26,7 +26,16 @@ func (b *Bot) OnTurn(fn func(context.Context, feature.Turn) feature.Additions) {
 
 func (b *Bot) OnReply(fn func(feature.Turn, *feature.Reply)) { b.replies = append(b.replies, fn) }
 
-func (b *Bot) Tools(g feature.ToolGroup) { b.groups = append(b.groups, g) }
+// Tools keeps g with only the tools the model's API can run, and drops a
+// group whose tools it can run none of.
+func (b *Bot) Tools(g feature.ToolGroup) {
+	if b.ai != nil && len(g.Tools) > 0 {
+		if g.Tools = b.ai.Usable(g.Tools); len(g.Tools) == 0 {
+			return
+		}
+	}
+	b.groups = append(b.groups, g)
+}
 
 func (b *Bot) At(name string, t time.Time, fn func(context.Context, time.Time)) (func(), error) {
 	return b.timers.At(name, t, fn)
@@ -37,8 +46,12 @@ func (b *Bot) At(name string, t time.Time, fn func(context.Context, time.Time)) 
 func (b *Bot) Env(key, def string) string { return config.Env(key, def) }
 
 func (b *Bot) Info(feature.Chat) feature.Info {
-	return feature.Info{Name: b.sig.BotName(), Version: b.cfg.Version, Model: b.cfg.Model,
+	info := feature.Info{Name: b.sig.BotName(), Version: b.cfg.Version, Model: b.cfg.Model,
 		Images: b.images, CallsTools: b.callsTools, Tools: b.toolNames()}
+	if b.ai == nil {
+		info.Model = ""
+	}
+	return info
 }
 
 func (b *Bot) Go(fn func(context.Context)) {
@@ -128,5 +141,7 @@ func (b *Bot) delivered(msg feature.Message) {
 		return
 	}
 	b.send(msg, msg.Text, nil, known)
-	b.chats.Add(key, time.Now(), msg.Expires, chats.Entry{Role: "user", Content: cmp.Or(msg.Name, "someone") + ": " + msg.Text})
+	if b.ai != nil { // with no model, nothing would read it
+		b.chats.Add(key, time.Now(), msg.Expires, chats.Entry{Role: "user", Content: cmp.Or(msg.Name, "someone") + ": " + msg.Text})
+	}
 }
