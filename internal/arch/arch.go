@@ -1,5 +1,4 @@
-// Package arch measures the code and holds the tests that keep its shape:
-// file and package sizes, and which packages may import which.
+// Package arch measures the code and holds the tests that keep its shape.
 package arch
 
 import (
@@ -8,13 +7,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-)
-
-// Size limits. A file over FileLimit or a package over PackageLimit fails
-// the tests, unless it is listed in the exceptions there.
-const (
-	FileLimit    = 1000
-	PackageLimit = 1500
 )
 
 // File is one Go file's line count.

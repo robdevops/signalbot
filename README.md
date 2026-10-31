@@ -74,7 +74,7 @@ The bot runs as a dynamic user (`DynamicUser=yes`) in the `signal-cli` Unix grou
    ```
 2. Build and install:
    ```
-   /usr/local/go/bin/go build ./cmd/signalbot
+   /usr/local/go/bin/go build
    sudo install -m 755 signalbot /usr/local/bin/signalbot
    sudo cp signalbot.service /etc/systemd/system/
    sudo systemctl daemon-reload
@@ -114,39 +114,20 @@ Add the bot's account to a group and @mention it, reply to one of its messages, 
 
 ## Configuration
 
-**Signal**
-
 | Variable | Default | Description |
 |---|---|---|
 | `SIGNALCLI_SOCKET` | required | Unix socket path, or `host:port` for TCP |
-| `SIGNAL_DM_USER_IDS` | empty | UUIDs/numbers allowed to DM the bot, separated by commas or whitespace |
-
-**Model**
-
-| Variable | Default | Description |
-|---|---|---|
 | `OPENROUTER_API_KEY` | required | [OpenRouter](https://openrouter.ai) API key |
-| `MODEL_API_URL` | OpenRouter | Another OpenAI-compatible API to use instead, e.g. `http://localhost:11434/v1` for Ollama. Web search is OpenRouter's, so it is off elsewhere |
-| `MODEL_API_KEY` | `OPENROUTER_API_KEY` | That API's key, if it needs one |
 | `MODEL` | `deepseek/deepseek-v4.1-flash-1017` | OpenRouter model name, as `provider/model` |
-| `MODEL_SEARCH` | `true` | Lets the model search the web (OpenRouter's web search tool) when it decides to; searches are billed. Accepts `true`/`false`, `yes`/`no`, `on`/`off`, `1`/`0` |
 | `REASONING` | `low` | Reasoning effort, e.g. `low`, `medium`, `high` (`none` to omit) |
-
-**Core**
-
-| Variable | Default | Description |
-|---|---|---|
+| `MODEL_SEARCH` | `true` | Lets the model search the web (OpenRouter's web search tool) when it decides to; searches are billed. Accepts `true`/`false`, `yes`/`no`, `on`/`off`, `1`/`0` |
+| `SIGNAL_DM_USER_IDS` | empty | UUIDs/numbers allowed to DM the bot, separated by commas or whitespace |
 | `SYSTEM_PROMPT` | empty | Extra instructions, appended to the built-in prompt (which keeps answers short and Signal-sized) |
+| `INTRO` | built-in sentence | Overrides the self-introduction; `{name}`, `{model}` (without any OpenRouter `provider/` prefix) and `{tools}` (`web search`, or `none`) are substituted |
 | `MAX_CONCURRENCY` | `32` | Conversations in flight at once; messages beyond this are dropped |
 | `HISTORY_TURNS` | `10` | Exchanges remembered per chat (`HISTORY_TURNS` × 2 messages) |
-| `INTRO` | built-in sentence | Overrides the self-introduction; `{name}`, `{model}` (without any OpenRouter `provider/` prefix) and `{tools}` (the tool groups by name, e.g. `web search, charts`, or `none`) are substituted |
-| `LOG_LEVEL` | `info` | `debug`, `info`, `warn` or `error` |
-
-**Features**
-
-| Variable | Default | Description |
-|---|---|---|
 | `GROUP_CONTEXT` | `true` | Remember group messages not addressed to the bot as context, so "what do you think @bot" works without replying to the message; they are never logged |
+| `LOG_LEVEL` | `info` | `debug`, `info`, `warn` or `error` |
 | `MCP_CONFIG` | empty | Path of an MCP servers file; see [MCP tools](#mcp-tools) |
 
 The default `INTRO` is: `hi, I'm {name}, your open source assistant running {model} (tools: {tools}). I respond to @mentions and replies to my messages. See https://github.com/robdevops/signalbot/blob/main/README.md for details.`

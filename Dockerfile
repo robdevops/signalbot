@@ -12,8 +12,8 @@ WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
 ENV GOPROXY=off
-COPY . ./
-RUN go build -trimpath -ldflags "-s -w -X main.version=${VERSION}" -o /signalbot ./cmd/signalbot
+COPY *.go ./
+RUN go build -trimpath -ldflags "-s -w -X main.version=${VERSION}" -o /signalbot .
 
 # distroless/static: no shell or package manager, CA certificates for TLS to
 # OpenRouter, and the unprivileged nonroot user. The binary stays root-owned, so the
