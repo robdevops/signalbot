@@ -30,7 +30,7 @@ var donutToolSchema = json.RawMessage(`{
       "properties": {"label": {"type": "string"}, "value": {"type": "number", "minimum": 0}}
     }},
     "unit": {"type": "string", "description": "Prefix for the total in the centre, e.g. \"$\""},
-    "suffix": {"type": "string", "description": "Suffix for the total, e.g. \"B\""},
+    "suffix": {"type": "string", "description": "The values' scale, K, M, B or T (e.g. \"B\" if 54.3 means 54.3 billion), or a unit such as \"kg\". Large totals are shortened for you"},
     "center": {"type": "string", "description": "Text for the centre instead of the total"}
   }
 }`)
@@ -92,13 +92,37 @@ func (s *donutSpec) share(sl donutSlice) string {
 	return fmt.Sprintf("%.1f%%", sl.Value/s.total*100)
 }
 
-// centerText is the total, e.g. "$127.6B", unless the model gave its own.
+// centerText is the total, e.g. "$127.6B", unless the model gave its own. A
+// K, M, B or T suffix scales the values, unless that would make the total
+// absurd (1e15 or more), which means the values were already raw.
 func (s *donutSpec) centerText() string {
 	if s.Center != "" {
 		return s.Center
 	}
-	t := strconv.FormatFloat(math.Round(s.total*10)/10, 'f', -1, 64)
-	return s.Unit + t + s.Suffix
+	v, suffix := s.total, s.Suffix
+	if m, ok := map[string]float64{"K": 1e3, "M": 1e6, "B": 1e9, "T": 1e12}[strings.ToUpper(strings.TrimSpace(suffix))]; ok {
+		if v*m < 1e15 {
+			v *= m
+		}
+		suffix = ""
+	}
+	if suffix != "" {
+		return s.Unit + oneDecimal(v) + suffix
+	}
+	for _, d := range []struct {
+		div    float64
+		letter string
+	}{{1e12, "T"}, {1e9, "B"}, {1e6, "M"}, {1e3, "K"}} {
+		if v >= d.div {
+			return s.Unit + oneDecimal(v/d.div) + d.letter
+		}
+	}
+	return s.Unit + oneDecimal(v)
+}
+
+// oneDecimal formats v with at most one decimal, e.g. 127.6 or 85.
+func oneDecimal(v float64) string {
+	return strconv.FormatFloat(math.Round(v*10)/10, 'f', -1, 64)
 }
 
 func (s *donutSpec) summary() string {

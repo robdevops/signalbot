@@ -104,3 +104,21 @@ func TestDonutToolInLoop(t *testing.T) {
 		t.Fatalf("got %q, %d images, %v", out, len(images), err)
 	}
 }
+
+// The total is shortened, and a scale suffix on values that were already raw
+// is not applied twice.
+func TestDonutTotal(t *testing.T) {
+	for args, want := range map[string]string{
+		`"unit":"$","suffix":"B","slices":[{"label":"a","value":54300000000},{"label":"b","value":55117000000}]`: "$109.4B",
+		`"unit":"$","suffix":"B","slices":[{"label":"a","value":54.3},{"label":"b","value":30.7}]`:               "$85B",
+		`"suffix":"m","slices":[{"label":"a","value":1500},{"label":"b","value":500}]`:                           "2B",
+		`"slices":[{"label":"a","value":1200000},{"label":"b","value":300000}]`:                                  "1.5M",
+		`"slices":[{"label":"a","value":12},{"label":"b","value":0.55}]`:                                         "12.6",
+		`"suffix":"kg","slices":[{"label":"a","value":12},{"label":"b","value":0.5}]`:                            "12.5kg",
+	} {
+		s, err := parseDonut(`{"title":"T",` + args + `}`)
+		if err != nil || s.centerText() != want {
+			t.Errorf("%s: got %q, want %q (%v)", args, s.centerText(), want, err)
+		}
+	}
+}

@@ -603,7 +603,7 @@ func (b *Bot) respond(req *Request) {
 			b.chartReplied(req.Key, asked || res.Charted)
 		}
 		gone := historyExpiry(start, req.Expires)
-		b.addHistory(req.Key, ChatMsg{Role: "user", Content: req.Prompt, Expires: gone}, ChatMsg{Role: "assistant", Content: res.Text, Expires: gone})
+		b.addHistory(req.Key, ChatMsg{Role: "user", Content: req.Prompt, Expires: gone}, ChatMsg{Role: "assistant", Content: sentImages(res) + res.Text, Expires: gone})
 	}
 
 	if n := len([]rune(res.Text)); n > maxReplyRunes {
@@ -715,6 +715,20 @@ func (b *Bot) toolsText() string {
 		tools = []string{"web search", "charts"}
 	}
 	return strings.Join(append(tools, b.toolNames...), ", ")
+}
+
+// sentImages notes in the history the charts and images a reply sent, which
+// the model would otherwise not know it did, e.g. "[sent the chart "NVDA"]".
+func sentImages(res Completion) string {
+	var note string
+	for i := range res.Images {
+		if i < len(res.Captions) && res.Captions[i] != "" {
+			note += "[sent the chart " + strconv.Quote(res.Captions[i]) + "]\n"
+		} else {
+			note += "[sent an image]\n"
+		}
+	}
+	return note
 }
 
 // chartFollowUps is how many replies after one that asked for or drew a chart

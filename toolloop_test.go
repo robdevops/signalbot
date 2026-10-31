@@ -371,3 +371,11 @@ func TestChartFollowUps(t *testing.T) {
 		t.Fatal("erasing the history kept the chart tools on")
 	}
 }
+
+// The history records the charts a reply sent, so the model knows it did.
+func TestSentImagesNote(t *testing.T) {
+	res := Completion{Images: [][]byte{{1}, {2}}, Captions: []string{"Apple revenue — Q3", ""}}
+	if got := sentImages(res); got != "[sent the chart \"Apple revenue — Q3\"]\n[sent an image]\n" {
+		t.Fatalf("got %q", got)
+	}
+}
