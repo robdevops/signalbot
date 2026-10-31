@@ -132,13 +132,13 @@ func (s *chartSpec) axisOf(sr chartSeries) *chartAxis {
 // chartNote opens a chart tool's result for the model.
 const chartNote = "Chart attached, captioned with its title and subtitle. Your text goes in a separate message after it: one short sentence on what stands out, without listing the data. "
 
-// chartCaption is the text sent with a chart: its title, and its subtitle on
-// a second line.
+// chartCaption is the text sent with a chart: its title and subtitle on one
+// line.
 func chartCaption(title, subtitle string) string {
 	if subtitle == "" {
 		return title
 	}
-	return title + "\n" + subtitle
+	return title + " — " + subtitle
 }
 
 // decodeArgs decodes a tool's arguments into v, with an error that tells the

@@ -336,7 +336,7 @@ func TestChartCaption(t *testing.T) {
 	if got := chartCaption("NVDA vs AMD", ""); got != "NVDA vs AMD" {
 		t.Fatalf("no subtitle: %q", got)
 	}
-	if got := chartCaption("NVDA vs AMD", "Past month"); got != "NVDA vs AMD\nPast month" {
+	if got := chartCaption("NVDA vs AMD", "Past month"); got != "NVDA vs AMD — Past month" {
 		t.Fatalf("with subtitle: %q", got)
 	}
 }
