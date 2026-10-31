@@ -559,7 +559,7 @@ func renderChart(s *chartSpec) ([]byte, error) {
 	case two:
 		right, labelX = 920.0, 1010.0 // room for the right axis's labels
 	case single:
-		right = 1220 // no end label: the plot takes the width
+		right = 1140 // room for the current value beside the end dot
 	}
 	cv := &canvas{img: image.NewRGBA(image.Rect(0, 0, W, H))}
 	cv.rect(chartBG, 0, 0, W, H)
@@ -728,10 +728,20 @@ func drawArea(cv *canvas, s *chartSpec, px func(time.Time) float64, top, bottom,
 		cv.text(markFace, chartTitle, tx, base, align, lines[0])
 		cv.text(markFace, chartTitle, tx, base+22, align, lines[1])
 	}
+	// The current value beside the end dot, in the line's colour.
 	last := pts[len(pts)-1]
 	x, y := px(last.t), a.y(last.Value)
 	cv.fill(chartBG, circle(x, y, 7.5))
 	cv.fill(c, circle(x, y, 5.5))
+	valueFace := face(chartFonts.bold, 20)
+	defer valueFace.Close()
+	decimals := 2
+	if a.Mode == "change" {
+		decimals = 1
+	}
+	y = min(max(y, 100), bottom-14) // keep both lines inside the image
+	cv.text(valueFace, c, x+14, y-2, 0, a.format(last.Value, decimals))
+	cv.text(markFace, chartMuted, x+14, y+20, 0, last.t.Format("2 Jan 2006"))
 }
 
 // textWidth is how wide s is in pixels in face f.
