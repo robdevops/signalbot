@@ -469,14 +469,14 @@ func TestSystemPromptLayering(t *testing.T) {
 	sig.selfID.Store(self)
 	b := NewBot(context.Background(), cfg, sig, nil)
 
-	p := b.systemPrompt()
+	p := b.systemPrompt(true)
 	for _, want := range []string{"single line", "2000 characters", "Never write your own name with an @"} {
 		if !strings.Contains(p, want) {
 			t.Errorf("built-in prompt missing %q", want)
 		}
 	}
 	cfg.ExtraPrompt = "Talk like a pirate."
-	p = b.systemPrompt()
+	p = b.systemPrompt(true)
 	if !strings.HasPrefix(p, basePrompt+"\n") || !strings.Contains(p, "\nTalk like a pirate.\nIf asked to introduce yourself") {
 		t.Fatalf("SYSTEM_PROMPT must be appended to the built-in prompt, not replace it: %q", p)
 	}

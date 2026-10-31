@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"maps"
 	"net/http"
+	"regexp"
 	"slices"
 	"sort"
 	"strconv"
@@ -74,6 +75,7 @@ type Bot struct {
 	toolNames   []string // MCP tools the model may call, for {tools}
 	toolGroups  string   // the same, grouped by server, for the system prompt
 	vision      bool     // the model accepts images
+	toolCalls   bool     // the model can call tools (web search, charts, MCP)
 }
 
 func NewBot(ctx context.Context, cfg *Config, sig *Signal, ai Completer) *Bot {
@@ -85,6 +87,7 @@ func NewBot(ctx context.Context, cfg *Config, sig *Signal, ai Completer) *Bot {
 		names:       NewNames(),
 		dedupe:      map[string]time.Time{},
 		typingEvery: 10 * time.Second,
+		toolCalls:   true,
 	}
 	sig.onConnect = b.refreshSoon // load names on startup and after every reconnect
 	return b
@@ -541,7 +544,11 @@ func (b *Bot) respond(req *Request) {
 	msgs := append(b.getHistory(req.Key), ChatMsg{Role: "user", Content: prompt, Images: seen})
 
 	start := time.Now()
-	res, err := b.ai.Complete(b.ctx, b.systemPrompt(), msgs)
+	ctx, chart := b.ctx, b.toolCalls && wantsChart(req.Text)
+	if chart {
+		ctx = withChart(ctx)
+	}
+	res, err := b.ai.Complete(ctx, b.systemPrompt(chart), msgs)
 	stopTyping()
 	took := time.Since(start)
 	if err != nil {
@@ -653,6 +660,9 @@ func modelName(model string) string {
 // systemPrompt is the built-in prompt, plus SYSTEM_PROMPT, plus the intro.
 // toolsText lists the tools the model can use, for {tools} and /example.
 func (b *Bot) toolsText() string {
+	if !b.toolCalls {
+		return "none"
+	}
 	tools := []string{"charts"}
 	if b.cfg.Search {
 		tools = []string{"web search", "charts"}
@@ -660,16 +670,31 @@ func (b *Bot) toolsText() string {
 	return strings.Join(append(tools, b.toolNames...), ", ")
 }
 
-func (b *Bot) systemPrompt() string {
+// wantsChart reports whether a message asks for a chart, so the chart tool
+// is offered only then.
+var wantsChart = regexp.MustCompile(`(?i)\b(chart(s|ed|ing)?|graph(s|ed|ing)?|plot(s|ted|ting)?|visuali[sz](e|es|ed|ing|ation|ations))\b`).MatchString
+
+// systemPrompt is the prompt for one request; chart says whether the chart
+// tool is offered with it.
+func (b *Bot) systemPrompt(chart bool) string {
 	intro := strings.NewReplacer("{name}", safeName(b.introName()), "{model}", modelName(b.cfg.Model), "{tools}", b.toolsText()).Replace(b.cfg.Intro)
-	tools, ask := []string{"charts (" + chartTool + ")"}, "name them"
-	if b.cfg.Search {
-		tools = append([]string{"web search"}, tools...)
+	var tools []string
+	ask := "name them"
+	if b.toolCalls {
+		if b.cfg.Search {
+			tools = append(tools, "web search")
+		}
+		if chart {
+			tools = append(tools, "charts ("+chartTool+")")
+		}
+		if b.toolGroups != "" {
+			tools, ask = append(tools, "MCP tools by server, "+b.toolGroups), "name them, grouped by server"
+		}
 	}
-	if b.toolGroups != "" {
-		tools, ask = append(tools, "MCP tools by server, "+b.toolGroups), "name them, grouped by server"
+	p := basePrompt
+	if len(tools) > 0 {
+		p += "\nYour tools: " + strings.Join(tools, "; ") + ". If asked what tools you have, " + ask + "."
 	}
-	p := basePrompt + "\nYour tools: " + strings.Join(tools, "; ") + ". If asked what tools you have, " + ask + "."
 	if b.cfg.ExtraPrompt != "" {
 		p += "\n" + b.cfg.ExtraPrompt
 	}

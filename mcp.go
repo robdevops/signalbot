@@ -623,6 +623,9 @@ func readSSE(r io.Reader, id int64) (*mcpMsg, error) {
 		line := sc.Text()
 		switch {
 		case strings.HasPrefix(line, "data:"):
+			if data.Len() > 0 {
+				data.WriteByte('\n') // lines of one event join with newlines
+			}
 			data.WriteString(strings.TrimPrefix(strings.TrimPrefix(line, "data:"), " "))
 		case line == "" && data.Len() > 0:
 			var m mcpMsg

@@ -102,8 +102,8 @@ func TestOpenRouterOmitsOptionsWhenOff(t *testing.T) {
 	if _, ok := got["reasoning"]; ok {
 		t.Error("reasoning sent although REASONING=none")
 	}
-	if tools := got["tools"].([]any); len(tools) != 1 || tools[0].(map[string]any)["function"].(map[string]any)["name"] != chartTool {
-		t.Errorf("with search off only the chart tool is offered: %v", tools)
+	if _, ok := got["tools"]; ok {
+		t.Errorf("tools sent with search off and no chart asked for: %v", got["tools"])
 	}
 	if res.Cost != 0 {
 		t.Errorf("with no reported cost, Cost must be 0, got %v", res.Cost)

@@ -44,17 +44,18 @@ func (m ChatMsg) MarshalJSON() ([]byte, error) {
 	}{plain(m), parts})
 }
 
-// SupportsImages asks OpenRouter whether the model accepts images. If it
-// cannot tell, the answer is no, and the failure is logged.
-func (o *OpenRouter) SupportsImages(ctx context.Context) bool {
+// Capabilities asks OpenRouter's model list whether the model accepts images
+// and tool calls. If it cannot tell, images are off (sending them would fail
+// every such message) and tools stay on, and the failure is logged.
+func (o *OpenRouter) Capabilities(ctx context.Context) (images, tools bool) {
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, o.modelsURL, nil)
 	req.Header.Set("Authorization", "Bearer "+o.cfg.APIKey)
 	resp, err := o.http.Do(req)
 	if err != nil {
-		warnf("could not check whether %s accepts images, so images are off: %v", o.cfg.Model, err)
-		return false
+		warnf("could not check what %s supports, so images are off: %v", o.cfg.Model, err)
+		return false, true
 	}
 	defer resp.Body.Close()
 	var r struct {
@@ -63,20 +64,29 @@ func (o *OpenRouter) SupportsImages(ctx context.Context) bool {
 			Architecture struct {
 				InputModalities []string `json:"input_modalities"`
 			} `json:"architecture"`
+			SupportedParameters []string `json:"supported_parameters"`
 		} `json:"data"`
 	}
 	if resp.StatusCode != http.StatusOK || json.NewDecoder(io.LimitReader(resp.Body, 32<<20)).Decode(&r) != nil {
-		warnf("could not check whether %s accepts images, so images are off: status %d", o.cfg.Model, resp.StatusCode)
-		return false
+		warnf("could not check what %s supports, so images are off: status %d", o.cfg.Model, resp.StatusCode)
+		return false, true
 	}
 	for _, m := range r.Data {
 		if m.ID == o.cfg.Model {
-			return slices.Contains(m.Architecture.InputModalities, "image")
+			return slices.Contains(m.Architecture.InputModalities, "image"), slices.Contains(m.SupportedParameters, "tools")
 		}
 	}
 	warnf("model %s is not in OpenRouter's model list, so images are off", o.cfg.Model)
-	return false
+	return false, true
 }
+
+// chartKey marks a request context in which the chart tool is offered.
+type chartKey struct{}
+
+// withChart offers the chart tool to the model for requests made with ctx.
+func withChart(ctx context.Context) context.Context { return context.WithValue(ctx, chartKey{}, true) }
+
+func chartWanted(ctx context.Context) bool { v, _ := ctx.Value(chartKey{}).(bool); return v }
 
 // ToolCall is the model asking to run a tool.
 type ToolCall struct {
@@ -111,6 +121,7 @@ type OpenRouter struct {
 	modelsURL string
 	http      *http.Client
 	tools     *MCP // nil without MCP_CONFIG
+	noTools   bool // the model can't call tools: offer none
 }
 
 // newHTTPClient is Go's default transport (proxy settings, timeouts, HTTP/2),
@@ -205,6 +216,37 @@ func (o *OpenRouter) runTool(ctx context.Context, tc ToolCall) (out string, imag
 	return out, images, cmp.Or(t.Name, "unknown") + " (" + cmp.Or(t.Server, "no server") + ")", err
 }
 
+// toolList is the tools offered to the model: web search, the chart tool
+// when ctx asks for it, and the MCP tools. None if the model can't call tools.
+func (o *OpenRouter) toolList(ctx context.Context) []any {
+	if o.noTools {
+		return nil
+	}
+	var tools []any
+	if o.cfg.Search {
+		// A server tool the model calls only when it decides to search, unlike
+		// the deprecated "web" plugin, which searched on every request.
+		tools = append(tools, map[string]string{"type": "openrouter:web_search"})
+	}
+	if chartWanted(ctx) {
+		tools = append(tools, map[string]any{"type": "function", "function": map[string]any{
+			"name": chartTool, "description": chartToolDescription, "parameters": chartToolSchema,
+		}})
+	}
+	if o.tools != nil {
+		for _, t := range o.tools.tools {
+			schema := t.Schema
+			if len(schema) == 0 {
+				schema = json.RawMessage(`{"type":"object"}`)
+			}
+			tools = append(tools, map[string]any{"type": "function", "function": map[string]any{
+				"name": t.Model, "description": t.Description, "parameters": schema,
+			}})
+		}
+	}
+	return tools
+}
+
 // request makes one chat completions request. It asks OpenRouter to route
 // only to providers that do not collect the data, and for the real cost to
 // be reported back.
@@ -218,27 +260,9 @@ func (o *OpenRouter) request(ctx context.Context, msgs []ChatMsg) (Completion, e
 	if r := o.cfg.Reasoning; r != "" && r != "none" {
 		body["reasoning"] = map[string]string{"effort": r}
 	}
-	var tools []any
-	if o.cfg.Search {
-		// A server tool the model calls only when it decides to search, unlike
-		// the deprecated "web" plugin, which searched on every request.
-		tools = append(tools, map[string]string{"type": "openrouter:web_search"})
+	if tools := o.toolList(ctx); len(tools) > 0 {
+		body["tools"] = tools
 	}
-	tools = append(tools, map[string]any{"type": "function", "function": map[string]any{
-		"name": chartTool, "description": chartToolDescription, "parameters": chartToolSchema,
-	}})
-	if o.tools != nil {
-		for _, t := range o.tools.tools {
-			schema := t.Schema
-			if len(schema) == 0 {
-				schema = json.RawMessage(`{"type":"object"}`)
-			}
-			tools = append(tools, map[string]any{"type": "function", "function": map[string]any{
-				"name": t.Model, "description": t.Description, "parameters": schema,
-			}})
-		}
-	}
-	body["tools"] = tools
 	payload, err := json.Marshal(body)
 	if err != nil {
 		return Completion{}, err

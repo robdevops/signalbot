@@ -192,23 +192,27 @@ func TestChatMsgWithImagesJSON(t *testing.T) {
 	}
 }
 
-func TestSupportsImages(t *testing.T) {
+// The startup check reads both images and tool calls from OpenRouter's
+// model list. Unknown means no images but tools on, as before the check.
+func TestCapabilities(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		io.WriteString(w, `{"data":[{"id":"a/vision","architecture":{"input_modalities":["text","image"]}},{"id":"b/text","architecture":{"input_modalities":["text"]}}]}`)
+		io.WriteString(w, `{"data":[`+
+			`{"id":"a/vision","architecture":{"input_modalities":["text","image"]},"supported_parameters":["tools","reasoning"]},`+
+			`{"id":"b/text","architecture":{"input_modalities":["text"]},"supported_parameters":["reasoning"]}]}`)
 	}))
 	defer srv.Close()
-	for model, want := range map[string]bool{"a/vision": true, "b/text": false, "c/unknown": false} {
+	for model, want := range map[string][2]bool{"a/vision": {true, true}, "b/text": {false, false}, "c/unknown": {false, true}} {
 		o := NewOpenRouter(&Config{APIKey: "k", Model: model}, nil)
 		o.modelsURL = srv.URL
-		if got := o.SupportsImages(context.Background()); got != want {
-			t.Errorf("%s: got %v, want %v", model, got, want)
+		if images, tools := o.Capabilities(context.Background()); images != want[0] || tools != want[1] {
+			t.Errorf("%s: images %v tools %v, want %v", model, images, tools, want)
 		}
 	}
 	srv.Close()
 	o := NewOpenRouter(&Config{APIKey: "k", Model: "a/vision"}, nil)
 	o.modelsURL = srv.URL
-	if o.SupportsImages(context.Background()) {
-		t.Error("a failed check must mean no images")
+	if images, tools := o.Capabilities(context.Background()); images || !tools {
+		t.Errorf("a failed check: images %v tools %v, want false true", images, tools)
 	}
 }
 

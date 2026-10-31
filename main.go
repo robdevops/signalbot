@@ -64,8 +64,12 @@ func main() {
 	ai := NewOpenRouter(cfg, tools)
 	bot := NewBot(connCtx, cfg, sig, ai)
 	bot.toolNames, bot.toolGroups = tools.Names(), tools.ByServer()
-	bot.vision = ai.SupportsImages(connCtx)
-	infof("model %s, reasoning %s, search %v, images %v", cfg.Model, cfg.Reasoning, cfg.Search, bot.vision)
+	images, toolCalls := ai.Capabilities(connCtx)
+	bot.vision, bot.toolCalls, ai.noTools = images, toolCalls, !toolCalls
+	infof("model %s, reasoning %s, search %v, images %v, tools %v", cfg.Model, cfg.Reasoning, cfg.Search, images, toolCalls)
+	if !toolCalls {
+		warnf("model %s can't call tools, so web search, charts and MCP tools are off", cfg.Model)
+	}
 	if names := tools.Names(); len(names) > 0 {
 		infof("MCP tools: %s", strings.Join(names, ", "))
 	}

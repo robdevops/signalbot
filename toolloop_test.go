@@ -68,9 +68,8 @@ func TestToolCallLoop(t *testing.T) {
 		t.Fatalf("%d requests, want 2", len(f.bodies))
 	}
 	tools := f.bodies[0]["tools"].([]any)
-	if len(tools) != 3 || tools[0].(map[string]any)["type"] != "openrouter:web_search" ||
-		tools[1].(map[string]any)["function"].(map[string]any)["name"] != chartTool ||
-		tools[2].(map[string]any)["function"].(map[string]any)["name"] != "fake__echo" {
+	if len(tools) != 2 || tools[0].(map[string]any)["type"] != "openrouter:web_search" ||
+		tools[1].(map[string]any)["function"].(map[string]any)["name"] != "fake__echo" {
 		t.Errorf("tools offered: %v", tools)
 	}
 	msgs := f.bodies[1]["messages"].([]any)
@@ -201,7 +200,7 @@ func TestChartToolInLoop(t *testing.T) {
 	defer srv.Close()
 	o := NewOpenRouter(&Config{APIKey: "k", Model: "m"}, nil)
 	o.url = srv.URL
-	res, err := o.Complete(context.Background(), "s", nil)
+	res, err := o.Complete(withChart(context.Background()), "s", nil)
 	if err != nil || res.Text != "Here you go." || len(res.Images) != 1 {
 		t.Fatalf("got text %q, %d images, %v", res.Text, len(res.Images), err)
 	}
@@ -262,5 +261,61 @@ func TestReplyCarriesImages(t *testing.T) {
 			t.Errorf("text %q: no reply", text)
 		}
 		cancel()
+	}
+}
+
+func TestWantsChart(t *testing.T) {
+	for text, want := range map[string]bool{
+		"chart NVDA vs AMD": true, "Can you graph this?": true, "plot the yields": true,
+		"visualise it": true, "VISUALIZATION please": true, "charts?": true, "plotted over time": true,
+		"what is up": false, "a plotless film": false, "paragraph": false,
+	} {
+		if got := wantsChart(text); got != want {
+			t.Errorf("%q: got %v, want %v", text, got, want)
+		}
+	}
+}
+
+// The chart tool goes only with a request that asks for a chart, and no tool
+// at all goes to a model that can't call tools.
+func TestToolListOffers(t *testing.T) {
+	m, _ := startFake(t, &fakeMCP{}, "echo")
+	o := NewOpenRouter(&Config{APIKey: "k", Model: "m", Search: true}, m)
+	names := func(tools []any) (out []string) {
+		for _, x := range tools {
+			if f, ok := x.(map[string]any); ok {
+				out = append(out, f["function"].(map[string]any)["name"].(string))
+			} else {
+				out = append(out, "search")
+			}
+		}
+		return out
+	}
+	if got := strings.Join(names(o.toolList(context.Background())), ","); got != "search,fake__echo" {
+		t.Errorf("no chart asked: %q", got)
+	}
+	if got := strings.Join(names(o.toolList(withChart(context.Background()))), ","); got != "search,make_chart,fake__echo" {
+		t.Errorf("chart asked: %q", got)
+	}
+	o.noTools = true
+	if got := o.toolList(withChart(context.Background())); got != nil {
+		t.Errorf("a model without tool calls was offered %v", got)
+	}
+}
+
+// The prompt names the chart tool only when it is offered, and no tools at
+// all for a model that can't call them.
+func TestSystemPromptTools(t *testing.T) {
+	cfg := &Config{Model: "m", Search: true, MaxConcurrency: 1, HistoryTurns: 1}
+	b := NewBot(context.Background(), cfg, NewSignal("x"), nil)
+	if p := b.systemPrompt(false); !strings.Contains(p, "\nYour tools: web search. If asked") {
+		t.Errorf("without a chart: %q", p)
+	}
+	if p := b.systemPrompt(true); !strings.Contains(p, "\nYour tools: web search; charts (make_chart). If asked") {
+		t.Errorf("with a chart: %q", p)
+	}
+	b.toolCalls = false
+	if p := b.systemPrompt(true); strings.Contains(p, "Your tools") || b.toolsText() != "none" {
+		t.Errorf("a model without tool calls was told of tools: %q, %q", p, b.toolsText())
 	}
 }
