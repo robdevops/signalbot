@@ -3,8 +3,6 @@ package main
 import (
 	"bufio"
 	"context"
-	"crypto/tls"
-	"crypto/x509"
 	"encoding/json"
 	"fmt"
 	"net"
@@ -87,8 +85,7 @@ func TestHandleBoundsGoroutines(t *testing.T) {
 	cfg := testCfg()
 	sig := signal.NewAdapter("unused", cfg.AllowedSenders)
 	sig.Client().SetSelf(self)
-	x := NewOpenRouter(cfg, nil)
-	x.url = ai.URL
+	x := testModel(ai.URL)
 	b := NewBot(context.Background(), cfg, x, sig)
 
 	before := runtime.NumGoroutine()
@@ -317,8 +314,7 @@ func TestShutdownDrainsReplyBeforeClosingSocket(t *testing.T) {
 
 	cfg := testCfg()
 	sig := signal.NewAdapter(sock, cfg.AllowedSenders)
-	x := NewOpenRouter(cfg, nil)
-	x.url = ai.URL
+	x := testModel(ai.URL)
 	b := NewBot(context.Background(), cfg, x, sig)
 	connCtx, closeConn := context.WithCancel(context.Background())
 	defer closeConn()
@@ -341,34 +337,6 @@ func TestShutdownDrainsReplyBeforeClosingSocket(t *testing.T) {
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("a reply in flight at shutdown was lost")
-	}
-}
-
-// The HTTP client must refuse servers that cannot do TLS 1.3, while keeping
-// Go's default transport behaviour (proxy from the environment, HTTP/2).
-func TestClientRequiresTLS13(t *testing.T) {
-	x := NewOpenRouter(testCfg(), nil)
-	tr := x.http.Transport.(*http.Transport)
-	if tr.Proxy == nil || !tr.ForceAttemptHTTP2 {
-		t.Fatal("lost the default transport's proxy support or HTTP/2")
-	}
-	for _, tc := range []struct {
-		max  uint16
-		want bool
-	}{{tls.VersionTLS12, false}, {tls.VersionTLS13, true}} {
-		srv := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
-		srv.TLS = &tls.Config{MaxVersion: tc.max}
-		srv.StartTLS()
-		tr.TLSClientConfig.RootCAs = x509.NewCertPool()
-		tr.TLSClientConfig.RootCAs.AddCert(srv.Certificate())
-		resp, err := x.http.Get(srv.URL)
-		if resp != nil {
-			resp.Body.Close()
-		}
-		srv.Close()
-		if ok := err == nil; ok != tc.want {
-			t.Fatalf("server capped at %x: connected=%v, want %v (err: %v)", tc.max, ok, tc.want, err)
-		}
 	}
 }
 

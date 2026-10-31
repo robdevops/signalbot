@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"github.com/robdevops/signalbot/internal/llm"
 	"strings"
 	"testing"
 	"time"
@@ -49,8 +50,9 @@ func TestParseCommand(t *testing.T) {
 // A chat command's turn offers only its tool, required until the result is in.
 func TestChatCommandForcesTool(t *testing.T) {
 	f := &fakeModel{calls: 1}
-	o := modelWithTools(t, f)
-	if _, err := o.Complete(withTool(context.Background(), "fake__echo"), "s", []ChatMsg{{Role: "user", Content: "/echo hi"}}); err != nil {
+	o, tools := modelWithTools(t, f)
+	if _, err := o.Complete(context.Background(), llm.Request{System: "s", Messages: []llm.Message{{Role: "user", Content: "/echo hi"}},
+		Tools: tools[1:], Force: "fake__echo"}); err != nil {
 		t.Fatal(err)
 	}
 	if len(f.bodies) != 2 {

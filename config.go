@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"github.com/robdevops/signalbot/internal/llm/openai"
 	"os"
 	"strconv"
 	"strings"
@@ -11,7 +12,8 @@ import (
 
 type Config struct {
 	Socket         string
-	APIKey         string // OPENROUTER_API_KEY
+	APIURL         string // MODEL_API_URL: the OpenAI-compatible API, OpenRouter by default
+	APIKey         string // MODEL_API_KEY, else OPENROUTER_API_KEY
 	Model          string
 	Reasoning      string
 	Search         bool
@@ -63,7 +65,8 @@ func splitIDs(s string) []string {
 func LoadConfig() (*Config, error) {
 	c := &Config{
 		Socket:         env("SIGNALCLI_SOCKET", ""),
-		APIKey:         env("OPENROUTER_API_KEY", ""),
+		APIURL:         env("MODEL_API_URL", openai.OpenRouterURL),
+		APIKey:         env("MODEL_API_KEY", env("OPENROUTER_API_KEY", "")),
 		Model:          env("MODEL", "deepseek/deepseek-v4.1-flash-1017"),
 		Search:         envBool("MODEL_SEARCH", true),
 		Reasoning:      strings.ToLower(env("REASONING", "low")),
@@ -85,7 +88,7 @@ func LoadConfig() (*Config, error) {
 	if c.Socket == "" {
 		return nil, fmt.Errorf("SIGNALCLI_SOCKET is required")
 	}
-	if c.APIKey == "" {
+	if c.APIKey == "" && c.APIURL == openai.OpenRouterURL {
 		return nil, fmt.Errorf("OPENROUTER_API_KEY is required")
 	}
 	return c, nil

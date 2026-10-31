@@ -3,6 +3,8 @@ package main
 import (
 	"context"
 	"fmt"
+	"github.com/robdevops/signalbot/internal/llm"
+	"github.com/robdevops/signalbot/internal/llm/openai"
 	"os"
 	ossignal "os/signal"
 	"runtime/debug"
@@ -59,11 +61,11 @@ func main() {
 		}
 		defer tools.Wait() // let stdio servers stop after connCtx ends
 	}
-	ai := NewOpenRouter(cfg, tools)
-	bot := NewBot(connCtx, cfg, ai, sig)
-	bot.toolNames, bot.toolGroups = tools.Names(), tools.ByServer()
-	images, toolCalls := ai.Capabilities(connCtx)
-	bot.vision, bot.toolCalls, ai.noTools = images, toolCalls, !toolCalls
+	model := openai.New(openai.Options{URL: cfg.APIURL, Key: cfg.APIKey, Model: cfg.Model, Reasoning: cfg.Reasoning})
+	bot := NewBot(connCtx, cfg, llm.Loop{Model: model}, sig)
+	bot.mcp, bot.toolNames, bot.toolGroups = tools, tools.Names(), tools.ByServer()
+	images, toolCalls := model.Capabilities(connCtx)
+	bot.vision, bot.toolCalls, bot.serverTools = images, toolCalls, model.OpenRouter()
 	if toolCalls {
 		bot.commands = tools.Commands()
 	} else if len(tools.Commands()) > 0 {

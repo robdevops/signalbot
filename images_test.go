@@ -5,10 +5,8 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
-	"io"
+	"github.com/robdevops/signalbot/internal/llm"
 	"net"
-	"net/http"
-	"net/http/httptest"
 	"strings"
 	"sync"
 	"testing"
@@ -68,14 +66,14 @@ func TestQuotedPhotoIsSeen(t *testing.T) {
 // recordingAI keeps the messages it was sent.
 type recordingAI struct {
 	mu   sync.Mutex
-	msgs []ChatMsg
+	msgs []llm.Message
 }
 
-func (a *recordingAI) Complete(_ context.Context, _ string, msgs []ChatMsg) (Completion, error) {
+func (a *recordingAI) Complete(_ context.Context, r llm.Request) (llm.Completion, error) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	a.msgs = msgs
-	return Completion{Text: "a cat"}, nil
+	a.msgs = r.Messages
+	return llm.Completion{Text: "a cat"}, nil
 }
 
 // photoBot is a bot on a fake signal-cli that serves getAttachment, records
@@ -184,41 +182,6 @@ func TestPhotoWithoutVision(t *testing.T) {
 	defer ai.mu.Unlock()
 	if last := ai.msgs[len(ai.msgs)-1]; last.Content != "[1 image attached, which you can't see with this model]" || last.Images != nil {
 		t.Fatalf("model got %q with %d images", last.Content, len(last.Images))
-	}
-}
-
-func TestChatMsgWithImagesJSON(t *testing.T) {
-	b, _ := json.Marshal(ChatMsg{Role: "user", Content: "what's this?", Images: []string{"data:image/png;base64,AA=="}})
-	want := `{"role":"user","content":[{"text":"what's this?","type":"text"},{"image_url":{"url":"data:image/png;base64,AA=="},"type":"image_url"}]}`
-	if string(b) != want {
-		t.Fatalf("got  %s\nwant %s", b, want)
-	}
-	if b, _ := json.Marshal(ChatMsg{Role: "user", Content: "hi"}); string(b) != `{"role":"user","content":"hi"}` {
-		t.Fatalf("plain message changed: %s", b)
-	}
-}
-
-// The startup check reads both images and tool calls from OpenRouter's
-// model list. Unknown means no images but tools on, as before the check.
-func TestCapabilities(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		io.WriteString(w, `{"data":[`+
-			`{"id":"a/vision","architecture":{"input_modalities":["text","image"]},"supported_parameters":["tools","reasoning"]},`+
-			`{"id":"b/text","architecture":{"input_modalities":["text"]},"supported_parameters":["reasoning"]}]}`)
-	}))
-	defer srv.Close()
-	for model, want := range map[string][2]bool{"a/vision": {true, true}, "b/text": {false, false}, "c/unknown": {false, true}} {
-		o := NewOpenRouter(&Config{APIKey: "k", Model: model}, nil)
-		o.modelsURL = srv.URL
-		if images, tools := o.Capabilities(context.Background()); images != want[0] || tools != want[1] {
-			t.Errorf("%s: images %v tools %v, want %v", model, images, tools, want)
-		}
-	}
-	srv.Close()
-	o := NewOpenRouter(&Config{APIKey: "k", Model: "a/vision"}, nil)
-	o.modelsURL = srv.URL
-	if images, tools := o.Capabilities(context.Background()); images || !tools {
-		t.Errorf("a failed check: images %v tools %v, want false true", images, tools)
 	}
 }
 

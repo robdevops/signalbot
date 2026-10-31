@@ -95,13 +95,9 @@ func TestRenderDonut(t *testing.T) {
 
 // The model calls the donut tool; the chart comes back as an image.
 func TestDonutToolInLoop(t *testing.T) {
-	o := NewOpenRouter(&Config{APIKey: "k", Model: "m"}, nil)
-	out, images, caption, tool, err := o.runTool(context.Background(), ToolCall{Function: struct {
-		Name      string `json:"name"`
-		Arguments string `json:"arguments"`
-	}{donutTool, alphabetDonut}})
-	if err != nil || tool != donutTool || caption != "GOOGL Q3 FY2026 revenue by type ($B)" || len(images) != 1 || !strings.Contains(out, "Total $127.6B") {
-		t.Fatalf("got %q, %d images, %v", out, len(images), err)
+	res, err := chartTools()[1].Run(context.Background(), alphabetDonut)
+	if err != nil || len(res.Images) != 1 || res.Images[0].Caption != "GOOGL Q3 FY2026 revenue by type ($B)" || !strings.Contains(res.Text, "Total $127.6B") {
+		t.Fatalf("got %q, %d images, %v", res.Text, len(res.Images), err)
 	}
 }
 

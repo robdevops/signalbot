@@ -9,6 +9,7 @@ import (
 	"github.com/robdevops/signalbot/internal/chat"
 	"github.com/robdevops/signalbot/internal/history"
 	"github.com/robdevops/signalbot/internal/kit/bound"
+	"github.com/robdevops/signalbot/internal/llm"
 	"maps"
 	"net/http"
 	"regexp"
@@ -42,7 +43,8 @@ const (
 type Bot struct {
 	cfg        *Config
 	transports map[string]chat.Transport // by kind: the ChatID prefix
-	ai         Completer
+	ai         llm.Completer
+	mcp        *MCP // nil without MCP_CONFIG
 	sem        chan struct{}
 	ctx        context.Context
 	closing    atomic.Bool // set by Shutdown: no new reply starts
@@ -58,9 +60,10 @@ type Bot struct {
 	commands    map[string]mcpCommand // chat commands, by name without the slash
 	vision      bool                  // the model accepts images
 	toolCalls   bool                  // the model can call tools (web search, charts, MCP)
+	serverTools bool                  // the provider runs server tools (OpenRouter's web search)
 }
 
-func NewBot(ctx context.Context, cfg *Config, ai Completer, transports ...chat.Transport) *Bot {
+func NewBot(ctx context.Context, cfg *Config, ai llm.Completer, transports ...chat.Transport) *Bot {
 	b := &Bot{
 		cfg: cfg, ai: ai, ctx: ctx,
 		transports:  map[string]chat.Transport{},
@@ -69,6 +72,7 @@ func NewBot(ctx context.Context, cfg *Config, ai Completer, transports ...chat.T
 		dedupe:      map[string]time.Time{},
 		typingEvery: 10 * time.Second,
 		toolCalls:   true,
+		serverTools: true,
 	}
 	for _, t := range transports {
 		b.transports[t.Kind()] = t
@@ -187,7 +191,7 @@ func (r *Request) logLine() string {
 
 // replyLogLine is the one-line summary of a model reply, e.g.
 // "reply Alice 3.3s, tokens in/out: 1203/312 (10% cached), $0.002".
-func replyLogLine(name string, took time.Duration, c Completion) string {
+func replyLogLine(name string, took time.Duration, c llm.Completion) string {
 	cached := 100 * min(c.CachedTokens, c.InputTokens) / max(c.InputTokens, 1)
 	return fmt.Sprintf("reply %s %.1fs, tokens in/out: %d/%d (%d%% cached), $%.3f",
 		name, took.Seconds(), c.InputTokens, c.OutputTokens, cached, c.Cost)
@@ -310,7 +314,7 @@ func (b *Bot) rememberChatter(m chat.Message) {
 	if text == "" {
 		return
 	}
-	b.addHistory(string(m.Chat), ChatMsg{
+	b.addHistory(string(m.Chat), history.Entry{
 		Role:    "user",
 		Content: cmp.Or(m.Sender.Name, "someone") + ": " + text,
 		Expires: history.Expiry(time.Now(), m.Expires),
@@ -440,24 +444,19 @@ func (b *Bot) respond(req *Request) {
 	}
 	prompt = strings.TrimSpace(prompt)
 	req.Prompt = strings.TrimSpace(kept)
-	msgs := append(b.getHistory(req.Key), ChatMsg{Role: "user", Content: prompt, Images: seen})
+	msgs := append(b.getHistory(req.Key), llm.Message{Role: "user", Content: prompt, Images: seen})
 
 	start := time.Now()
-	ctx, asked := b.ctx, wantsChart(req.Text)
+	asked := wantsChart(req.Text)
 	chart := req.Tool == "" && b.toolCalls && (asked || b.chartTurns(req.Key) > 0)
-	switch {
-	case req.Tool != "":
-		ctx = withTool(ctx, req.Tool)
-	case chart:
-		ctx = withChart(ctx)
-	}
-	res, err := b.ai.Complete(ctx, b.systemPrompt(chart, req.Chat, self), msgs)
+	res, err := b.ai.Complete(b.ctx, llm.Request{System: b.systemPrompt(chart, req.Chat, self), Messages: msgs,
+		Tools: b.tools(chart, req.Tool), Force: req.Tool})
 	stopTyping()
 	took := time.Since(start)
 	var caption string
 	if err != nil {
 		logx.Errorf("OpenRouter error for %s after %.1fs: %v", req.Name, took.Seconds(), err)
-		res = Completion{Text: "Sorry, I couldn't get an answer right now."}
+		res = llm.Completion{Text: "Sorry, I couldn't get an answer right now."}
 	} else {
 		logx.Infof("%s", replyLogLine(req.Name, took, res))
 		// A chart is sent as one message captioned with its title, in place
@@ -466,10 +465,10 @@ func (b *Bot) respond(req *Request) {
 			res.Text = ""
 		}
 		if chart {
-			b.chartReplied(req.Key, asked || res.Charted)
+			b.chartReplied(req.Key, asked || charted(res))
 		}
 		gone := history.Expiry(start, req.Expires)
-		b.addHistory(req.Key, ChatMsg{Role: "user", Content: req.Prompt, Expires: gone}, ChatMsg{Role: "assistant", Content: sentImages(res) + res.Text, Expires: gone})
+		b.addHistory(req.Key, history.Entry{Role: "user", Content: req.Prompt, Expires: gone}, history.Entry{Role: "assistant", Content: sentImages(res) + res.Text, Expires: gone})
 	}
 
 	if n := len([]rune(res.Text)); n > maxReplyRunes {
@@ -479,12 +478,8 @@ func (b *Bot) respond(req *Request) {
 	if caption != "" {
 		out.Text = caption
 	}
-	for i, img := range res.Images {
-		var c string
-		if i < len(res.Captions) {
-			c = res.Captions[i]
-		}
-		out.Pictures = append(out.Pictures, chat.Picture{Data: img, Caption: c})
+	for _, img := range res.Images {
+		out.Pictures = append(out.Pictures, chat.Picture{Data: img.Data, Caption: img.Caption})
 	}
 	if strings.TrimSpace(out.Text) == "" && len(out.Pictures) == 0 {
 		logx.Warnf("empty reply to %s, nothing sent", req.Name)
@@ -571,11 +566,11 @@ func (b *Bot) commandNames() []string {
 
 // chartCaptions is the caption for a reply's charts, one per line, or ""
 // if it drew none.
-func chartCaptions(res Completion) string {
+func chartCaptions(res llm.Completion) string {
 	var caps []string
-	for _, c := range res.Captions {
-		if c != "" {
-			caps = append(caps, c)
+	for _, img := range res.Images {
+		if img.Caption != "" {
+			caps = append(caps, img.Caption)
 		}
 	}
 	return strings.Join(caps, "\n")
@@ -583,11 +578,11 @@ func chartCaptions(res Completion) string {
 
 // sentImages notes in the history the charts and images a reply sent, which
 // the model would otherwise not know it did, e.g. "[sent the chart "NVDA"]".
-func sentImages(res Completion) string {
+func sentImages(res llm.Completion) string {
 	var note string
-	for i := range res.Images {
-		if i < len(res.Captions) && res.Captions[i] != "" {
-			note += "[sent the chart " + strconv.Quote(res.Captions[i]) + "]\n"
+	for _, img := range res.Images {
+		if img.Caption != "" {
+			note += "[sent the chart " + strconv.Quote(img.Caption) + "]\n"
 		} else {
 			note += "[sent an image]\n"
 		}
@@ -657,19 +652,15 @@ func (b *Bot) systemPrompt(chart bool, c chat.ChatID, self string) string {
 }
 
 // getHistory is the chat's history as model messages.
-func (b *Bot) getHistory(key string) []ChatMsg {
-	var out []ChatMsg
+func (b *Bot) getHistory(key string) []llm.Message {
+	var out []llm.Message
 	for _, e := range b.hist.Get(chat.ChatID(key)) {
-		out = append(out, ChatMsg{Role: e.Role, Content: e.Content, Expires: e.Expires})
+		out = append(out, llm.Message{Role: e.Role, Content: e.Content})
 	}
 	return out
 }
 
-// addHistory remembers model messages in the chat's history: their text only.
-func (b *Bot) addHistory(key string, msgs ...ChatMsg) {
-	entries := make([]history.Entry, len(msgs))
-	for i, m := range msgs {
-		entries[i] = history.Entry{Role: m.Role, Content: m.Content, Expires: m.Expires}
-	}
+// addHistory remembers entries in the chat's history.
+func (b *Bot) addHistory(key string, entries ...history.Entry) {
 	b.hist.Add(chat.ChatID(key), entries...)
 }

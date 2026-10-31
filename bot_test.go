@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"github.com/robdevops/signalbot/internal/chat"
+	"github.com/robdevops/signalbot/internal/llm"
 	"log"
 	"net"
 	"net/http"
@@ -142,8 +143,7 @@ func TestEndToEnd(t *testing.T) {
 	cfg := &Config{Socket: sock, APIKey: "k", Model: "m", Reasoning: "low", Search: true,
 		AllowedSenders: map[string]bool{}, MaxConcurrency: 4, HistoryTurns: 2}
 	sig := signal.NewAdapter(sock, cfg.AllowedSenders)
-	x := NewOpenRouter(cfg, nil)
-	x.url = ai.URL
+	x := testModel(ai.URL)
 	bot := NewBot(context.Background(), cfg, x, sig)
 	bot.typingEvery = 50 * time.Millisecond
 	ctx, cancel := contextWithCancel()
@@ -234,12 +234,12 @@ func TestMessageLogLine(t *testing.T) {
 }
 
 func TestReplyLogLine(t *testing.T) {
-	c := Completion{InputTokens: 1203, CachedTokens: 128, OutputTokens: 312, Cost: 0.00215}
+	c := llm.Completion{InputTokens: 1203, CachedTokens: 128, OutputTokens: 312, Cost: 0.00215}
 	got := replyLogLine("Alice", 3310*time.Millisecond, c)
 	if want := "reply Alice 3.3s, tokens in/out: 1203/312 (10% cached), $0.002"; got != want {
 		t.Fatalf("got  %q\nwant %q", got, want)
 	}
-	if got := replyLogLine("Alice", time.Second, Completion{}); !strings.Contains(got, "(0% cached)") {
+	if got := replyLogLine("Alice", time.Second, llm.Completion{}); !strings.Contains(got, "(0% cached)") {
 		t.Fatalf("no input tokens: %q", got)
 	}
 }
@@ -344,6 +344,6 @@ func (b *Bot) prompt(chart bool) string {
 // through.
 type okAI struct{}
 
-func (okAI) Complete(context.Context, string, []ChatMsg) (Completion, error) {
-	return Completion{Text: "ok"}, nil
+func (okAI) Complete(context.Context, llm.Request) (llm.Completion, error) {
+	return llm.Completion{Text: "ok"}, nil
 }

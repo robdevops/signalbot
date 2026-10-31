@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"github.com/robdevops/signalbot/internal/llm"
 	"strings"
 	"testing"
 	"time"
@@ -17,8 +18,8 @@ const secretText = "my-secret-message-text"
 // Go runtime would print to the log if nothing recovered it.
 type panicAI struct{}
 
-func (panicAI) Complete(ctx context.Context, system string, msgs []ChatMsg) (Completion, error) {
-	panic("boom: " + msgs[len(msgs)-1].Content)
+func (panicAI) Complete(_ context.Context, r llm.Request) (llm.Completion, error) {
+	panic("boom: " + r.Messages[len(r.Messages)-1].Content)
 }
 
 // A panic while answering must not reach the log (its value and stack trace
@@ -46,35 +47,5 @@ func TestPanicWhileAnsweringIsContained(t *testing.T) {
 			t.Fatal("the concurrency slot was not released after a panic")
 		}
 		time.Sleep(10 * time.Millisecond)
-	}
-}
-
-// API error bodies can quote the request, so only the message is logged.
-func TestAPIErrorTextKeepsOnlyTheMessage(t *testing.T) {
-	for name, tc := range map[string]struct{ body, want string }{
-		"openai style": {`{"error":{"message":"No auth credentials","code":401}}`, "No auth credentials"},
-		"openrouter moderation": {`{"error":{"message":"Input flagged","code":403,"metadata":{"flagged_input":"` +
-			secretText + `","reasons":["x"]}}}`, "Input flagged"},
-		"html":  {`<html>502 Bad Gateway ` + secretText + `</html>`, "(unreadable error body)"},
-		"empty": {`{}`, "(no message)"},
-	} {
-		got := apiErrorText([]byte(tc.body))
-		if got != tc.want || strings.Contains(got, secretText) {
-			t.Errorf("%s: got %q, want %q", name, got, tc.want)
-		}
-	}
-}
-
-// A reply with no text, or one that is not JSON, must not echo the body: a
-// response can include the conversation.
-func TestBadReplyBodiesAreNotEchoed(t *testing.T) {
-	for _, body := range []string{
-		`{"output":[],"instructions":"` + secretText + `"}`,
-		`{"choices":[],"echo":"` + secretText + `"}`,
-		`{"output": ` + secretText,
-	} {
-		if _, err := parseChatCompletion([]byte(body)); err == nil || strings.Contains(err.Error(), secretText) {
-			t.Errorf("body %q: err = %v", body, err)
-		}
 	}
 }

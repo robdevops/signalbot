@@ -73,8 +73,7 @@ func TestMentionNameResolvedFromContacts(t *testing.T) {
 
 	cfg := &Config{Socket: sock, APIKey: "k", Model: "m", AllowedSenders: map[string]bool{}, MaxConcurrency: 4, HistoryTurns: 2}
 	sig := signal.NewAdapter(sock, cfg.AllowedSenders)
-	x := NewOpenRouter(cfg, nil)
-	x.url = ai.URL
+	x := testModel(ai.URL)
 	bot := NewBot(context.Background(), cfg, x, sig)
 	ctx, cancel := contextWithCancel()
 	defer cancel()

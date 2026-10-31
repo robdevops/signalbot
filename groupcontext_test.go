@@ -1,6 +1,7 @@
 package main
 
 import (
+	"github.com/robdevops/signalbot/internal/chat"
 	"strings"
 	"testing"
 	"time"
@@ -15,7 +16,7 @@ func TestGroupChatterIsContext(t *testing.T) {
 	b.cfg.GroupContext = true
 	logs := logxtest.Capture(t)
 	deliver(b, parse(t, strings.Replace(groupPlain, "Group test", "the moon is made of cheese", 1)))
-	if h := b.getHistory("signal:g:" + group); len(h) != 1 || h[0].Content != "Alice: the moon is made of cheese" || h[0].Expires.IsZero() {
+	if h := b.hist.Get(chat.ChatID("signal:g:" + group)); len(h) != 1 || h[0].Content != "Alice: the moon is made of cheese" || h[0].Expires.IsZero() {
 		t.Fatalf("history %+v", h)
 	}
 	if logs.String() != "" {

@@ -118,6 +118,8 @@ Add the bot's account to a group and @mention it, reply to one of its messages, 
 |---|---|---|
 | `SIGNALCLI_SOCKET` | required | Unix socket path, or `host:port` for TCP |
 | `OPENROUTER_API_KEY` | required | [OpenRouter](https://openrouter.ai) API key |
+| `MODEL_API_URL` | OpenRouter | Another OpenAI-compatible API to use instead, e.g. `http://localhost:11434/v1` for Ollama. Web search is OpenRouter's, so it is off elsewhere |
+| `MODEL_API_KEY` | `OPENROUTER_API_KEY` | That API's key, if it needs one |
 | `MODEL` | `deepseek/deepseek-v4.1-flash-1017` | OpenRouter model name, as `provider/model` |
 | `REASONING` | `low` | Reasoning effort, e.g. `low`, `medium`, `high` (`none` to omit) |
 | `MODEL_SEARCH` | `true` | Lets the model search the web (OpenRouter's web search tool) when it decides to; searches are billed. Accepts `true`/`false`, `yes`/`no`, `on`/`off`, `1`/`0` |

@@ -6,6 +6,9 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"github.com/robdevops/signalbot/internal/history"
+	"github.com/robdevops/signalbot/internal/llm"
+	"github.com/robdevops/signalbot/internal/llm/openai"
 	"image"
 	"image/png"
 	"io"
@@ -47,23 +50,28 @@ func (f *fakeModel) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	io.WriteString(w, `{"choices":[{"message":{"content":"done"}}],"usage":{"prompt_tokens":20,"completion_tokens":3,"cost":0.002}}`)
 }
 
-func modelWithTools(t *testing.T, f *fakeModel) *OpenRouter {
+// modelWithTools is the tool loop on a fake model server, and the tools a
+// turn would offer: web search and a fake MCP server's echo.
+func modelWithTools(t *testing.T, f *fakeModel) (llm.Loop, []llm.Tool) {
 	t.Helper()
 	m, _ := startFake(t, &fakeMCP{}, "echo")
 	srv := httptest.NewServer(f)
 	t.Cleanup(srv.Close)
-	o := NewOpenRouter(&Config{APIKey: "k", Model: "m", Search: true}, m)
-	o.url = srv.URL
-	return o
+	return testModel(srv.URL), append([]llm.Tool{webSearch}, m.llmTools()...)
+}
+
+// testModel is the tool loop over an OpenAI-compatible client at url.
+func testModel(url string) llm.Loop {
+	return llm.Loop{Model: openai.New(openai.Options{URL: url, Key: "k", Model: "m"})}
 }
 
 // The model calls a tool, gets its result, and answers. Neither the
 // arguments nor the result reach the log.
 func TestToolCallLoop(t *testing.T) {
 	f := &fakeModel{calls: 1}
-	o := modelWithTools(t, f)
+	o, tools := modelWithTools(t, f)
 	logs := logxtest.Capture(t)
-	res, err := o.Complete(context.Background(), "s", []ChatMsg{{Role: "user", Content: "hi"}})
+	res, err := o.Complete(context.Background(), llm.Request{System: "s", Messages: []llm.Message{{Role: "user", Content: "hi"}}, Tools: tools})
 	if err != nil || res.Text != "done" {
 		t.Fatalf("got %+v, %v", res, err)
 	}
@@ -73,10 +81,10 @@ func TestToolCallLoop(t *testing.T) {
 	if len(f.bodies) != 2 {
 		t.Fatalf("%d requests, want 2", len(f.bodies))
 	}
-	tools := f.bodies[0]["tools"].([]any)
-	if len(tools) != 2 || tools[0].(map[string]any)["type"] != "openrouter:web_search" ||
-		tools[1].(map[string]any)["function"].(map[string]any)["name"] != "fake__echo" {
-		t.Errorf("tools offered: %v", tools)
+	sent := f.bodies[0]["tools"].([]any)
+	if len(sent) != 2 || sent[0].(map[string]any)["type"] != "openrouter:web_search" ||
+		sent[1].(map[string]any)["function"].(map[string]any)["name"] != "fake__echo" {
+		t.Errorf("tools offered: %v", sent)
 	}
 	msgs := f.bodies[1]["messages"].([]any)
 	call := msgs[len(msgs)-2].(map[string]any)
@@ -98,22 +106,22 @@ func TestToolCallLoop(t *testing.T) {
 // A model that keeps calling tools is cut off after maxToolRounds requests.
 func TestToolCallRoundCap(t *testing.T) {
 	f := &fakeModel{calls: 100}
-	o := modelWithTools(t, f)
-	res, err := o.Complete(context.Background(), "s", nil)
+	o, tools := modelWithTools(t, f)
+	res, err := o.Complete(context.Background(), llm.Request{System: "s", Tools: tools})
 	if err != nil || res.Text != "Sorry, I couldn't finish that." {
 		t.Fatalf("got %+v, %v", res, err)
 	}
-	if len(f.bodies) != maxToolRounds {
-		t.Fatalf("%d requests, want %d", len(f.bodies), maxToolRounds)
+	if len(f.bodies) != llm.MaxRounds {
+		t.Fatalf("%d requests, want %d", len(f.bodies), llm.MaxRounds)
 	}
 }
 
 // failAI fails the test if the model is asked anything.
 type failAI struct{ t *testing.T }
 
-func (f failAI) Complete(context.Context, string, []ChatMsg) (Completion, error) {
+func (f failAI) Complete(context.Context, llm.Request) (llm.Completion, error) {
 	f.t.Error("the model was called")
-	return Completion{Text: "x"}, nil
+	return llm.Completion{Text: "x"}, nil
 }
 
 // "/example" is answered without the model, with a real mention of the sender in
@@ -204,13 +212,11 @@ func TestChartToolInLoop(t *testing.T) {
 		io.WriteString(w, `{"choices":[{"message":{"content":"Here you go."}}]}`)
 	}))
 	defer srv.Close()
-	o := NewOpenRouter(&Config{APIKey: "k", Model: "m"}, nil)
-	o.url = srv.URL
-	res, err := o.Complete(withChart(context.Background()), "s", nil)
+	res, err := testModel(srv.URL).Complete(context.Background(), llm.Request{System: "s", Tools: chartTools()})
 	if err != nil || res.Text != "Here you go." || len(res.Images) != 1 {
 		t.Fatalf("got text %q, %d images, %v", res.Text, len(res.Images), err)
 	}
-	if _, err := png.Decode(bytes.NewReader(res.Images[0])); err != nil {
+	if _, err := png.Decode(bytes.NewReader(res.Images[0].Data)); err != nil {
 		t.Fatalf("not a PNG: %v", err)
 	}
 	msgs := bodies[1]["messages"].([]any)
@@ -222,9 +228,9 @@ func TestChartToolInLoop(t *testing.T) {
 // imageAI replies with text and one image, captioned if it is a chart.
 type imageAI struct{ text, caption string }
 
-func (a imageAI) Complete(context.Context, string, []ChatMsg) (Completion, error) {
+func (a imageAI) Complete(context.Context, llm.Request) (llm.Completion, error) {
 	img, _ := base64.StdEncoding.DecodeString(tinyPNG())
-	return Completion{Text: a.text, Images: [][]byte{img}, Captions: []string{a.caption}}, nil
+	return llm.Completion{Text: a.text, Images: []llm.Image{{Data: img, Caption: a.caption}}}, nil
 }
 
 // A reply is one message: a chart with its caption in place of the model's
@@ -302,25 +308,29 @@ func TestWantsChart(t *testing.T) {
 // at all goes to a model that can't call tools.
 func TestToolListOffers(t *testing.T) {
 	m, _ := startFake(t, &fakeMCP{}, "echo")
-	o := NewOpenRouter(&Config{APIKey: "k", Model: "m", Search: true}, m)
-	names := func(tools []any) (out []string) {
+	b := NewBot(context.Background(), testCfg(), nil, signal.NewAdapter("x", nil))
+	b.cfg.Search, b.mcp = true, m
+	names := func(tools []llm.Tool) (out []string) {
 		for _, x := range tools {
-			if f, ok := x.(map[string]any); ok {
-				out = append(out, f["function"].(map[string]any)["name"].(string))
-			} else {
-				out = append(out, "search")
-			}
+			out = append(out, x.Name)
 		}
 		return out
 	}
-	if got := strings.Join(names(o.toolList(context.Background())), ","); got != "search,fake__echo" {
+	if got := strings.Join(names(b.tools(false, "")), ","); got != "web_search,fake__echo" {
 		t.Errorf("no chart asked: %q", got)
 	}
-	if got := strings.Join(names(o.toolList(withChart(context.Background()))), ","); got != "search,make_chart,make_donut_chart,fake__echo" {
+	if got := strings.Join(names(b.tools(true, "")), ","); got != "web_search,make_chart,make_donut_chart,fake__echo" {
 		t.Errorf("chart asked: %q", got)
 	}
-	o.noTools = true
-	if got := o.toolList(withChart(context.Background())); got != nil {
+	if got := strings.Join(names(b.tools(true, "fake__echo")), ","); got != "fake__echo" {
+		t.Errorf("a chat command offers only its tool: %q", got)
+	}
+	b.serverTools = false
+	if got := strings.Join(names(b.tools(false, "")), ","); got != "fake__echo" {
+		t.Errorf("web search offered to a provider without server tools: %q", got)
+	}
+	b.toolCalls = false
+	if got := b.tools(true, ""); got != nil {
 		t.Errorf("a model without tool calls was offered %v", got)
 	}
 }
@@ -374,7 +384,7 @@ func TestChartFollowUps(t *testing.T) {
 		}
 	}
 	reply("u:a", "plot it", false)
-	b.addHistory("u:a", ChatMsg{Content: "old", Expires: time.Now().Add(20 * time.Millisecond)})
+	b.addHistory("u:a", history.Entry{Content: "old", Expires: time.Now().Add(20 * time.Millisecond)})
 	time.Sleep(100 * time.Millisecond) // erased when it expires
 	if b.chartTurns("u:a") != 0 {
 		t.Fatal("erasing the history kept the chart tools on")
@@ -383,7 +393,7 @@ func TestChartFollowUps(t *testing.T) {
 
 // The history records the charts a reply sent, so the model knows it did.
 func TestSentImagesNote(t *testing.T) {
-	res := Completion{Images: [][]byte{{1}, {2}}, Captions: []string{"Apple revenue — Q3", ""}}
+	res := llm.Completion{Images: []llm.Image{{Data: []byte{1}, Caption: "Apple revenue — Q3"}, {Data: []byte{2}}}}
 	if got := sentImages(res); got != "[sent the chart \"Apple revenue — Q3\"]\n[sent an image]\n" {
 		t.Fatalf("got %q", got)
 	}

@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/robdevops/signalbot/internal/kit/httpx"
 	"io"
 	"maps"
 	"net/http"
@@ -166,7 +167,7 @@ func StartMCP(ctx context.Context, servers map[string]mcpServerConfig) (*MCP, er
 		cfg := servers[name]
 		var conn mcpConn
 		if cfg.URL != "" {
-			conn = &httpConn{name: name, url: cfg.URL, headers: cfg.Headers, client: newHTTPClient()}
+			conn = &httpConn{name: name, url: cfg.URL, headers: cfg.Headers, client: httpx.NewClient()}
 		} else {
 			conn = &stdioConn{name: name, cfg: cfg}
 		}
