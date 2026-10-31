@@ -365,18 +365,27 @@ func spreadLabels(ys []float64, gap, lo, hi float64) []float64 {
 }
 
 var (
-	chartBG      = color.RGBA{0x14, 0x18, 0x1f, 0xff}
-	chartTitle   = color.RGBA{0xf2, 0xf4, 0xf8, 0xff}
-	chartMuted   = color.RGBA{0x9a, 0xa3, 0xad, 0xff}
-	chartGrid    = color.RGBA{0x2a, 0x30, 0x3a, 0xff}
-	chartZero    = color.RGBA{0x6b, 0x72, 0x80, 0xff}
+	chartBG    = color.RGBA{0xff, 0xff, 0xff, 0xff}
+	chartTitle = color.RGBA{0x11, 0x18, 0x27, 0xff}
+	chartMuted = color.RGBA{0x6b, 0x72, 0x80, 0xff}
+	chartGrid  = color.RGBA{0xe5, 0xe7, 0xeb, 0xff}
+	chartZero  = color.RGBA{0x9c, 0xa3, 0xaf, 0xff}
+	chartUp    = color.RGBA{0x16, 0xa3, 0x4a, 0xff} // a single series that rose
+	chartDown  = color.RGBA{0xdc, 0x26, 0x26, 0xff} // a single series that fell
+	// chartPalette serves both chart types; line charts use the first 6.
 	chartPalette = []color.RGBA{
-		{0xe0, 0x5a, 0x2b, 0xff}, // orange
-		{0x3b, 0x8b, 0xea, 0xff}, // blue
-		{0x3f, 0xb9, 0x50, 0xff}, // green
-		{0xa3, 0x71, 0xf7, 0xff}, // purple
-		{0xe3, 0xb3, 0x41, 0xff}, // yellow
-		{0xe8, 0x5a, 0xad, 0xff}, // pink
+		{0x25, 0x63, 0xeb, 0xff}, // blue
+		{0xf9, 0x73, 0x16, 0xff}, // orange
+		{0x16, 0xa3, 0x4a, 0xff}, // green
+		{0xdc, 0x26, 0x26, 0xff}, // red
+		{0x93, 0x33, 0xea, 0xff}, // purple
+		{0x08, 0x91, 0xb2, 0xff}, // teal
+		{0xca, 0x8a, 0x04, 0xff}, // amber
+		{0xdb, 0x27, 0x77, 0xff}, // pink
+		{0x4f, 0x46, 0xe5, 0xff}, // indigo
+		{0x65, 0xa3, 0x0d, 0xff}, // lime
+		{0x47, 0x55, 0x69, 0xff}, // slate
+		{0x92, 0x40, 0x0e, 0xff}, // brown
 	}
 )
 
@@ -406,7 +415,7 @@ type canvas struct {
 }
 
 // fill paints polygons, each given as x,y pairs, in c.
-func (cv *canvas) fill(c color.RGBA, polys ...[]float64) {
+func (cv *canvas) fill(c color.Color, polys ...[]float64) {
 	b := cv.img.Bounds()
 	r := vector.NewRasterizer(b.Dx(), b.Dy())
 	for _, p := range polys {
@@ -483,17 +492,20 @@ func (cv *canvas) text(f font.Face, c color.RGBA, x, y float64, align float64, s
 func renderChart(s *chartSpec) ([]byte, error) {
 	const W, H = 1280, 800
 	const left, top, bottom = 100.0, 125.0, 700.0
-	two := s.right.used
+	two, single := s.right.used, len(s.Series) == 1
 	right, labelX := 1000.0, 1030.0 // plot edge, end labels
-	if two {
+	switch {
+	case two:
 		right, labelX = 920.0, 1010.0 // room for the right axis's labels
+	case single:
+		right = 1220 // no end label: the plot takes the width
 	}
 	cv := &canvas{img: image.NewRGBA(image.Rect(0, 0, W, H))}
 	cv.rect(chartBG, 0, 0, W, H)
 
 	titleFace, subFace := face(chartFonts.bold, 34), face(chartFonts.regular, 22)
-	axisFace, labelFace, axisTitleFace := face(chartFonts.regular, 24), face(chartFonts.regular, 20), face(chartFonts.regular, 18)
-	for _, f := range []font.Face{titleFace, subFace, axisFace, labelFace, axisTitleFace} {
+	axisFace, axisTitleFace := face(chartFonts.regular, 24), face(chartFonts.regular, 18)
+	for _, f := range []font.Face{titleFace, subFace, axisFace, axisTitleFace} {
 		defer f.Close()
 	}
 	cv.text(titleFace, chartTitle, 38, 46, 0, s.Title)
@@ -551,6 +563,23 @@ func renderChart(s *chartSpec) ([]byte, error) {
 		cv.text(axisFace, chartMuted, x, bottom+60, 0.5, tk.label)
 	}
 
+	if single {
+		drawArea(cv, s, px, top, bottom, left, right)
+	} else {
+		drawLines(cv, s, px, top, bottom, right, labelX, two)
+	}
+
+	var buf bytes.Buffer
+	if err := png.Encode(&buf, cv.img); err != nil {
+		return nil, err
+	}
+	return buf.Bytes(), nil
+}
+
+// drawLines draws two or more series, each with an end label.
+func drawLines(cv *canvas, s *chartSpec, px func(time.Time) float64, top, bottom, right, labelX float64, two bool) {
+	labelFace := face(chartFonts.regular, 20)
+	defer labelFace.Close()
 	ends := make([]float64, len(s.Series))
 	for i, sr := range s.Series {
 		a := s.axisOf(sr)
@@ -574,12 +603,96 @@ func renderChart(s *chartSpec) ([]byte, error) {
 		cv.text(labelFace, chartTitle, labelX+18, labels[i]+7, 0,
 			sr.Name+"  "+s.axisOf(sr).format(sr.Points[len(sr.Points)-1].Value, 1))
 	}
+}
 
-	var buf bytes.Buffer
-	if err := png.Encode(&buf, cv.img); err != nil {
-		return nil, err
+// drawArea draws a single series as an area chart: green if it rose over the
+// period, red if it fell, with a translucent fill down to the bottom of the
+// plot, its high and low marked and a dot on its last point. It is styling
+// only; the model isn't told.
+func drawArea(cv *canvas, s *chartSpec, px func(time.Time) float64, top, bottom, left, right float64) {
+	sr, a := s.Series[0], s.left
+	pts := sr.Points
+	c := chartUp
+	if pts[len(pts)-1].Value < pts[0].Value {
+		c = chartDown
 	}
-	return buf.Bytes(), nil
+	line := make([]float64, 0, 2*len(pts))
+	for _, p := range pts {
+		line = append(line, px(p.t), a.y(p.Value))
+	}
+	area := append(append([]float64(nil), line...), px(pts[len(pts)-1].t), bottom, px(pts[0].t), bottom)
+	cv.fill(color.NRGBA{c.R, c.G, c.B, 0x26}, area) // about 15% opacity
+	cv.line(c, 3, line...)
+
+	hi, lo := highLow(pts)
+	markFace := face(chartFonts.regular, 18)
+	defer markFace.Close()
+	for _, m := range []struct {
+		i     int
+		word  string
+		above bool
+	}{{hi, "High", !a.Invert}, {lo, "Low", a.Invert}} {
+		p := pts[m.i]
+		x, y := px(p.t), a.y(p.Value)
+		decimals := 2
+		if a.Mode == "change" {
+			decimals = 1
+		}
+		lines := [2]string{m.word + " " + a.format(p.Value, decimals), p.t.Format("2 Jan 2006")}
+		cv.fill(chartTitle, circle(x, y, 6.5))
+		cv.fill(chartBG, circle(x, y, 4.5))
+		// Above the high and below the low (swapped on an inverted axis),
+		// centred on the point unless that would run off the side. Where that
+		// would cross the subtitle or the date labels, it goes beside the point.
+		align, tx := 0.5, x
+		switch {
+		case x < left+110:
+			align, tx = 0, x-10
+		case x > right-110:
+			align, tx = 1, x+10
+		}
+		base := y + 30 // first line's baseline, below the point
+		if m.above {
+			base = y - 36
+		}
+		if base-18 < 90 || base+22 > bottom+8 {
+			base, align, tx = y-4, 1, x-14 // to the left of the point
+			if x < left+260 {
+				align, tx = 0, x+14 // to the right, near the left edge
+			}
+		}
+		// A light backing keeps the label readable where it crosses the line.
+		w := max(textWidth(markFace, lines[0]), textWidth(markFace, lines[1]))
+		cv.fill(color.NRGBA{0xff, 0xff, 0xff, 0xd9}, rectPoly(tx-w*align-4, base-17, w+8, 45))
+		cv.text(markFace, chartTitle, tx, base, align, lines[0])
+		cv.text(markFace, chartTitle, tx, base+22, align, lines[1])
+	}
+	last := pts[len(pts)-1]
+	x, y := px(last.t), a.y(last.Value)
+	cv.fill(chartBG, circle(x, y, 7.5))
+	cv.fill(c, circle(x, y, 5.5))
+}
+
+// textWidth is how wide s is in pixels in face f.
+func textWidth(f font.Face, s string) float64 {
+	return float64(font.MeasureString(f, s)) / 64
+}
+
+func rectPoly(x, y, w, h float64) []float64 {
+	return []float64{x, y, x + w, y, x + w, y + h, x, y + h}
+}
+
+// highLow returns the indices of the first highest and first lowest points.
+func highLow(pts []chartPoint) (hi, lo int) {
+	for i, p := range pts {
+		if p.Value > pts[hi].Value {
+			hi = i
+		}
+		if p.Value < pts[lo].Value {
+			lo = i
+		}
+	}
+	return hi, lo
 }
 
 func minTime(a, b time.Time) time.Time {

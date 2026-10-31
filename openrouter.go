@@ -209,6 +209,17 @@ func (o *OpenRouter) runTool(ctx context.Context, tc ToolCall) (out string, imag
 		}
 		return s.summary(), [][]byte{img}, chartTool, nil
 	}
+	if tc.Function.Name == donutTool {
+		s, err := parseDonut(tc.Function.Arguments)
+		if err != nil {
+			return "error: " + err.Error(), nil, donutTool, err
+		}
+		img, err := renderDonut(s)
+		if err != nil {
+			return "error: the chart could not be drawn", nil, donutTool, err
+		}
+		return s.summary(), [][]byte{img}, donutTool, nil
+	}
 	if o.tools == nil {
 		return "error: there is no tool named " + tc.Function.Name, nil, "unknown", errors.New("unknown tool")
 	}
@@ -229,9 +240,13 @@ func (o *OpenRouter) toolList(ctx context.Context) []any {
 		tools = append(tools, map[string]string{"type": "openrouter:web_search"})
 	}
 	if chartWanted(ctx) {
-		tools = append(tools, map[string]any{"type": "function", "function": map[string]any{
-			"name": chartTool, "description": chartToolDescription, "parameters": chartToolSchema,
-		}})
+		tools = append(tools,
+			map[string]any{"type": "function", "function": map[string]any{
+				"name": chartTool, "description": chartToolDescription, "parameters": chartToolSchema,
+			}},
+			map[string]any{"type": "function", "function": map[string]any{
+				"name": donutTool, "description": donutToolDescription, "parameters": donutToolSchema,
+			}})
 	}
 	if o.tools != nil {
 		for _, t := range o.tools.tools {

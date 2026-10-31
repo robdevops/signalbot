@@ -268,6 +268,7 @@ func TestWantsChart(t *testing.T) {
 	for text, want := range map[string]bool{
 		"chart NVDA vs AMD": true, "Can you graph this?": true, "plot the yields": true,
 		"visualise it": true, "VISUALIZATION please": true, "charts?": true, "plotted over time": true,
+		"a pie chart": true, "donut please": true, "doughnut": true, "pied": false, "spied on": false,
 		"what is up": false, "a plotless film": false, "paragraph": false,
 	} {
 		if got := wantsChart(text); got != want {
@@ -294,7 +295,7 @@ func TestToolListOffers(t *testing.T) {
 	if got := strings.Join(names(o.toolList(context.Background())), ","); got != "search,fake__echo" {
 		t.Errorf("no chart asked: %q", got)
 	}
-	if got := strings.Join(names(o.toolList(withChart(context.Background()))), ","); got != "search,make_chart,fake__echo" {
+	if got := strings.Join(names(o.toolList(withChart(context.Background()))), ","); got != "search,make_chart,make_donut_chart,fake__echo" {
 		t.Errorf("chart asked: %q", got)
 	}
 	o.noTools = true
@@ -311,7 +312,7 @@ func TestSystemPromptTools(t *testing.T) {
 	if p := b.systemPrompt(false); !strings.Contains(p, "\nYour tools: web search. If asked") {
 		t.Errorf("without a chart: %q", p)
 	}
-	if p := b.systemPrompt(true); !strings.Contains(p, "\nYour tools: web search; charts (make_chart). If asked") {
+	if p := b.systemPrompt(true); !strings.Contains(p, "\nYour tools: web search; charts (make_chart, make_donut_chart). If asked") {
 		t.Errorf("with a chart: %q", p)
 	}
 	b.toolCalls = false

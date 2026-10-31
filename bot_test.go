@@ -303,11 +303,11 @@ func TestSystemPromptNamesTools(t *testing.T) {
 	b := NewBot(context.Background(), cfg, NewSignal("x"), nil)
 	b.toolNames, b.toolGroups = []string{"get_quote", "filings"}, "yahoo: get_quote; scout: filings"
 	p := b.systemPrompt(true)
-	if !strings.Contains(p, "\nYour tools: web search; charts (make_chart); MCP tools by server, yahoo: get_quote; scout: filings. If asked what tools you have, name them, grouped by server.") {
+	if !strings.Contains(p, "\nYour tools: web search; charts (make_chart, make_donut_chart); MCP tools by server, yahoo: get_quote; scout: filings. If asked what tools you have, name them, grouped by server.") {
 		t.Fatalf("prompt %q", p)
 	}
 	cfg.Search, b.toolNames, b.toolGroups = false, nil, ""
-	if p := b.systemPrompt(true); !strings.Contains(p, "\nYour tools: charts (make_chart). If asked what tools you have, name them.\n") {
+	if p := b.systemPrompt(true); !strings.Contains(p, "\nYour tools: charts (make_chart, make_donut_chart). If asked what tools you have, name them.\n") {
 		t.Fatalf("the chart tool is always there: %q", p)
 	}
 }

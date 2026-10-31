@@ -703,7 +703,7 @@ func (b *Bot) toolsText() string {
 
 // wantsChart reports whether a message asks for a chart, so the chart tool
 // is offered only then.
-var wantsChart = regexp.MustCompile(`(?i)\b(chart(s|ed|ing)?|graph(s|ed|ing)?|plot(s|ted|ting)?|visuali[sz](e|es|ed|ing|ation|ations))\b`).MatchString
+var wantsChart = regexp.MustCompile(`(?i)\b(chart(s|ed|ing)?|graph(s|ed|ing)?|plot(s|ted|ting)?|visuali[sz](e|es|ed|ing|ation|ations)|pies?|donuts?|doughnuts?)\b`).MatchString
 
 // systemPrompt is the prompt for one request; chart says whether the chart
 // tool is offered with it.
@@ -716,7 +716,7 @@ func (b *Bot) systemPrompt(chart bool) string {
 			tools = append(tools, "web search")
 		}
 		if chart {
-			tools = append(tools, "charts ("+chartTool+")")
+			tools = append(tools, "charts ("+chartTool+", "+donutTool+")")
 		}
 		if b.toolGroups != "" {
 			tools, ask = append(tools, "MCP tools by server, "+b.toolGroups), "name them, grouped by server"
