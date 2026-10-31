@@ -32,15 +32,16 @@ Every request tells OpenRouter to use only model providers that do not collect d
 
 Every level, debug included, is always written; there is no setting to turn any of it down.
 
-- **A message addressed to the bot:** "received group chat" or "received dm", with no name, ID or text; after the answer, a line with the sender's name, time taken, tokens used and cost.
+- **A message addressed to the bot:** "received group chat" or "received dm", with no name, ID or text; after the answer, a line with the time taken, tokens used and cost, again with no name or ID.
 - **Never the text of any message,** nor errors that quote one.
 - **A message not addressed to the bot:** nothing, not even a note that it arrived.
 - **A DM from someone not in `SIGNAL_DM_USER_IDS`:** their ID, every time, never a name or text. The same goes for a scheduled run in the DM of a user since removed from the list.
 - **A tool call:** the tool's name and how long it took; never the arguments or the result.
 - **Schedules:** how many were loaded at startup, a run skipped or dropped, and how long each run took; never the text or who made it. A run dropped because its user left the group is logged without content.
-- **Debug lines:** the number of contacts loaded, the ID of a mentioned person with no known name, the name of a sender whose repeated message was dropped, and a local MCP server's own error output.
+- **Names and IDs:** never anyone's name, and never anyone's ID except as above for a DM from someone not in `SIGNAL_DM_USER_IDS`. The bot logs its own account ID at startup.
+- **Debug lines:** the number of contacts loaded, that a repeated message was dropped, and a local MCP server's own error output (which the bot doesn't control).
 
-Logs go to the journal or Docker's log driver and are kept as long as your settings keep them, names and IDs included.
+Logs go to the journal or Docker's log driver and are kept as long as your settings keep them.
 
 ## What the bot can see
 

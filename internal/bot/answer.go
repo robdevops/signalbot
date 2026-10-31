@@ -69,7 +69,6 @@ func (b *Bot) respond(msg feature.Message, act feature.Action, text string) {
 	offered, tools := b.offer(key, msg.Text, act.ToolChoice)
 	start := time.Now() // history expires from here, not from when it is stored
 	reply, err := b.ai.Ask(b.ctx, openrouter.Request{
-		Who:        cmp.Or(msg.Name, msg.Sender),
 		System:     b.system(offered, systems),
 		History:    b.chats.History(key),
 		Text:       strings.TrimSpace(text),
@@ -79,7 +78,7 @@ func (b *Bot) respond(msg feature.Message, act feature.Action, text string) {
 	})
 	stop()
 	if err != nil {
-		logx.Errorf("OpenRouter error for %s after %.1fs: %v", cmp.Or(msg.Name, msg.Sender), time.Since(start).Seconds(), err)
+		logx.Errorf("OpenRouter error after %.1fs: %v", time.Since(start).Seconds(), err)
 		b.send(msg, sorry, nil, b.chats.Names(key))
 		return
 	}
@@ -214,14 +213,13 @@ func (b *Bot) system(offered []int, lines []string) string {
 // send posts text to msg's chat, linking each @Name in known (lowercased
 // name to ID), split into messages, with the attachments on the first.
 func (b *Bot) send(msg feature.Message, text string, attachments []string, known map[string]string) {
-	who := cmp.Or(msg.Name, msg.Sender)
 	if n := utf8.RuneCountInString(text); n > signal.MaxReply {
-		logx.Warnf("reply to %s truncated from %d chars", who, n)
+		logx.Warnf("reply truncated from %d chars", n)
 	}
 	parts := signal.Parts(text, b.sig.BotName())
 	if len(parts) == 0 {
 		if len(attachments) == 0 {
-			logx.Warnf("empty reply to %s, nothing sent", who)
+			logx.Warnf("empty reply, nothing sent")
 			return
 		}
 		parts = []string{""}
@@ -231,7 +229,7 @@ func (b *Bot) send(msg feature.Message, text string, attachments []string, known
 			attachments = nil
 		}
 		if err := b.sig.Send(msg.Chat, part, signal.Mentions(part, known), attachments); err != nil {
-			logx.Errorf("send to %s failed: %v", who, err)
+			logx.Errorf("send failed: %v", err)
 			return
 		}
 	}

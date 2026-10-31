@@ -13,7 +13,6 @@ import (
 
 	"github.com/robdevops/signalbot/internal/feature"
 	"github.com/robdevops/signalbot/internal/kit/img"
-	"github.com/robdevops/signalbot/internal/kit/logx"
 	"github.com/robdevops/signalbot/internal/kit/txt"
 )
 
@@ -151,7 +150,7 @@ func (c *Client) Message(env *Envelope, self string, allowed map[string]bool) fe
 		Chat:      env.Chat(),
 		Sender:    env.Sender(),
 		Name:      txt.SafeName(env.SourceName),
-		Text:      c.text(d.Message, d.Mentions, self, addressed),
+		Text:      c.text(d.Message, d.Mentions, self),
 		Expires:   time.Duration(d.ExpiresInSeconds) * time.Second,
 		Addressed: addressed,
 	}
@@ -200,11 +199,10 @@ func (c *Client) People(env *Envelope, self string) []Person {
 }
 
 // text removes the bot's own mention from msg and shows other mentions as
-// @Name, or [unnamed user], logged only when logIt is set: an unaddressed
-// message is never logged. Mentions are applied from the end, so earlier
+// @Name, or [unnamed user]. Mentions are applied from the end, so earlier
 // offsets stay valid; signal-cli's order isn't guaranteed, so they are
 // sorted, and one that overlaps another or falls outside msg is skipped.
-func (c *Client) text(msg string, ms []Mention, self string, logIt bool) string {
+func (c *Client) text(msg string, ms []Mention, self string) string {
 	u := utf16.Encode([]rune(msg))
 	sorted := slices.Clone(ms)
 	sort.SliceStable(sorted, func(i, j int) bool { return sorted[i].Start > sorted[j].Start })
@@ -218,9 +216,6 @@ func (c *Client) text(msg string, ms []Mention, self string, logIt bool) string 
 		if m.UUID != self && m.Number != self {
 			name := "@" + c.resolve(m)
 			if name == "@" {
-				if logIt {
-					logx.Debugf("unresolved mention of %s", cmp.Or(m.UUID, m.Number))
-				}
 				name = unnamed
 			}
 			repl = utf16.Encode([]rune(name))

@@ -115,28 +115,27 @@ func TestMentionsOddOffsets(t *testing.T) {
 		{[]Mention{{UUID: "u", Name: "Bob", Start: 0, Length: 4}, {UUID: botID, Start: 2, Length: 2}}, "￼ ￼"},
 		{[]Mention{{UUID: "u", Start: 99, Length: 1}, {UUID: "u", Start: 1, Length: -1}}, "￼ a ￼"},
 	} {
-		if got := c.text("￼ a ￼", tc.ms, botID, true); got != tc.want {
+		if got := c.text("￼ a ￼", tc.ms, botID); got != tc.want {
 			t.Errorf("%v: %q", tc.ms, got)
 		}
 	}
 }
 
-// An unresolved mention is logged for an addressed message only: an
-// unaddressed one is never logged.
-func TestUnresolvedMentionLoggedOnlyWhenAddressed(t *testing.T) {
+// An unresolved mention is shown as [unnamed user], and never logged,
+// addressed or not.
+func TestUnresolvedMentionNotLogged(t *testing.T) {
 	logs := captureLogs(t)
 	c := New("x")
 	unknown := `"mentions":[{"uuid":"` + aliceID + `","start":0,"length":1}]`
 	if m := c.Message(envelope(t, `{`+fromBob+`,"dataMessage":{"message":"￼ hi",`+unknown+`,`+inGroup+`}}`), botID, nil); m.Text != "[unnamed user] hi" {
 		t.Fatalf("text %q", m.Text)
 	}
-	if logs.String() != "" {
-		t.Fatalf("an unaddressed message logged %q", logs.String())
-	}
 	both := `"mentions":[{"uuid":"` + botID + `","start":0,"length":1},{"uuid":"` + aliceID + `","start":2,"length":1}]`
-	c.Message(envelope(t, `{`+fromBob+`,"dataMessage":{"message":"￼ ￼",`+both+`,`+inGroup+`}}`), botID, nil)
-	if !strings.Contains(logs.String(), "unresolved mention of "+aliceID) {
-		t.Fatalf("logs %q", logs.String())
+	if m := c.Message(envelope(t, `{`+fromBob+`,"dataMessage":{"message":"￼ ￼",`+both+`,`+inGroup+`}}`), botID, nil); m.Text != "[unnamed user]" {
+		t.Fatalf("text %q", m.Text)
+	}
+	if logs.String() != "" {
+		t.Fatalf("logged %q", logs.String())
 	}
 }
 

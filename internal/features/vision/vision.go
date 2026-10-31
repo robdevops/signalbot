@@ -3,7 +3,6 @@
 package vision
 
 import (
-	"cmp"
 	"context"
 	"encoding/base64"
 	"errors"
@@ -87,7 +86,7 @@ func fetch(ctx context.Context, h feature.Host, m feature.Message, i int, what s
 		err = errors.New("not an image")
 	}
 	if err != nil {
-		logx.Warnf("could not fetch %s from %s: %v", what, cmp.Or(m.Name, m.Sender), err)
+		logx.Warnf("could not fetch %s: %v", what, err)
 		return ""
 	}
 	return "data:" + http.DetectContentType(data) + ";base64," + base64.StdEncoding.EncodeToString(data)

@@ -96,9 +96,10 @@ type harness struct {
 	reqs      []modelRequest // every chat completions request
 	mcpCalls  []string       // "server/tool arguments" for every MCP tool call
 	logs      []logLine
-	partial   []byte   // a log line still being written
-	secrets   []string // message and reply texts, which must never be logged
-	sendsRead int      // sends returned by nextSend
+	partial   []byte          // a log line still being written
+	secrets   []string        // message and reply texts, which must never be logged
+	people    map[string]bool // names and IDs of everyone but the bot, logged only for a DM not allowed
+	sendsRead int             // sends returned by nextSend
 
 	signalSock string // the fake signal-cli's socket
 	modelURL   string // the fake OpenRouter's base URL
@@ -168,6 +169,7 @@ func newHarness(t *testing.T, w world) *harness {
 	}
 	for id, name := range w.Contacts {
 		h.contacts[id] = name
+		h.person(id, name)
 	}
 	h.startSignal()
 	h.startModel()
@@ -297,6 +299,26 @@ func (h *harness) setContacts(c map[string]string) {
 	}
 	for id, name := range c {
 		h.contacts[id] = name
+		h.personLocked(id, name)
+	}
+}
+
+// person remembers names and IDs of someone other than the bot, which no
+// log line may hold except one about a DM from someone not allowed.
+func (h *harness) person(xs ...string) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.personLocked(xs...)
+}
+
+func (h *harness) personLocked(xs ...string) {
+	if h.people == nil {
+		h.people = map[string]bool{}
+	}
+	for _, x := range xs {
+		if x = strings.TrimSpace(x); utf8.RuneCountInString(x) >= 3 && x != idBot && x != "Botty" {
+			h.people[x] = true
+		}
 	}
 }
 
@@ -314,17 +336,24 @@ func (h *harness) receive(frame string) {
 	h.t.Helper()
 	var f struct {
 		Envelope struct {
-			DataMessage struct {
-				Message string
-				Quote   struct{ Text string }
+			Source, SourceUUID, SourceNumber, SourceName string
+			DataMessage                                  struct {
+				Message  string
+				Quote    struct{ Text, Author, AuthorUUID string }
+				Mentions []struct{ UUID, Number string }
 			}
 		}
 	}
 	if err := json.Unmarshal([]byte(frame), &f); err != nil {
 		h.t.Fatalf("bad frame: %v", err)
 	}
-	h.keepSecret(f.Envelope.DataMessage.Message)
-	h.keepSecret(f.Envelope.DataMessage.Quote.Text)
+	e := f.Envelope
+	h.keepSecret(e.DataMessage.Message)
+	h.keepSecret(e.DataMessage.Quote.Text)
+	h.person(e.Source, e.SourceUUID, e.SourceNumber, e.SourceName, e.DataMessage.Quote.Author, e.DataMessage.Quote.AuthorUUID)
+	for _, m := range e.DataMessage.Mentions {
+		h.person(m.UUID, m.Number)
+	}
 	h.receiveRaw(`{"jsonrpc":"2.0","method":"receive","params":` + frame + `}`)
 	select {
 	case <-h.handled:
@@ -825,7 +854,9 @@ func containsAll(s string, parts []string) bool {
 	return true
 }
 
-// checkNoSecretsLogged fails if any message or reply text reached the log.
+// checkNoSecretsLogged fails if any message or reply text reached the log,
+// or anyone's name or ID but the bot's, except the ID in a line about a DM
+// from someone not in SIGNAL_DM_USER_IDS.
 func (h *harness) checkNoSecretsLogged() {
 	h.mu.Lock()
 	defer h.mu.Unlock()
@@ -833,6 +864,14 @@ func (h *harness) checkNoSecretsLogged() {
 		for _, s := range h.secrets {
 			if strings.Contains(l.Text, s) {
 				h.t.Errorf("message text %q reached the log: %q", s, l.Text)
+			}
+		}
+		if strings.Contains(l.Text, "not in SIGNAL_DM_USER_IDS") {
+			continue
+		}
+		for p := range h.people {
+			if strings.Contains(l.Text, p) {
+				h.t.Errorf("name or ID %q reached the log: %q", p, l.Text)
 			}
 		}
 	}

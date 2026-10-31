@@ -55,7 +55,7 @@ func TestGroupMentionIsAnswered(t *testing.T) {
 		t.Fatalf("typing %v", typing)
 	}
 	logs := h.logs.String()
-	if !strings.Contains(logs, "<6>received group chat\n") || !strings.Contains(logs, "<6>reply Alice ") || strings.Contains(logs, "hello") || strings.Contains(logs, "again") {
+	if !strings.Contains(logs, "<6>received group chat\n") || !strings.Contains(logs, "<6>reply 0.") || strings.Contains(logs, "Alice") || strings.Contains(logs, "hello") || strings.Contains(logs, "again") {
 		t.Fatalf("logs:\n%s", logs)
 	}
 }
@@ -122,7 +122,7 @@ func TestModelError(t *testing.T) {
 	if s["message"] != sorry {
 		t.Fatalf("sent %v", s)
 	}
-	if logs := h.logs.String(); !strings.Contains(logs, "<3>OpenRouter error for Alice after ") || !strings.Contains(logs, "Input flagged") || strings.Contains(logs, "secret") {
+	if logs := h.logs.String(); !strings.Contains(logs, "<3>OpenRouter error after ") || strings.Contains(logs, "Alice") || !strings.Contains(logs, "Input flagged") || strings.Contains(logs, "secret") {
 		t.Fatalf("logs:\n%s", logs)
 	}
 	r, _ := h.ask(dm("try again"))
@@ -200,7 +200,7 @@ func TestRepeatIsDropped(t *testing.T) {
 	h.receive(dm("different"))
 	h.nextSend()
 	h.noSend()
-	if n := len(h.requests()); n != 2 || !strings.Contains(h.logs.String(), "<7>ignored duplicate from Alice\n") {
+	if n := len(h.requests()); n != 2 || !strings.Contains(h.logs.String(), "<7>ignored duplicate\n") {
 		t.Fatalf("%d requests; logs:\n%s", n, h.logs)
 	}
 }

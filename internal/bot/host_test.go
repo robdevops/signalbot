@@ -231,7 +231,7 @@ func TestDeliver(t *testing.T) {
 	h.b.Deliver(feature.Message{Chat: group, Sender: aliceID, Text: "@BOTTY what's new?"}) // her name is looked up
 	r := h.nextSend()
 	equal(t, "model got", contents(h.requests()[0]), []string{"user: Alice: see you @bob and @Alice", "user: Alice: what's new?"})
-	if r["message"] != "ok" || !strings.Contains(h.logs.String(), "<6>reply Alice ") {
+	if r["message"] != "ok" || !strings.Contains(h.logs.String(), "<6>reply 0.") {
 		t.Fatalf("sent %v; logs:\n%s", r, h.logs)
 	}
 	h.b.Deliver(feature.Message{Chat: feature.Chat{GroupID: "other"}, Sender: aliceID, Text: "hello"})

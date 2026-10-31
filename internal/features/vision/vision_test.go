@@ -170,8 +170,8 @@ func TestFetchFailures(t *testing.T) {
 		t.Fatalf("got %q with %d images", a.Note, len(a.Images))
 	}
 	logs := errw.String()
-	if !strings.Contains(logs, "<4>could not fetch an image from Alice: timed out") ||
-		!strings.Contains(logs, "<4>could not fetch a sticker from Alice: not an image") || strings.Contains(logs, "look") {
+	if !strings.Contains(logs, "<4>could not fetch an image: timed out") ||
+		!strings.Contains(logs, "<4>could not fetch a sticker: not an image") || strings.Contains(logs, "look") || strings.Contains(logs, "Alice") {
 		t.Fatalf("log %q", logs)
 	}
 

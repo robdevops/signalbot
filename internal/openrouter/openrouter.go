@@ -53,7 +53,6 @@ func New(cfg *config.Config) *Client {
 
 // Request is one question for the model.
 type Request struct {
-	Who        string // whom it answers, for the log
 	System     string
 	History    []chats.Entry
 	Text       string
@@ -154,8 +153,8 @@ func (c *Client) Ask(ctx context.Context, r Request) (feature.Reply, error) {
 				return reply, errors.New("empty response") // not the body: it can hold the conversation
 			}
 			cached := 100 * min(total.cached, total.input) / max(total.input, 1)
-			logx.Infof("reply %s %.1fs, tokens in/out: %d/%d (%d%% cached), $%.3f",
-				r.Who, time.Since(start).Seconds(), total.input, total.output, cached, total.cost)
+			logx.Infof("reply %.1fs, tokens in/out: %d/%d (%d%% cached), $%.3f",
+				time.Since(start).Seconds(), total.input, total.output, cached, total.cost)
 			return reply, nil
 		}
 		msgs = append(msgs, message{Role: "assistant", Content: a.text, ToolCalls: a.calls})

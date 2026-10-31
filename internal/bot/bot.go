@@ -346,7 +346,7 @@ func (b *Bot) load(env *signal.Envelope, self string) (feature.Message, bool) {
 		id += fmt.Sprintf("\x00%s:%s:%d", m.ID, m.Pack, m.Sticker)
 	}
 	if b.chats.Repeat(key, id) {
-		logx.Debugf("ignored duplicate from %s", cmp.Or(msg.Name, msg.Sender))
+		logx.Debugf("ignored duplicate")
 		return msg, false
 	}
 	for i := range msg.Media {

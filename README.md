@@ -233,7 +233,7 @@ Each line has a journald priority, and every priority is always written:
 | `<6>` info | each message answered ("received group chat" or "received dm", then the reply's time, tokens and cost), tool calls |
 | `<7>` debug | detail, such as contact list loads |
 
-Priorities 5–7 go to stdout and 2–4 to stderr. Under systemd the lines carry their `<N>` prefix, so `journalctl -p warning` filters by level. Under Docker the lines are plain, and only the stream tells levels apart. Message text is never logged.
+Priorities 5–7 go to stdout and 2–4 to stderr. Under systemd the lines carry their `<N>` prefix, so `journalctl -p warning` filters by level. Under Docker the lines are plain, and only the stream tells levels apart. Message text is never logged, and neither is anyone's name or ID, except the ID of someone not in `SIGNAL_DM_USER_IDS` who DMs the bot.
 
 ## Troubleshooting
 
