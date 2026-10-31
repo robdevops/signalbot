@@ -20,7 +20,7 @@ A small, [privacy-conscious](PRIVACY.md) chat bot that connects to a running [si
 - Understands images, Signal stickers and emojis (if the configured model supports it)
 - Short per-conversation memory, for context
 - Typing indicators
-- Never logs message content
+- Respects any "disappearing messages" setting (messages are erased from memory). The bot never logs the content of any message
 
 ## Use cases
 
