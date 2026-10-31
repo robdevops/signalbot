@@ -88,7 +88,7 @@ The core's lifecycle has four stages. Each port is one stage; nothing else is a 
 - `Env`: a feature's own settings, recorded for the docs test.
 - `Info`: the bot's name in a chat, the model, whether it takes images and can call tools, and the names of the tools.
 - `Media(ctx, msg, i)`: the bytes of a message's attachment. The core fills in each item's label (a sticker's emoji and pack) when it loads the message.
-- `Deliver(Message)`: handle a message as if its sender had just sent it to the bot (commands, hooks and the model), through its chat's mailbox.
+- `Deliver(Message)`: act on a message as if its sender had just posted it in its chat, through the chat's mailbox. A command or a mention of the bot is handled like any addressed message; anything else the bot posts as written, with @Name linked, and keeps in history.
 - `Groups(ctx, user)`: the groups the bot shares with a user, with their names (signal-cli's `listGroups`).
 
 **Types**, each field being a stage's natural input or output:
@@ -139,16 +139,20 @@ At(name string, t time.Time, fn func(ctx context.Context)) (cancel func())
 
 In `features.go`, `websearch`, `charts` and `mcp` stay in that order: it's the order of the tools line and `{tools}`.
 
-**`/schedule`** lets a user schedule anything they could type to the bot. It works only in a DM from a sender in `SIGNAL_DM_USER_IDS`.
+**`/schedule`** lets a user schedule anything they could post in the chat. It works only in a DM from a sender in `SIGNAL_DM_USER_IDS`.
 ```
 /schedule "<message or /command>" <ISO 8601 time> [every hour|day|week|month|quarter|year] [group name]
 /schedule list            (a numbered list of your schedules)
 /schedule del <number>
 /schedule help
 ```
-- At each run, the text is delivered as if the user had sent it, in the DM or the named group: commands, hooks and the model all apply.
+- At each run, the text acts as if the user had posted it in the DM or the named group, with the bot posting in their place:
+  - plain text is posted as written, with @Name linked to real mentions, and the model isn't involved;
+  - text that mentions the bot goes to the model, like any mention, and the answer is posted;
+  - a `/command` runs as a command.
+- The group name is the rest of the line, so it needs no quotes even with spaces. It's matched case-insensitively.
 - The group must be one the user shares with the bot, checked again at each run.
-- A time without an offset is in the bot's time zone. A monthly schedule from the 31st runs on the last day of shorter months.
+- A time without an offset is in the bot's time zone. A monthly schedule from the 31st runs on the last day of shorter months, and a yearly one from 29 February runs on 28 February in other years. A past start is accepted for a repeating schedule, which first runs at the next time still to come; a one-shot in the past is refused.
 - Straight and curly quotes both work (phones type “ ”).
 - Each user has a cap, scheduling `/schedule` itself is refused, and the text is never logged.
 - Schedules are always saved as JSON (standard library, no new dependencies) in `$STATE_DIRECTORY`, or the working directory when run by hand. Each save writes a temporary file and renames it over the old one.
