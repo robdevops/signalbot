@@ -12,7 +12,7 @@ import (
 
 	"github.com/robdevops/signalbot/internal/kit/logx"
 
-	"github.com/robdevops/signalbot/internal/signal"
+	"github.com/robdevops/signalbot/internal/transports/signal"
 )
 
 // version is set at build time: go build -ldflags "-X main.version=v1.2.3"

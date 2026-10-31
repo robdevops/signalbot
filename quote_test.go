@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/robdevops/signalbot/internal/signal"
+	"github.com/robdevops/signalbot/internal/transports/signal"
 )
 
 const bob = "99999999-8888-7777-6666-555555555555"

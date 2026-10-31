@@ -26,7 +26,7 @@ import (
 
 	"github.com/robdevops/signalbot/internal/kit/txt"
 
-	"github.com/robdevops/signalbot/internal/signal"
+	"github.com/robdevops/signalbot/internal/transports/signal"
 )
 
 const (

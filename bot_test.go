@@ -18,7 +18,7 @@ import (
 
 	"github.com/robdevops/signalbot/internal/kit/logx/logxtest"
 
-	"github.com/robdevops/signalbot/internal/signal"
+	"github.com/robdevops/signalbot/internal/transports/signal"
 )
 
 const (

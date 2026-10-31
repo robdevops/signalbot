@@ -8,7 +8,7 @@ import (
 
 	"github.com/robdevops/signalbot/internal/kit/logx/logxtest"
 
-	"github.com/robdevops/signalbot/internal/signal"
+	"github.com/robdevops/signalbot/internal/transports/signal"
 )
 
 // A group message that isn't for the bot is kept as context, never logged,

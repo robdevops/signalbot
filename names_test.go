@@ -13,7 +13,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/robdevops/signalbot/internal/signal"
+	"github.com/robdevops/signalbot/internal/transports/signal"
 )
 
 const contactsJSON = `[{"number":null,"uuid":"` + alice + `","username":"alice.user20","name":"","givenName":null,"familyName":null,"nickName":null,"isArchived":false,"profile":{"lastUpdateTimestamp":1792622246207,"givenName":"Alice","familyName":null,"about":"","hasAvatar":true}}]`

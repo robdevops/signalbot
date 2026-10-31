@@ -19,9 +19,9 @@ import (
 
 	"github.com/robdevops/signalbot/internal/kit/logx/logxtest"
 
-	"github.com/robdevops/signalbot/internal/signal"
+	"github.com/robdevops/signalbot/internal/transports/signal"
 
-	"github.com/robdevops/signalbot/internal/signal/signaltest"
+	"github.com/robdevops/signalbot/internal/transports/signal/signaltest"
 )
 
 // fakeModel answers chat completions: with a call to fake__echo for the first

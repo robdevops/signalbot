@@ -7,7 +7,7 @@ import (
 
 	"github.com/robdevops/signalbot/internal/kit/logx"
 
-	"github.com/robdevops/signalbot/internal/signal"
+	"github.com/robdevops/signalbot/internal/transports/signal"
 
 	"github.com/robdevops/signalbot/internal/kit/txt"
 )

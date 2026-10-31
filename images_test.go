@@ -16,9 +16,9 @@ import (
 
 	"github.com/robdevops/signalbot/internal/kit/logx/logxtest"
 
-	"github.com/robdevops/signalbot/internal/signal"
+	"github.com/robdevops/signalbot/internal/transports/signal"
 
-	"github.com/robdevops/signalbot/internal/signal/signaltest"
+	"github.com/robdevops/signalbot/internal/transports/signal/signaltest"
 )
 
 // dmPhoto is a photo with no text sent as a DM, in the shape signal-cli
