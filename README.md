@@ -129,6 +129,7 @@ Add the bot's account to a group and @mention it, reply to one of its messages, 
 | `MODEL_API_URL` | OpenRouter | Another OpenAI-compatible API to use instead, e.g. `http://localhost:11434/v1` for Ollama. Web search is OpenRouter's, so it is off elsewhere |
 | `MODEL_API_KEY` | `OPENROUTER_API_KEY` | That API's key, if it needs one |
 | `MODEL` | `deepseek/deepseek-v4.1-flash-1017` | OpenRouter model name, as `provider/model` |
+| `MODEL_SEARCH` | `true` | Lets the model search the web (OpenRouter's web search tool) when it decides to; searches are billed. Accepts `true`/`false`, `yes`/`no`, `on`/`off`, `1`/`0` |
 | `REASONING` | `low` | Reasoning effort, e.g. `low`, `medium`, `high` (`none` to omit) |
 
 **Core**
@@ -138,14 +139,13 @@ Add the bot's account to a group and @mention it, reply to one of its messages, 
 | `SYSTEM_PROMPT` | empty | Extra instructions, appended to the built-in prompt (which keeps answers short and Signal-sized) |
 | `MAX_CONCURRENCY` | `32` | Conversations in flight at once; messages beyond this are dropped |
 | `HISTORY_TURNS` | `10` | Exchanges remembered per chat (`HISTORY_TURNS` × 2 messages) |
+| `INTRO` | built-in sentence | Overrides the self-introduction; `{name}`, `{model}` (without any OpenRouter `provider/` prefix) and `{tools}` (the tool groups by name, e.g. `web search, charts`, or `none`) are substituted |
 | `LOG_LEVEL` | `info` | `debug`, `info`, `warn` or `error` |
 
 **Features**
 
 | Variable | Default | Description |
 |---|---|---|
-| `MODEL_SEARCH` | `true` | Lets the model search the web (OpenRouter's web search tool) when it decides to; searches are billed. Accepts `true`/`false`, `yes`/`no`, `on`/`off`, `1`/`0` |
-| `INTRO` | built-in sentence | Overrides the self-introduction; `{name}`, `{model}` (without any OpenRouter `provider/` prefix) and `{tools}` (the tool groups by name, e.g. `web search, charts`, or `none`) are substituted |
 | `GROUP_CONTEXT` | `true` | Remember group messages not addressed to the bot as context, so "what do you think @bot" works without replying to the message; they are never logged |
 | `MCP_CONFIG` | empty | Path of an MCP servers file; see [MCP tools](#mcp-tools) |
 

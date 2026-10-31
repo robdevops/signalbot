@@ -27,7 +27,7 @@ func TestEverySettingIsDocumented(t *testing.T) {
 		t.Fatal(err)
 	}
 	b := bot.New(context.Background(), &bot.Config{Model: cfg.Model, MaxConcurrency: 1, HistoryTurns: 1, Env: env,
-		Caps: feature.Caps{Vision: true, Tools: true, ServerTools: true}}, nil)
+		Caps: feature.Caps{Vision: true, Tools: true}}, nil)
 	fs, _ := features(cfg)
 	if err := b.Register(fs...); err != nil {
 		t.Fatal(err)

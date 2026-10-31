@@ -35,8 +35,10 @@ const (
 
 // Config is the core's settings.
 type Config struct {
-	Model          string // as the provider names it, e.g. "deepseek/deepseek-v4.1-flash-1017"
-	ExtraPrompt    string // SYSTEM_PROMPT, appended to the built-in prompt
+	Model          string              // as the provider names it, e.g. "deepseek/deepseek-v4.1-flash-1017"
+	ExtraPrompt    string              // SYSTEM_PROMPT, appended to the built-in prompt
+	Intro          string              // INTRO; "" for DefaultIntro
+	Tools          []feature.ToolGroup // the provider's own tools (OpenRouter's web search), named first
 	MaxConcurrency int
 	HistoryTurns   int
 	Caps           feature.Caps
@@ -69,7 +71,7 @@ func New(ctx context.Context, cfg *Config, ai llm.Completer, transports ...chat.
 		sem:         make(chan struct{}, cfg.MaxConcurrency),
 		dedupe:      map[string]time.Time{},
 		typingEvery: cmp.Or(cfg.TypingEvery, 10*time.Second),
-		hooks:       hooks{commands: map[string]commandFunc{}},
+		hooks:       hooks{commands: map[string]commandFunc{}, groups: cfg.Tools},
 	}
 	for _, t := range transports {
 		b.transports[t.Kind()] = t

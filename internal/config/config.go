@@ -23,6 +23,8 @@ type Config struct {
 	Model          string
 	Reasoning      string
 	ExtraPrompt    string // SYSTEM_PROMPT: appended to the built-in prompt
+	Intro          string // INTRO
+	Search         bool   // MODEL_SEARCH: OpenRouter's web search
 	MaxConcurrency int
 	HistoryTurns   int
 	LogLevel       logx.Level
@@ -39,6 +41,8 @@ func Load(e *Env) (*Config, error) {
 		Model:          e.String("MODEL", "deepseek/deepseek-v4.1-flash-1017"),
 		Reasoning:      strings.ToLower(e.String("REASONING", "low")),
 		ExtraPrompt:    e.String("SYSTEM_PROMPT", ""),
+		Intro:          e.String("INTRO", ""),
+		Search:         e.Bool("MODEL_SEARCH", true),
 		MaxConcurrency: e.Int("MAX_CONCURRENCY", 32),
 		HistoryTurns:   e.Int("HISTORY_TURNS", 10),
 		Socket:         e.String("SIGNALCLI_SOCKET", ""),

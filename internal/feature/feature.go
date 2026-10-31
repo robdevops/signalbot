@@ -23,7 +23,6 @@ type Host interface {
 	Env() Env
 	Caps() Caps
 	Info() Info
-	Media() Media
 
 	// Command answers "/name ...". run gets the text after the name, and
 	// reports false to let the message go to the model as usual. A name
@@ -31,8 +30,6 @@ type Host interface {
 	Command(name string, run func(ctx context.Context, t Turn, rest string) (Command, bool)) error
 	// Tools offers a group of tools to the model, on the turns Offer allows.
 	Tools(g ToolGroup)
-	// OnTurn adds to a turn before the model is asked.
-	OnTurn(func(ctx context.Context, t Turn) Additions)
 	// OnReply may replace what is sent: nil keeps the reply.
 	OnReply(func(t Turn, r Reply) *chat.Outgoing)
 	// OnUnaddressed sees group messages not for the bot. Their text is
@@ -55,20 +52,14 @@ type Env interface {
 
 // Caps is what the model and provider can do.
 type Caps struct {
-	Vision      bool // the model accepts images
-	Tools       bool // the model can call tools
-	ServerTools bool // the provider runs server tools (OpenRouter's web search)
+	Vision bool // the model accepts images
+	Tools  bool // the model can call tools
 }
 
 // Info describes the bot, for features that talk about it.
 type Info struct {
 	Model string // the model's name without its provider, e.g. "deepseek-v4.1-flash-1017"
 	Tools string // the tool groups by name, e.g. "web search, charts", or "none"
-}
-
-// Media fetches an image or sticker from a message.
-type Media interface {
-	Fetch(ctx context.Context, c chat.ChatID, m chat.Media) ([]byte, error)
 }
 
 // Turn is one message the bot is answering. It is read-only.
@@ -108,16 +99,6 @@ type Tool struct {
 type Result struct {
 	Text   string
 	Images []chat.Picture
-}
-
-// Additions is what an OnTurn hook adds: a line for the system prompt, a
-// note for the model with the message, the note history keeps in its place,
-// and images (data: URLs) shown to the model with the message.
-type Additions struct {
-	Prompt      string
-	ModelNote   string
-	HistoryNote string
-	Images      []string
 }
 
 // Reply is the model's answer to a turn, before it is sent.

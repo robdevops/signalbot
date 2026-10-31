@@ -16,7 +16,6 @@ type commandFunc = func(ctx context.Context, t feature.Turn, rest string) (featu
 type hooks struct {
 	commands    map[string]commandFunc
 	groups      []feature.ToolGroup
-	turn        []func(context.Context, feature.Turn) feature.Additions
 	reply       []func(feature.Turn, feature.Reply) *chat.Outgoing
 	unaddressed []func(chat.Message)
 	forget      []func(chat.ChatID)
@@ -65,7 +64,6 @@ type host struct{ b *Bot }
 func (h host) Context() context.Context { return h.b.ctx }
 func (h host) Env() feature.Env         { return h.b.cfg.Env }
 func (h host) Caps() feature.Caps       { return h.b.cfg.Caps }
-func (h host) Media() feature.Media     { return media{h.b} }
 
 func (h host) Info() feature.Info {
 	return feature.Info{Model: modelName(h.b.cfg.Model), Tools: h.b.toolsText()}
@@ -80,9 +78,6 @@ func (h host) Command(name string, run commandFunc) error {
 }
 
 func (h host) Tools(g feature.ToolGroup) { h.b.hooks.groups = append(h.b.hooks.groups, g) }
-func (h host) OnTurn(fn func(context.Context, feature.Turn) feature.Additions) {
-	h.b.hooks.turn = append(h.b.hooks.turn, fn)
-}
 func (h host) OnReply(fn func(feature.Turn, feature.Reply) *chat.Outgoing) {
 	h.b.hooks.reply = append(h.b.hooks.reply, fn)
 }
@@ -93,13 +88,6 @@ func (h host) OnForget(fn func(chat.ChatID)) { h.b.hooks.forget = append(h.b.hoo
 
 func (h host) Remember(c chat.ChatID, text string, expires time.Duration) {
 	h.b.hist.Add(c, history.Entry{Role: "user", Content: text, Expires: history.Expiry(time.Now(), expires)})
-}
-
-// media fetches through the transport that owns the chat.
-type media struct{ b *Bot }
-
-func (m media) Fetch(ctx context.Context, c chat.ChatID, md chat.Media) ([]byte, error) {
-	return m.b.tr(c).Fetch(ctx, c, md)
 }
 
 // These let tests outside the package see the bot's state, read-only.

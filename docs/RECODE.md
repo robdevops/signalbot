@@ -219,6 +219,13 @@ The work goes in one PR per step, or "pr and merge" whenever asked.
 - **Fixtures:** the envelope fixtures become `testdata/` in the Signal adapter. Shared fakes go in `*test` helper packages: `signaltest`, a fake transport, a fake model.
 - **No test is dropped or loosened to make a move pass.** Each step reports the count of test functions before and after. A test whose subject changes packages counts as moved, not removed.
 
+## Tightened after review
+- **Into the core:** vision (images are part of a message; whether the model sees them follows its capability, and the history note is privacy policy) and the intro (`INTRO` is identity, like `SYSTEM_PROMPT`).
+- **Into the provider:** web search, which is OpenRouter's server tool (`MODEL_SEARCH`). The provider hands the core its own tool groups.
+- **Ports:** that removed `OnTurn` and its return type, media fetching and the server-tools capability. The feature API is now commands, tool groups, `OnReply`, `OnUnaddressed`, `OnForget` and `Remember`, each with a feature that needs it.
+- **Features:** `example`, `charts`, `mcp` and `groupctx`, each one optional.
+- **Kit:** only code with more than one user. File size is a 1,000-line sanity cap, not a design rule.
+
 ## Line counts
 - **Before:** 4,185 lines of non-test Go, at `14a2a21`:
   - `bot.go` 1,024, `chart.go` 782, `mcp.go` 689, `signal.go` 442, `openrouter.go` 409, `donut.go` 263
@@ -226,15 +233,16 @@ The work goes in one PR per step, or "pr and merge" whenever asked.
 - **After:** reported in the final PR with the same measure, by `go run ./internal/arch/sizes`. It leaves out tests, `internal/arch` and the `*test` helper packages, and shows core, adapters, kit and features apart, with the total and its change from 4,185.
 - **Expected:** a total about the same or up to ~300 higher (the ports, `chat` types and router), with the core well under half of the total.
 - **Actual, first pass:** 5,615 lines (+1,430, +34%). About 820 of that was structure from splitting 13 files into 61 (package/import, blank and comment lines), and 660 was code: the ports, the neutral types, the adapter glue, plus duplication.
-- **After the trim** (one tool and picture type end to end, the MCP client and the chart drawing folded back into their only users, and the file limit raised to 500 so related files merge): **5,356 lines** (+1,171, +28%), in 35 files.
+- **After the trim** (one tool and picture type end to end, the MCP client and chart drawing folded back into their only users, related files merged): 5,356 lines.
+- **After the review** (vision and intro into the core, web search into the provider, slimmer ports): **5,278 lines** (+1,093, +26%), in 33 files. Code is +559 (+17%); the rest is package, import, comment and blank lines.
 
   | Part | Lines |
   |---|---:|
-  | Core (`bot`, `chat`, `history`, `llm`, `config`, `feature`) | 1,301 |
-  | Signal adapter and provider | 1,330 |
+  | Core (`bot`, `chat`, `history`, `llm`, `config`, `feature`) | 1,370 |
+  | Signal adapter and provider | 1,349 |
   | Kit | 318 |
-  | Features | 2,295 |
-  | `cmd/signalbot` | 112 |
+  | Features (`example`, `charts`, `mcp`, `groupctx`) | 2,131 |
+  | `cmd/signalbot` | 110 |
 
 ## Simplifications that change behaviour
 Anything that would change what users see or how the bot is configured is listed with its line saving, and I ask before applying it. That covers wording, defaults, settings, limits, log lines and reply layout. The new `MODEL_API_URL` and `MODEL_API_KEY` settings are additions, and existing settings keep working. The "at least one network" check replaces "SIGNALCLI_SOCKET is required" with the same effect for current setups. Simplifications that keep behaviour the same go ahead, and the tests show it.

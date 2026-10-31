@@ -18,8 +18,8 @@ import (
 	"github.com/robdevops/signalbot/internal/chat"
 	"github.com/robdevops/signalbot/internal/config"
 	"github.com/robdevops/signalbot/internal/feature"
-	"github.com/robdevops/signalbot/internal/features/intro"
 	"github.com/robdevops/signalbot/internal/llm"
+	"github.com/robdevops/signalbot/internal/llm/openai"
 	"github.com/robdevops/signalbot/internal/transports/signal"
 )
 
@@ -36,10 +36,10 @@ type Config struct {
 }
 
 func testCfg() *Config {
-	return &Config{Model: "m", AllowedSenders: map[string]bool{}, Intro: intro.Default, MaxConcurrency: 4, HistoryTurns: 2}
+	return &Config{Model: "m", AllowedSenders: map[string]bool{}, Intro: bot.DefaultIntro, MaxConcurrency: 4, HistoryTurns: 2}
 }
 
-var defaultIntro = intro.Default
+var defaultIntro = bot.DefaultIntro
 
 // adapters remembers each test bot's Signal adapter.
 var adapters = map[*bot.Bot]*signal.Adapter{}
@@ -50,13 +50,15 @@ var typingEvery = 50 * time.Millisecond
 // NewBot builds the bot as main does: the core on the Signal adapter sig,
 // with every feature, configured by cfg.
 func NewBot(ctx context.Context, cfg *Config, ai llm.Completer, sig *signal.Adapter) *bot.Bot {
-	os.Setenv("MODEL_SEARCH", strconv.FormatBool(cfg.Search))
 	os.Setenv("GROUP_CONTEXT", strconv.FormatBool(cfg.GroupContext))
-	os.Setenv("INTRO", cfg.Intro)
 	os.Setenv("MCP_CONFIG", cfg.MCPConfig)
-	b := bot.New(ctx, &bot.Config{Model: cfg.Model, ExtraPrompt: cfg.ExtraPrompt, MaxConcurrency: cfg.MaxConcurrency,
+	var search []feature.ToolGroup
+	if cfg.Search && !cfg.NoServerTools {
+		search = []feature.ToolGroup{openai.SearchTool()}
+	}
+	b := bot.New(ctx, &bot.Config{Model: cfg.Model, ExtraPrompt: cfg.ExtraPrompt, Intro: cfg.Intro, Tools: search, MaxConcurrency: cfg.MaxConcurrency,
 		HistoryTurns: cfg.HistoryTurns, Env: &config.Env{}, TypingEvery: typingEvery,
-		Caps: feature.Caps{Vision: cfg.Vision, Tools: !cfg.NoTools, ServerTools: !cfg.NoServerTools}}, ai, sig)
+		Caps: feature.Caps{Vision: cfg.Vision, Tools: !cfg.NoTools}}, ai, sig)
 	fs, _ := features(&config.Config{Model: cfg.Model})
 	if err := b.Register(fs...); err != nil {
 		panic(err)

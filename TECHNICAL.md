@@ -11,7 +11,7 @@ cmd/signalbot/               wiring (main.go) and the feature list (features.go)
 internal/bot, chat, history, llm, config, feature   the core
 internal/transports/signal   the Signal adapter
 internal/llm/openai          the model provider
-internal/features/*          example, websearch, charts, mcp, groupctx, vision, intro
+internal/features/*          example, charts, mcp, groupctx
 internal/kit/*               shared code: logx, txt, img, httpx, bound
 ```
 
@@ -22,6 +22,8 @@ internal/kit/*               shared code: logx, txt, img, httpx, bound
 - In-memory state only, all capped: history per chat (`HISTORY_TURNS`), number of chats (500), names, frame size (1 MiB) and reply length (8,000 characters, split by the network)
 - Honours disappearing messages: each message's expiry, derived from the chat's timer, is stored with its history, and no message outlives 24 hours or that timer, whichever is shorter. Once a message expires, reads ignore it at once, it is dropped from the history, and the garbage collector reclaims its memory. Each chat has one expiry timer. When a chat's history is gone, what features and the network kept about it (chart follow-ups, names for mentions) goes too
 - Several networks can run at once: chat IDs carry their network (`signal:g:…`), so history and state never mix, and replies go to the network that owns the chat
+- How the bot introduces itself (`INTRO`, a line at the end of the prompt) and SYSTEM_PROMPT are core settings
+- Images: a message's images, and a quoted message's thumbnails, up to 4 and 5 MB each, and its sticker, are fetched while answering and shown to the model if it accepts images; otherwise the model is told it can't see them. History keeps only a marker, which tells the model it sees images only in the latest message, so to look again someone replies to it and mentions the bot
 - The same message repeated by the same sender in the same chat within 10 seconds is ignored
 - Message text is never logged, nor anything that can quote it: a panic while handling a message is recovered and reported without its value or stack trace; API error bodies are reduced to their message (OpenRouter's moderation errors quote the flagged input); malformed replies and frames are reported without being echoed. A message that is not a mention, a reply or a DM is not logged at all
 - One reply may take at most 5 model requests and 3 minutes; each tool call has 30s, and its result is capped at 16K characters. Tool results are untrusted input to the model, like a quote, and it may follow instructions in them. Only the question and the final answer go into history
@@ -39,16 +41,14 @@ internal/kit/*               shared code: logx, txt, img, httpx, bound
 ### Model provider (`internal/llm/openai`)
 - An OpenAI-compatible chat completions client, OpenRouter by default (`MODEL_API_URL`, `MODEL_API_KEY`), over a keep-alive HTTP client that requires TLS 1.3 and retries once on a network error, 429 or 5xx. On OpenRouter, requests set `provider.data_collection: deny` and ask for the real cost to be reported
 - The provider's model list says whether MODEL accepts images and can call tools. If it can't call tools, no tools are offered at all
+- Its own tools: on OpenRouter, the web search server tool (`MODEL_SEARCH`), which the model calls only when it decides to
 
 ### Features (`internal/features`)
 Each feature's package comment describes it in full.
 - [`example`](internal/features/example): `/example` is answered by the bot itself, never the model, and leaves no history
-- [`websearch`](internal/features/websearch): OpenRouter's web search server tool (`MODEL_SEARCH`)
 - [`charts`](internal/features/charts): `make_chart` and `make_donut_chart`, offered when a message asks for a chart (chart, graph, plot, visualise/visualize, pie, donut and their forms) and for the next 2 replies in that chat. Line charts take up to 6 series on one or two Y axes, each with its own mode (values, or % change computed by the bot), unit, title and inversion; a single series is drawn as an area, green if it ends up and red if down, with its high, low and current value marked. Donuts take 2–12 shares, largest first, with the percentages and a shortened total (K, M, B, T) computed by the bot. Charts are 1280×800 PNGs on white. A reply with a chart is one message: the chart, captioned with its title (and subtitle, if both fit on one line) in place of the model's text; history notes each chart sent, by caption
 - [`mcp`](internal/features/mcp): tools from MCP servers (`MCP_CONFIG`): remote ones over Streamable HTTP (JSON or server-sent events, with the session re-established if the server forgets it) and local ones over stdio (restarted with backoff if they exit, given only `PATH`, `HOME` and their configured `env`). Each server's `allowed_tools` and `blocked_tools` decide which tools are offered, named `server__tool`. `chat_commands`: `/name text` is a turn in which only that tool is offered, with `tool_choice` requiring the call until its result is in; with `require_arg`, a bare `/name` is answered by the bot. Names are checked at startup (letters, digits, `_`, `-`; free; the tool offered), and skipped with a warning otherwise. Images from MCP tools are attached to the model's text, up to 4 per reply
 - [`groupctx`](internal/features/groupctx): a group message not addressed to the bot is added to the group's history as text (`Name: text`, mentions resolved, photos and stickers noted as `[image]`/`[sticker]` but never fetched), never logged, and expires like any other history entry (`GROUP_CONTEXT`)
-- [`vision`](internal/features/vision): a message's images, and a quoted message's thumbnails, up to 4 and 5 MB each, and its sticker, are fetched while answering and shown to the model if it accepts images; otherwise the model is told it can't see them. History keeps only a marker, which tells the model it sees images only in the latest message, so to look again someone replies to it and mentions the bot
-- [`intro`](internal/features/intro): how the model introduces itself (`INTRO`)
 
 ## The prompt
 
@@ -62,7 +62,7 @@ The system prompt is built from these parts, in this order:
 
 2. When the model has tools for this request, a line naming the tool groups the features offer, in feature order (the charts only when they are offered): `Your tools: web search; MCP tools by server, yahoo: get_quote, …. If asked what tools you have, name them, grouped by server.`
 3. `SYSTEM_PROMPT`, if set, on a new line after it. It adds to the built-in prompt and never replaces it.
-4. Lines features add: the `intro` feature's introduction rule: `If asked to introduce yourself, reply with exactly this text and nothing else: "…"`. The quoted text is `INTRO` with `{name}` (the bot's own Signal profile name, else `signalbot`), `{model}` (without any OpenRouter `provider/` prefix) and `{tools}` (the tool groups by name, e.g. `web search, charts`, or `none`) filled in. It is quoted so a newline or quote in it cannot escape into the rest of the prompt.
+4. The introduction rule, always last: `If asked to introduce yourself, reply with exactly this text and nothing else: "…"`. The quoted text is `INTRO` with `{name}` (the bot's own Signal profile name, else `signalbot`), `{model}` (without any OpenRouter `provider/` prefix) and `{tools}` (the tool groups by name, e.g. `web search, charts`, or `none`) filled in. It is quoted so a newline or quote in it cannot escape into the rest of the prompt.
 
 The messages that follow are the chat's history (at most `HISTORY_TURNS` exchanges, none older than 24 hours), then the new message. In a group each message is prefixed with its sender's name ("Alice: …"). A quoted message is added as `[Replying to a message attributed to you: "…"]` when it is the bot's own, or as `[Replying to a message by "Bob": "…"]` when someone mentions the bot in reply to another person (`"someone"` if the author's name is unknown). Quotes are escaped and capped at 500 characters, because the sender composes them.
 

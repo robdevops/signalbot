@@ -10,6 +10,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/robdevops/signalbot/internal/feature"
 	"io"
 	"net/http"
 	"slices"
@@ -239,4 +240,22 @@ func (c *Client) Capabilities(ctx context.Context) (images, tools bool) {
 	}
 	logx.Warnf("model %s is not in %s's model list, so images are off", c.opt.Model, c.name())
 	return false, true
+}
+
+// SearchTool is OpenRouter's web search server tool, which the model calls
+// only when it decides to (unlike the deprecated "web" plugin, which
+// searched on every request).
+func SearchTool() feature.ToolGroup {
+	return feature.ToolGroup{Prompt: "web search", Intro: "web search", Tools: []feature.Tool{{
+		Name: "web_search", Label: "web search", Def: map[string]string{"type": "openrouter:web_search"},
+	}}}
+}
+
+// ServerTools are the tools the provider runs itself: web search on
+// OpenRouter when search is on, else none.
+func (c *Client) ServerTools(search bool) []feature.ToolGroup {
+	if !search || !c.openRouter {
+		return nil
+	}
+	return []feature.ToolGroup{SearchTool()}
 }

@@ -60,9 +60,13 @@ func main() {
 		logx.Warnf("model %s can't call tools, so web search, charts and MCP tools are off", cfg.Model)
 	}
 
-	b := bot.New(connCtx, &bot.Config{Model: cfg.Model, ExtraPrompt: cfg.ExtraPrompt, MaxConcurrency: cfg.MaxConcurrency,
-		HistoryTurns: cfg.HistoryTurns, Env: env,
-		Caps: feature.Caps{Vision: images, Tools: toolCalls, ServerTools: model.OpenRouter()},
+	search := model.ServerTools(cfg.Search)
+	if len(search) > 0 {
+		logx.Infof("web search on")
+	}
+	b := bot.New(connCtx, &bot.Config{Model: cfg.Model, ExtraPrompt: cfg.ExtraPrompt, Intro: cfg.Intro, Tools: search,
+		MaxConcurrency: cfg.MaxConcurrency, HistoryTurns: cfg.HistoryTurns, Env: env,
+		Caps: feature.Caps{Vision: images, Tools: toolCalls},
 	}, llm.Loop{Model: model}, signal.NewAdapter(cfg.Socket, cfg.AllowedSenders))
 	fs, waits := features(cfg)
 	if err := b.Register(fs...); err != nil {

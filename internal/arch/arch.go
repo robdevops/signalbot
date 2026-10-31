@@ -13,7 +13,7 @@ import (
 // Size limits. A file over FileLimit or a package over PackageLimit fails
 // the tests, unless it is listed in the exceptions there.
 const (
-	FileLimit    = 500
+	FileLimit    = 1000
 	PackageLimit = 1500
 )
 

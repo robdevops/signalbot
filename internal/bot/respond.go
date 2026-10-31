@@ -102,22 +102,13 @@ func (b *Bot) prepare(req *Request, self string) prepared {
 		t.Offered = append(t.Offered, tl.Name)
 	}
 	prompt, kept := strings.TrimSpace(req.Prompt), strings.TrimSpace(req.Prompt)
-	var lines, images []string
-	for _, fn := range b.hooks.turn {
-		a := fn(b.ctx, t)
-		if a.Prompt != "" {
-			lines = append(lines, a.Prompt)
-		}
-		if a.ModelNote != "" {
-			prompt += "\n" + a.ModelNote
-		}
-		if a.HistoryNote != "" {
-			kept += "\n" + a.HistoryNote
-		}
-		images = append(images, a.Images...)
+	modelNote, historyNote, images := b.see(b.ctx, req.Message)
+	if modelNote != "" {
+		prompt += "\n" + modelNote
+		kept += "\n" + historyNote
 	}
 	req.Prompt = strings.TrimSpace(kept)
-	return prepared{turn: t, system: b.systemPrompt(req.Chat, groups, lines), prompt: strings.TrimSpace(prompt), images: images, tools: tools}
+	return prepared{turn: t, system: b.systemPrompt(req.Chat, groups, self), prompt: strings.TrimSpace(prompt), images: images, tools: tools}
 }
 
 const truncatedMarker = " […truncated]"
@@ -181,6 +172,11 @@ func (b *Bot) addHistory(key string, entries ...history.Entry) {
 	b.hist.Add(chat.ChatID(key), entries...)
 }
 
+// DefaultIntro is how the bot introduces itself when INTRO is unset. {name},
+// {model} and {tools} are filled in.
+const DefaultIntro = "hi, I'm {name}, your open source assistant running {model} (tools: {tools}). " +
+	"I respond to @mentions and replies to my messages. See https://github.com/robdevops/signalbot/blob/main/README.md for details."
+
 // basePrompt follows the transport's description of the chat.
 const basePrompt = " To mention someone, write @ followed by their exact name. Never write your own name with an @."
 
@@ -209,8 +205,8 @@ func (b *Bot) toolsText() string {
 
 // systemPrompt is the prompt for one request: the transport's description
 // of the chat and the built-in rules, the tool groups offered, SYSTEM_PROMPT,
-// and the lines features add.
-func (b *Bot) systemPrompt(c chat.ChatID, groups []feature.ToolGroup, lines []string) string {
+// and how to introduce itself.
+func (b *Bot) systemPrompt(c chat.ChatID, groups []feature.ToolGroup, self string) string {
 	p := b.tr(c).Describe() + basePrompt
 	var names []string
 	ask := "name them"
@@ -228,8 +224,8 @@ func (b *Bot) systemPrompt(c chat.ChatID, groups []feature.ToolGroup, lines []st
 	if b.cfg.ExtraPrompt != "" {
 		p += "\n" + b.cfg.ExtraPrompt
 	}
-	for _, l := range lines {
-		p += "\n" + l
-	}
-	return p
+	intro := strings.NewReplacer("{name}", txt.Safe(self), "{model}", modelName(b.cfg.Model), "{tools}", b.toolsText()).
+		Replace(cmp.Or(b.cfg.Intro, DefaultIntro))
+	// Quoted so a newline or quote in the name or in INTRO cannot escape it.
+	return p + "\nIf asked to introduce yourself, reply with exactly this text and nothing else: " + strconv.Quote(intro)
 }

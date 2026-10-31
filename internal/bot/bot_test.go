@@ -91,7 +91,8 @@ func TestCoreWithNoFeatures(t *testing.T) {
 	}
 	ai.mu.Lock()
 	defer ai.mu.Unlock()
-	if ai.req.System != "You are a helpful assistant in a test chat."+basePrompt || len(ai.req.Tools) != 0 {
+	if !strings.HasPrefix(ai.req.System, "You are a helpful assistant in a test chat."+basePrompt+"\nIf asked to introduce yourself") ||
+		strings.Contains(ai.req.System, "Your tools") || len(ai.req.Tools) != 0 {
 		t.Fatalf("system prompt %q, tools %v", ai.req.System, ai.req.Tools)
 	}
 	if b.toolsText() != "" {
