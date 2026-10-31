@@ -374,10 +374,8 @@ func TestChartFollowUps(t *testing.T) {
 		}
 	}
 	reply("u:a", "plot it", false)
-	b.mu.Lock()
-	b.history["u:a"] = []ChatMsg{{Content: "old", Expires: time.Now().Add(-time.Second)}}
-	b.mu.Unlock()
-	b.forget("u:a")
+	b.addHistory("u:a", ChatMsg{Content: "old", Expires: time.Now().Add(20 * time.Millisecond)})
+	time.Sleep(100 * time.Millisecond) // erased when it expires
 	if b.chartTurns("u:a") != 0 {
 		t.Fatal("erasing the history kept the chart tools on")
 	}

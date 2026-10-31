@@ -1,14 +1,11 @@
 package main
 
 import (
-	"context"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/robdevops/signalbot/internal/kit/logx/logxtest"
-
-	"github.com/robdevops/signalbot/internal/transports/signal"
 )
 
 // A group message that isn't for the bot is kept as context, never logged,
@@ -58,30 +55,6 @@ func TestGroupContextOff(t *testing.T) {
 	deliver(b, parse(t, groupPlain))
 	if h := b.getHistory("signal:g:" + group); len(h) != 0 {
 		t.Fatalf("chatter kept with GROUP_CONTEXT off: %+v", h)
-	}
-}
-
-// However many messages a chat holds, it has at most one expiry timer, and
-// it is set for the earliest message to expire.
-func TestOneEraserPerChat(t *testing.T) {
-	b := NewBot(context.Background(), testCfg(), nil, signal.NewAdapter("x", testCfg().AllowedSenders))
-	b.cfg.HistoryTurns = 100
-	now := time.Now()
-	for i := 0; i < 50; i++ {
-		b.addHistory("g:x", ChatMsg{Role: "user", Content: "m", Expires: now.Add(time.Hour + time.Duration(i)*time.Minute)})
-	}
-	b.addHistory("g:x", ChatMsg{Role: "user", Content: "soon", Expires: now.Add(30 * time.Millisecond)})
-	b.mu.Lock()
-	n, at := len(b.erasers), b.erasers["g:x"].at
-	b.mu.Unlock()
-	if n != 1 || !at.Equal(now.Add(30*time.Millisecond)) {
-		t.Fatalf("%d timers, next at %v", n, at.Sub(now))
-	}
-	time.Sleep(150 * time.Millisecond)
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	if len(b.history["g:x"]) != 50 || !b.erasers["g:x"].at.Equal(now.Add(time.Hour)) {
-		t.Fatalf("after the first expiry: %d messages, next at %v", len(b.history["g:x"]), b.erasers["g:x"].at.Sub(now))
 	}
 }
 

@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/robdevops/signalbot/internal/chat"
+	"github.com/robdevops/signalbot/internal/history"
 	"github.com/robdevops/signalbot/internal/kit/bound"
 	"maps"
 	"net/http"
@@ -46,11 +47,10 @@ type Bot struct {
 	ctx        context.Context
 	closing    atomic.Bool // set by Shutdown: no new reply starts
 
-	mu      sync.Mutex
-	history map[string][]ChatMsg
-	erasers map[string]eraser // one timer per chat, for its next message to expire
-	charts  map[string]int    // chat key -> replies left with the chart tools on
-	dedupe  map[string]time.Time
+	mu     sync.Mutex
+	hist   *history.Store
+	charts map[string]int // chat key -> replies left with the chart tools on
+	dedupe map[string]time.Time
 
 	typingEvery time.Duration
 	toolNames   []string              // MCP tools the model may call, for {tools}
@@ -65,8 +65,6 @@ func NewBot(ctx context.Context, cfg *Config, ai Completer, transports ...chat.T
 		cfg: cfg, ai: ai, ctx: ctx,
 		transports:  map[string]chat.Transport{},
 		sem:         make(chan struct{}, cfg.MaxConcurrency),
-		history:     map[string][]ChatMsg{},
-		erasers:     map[string]eraser{},
 		charts:      map[string]int{},
 		dedupe:      map[string]time.Time{},
 		typingEvery: 10 * time.Second,
@@ -75,6 +73,15 @@ func NewBot(ctx context.Context, cfg *Config, ai Completer, transports ...chat.T
 	for _, t := range transports {
 		b.transports[t.Kind()] = t
 	}
+	b.hist = history.New(func() int { return cfg.HistoryTurns })
+	b.hist.OnForget(func(c chat.ChatID) {
+		b.mu.Lock()
+		delete(b.charts, string(c)) // nothing left to follow up on
+		b.mu.Unlock()
+		if t := b.tr(c); t != nil {
+			t.Forget(c) // nor names to mention
+		}
+	})
 	return b
 }
 
@@ -306,7 +313,7 @@ func (b *Bot) rememberChatter(m chat.Message) {
 	b.addHistory(string(m.Chat), ChatMsg{
 		Role:    "user",
 		Content: cmp.Or(m.Sender.Name, "someone") + ": " + text,
-		Expires: historyExpiry(time.Now(), m.Expires),
+		Expires: history.Expiry(time.Now(), m.Expires),
 	})
 }
 
@@ -461,7 +468,7 @@ func (b *Bot) respond(req *Request) {
 		if chart {
 			b.chartReplied(req.Key, asked || res.Charted)
 		}
-		gone := historyExpiry(start, req.Expires)
+		gone := history.Expiry(start, req.Expires)
 		b.addHistory(req.Key, ChatMsg{Role: "user", Content: req.Prompt, Expires: gone}, ChatMsg{Role: "assistant", Content: sentImages(res) + res.Text, Expires: gone})
 	}
 
@@ -649,90 +656,20 @@ func (b *Bot) systemPrompt(chart bool, c chat.ChatID, self string) string {
 	return p + "\nIf asked to introduce yourself, reply with exactly this text and nothing else: " + strconv.Quote(intro)
 }
 
+// getHistory is the chat's history as model messages.
 func (b *Bot) getHistory(key string) []ChatMsg {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	return unexpired(b.history[key], time.Now())
-}
-
-// maxHistoryAge is the longest any message is kept. A chat's shorter
-// disappearing-messages timer wins.
-const maxHistoryAge = 24 * time.Hour
-
-// historyExpiry is when a message handled at now must be forgotten.
-func historyExpiry(now time.Time, disappearing time.Duration) time.Time {
-	if disappearing <= 0 {
-		disappearing = maxHistoryAge
+	var out []ChatMsg
+	for _, e := range b.hist.Get(chat.ChatID(key)) {
+		out = append(out, ChatMsg{Role: e.Role, Content: e.Content, Expires: e.Expires})
 	}
-	return now.Add(min(disappearing, maxHistoryAge))
+	return out
 }
 
-// unexpired returns a copy of h without the messages whose disappearing-
-// messages time has passed.
-func unexpired(h []ChatMsg, now time.Time) []ChatMsg {
-	return slices.DeleteFunc(slices.Clone(h), func(m ChatMsg) bool {
-		return !m.Expires.IsZero() && !now.Before(m.Expires)
-	})
-}
-
-// eraser is a chat's pending timer and when it fires.
-type eraser struct {
-	timer *time.Timer
-	at    time.Time
-}
-
-// forget erases the chat's expired messages from memory, and sets the timer
-// for the next one.
-func (b *Bot) forget(key string) {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	delete(b.erasers, key)
-	if h := unexpired(b.history[key], time.Now()); len(h) > 0 {
-		b.history[key] = h
-	} else {
-		delete(b.history, key)
-		delete(b.charts, key) // nothing left to follow up on
-		if t := b.tr(chat.ChatID(key)); t != nil {
-			t.Forget(chat.ChatID(key)) // nor names to mention
-		}
-	}
-	b.scheduleErase(key)
-}
-
-// scheduleErase makes sure a timer will fire when the chat's earliest message
-// expires. One timer per chat, however many messages, so a busy group can't
-// pile up timers. Caller holds b.mu.
-func (b *Bot) scheduleErase(key string) {
-	var next time.Time
-	for _, m := range b.history[key] {
-		if !m.Expires.IsZero() && (next.IsZero() || m.Expires.Before(next)) {
-			next = m.Expires
-		}
-	}
-	e, ok := b.erasers[key]
-	switch {
-	case next.IsZero():
-		if ok {
-			e.timer.Stop()
-			delete(b.erasers, key)
-		}
-	case !ok || next.Before(e.at):
-		if ok {
-			e.timer.Stop()
-		}
-		b.erasers[key] = eraser{time.AfterFunc(time.Until(next), func() { b.forget(key) }), next}
-	}
-}
-
+// addHistory remembers model messages in the chat's history: their text only.
 func (b *Bot) addHistory(key string, msgs ...ChatMsg) {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	bound.MakeRoom(b.history, key, maxChats)
-	h := append(unexpired(b.history[key], time.Now()), msgs...)
-	if max := b.cfg.HistoryTurns * 2; len(h) > max {
-		h = append([]ChatMsg(nil), h[len(h)-max:]...)
+	entries := make([]history.Entry, len(msgs))
+	for i, m := range msgs {
+		entries[i] = history.Entry{Role: m.Role, Content: m.Content, Expires: m.Expires}
 	}
-	b.history[key] = h
-	// Erase the expired messages and let the garbage collector reclaim them.
-	b.scheduleErase(key)
+	b.hist.Add(chat.ChatID(key), entries...)
 }

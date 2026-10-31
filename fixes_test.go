@@ -111,21 +111,6 @@ func TestReplyIsCappedToAFewMessages(t *testing.T) {
 	}
 }
 
-func TestChatsAreCapped(t *testing.T) {
-	b := NewBot(context.Background(), testCfg(), nil, signal.NewAdapter("x", testCfg().AllowedSenders))
-	last := ""
-	for i := 0; i < maxChats+50; i++ {
-		last = fmt.Sprintf("g:%d", i)
-		b.addHistory(last, ChatMsg{Role: "user", Content: "x"})
-	}
-	if len(b.history) > maxChats {
-		t.Fatalf("history grew past maxChats: %d", len(b.history))
-	}
-	if _, ok := b.history[last]; !ok {
-		t.Fatal("the chat just added was dropped")
-	}
-}
-
 // --- correctness ------------------------------------------------------------
 
 func TestConfigParsing(t *testing.T) {
@@ -468,39 +453,9 @@ func TestOnlyUnlistedDMsGetTheIgnoredLine(t *testing.T) {
 
 // Disappearing messages: the chat's timer is read from the message, and the
 // history entries it produces are erased from memory once it runs out.
-func TestDisappearingMessagesAreErasedFromHistory(t *testing.T) {
+func TestDisappearingTimerIsRead(t *testing.T) {
 	env := parse(t, strings.Replace(groupMention, `"groupInfo"`, `"expiresInSeconds":3600,"groupInfo"`, 1))
 	if got := decide(env, nil).Expires; got != time.Hour {
 		t.Fatalf("Expires = %v, want 1h", got)
-	}
-
-	b := NewBot(context.Background(), testCfg(), nil, signal.NewAdapter("x", testCfg().AllowedSenders))
-	soon := time.Now().Add(50 * time.Millisecond)
-	b.addHistory("k", ChatMsg{Role: "user", Content: "a", Expires: soon}, ChatMsg{Role: "assistant", Content: "b", Expires: soon})
-	b.addHistory("k", ChatMsg{Role: "user", Content: "kept"}, ChatMsg{Role: "assistant", Content: "kept"})
-	if n := len(b.getHistory("k")); n != 4 {
-		t.Fatalf("history before expiry has %d messages, want 4", n)
-	}
-	time.Sleep(150 * time.Millisecond)
-	b.mu.Lock()
-	n := len(b.history["k"])
-	b.mu.Unlock()
-	if n != 2 {
-		t.Fatalf("expired messages still in memory: %d left, want 2", n)
-	}
-}
-
-// No message is remembered for more than a day, whatever the chat's
-// disappearing-messages setting; a shorter timer wins.
-func TestHistoryExpiry(t *testing.T) {
-	now := time.Now()
-	for _, tc := range []struct{ timer, want time.Duration }{
-		{0, 24 * time.Hour},
-		{time.Hour, time.Hour},
-		{7 * 24 * time.Hour, 24 * time.Hour},
-	} {
-		if got := historyExpiry(now, tc.timer); !got.Equal(now.Add(tc.want)) {
-			t.Errorf("timer %v: expires in %v, want %v", tc.timer, got.Sub(now), tc.want)
-		}
 	}
 }
