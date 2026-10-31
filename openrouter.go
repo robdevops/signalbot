@@ -107,6 +107,7 @@ type Completion struct {
 	Cost         float64 // USD, as OpenRouter reports it; 0 if it did not
 	ToolCalls    []ToolCall
 	Images       [][]byte // charts and tool images to send with the reply
+	Charted      bool     // a built-in chart tool drew one
 }
 
 // Completer is a model API the bot can ask for a reply.
@@ -185,6 +186,7 @@ func (o *OpenRouter) Complete(ctx context.Context, system string, msgs []ChatMsg
 				debugf("tool %s arguments were %d bytes", tool, len(tc.Function.Arguments))
 			} else {
 				infof("tool %s %.1fs", tool, time.Since(start).Seconds())
+				total.Charted = total.Charted || tool == chartTool || tool == donutTool
 			}
 			for _, img := range images {
 				if len(total.Images) < maxReplyImages {

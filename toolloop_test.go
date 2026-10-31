@@ -320,3 +320,44 @@ func TestSystemPromptTools(t *testing.T) {
 		t.Errorf("a model without tool calls was told of tools: %q, %q", p, b.toolsText())
 	}
 }
+
+// After a message asks for a chart or a reply draws one, the chart tools stay
+// on for 2 more replies in that chat, for follow-ups.
+func TestChartFollowUps(t *testing.T) {
+	b := NewBot(context.Background(), testCfg(), NewSignal("x"), nil)
+	reply := func(key, text string, drew bool) bool {
+		asked := wantsChart(text)
+		chart := asked || b.chartTurns(key) > 0
+		if chart {
+			b.chartReplied(key, asked || drew)
+		}
+		return chart
+	}
+	for i, step := range []struct {
+		text string
+		drew bool
+		want bool
+	}{
+		{"chart NVDA for 3 months", true, true},
+		{"show that for 1 month", false, true},
+		{"and for a week", true, true}, // drew one: the count restarts
+		{"thanks", false, true},
+		{"what about AMD", false, true},
+		{"ok", false, false},
+	} {
+		if got := reply("u:a", step.text, step.drew); got != step.want {
+			t.Fatalf("step %d %q: chart tools %v, want %v", i, step.text, got, step.want)
+		}
+		if reply("u:other", "hello", false) {
+			t.Fatal("another chat got the chart tools")
+		}
+	}
+	reply("u:a", "plot it", false)
+	b.mu.Lock()
+	b.history["u:a"] = []ChatMsg{{Content: "old", Expires: time.Now().Add(-time.Second)}}
+	b.mu.Unlock()
+	b.forget("u:a")
+	if b.chartTurns("u:a") != 0 {
+		t.Fatal("erasing the history kept the chart tools on")
+	}
+}

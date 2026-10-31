@@ -69,6 +69,7 @@ type Bot struct {
 	history map[string][]ChatMsg
 	erasers map[string]eraser            // one timer per chat, for its next message to expire
 	known   map[string]map[string]string // chat key -> name -> uuid shown to the model
+	charts  map[string]int               // chat key -> replies left with the chart tools on
 	names   *Names
 	dedupe  map[string]time.Time
 
@@ -86,6 +87,7 @@ func NewBot(ctx context.Context, cfg *Config, sig *Signal, ai Completer) *Bot {
 		history:     map[string][]ChatMsg{},
 		erasers:     map[string]eraser{},
 		known:       map[string]map[string]string{},
+		charts:      map[string]int{},
 		names:       NewNames(),
 		dedupe:      map[string]time.Time{},
 		typingEvery: 10 * time.Second,
@@ -584,7 +586,8 @@ func (b *Bot) respond(req *Request) {
 	msgs := append(b.getHistory(req.Key), ChatMsg{Role: "user", Content: prompt, Images: seen})
 
 	start := time.Now()
-	ctx, chart := b.ctx, b.toolCalls && wantsChart(req.Text)
+	ctx, asked := b.ctx, wantsChart(req.Text)
+	chart := b.toolCalls && (asked || b.chartTurns(req.Key) > 0)
 	if chart {
 		ctx = withChart(ctx)
 	}
@@ -596,6 +599,9 @@ func (b *Bot) respond(req *Request) {
 		res = Completion{Text: "Sorry, I couldn't get an answer right now."}
 	} else {
 		infof("%s", replyLogLine(req.Name, took, res))
+		if chart {
+			b.chartReplied(req.Key, asked || res.Charted)
+		}
 		gone := historyExpiry(start, req.Expires)
 		b.addHistory(req.Key, ChatMsg{Role: "user", Content: req.Prompt, Expires: gone}, ChatMsg{Role: "assistant", Content: res.Text, Expires: gone})
 	}
@@ -710,6 +716,32 @@ func (b *Bot) toolsText() string {
 	return strings.Join(append(tools, b.toolNames...), ", ")
 }
 
+// chartFollowUps is how many replies after one that asked for or drew a chart
+// still offer the chart tools, for follow-ups like "show that for a month".
+const chartFollowUps = 2
+
+func (b *Bot) chartTurns(key string) int {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.charts[key]
+}
+
+// chartReplied counts a reply that offered the chart tools: one that asked
+// for or drew a chart restarts the count, any other uses one up.
+func (b *Bot) chartReplied(key string, fresh bool) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	switch {
+	case fresh:
+		makeRoom(b.charts, key, maxChats)
+		b.charts[key] = chartFollowUps
+	case b.charts[key] > 1:
+		b.charts[key]--
+	default:
+		delete(b.charts, key)
+	}
+}
+
 // wantsChart reports whether a message asks for a chart, so the chart tool
 // is offered only then.
 var wantsChart = regexp.MustCompile(`(?i)\b(chart(s|ed|ing)?|graph(s|ed|ing)?|plot(s|ted|ting)?|visuali[sz](e|es|ed|ing|ation|ations)|pies?|donuts?|doughnuts?)\b`).MatchString
@@ -822,6 +854,7 @@ func (b *Bot) forget(key string) {
 		b.history[key] = h
 	} else {
 		delete(b.history, key)
+		delete(b.charts, key) // nothing left to follow up on
 	}
 	b.scheduleErase(key)
 }
