@@ -12,7 +12,7 @@ internal/bot, chat, history, llm, config, feature   the core
 internal/transports/signal   the Signal adapter
 internal/llm/openai          the model provider
 internal/features/*          example, websearch, charts, mcp, groupctx, vision, intro
-internal/kit/*               shared code: logx, txt, img, draw, linechart, donut, mcp, httpx, bound
+internal/kit/*               shared code: logx, txt, img, httpx, bound
 ```
 
 ### Core

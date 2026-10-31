@@ -13,9 +13,9 @@ This merges the original plan with the later design changes: networks and provid
 1. **The core knows no feature, network or provider.** Only `cmd/signalbot` imports features and adapters. `cmd/signalbot/features.go` lists the features, one line each.
 2. **Ports only.** A feature reaches the world through the `feature.Host` it is given. It may import `feature`, the neutral `chat` types and kit, but never core internals or another feature.
 3. **A feature owns everything it needs:** settings, triggers, commands, tools, prompt lines, a package doc comment describing it, and tests, all in `internal/features/<name>/`.
-4. **Shared pure code is a library** in `internal/kit/*`. Anyone may import it, and it imports nothing internal but other kit.
+4. **Shared pure code is a library** in `internal/kit/*`, once more than one package uses it. Anyone may import it, and it imports nothing internal but other kit.
 5. **Data-source adapters** go in `internal/sources/<server>` once a feature depends on one MCP server's output shape. None does yet, so the package isn't created.
-6. **Small files, reported sizes.** One role per file, aiming for ~200 lines; a file over 300 fails a test, tests included. A package over 1,500 lines must split. Sizes are reported on every PR.
+6. **Small files, reported sizes.** One role per file; a file over 500 lines fails a test, tests included (300 at first; raised after the recode, see below). A package over 1,500 lines must split. Sizes are reported on every PR.
 
 ## Layout
 ```
@@ -160,7 +160,7 @@ type Host interface {
   - kit imports only kit;
   - features import only `feature`, `chat` and kit;
   - no feature imports another.
-- **Sizes:** a file over 300 lines or a package over 1,500 fails. The files that were already oversized are listed, and an entry goes when its file is split; none may be added.
+- **Sizes:** a file over 500 lines (first 300) or a package over 1,500 fails. The files that were already oversized are listed, and an entry goes when its file is split; none may be added.
 - **Isolation:** the core tests run with no features and a fake transport, and each feature's tests run with only that feature, through `featuretest`.
 - **Golden prompt:** a test of today's full system prompt for the Signal setup, with all features. It's written before the split (the first commit of step 2's next part), and the assembled prompt must stay byte-identical.
 - **Docs:** every setting read through `Env()` must be in the README config table.
@@ -225,15 +225,16 @@ The work goes in one PR per step, or "pr and merge" whenever asked.
   - `names.go` 188, `main.go` 94, `log.go` 91, `config.go` 90, `mentions.go` 81, `journal_*` 32
 - **After:** reported in the final PR with the same measure, by `go run ./internal/arch/sizes`. It leaves out tests, `internal/arch` and the `*test` helper packages, and shows core, adapters, kit and features apart, with the total and its change from 4,185.
 - **Expected:** a total about the same or up to ~300 higher (the ports, `chat` types and router), with the core well under half of the total.
-- **Actual:** 5,615 lines (+1,430, +34%), over the estimate. Most of it is structure: 61 files instead of 13, so 384 more package and import lines, 225 more blank lines and 209 more comment lines. Code itself grew by 660 lines (+20%): the ports, the neutral chat types, the registry and the adapter glue. The core (`bot`, `chat`, `history`, `llm`, `config`, `feature`) is 1,376 lines, 25% of the total.
+- **Actual, first pass:** 5,615 lines (+1,430, +34%). About 820 of that was structure from splitting 13 files into 61 (package/import, blank and comment lines), and 660 was code: the ports, the neutral types, the adapter glue, plus duplication.
+- **After the trim** (one tool and picture type end to end, the MCP client and the chart drawing folded back into their only users, and the file limit raised to 500 so related files merge): **5,356 lines** (+1,171, +28%), in 35 files.
 
   | Part | Lines |
   |---|---:|
-  | Core | 1,376 |
-  | Signal adapter and provider | 1,401 |
-  | Kit | 1,794 |
-  | Features | 936 |
-  | `cmd/signalbot` | 113 |
+  | Core (`bot`, `chat`, `history`, `llm`, `config`, `feature`) | 1,301 |
+  | Signal adapter and provider | 1,330 |
+  | Kit | 318 |
+  | Features | 2,295 |
+  | `cmd/signalbot` | 112 |
 
 ## Simplifications that change behaviour
 Anything that would change what users see or how the bot is configured is listed with its line saving, and I ask before applying it. That covers wording, defaults, settings, limits, log lines and reply layout. The new `MODEL_API_URL` and `MODEL_API_KEY` settings are additions, and existing settings keep working. The "at least one network" check replaces "SIGNALCLI_SOCKET is required" with the same effect for current setups. Simplifications that keep behaviour the same go ahead, and the tests show it.

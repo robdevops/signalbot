@@ -12,10 +12,12 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"slices"
 	"strings"
 	"time"
 
 	"github.com/robdevops/signalbot/internal/kit/httpx"
+	"github.com/robdevops/signalbot/internal/kit/logx"
 	"github.com/robdevops/signalbot/internal/kit/txt"
 	"github.com/robdevops/signalbot/internal/llm"
 )
@@ -176,4 +178,65 @@ func parseChatCompletion(data []byte) (llm.Completion, error) {
 		return c, fmt.Errorf("empty response") // not the body: it can hold the conversation
 	}
 	return c, nil
+}
+
+// message is an llm.Message in the API's JSON.
+type message llm.Message
+
+// MarshalJSON sends a message with images as content parts: the text, then
+// each image.
+func (m message) MarshalJSON() ([]byte, error) {
+	plain := struct {
+		Role       string         `json:"role"`
+		Content    any            `json:"content"`
+		ToolCalls  []llm.ToolCall `json:"tool_calls,omitempty"`
+		ToolCallID string         `json:"tool_call_id,omitempty"`
+	}{m.Role, m.Content, m.ToolCalls, m.ToolCallID}
+	if len(m.Images) > 0 {
+		parts := []any{map[string]string{"type": "text", "text": m.Content}}
+		for _, u := range m.Images {
+			parts = append(parts, map[string]any{"type": "image_url", "image_url": map[string]string{"url": u}})
+		}
+		plain.Content = parts
+	}
+	return json.Marshal(plain)
+}
+
+// Capabilities asks the provider's model list whether the model accepts
+// images and tool calls. If it cannot tell, images are off (sending them
+// would fail every such message) and tools stay on, and the failure is
+// logged.
+func (c *Client) Capabilities(ctx context.Context) (images, tools bool) {
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, c.opt.URL+"/models", nil)
+	if c.opt.Key != "" {
+		req.Header.Set("Authorization", "Bearer "+c.opt.Key)
+	}
+	resp, err := c.http.Do(req)
+	if err != nil {
+		logx.Warnf("could not check what %s supports, so images are off: %v", c.opt.Model, err)
+		return false, true
+	}
+	defer resp.Body.Close()
+	var r struct {
+		Data []struct {
+			ID           string `json:"id"`
+			Architecture struct {
+				InputModalities []string `json:"input_modalities"`
+			} `json:"architecture"`
+			SupportedParameters []string `json:"supported_parameters"`
+		} `json:"data"`
+	}
+	if resp.StatusCode != http.StatusOK || json.NewDecoder(io.LimitReader(resp.Body, 32<<20)).Decode(&r) != nil {
+		logx.Warnf("could not check what %s supports, so images are off: status %d", c.opt.Model, resp.StatusCode)
+		return false, true
+	}
+	for _, m := range r.Data {
+		if m.ID == c.opt.Model {
+			return slices.Contains(m.Architecture.InputModalities, "image"), slices.Contains(m.SupportedParameters, "tools")
+		}
+	}
+	logx.Warnf("model %s is not in %s's model list, so images are off", c.opt.Model, c.name())
+	return false, true
 }

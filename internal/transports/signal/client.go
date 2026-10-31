@@ -5,16 +5,19 @@ import (
 	"bufio"
 	"cmp"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"net"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
 
 	"github.com/robdevops/signalbot/internal/kit/logx"
+	"github.com/robdevops/signalbot/internal/kit/txt"
 )
 
 type rpcMsg struct {
@@ -238,3 +241,154 @@ func (s *Client) listAccounts(ctx context.Context) (string, error) {
 	}
 	return cmp.Or(accts[0].ACI, accts[0].Number), nil
 }
+
+// Send sends msg, with mentions ("start:length:uuid") and attachments (data:
+// URIs, see imageDataURI).
+func (s *Client) Send(t Target, msg string, mentions, attachments []string) error {
+	p := t.params()
+	p["message"] = msg
+	if len(mentions) > 0 {
+		p["mention"] = mentions
+	}
+	if len(attachments) > 0 {
+		p["attachments"] = attachments
+	}
+	return s.write(s.nextID.Add(1), "send", p)
+}
+
+func (s *Client) Typing(t Target) {
+	_ = s.write(s.nextID.Add(1), "sendTyping", t.params())
+}
+
+// handleUnmatched reports the outcome of fire-and-forget requests (send,
+// sendTyping).
+func (s *Client) handleUnmatched(m *rpcMsg) {
+	if m.Error != nil {
+		logx.Errorf("signal-cli request %s failed: %s", m.ID, m.Error.Message)
+		return
+	}
+	var r struct {
+		Results []struct {
+			Type string `json:"type"`
+		} `json:"results"`
+	}
+	if json.Unmarshal(m.Result, &r) != nil {
+		return
+	}
+	for _, res := range r.Results {
+		if res.Type != "" && res.Type != "SUCCESS" {
+			logx.Warnf("signal-cli request %s not delivered: %s", m.ID, res.Type)
+		}
+	}
+}
+
+// Send posts msg; mentions are signal-cli specs ("start:length:uuid") for @names in msg.
+// GetAttachment fetches an attachment's bytes from signal-cli by id, naming
+// the chat it arrived in: the group, or for a DM the person who sent it. The
+// bot never reads signal-cli's data directory itself.
+func (s *Client) GetAttachment(ctx context.Context, t Target, id string) ([]byte, error) {
+	p := map[string]any{"id": id}
+	if t.GroupID != "" {
+		p["groupId"] = t.GroupID
+	} else {
+		p["recipient"] = t.User
+	}
+	resp, err := s.call(ctx, "getAttachment", p)
+	if err != nil {
+		return nil, err
+	}
+	var r struct {
+		Data string `json:"data"`
+	}
+	if err := json.Unmarshal(resp.Result, &r); err != nil {
+		return nil, errors.New("malformed getAttachment result")
+	}
+	return base64.StdEncoding.DecodeString(r.Data)
+}
+
+// GetSticker fetches a sticker's image (WebP, or APNG if animated) from
+// signal-cli, which downloads the packs of stickers it receives.
+func (s *Client) GetSticker(ctx context.Context, st Sticker) ([]byte, error) {
+	resp, err := s.call(ctx, "getSticker", map[string]any{"packId": st.PackID, "stickerId": st.StickerID})
+	if err != nil {
+		return nil, err
+	}
+	var r struct {
+		Data string `json:"data"`
+	}
+	if err := json.Unmarshal(resp.Result, &r); err != nil {
+		return nil, errors.New("malformed getSticker result")
+	}
+	return base64.StdEncoding.DecodeString(r.Data)
+}
+
+// StickerLabel describes a sticker from its pack's details: its emoji and
+// the pack's title, e.g. `: 🕵️ from "My Daily Life"`, or "" if signal-cli
+// doesn't know the pack. Both come from whoever made the pack, so they are
+// trimmed and the title quoted.
+func (s *Client) StickerLabel(ctx context.Context, st Sticker) string {
+	resp, err := s.call(ctx, "listStickerPacks", nil)
+	if err != nil {
+		return ""
+	}
+	var packs []struct {
+		PackID   string `json:"packId"`
+		Title    string `json:"title"`
+		Stickers []struct {
+			ID    int    `json:"id"`
+			Emoji string `json:"emoji"`
+		} `json:"stickers"`
+	}
+	if json.Unmarshal(resp.Result, &packs) != nil {
+		return ""
+	}
+	for _, p := range packs {
+		if p.PackID != st.PackID {
+			continue
+		}
+		label := ""
+		for _, sk := range p.Stickers {
+			if sk.ID == st.StickerID {
+				if e := txt.Clamp(txt.Safe(sk.Emoji), 8); e != "" {
+					label = ": " + e
+				}
+			}
+		}
+		if t := txt.Safe(p.Title); t != "" {
+			label += " from " + strconv.Quote(t)
+		}
+		return label
+	}
+	return ""
+}
+
+// Contact is the subset of a signal-cli listContacts entry we use.
+type Contact struct {
+	Number    string `json:"number"`
+	UUID      string `json:"uuid"`
+	Username  string `json:"username"`
+	GivenName string `json:"givenName"`
+	Profile   struct {
+		GivenName string `json:"givenName"`
+	} `json:"profile"`
+}
+
+// ListContacts returns the account's contacts and other known recipients.
+func (s *Client) ListContacts(ctx context.Context) ([]Contact, error) {
+	resp, err := s.call(ctx, "listContacts", map[string]any{"allRecipients": true})
+	if err != nil {
+		return nil, err
+	}
+	var cs []Contact
+	if err := json.Unmarshal(resp.Result, &cs); err != nil {
+		return nil, err
+	}
+	return cs, nil
+}
+
+// SetSelf sets the bot's account id without asking signal-cli: for tests
+// and fakes.
+func (s *Client) SetSelf(id string) { s.selfID.Store(id) }
+
+// SetContacts replaces the known contacts as listContacts would: for tests.
+func (a *Adapter) SetContacts(cs []Contact) { a.names.replaceContacts(cs) }
