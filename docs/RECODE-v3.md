@@ -150,8 +150,9 @@ In `features.go`, `websearch`, `charts` and `mcp` stay in that order: it's the o
   - plain text is posted as written, with @Name linked to real mentions, and the model isn't involved;
   - text that mentions the bot goes to the model, like any mention, and the answer is posted;
   - a `/command` runs as a command.
-- The group name is the rest of the line, so it needs no quotes even with spaces. It's matched case-insensitively.
-- The group must be one the user shares with the bot, checked again at each run.
+- The group name is the rest of the line, so it needs no quotes even with spaces. It's matched among the groups the user shares with the bot, ignoring capitals: an exact match first, otherwise with emoji and symbols removed and extra spaces collapsed on both sides ("family" matches "🏡 Family 🎉").
+- No match is refused, with the list of the user's groups; more than one match is refused as ambiguous.
+- A schedule keeps the group's ID, so it survives a rename. If the user has left the group, that run is dropped and logged, and the schedule stays in `/schedule list` until deleted.
 - A time without an offset is in the bot's time zone. A monthly schedule from the 31st runs on the last day of shorter months, and a yearly one from 29 February runs on 28 February in other years. A past start is accepted for a repeating schedule, which first runs at the next time still to come; a one-shot in the past is refused.
 - Straight and curly quotes both work (phones type “ ”).
 - Each user has a cap, scheduling `/schedule` itself is refused, and the text is never logged.
