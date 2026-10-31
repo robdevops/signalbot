@@ -39,7 +39,7 @@ Out of scope: chat networks other than Signal, and providers other than OpenRout
    - message text is never logged, including in panics and error bodies;
    - all memory is capped.
 9. **Configure from environment variables,** and print the version with `-version`.
-10. **Log** at four levels, all always written: with journald priorities under systemd, otherwise debug and info to stdout, warn and error to stderr. Message content is never logged. Each addressed message logs "received group chat" or "received dm" at info; a DM from a sender not in `SIGNAL_DM_USER_IDS` always logs the sender's ID.
+10. **Log** at journald priorities 2–7, all always written with their `<N>` prefix: `<2>` errors that stop the bot, `<3>` errors, `<4>` warnings, `<5>` startup, connect and reconnect, `<6>` info, `<7>` debug. Priorities 5–7 go to stdout and 2–4 to stderr, so a log driver that only sees the stream still tells them apart. Message content is never logged. Each addressed message logs "received group chat" or "received dm" at info; a DM from a sender not in `SIGNAL_DM_USER_IDS` always logs the sender's ID.
 
 A message with no text (only a photo or sticker) has nothing to answer in the core. It's answered only if a feature adds something to it.
 
@@ -103,7 +103,7 @@ type ToolGroup struct{ Name, Listing, System string; Tools []Tool; Keywords *reg
 - **`Context`** is "keep this text in history", which the core does under its own expiry rules.
 - **`ToolsUsed`** is what the tool loop reports.
 - **A picture's `HistoryNote`** is set by the tool that made it; without one, the core records "[sent an image]". A reply with no text is sent with its pictures' captions, one per line.
-- **`ToolGroup`:** `Name` is how the intro's `{tools}` lists it. `Listing` is its item in the tools line, which the core ends with "If asked what tools you have, name them." `System` is a system-prompt line while the group is offered.
+- **`ToolGroup`:** `Name` is how the intro's `{tools}` lists it. `Listing` is its item in the tools line, which the core ends with "If asked what tools you have:" and every group's `Name`, offered or not. `System` is a system-prompt line while the group is offered.
 - **Offering:** a group without `Keywords` is always offered. One with `Keywords` is offered when a message matches, and for the 2 replies after any reply that matched or used one of its tools. A `ToolChoice` offers only that tool.
 - **`Turn`** is the message being answered, in its chat.
 
@@ -147,7 +147,8 @@ In `features.go`, `websearch`, `charts` and `mcp` stay in that order: it's the o
 - A time without an offset is in the bot's time zone. A monthly schedule from the 31st runs on the last day of shorter months.
 - Straight and curly quotes both work (phones type “ ”).
 - Each user has a cap, scheduling `/schedule` itself is refused, and the text is never logged.
-- Schedules are always saved, in `$STATE_DIRECTORY` (or the working directory when run by hand), so they survive a restart. The systemd unit gets `StateDirectory=signalbot`; the Docker image sets `STATE_DIRECTORY=/data` and the README mounts a volume there. If the bot can't write, it warns at startup and keeps schedules in memory.
+- Schedules are always saved as JSON (standard library, no new dependencies) in `$STATE_DIRECTORY`, or the working directory when run by hand. Each save writes a temporary file and renames it over the old one.
+- The systemd unit gets `StateDirectory=signalbot` (`/var/lib/private/signalbot` with `DynamicUser`). The Docker image sets `STATE_DIRECTORY=/data`, and the README bind-mounts that same host directory there. If `/data` isn't readable and writable, the bot exits with a message asking for `chown 65532 /var/lib/private/signalbot`. One install per host: the unit's dynamic user and the container's user 65532 can't share the directory.
 
 **If a feature can't be built on these ports, that's a design finding.** Either the port becomes more generic (and stays tied to its stage), or the feature takes on more of the work. A feature-shaped field is never the answer.
 
@@ -187,16 +188,16 @@ In `features.go`, `websearch`, `charts` and `mcp` stay in that order: it's the o
 ## 10. Behaviour changes
 **Approved:**
 - Messages in one chat are answered one at a time, in order, with at most 4 waiting (section 2).
-- The tools line lists each MCP server as its own item, without "MCP tools by server", and always ends "If asked what tools you have, name them." Today it says "name them, grouped by server" when MCP tools exist.
+- The tools line lists each MCP server as its own item, without "MCP tools by server". Today it ends "name them, grouped by server" when MCP tools exist; see the full list below.
 - MCP's `prompt` and `keywords` are new and optional: without them, nothing changes.
 - `/schedule` is new, and `TZ` sets its time zone. Schedules are always saved, so they survive a restart (section 6).
 - The donut chart is renamed pie: the tool is `make_pie_chart`, still drawn as a ring with the total in the middle. Its description still mentions donuts.
 - Settings: `REASONING` becomes `MODEL_REASONING`, `SYSTEM_PROMPT` becomes `MODEL_SYSTEM_PROMPT`, and `LOG_LEVEL` is dropped.
-- Logging (section 1): every level is always written, with its journald priority under systemd, and otherwise debug and info to stdout, warn and error to stderr. Each addressed message is logged at info as "received group chat" or "received dm", with no name or content.
+- Logging (section 1): journald priorities 2–7, always written with their prefix, 5–7 to stdout and 2–4 to stderr. Each addressed message is logged at info as "received group chat" or "received dm", with no name or content.
 - The websearch feature logs "web search on", and the startup line drops `search …`. The "OpenRouter error" line keeps today's wording.
 - When the model can't call tools, the core's warning says "tools are off" in place of naming web search, charts and MCP.
 
-**Proposed, not yet approved:** end the tools line with the full list of tools, not only those offered this turn, so "what tools do you have?" names charts and keyword-gated MCP servers too.
+- The tools line ends with the full list of tools, not only those offered this turn: "If asked what tools you have: web search, charts, …". So "what tools do you have?" names charts and keyword-gated MCP servers too.
 
 ## 11. Expected size
 About +650 to +850 lines over 4,185, checked after the core (step 2):
