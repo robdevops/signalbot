@@ -58,8 +58,8 @@ type donutSpec struct {
 // the model. Slices come back largest first.
 func parseDonut(arguments string) (*donutSpec, error) {
 	var s donutSpec
-	if err := json.Unmarshal([]byte(arguments), &s); err != nil {
-		return nil, errors.New("the arguments are not valid JSON for make_donut_chart")
+	if err := decodeArgs(donutTool, arguments, &s); err != nil {
+		return nil, err
 	}
 	s.Title = clamp(strings.TrimSpace(s.Title), 80)
 	s.Subtitle = clamp(strings.TrimSpace(s.Subtitle), 120)

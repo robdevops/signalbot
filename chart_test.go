@@ -303,3 +303,31 @@ func TestAreaStyle(t *testing.T) {
 		}
 	}
 }
+
+// Argument errors say what to fix, so the model can correct its next call.
+func TestChartArgErrors(t *testing.T) {
+	for args, want := range map[string]string{
+		`{"title":"T","series":[{"name":"a","points":[{"date":"2026-10-01","value":"12.3"}]}]}`: "series.points.value must be a number, got string",
+		`{"title":"T","axes":{"left":{"invert":"true"}},"series":[]}`:                           "axes.invert must be true or false, got string",
+		`{"title":"T","series":[`: "not valid JSON (at character 23)",
+		`[1,2]`:                   "must be a JSON object, got array",
+		``:                        "title is required",
+		`  `:                      "title is required",
+	} {
+		if _, err := parseChart(args); err == nil || !strings.Contains(err.Error(), want) {
+			t.Errorf("%s: got %v, want %q", args, err, want)
+		}
+	}
+	if _, err := parseDonut(`{"title":"T","slices":[{"label":"a","value":"1"}]}`); err == nil || !strings.Contains(err.Error(), "slices.value must be a number") {
+		t.Errorf("donut: %v", err)
+	}
+}
+
+// Some models send the arguments as a JSON string holding the JSON.
+func TestChartArgsDoubleEncoded(t *testing.T) {
+	inner := `{"title":"T","series":[{"name":"a","points":[{"date":"2026-10-01","value":1},{"date":"2026-10-02","value":2}]}]}`
+	b, _ := json.Marshal(inner)
+	if s, err := parseChart(string(b)); err != nil || s.Title != "T" {
+		t.Fatalf("got %v", err)
+	}
+}

@@ -182,6 +182,7 @@ func (o *OpenRouter) Complete(ctx context.Context, system string, msgs []ChatMsg
 			out, images, tool, err := o.runTool(ctx, tc)
 			if err != nil {
 				warnf("tool %s failed after %.1fs: %v", tool, time.Since(start).Seconds(), err)
+				debugf("tool %s arguments were %d bytes", tool, len(tc.Function.Arguments))
 			} else {
 				infof("tool %s %.1fs", tool, time.Since(start).Seconds())
 			}
