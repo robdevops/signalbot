@@ -204,3 +204,25 @@ func TestSupportsImages(t *testing.T) {
 		t.Error("a failed check must mean no images")
 	}
 }
+
+// dmQuotedPhoto is a DM replying to an earlier photo, in the shape
+// signal-cli 0.14 sends it (ids made up). The thumbnail travels with the new
+// message, so it is fetched with the sender as recipient.
+const dmQuotedPhoto = `{"envelope":{"source":"` + alice + `","sourceNumber":null,"sourceUuid":"` + alice + `","sourceName":"Alice","sourceDevice":2,"timestamp":2,` +
+	`"dataMessage":{"timestamp":2,"message":"quoted image","expiresInSeconds":0,"isExpirationUpdate":false,"viewOnce":false,` +
+	`"quote":{"id":1,"author":"` + alice + `","authorNumber":null,"authorUuid":"` + alice + `","text":"","attachments":[` +
+	`{"contentType":"image/png","filename":null,"thumbnail":{"contentType":"image/png","filename":null,"id":"thumb2.png","size":6471,"width":null,"height":null,"caption":null,"isVoiceNote":false}}]}}},"account":"` + self + `"}`
+
+func TestDMQuotedPhoto(t *testing.T) {
+	b, ai, params, sent := photoBot(t, true)
+	b.Handle(parse(t, dmQuotedPhoto))
+	waitSent(t, sent)
+	if p := <-params; p["id"] != "thumb2.png" || p["recipient"] != alice {
+		t.Fatalf("getAttachment params %v", p)
+	}
+	ai.mu.Lock()
+	defer ai.mu.Unlock()
+	if last := ai.msgs[len(ai.msgs)-1]; last.Content != "quoted image\n[1 image attached]" || len(last.Images) != 1 {
+		t.Fatalf("model got %q with %d images", last.Content, len(last.Images))
+	}
+}
