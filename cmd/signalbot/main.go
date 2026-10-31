@@ -55,8 +55,7 @@ func main() {
 
 	model := openai.New(openai.Options{URL: cfg.APIURL, Key: cfg.APIKey, Model: cfg.Model, Reasoning: cfg.Reasoning})
 	images, toolCalls := model.Capabilities(connCtx)
-	search := env.Bool("MODEL_SEARCH", true)
-	logx.Infof("model %s, reasoning %s, search %v, images %v, tools %v", cfg.Model, cfg.Reasoning, search, images, toolCalls)
+	logx.Infof("model %s, reasoning %s, images %v, tools %v", cfg.Model, cfg.Reasoning, images, toolCalls)
 	if !toolCalls {
 		logx.Warnf("model %s can't call tools, so web search, charts and MCP tools are off", cfg.Model)
 	}

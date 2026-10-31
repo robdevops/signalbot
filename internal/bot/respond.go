@@ -49,7 +49,7 @@ func (b *Bot) respond(req *Request) {
 	took := time.Since(start)
 	var replaced *chat.Outgoing
 	if err != nil {
-		logx.Errorf("OpenRouter error for %s after %.1fs: %v", req.Name, took.Seconds(), err)
+		logx.Errorf("model error for %s after %.1fs: %v", req.Name, took.Seconds(), err)
 		res = llm.Completion{Text: "Sorry, I couldn't get an answer right now."}
 	} else {
 		logx.Infof("%s", replyLogLine(req.Name, took, res))
