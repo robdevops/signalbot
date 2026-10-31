@@ -17,7 +17,7 @@ A small, [privacy-conscious](PRIVACY.md) chat bot that connects to a running [si
 
 - Responds to @mentions, replies to its messages, and DMs from senders in `SIGNAL_DM_USER_IDS`
 - Tools: web search, a built-in charting tool, and your own [MCP](#mcp-tools) tools
-- Understands images and Signal stickers (if the configured model supports vision)
+- Understands images and stickers (if the configured model supports vision)
 - Short per-conversation memory, for context. Frees from memory after 20 messages (HISTORY_TURNS), 24 hours, or when Signal's _disappearing messages_ timer expires, whichever comes first. Message content is never logged to disk.
 - Typing indicators
 
