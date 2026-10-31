@@ -26,10 +26,8 @@ A small, [privacy-conscious](PRIVACY.md) chat bot that connects to a running [si
 - Your group's brain trust: ask it to explain things, check facts or settle debates
 - Explain or translate any message or photo by replying to it and tagging the bot
 - Connect MCP tools and data to your group chat
-- Ask for a chart: "@signalbot chart NVDA vs ACMR over the past month"
 - Modify the bot to add your own /commands (see `/example`)
-- A private assistant in your DMs
-- Just for the fun or convenience of a sassy LLM in your Signal groups or DMs
+- A private assistant in your DMs, or just the fun or convenience of a sassy LLM in your Signal groups
 
 The messages the bot answers, and the names in them, are sent to OpenRouter and on to the model's provider. See [TECHNICAL.md](TECHNICAL.md) and [PRIVACY.md](PRIVACY.md) for details on how it works.
 
