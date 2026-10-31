@@ -120,6 +120,7 @@ type Request struct {
 
 	Expires time.Duration // the chat's disappearing-messages timer, 0 if off
 	Images  []Attachment  // images in or quoted by the message, fetched when answering
+	Sticker *Sticker      // a sticker sent as the message, fetched when answering
 
 	// Names the model has been shown in this message (name -> uuid), so
 	// "@Name" in its reply can become a real Signal mention. Groups only.
@@ -135,6 +136,9 @@ func (r *Request) logLine() string {
 		line += " with 1 image"
 	default:
 		line += fmt.Sprintf(" with %d images", n)
+	}
+	if r.Sticker != nil {
+		line += " with a sticker"
 	}
 	return line
 }
@@ -164,8 +168,10 @@ func trigger(env *Envelope, self string, allowed map[string]bool) string {
 	if dm == nil || self == "" || fromSelf(env, self) {
 		return ""
 	}
-	// A photo alone (no text) counts too: in a DM, or as a reply to the bot.
-	if strings.TrimSpace(dm.Message) == "" && !slices.ContainsFunc(dm.Attachments, func(a Attachment) bool { return a.image() != nil }) {
+	// A photo or sticker alone (no text) counts too: in a DM, or as a reply
+	// to the bot.
+	if strings.TrimSpace(dm.Message) == "" && dm.Sticker == nil &&
+		!slices.ContainsFunc(dm.Attachments, func(a Attachment) bool { return a.image() != nil }) {
 		return ""
 	}
 	if dm.GroupInfo == nil || dm.GroupInfo.GroupID == "" {
@@ -208,7 +214,7 @@ func Decide(env *Envelope, kind, self string, names *Names) *Request {
 			images = append(images, *img)
 		}
 	}
-	if text == "" && len(images) == 0 {
+	if text == "" && len(images) == 0 && dm.Sticker == nil {
 		return nil
 	}
 	raw := text
@@ -235,7 +241,7 @@ func Decide(env *Envelope, kind, self string, names *Names) *Request {
 	}
 
 	req := &Request{Target: target, Key: key, Prompt: text, Kind: kind, Sender: who, Name: cmp.Or(name, sender), Display: name, Text: raw,
-		Expires: time.Duration(dm.ExpiresInSeconds) * time.Second, Images: images}
+		Expires: time.Duration(dm.ExpiresInSeconds) * time.Second, Images: images, Sticker: dm.Sticker}
 	if target.GroupID != "" {
 		req.Names = map[string]string{}
 		add := func(n, uuid string) {
@@ -414,6 +420,22 @@ func (b *Bot) images(req *Request) []string {
 	return urls
 }
 
+// sticker fetches the request's sticker as a data: URL for the model, if it
+// can see images, else "".
+func (b *Bot) sticker(req *Request) string {
+	if !b.vision {
+		return ""
+	}
+	ctx, cancel := context.WithTimeout(b.ctx, 15*time.Second)
+	defer cancel()
+	data, err := b.sig.GetSticker(ctx, *req.Sticker)
+	if err != nil || !sendableImage(data) {
+		warnf("could not fetch a sticker from %s: %v", req.Name, cmp.Or(err, errors.New("not an image")))
+		return ""
+	}
+	return "data:" + http.DetectContentType(data) + ";base64," + base64.StdEncoding.EncodeToString(data)
+}
+
 // duplicate reports whether the same sender sent the same text to the same
 // chat within the dedupe window, and records this one.
 func (b *Bot) duplicate(req *Request) bool {
@@ -421,6 +443,9 @@ func (b *Bot) duplicate(req *Request) bool {
 	key := req.Sender + "\x00" + req.Key + "\x00" + req.Text
 	for _, a := range req.Images { // two different photos are not duplicates
 		key += "\x00" + a.ID
+	}
+	if s := req.Sticker; s != nil {
+		key += fmt.Sprintf("\x00%s:%d", s.PackID, s.StickerID)
 	}
 	now := time.Now()
 	b.mu.Lock()
@@ -493,13 +518,22 @@ func (b *Bot) respond(req *Request) {
 	defer stopTyping() // also if something below panics
 	b.ensureSelfName()
 	// The history keeps only a marker for images, never the pictures.
-	prompt, seen := req.Prompt, b.images(req)
+	prompt, seen := strings.TrimSpace(req.Prompt), b.images(req)
 	switch {
 	case len(seen) > 0:
-		prompt = strings.TrimSpace(strings.TrimSpace(prompt) + "\n" + imageNote(len(seen), "attached"))
+		prompt += "\n" + imageNote(len(seen), "attached")
 	case len(req.Images) > 0:
-		prompt = strings.TrimSpace(strings.TrimSpace(prompt) + "\n" + imageNote(len(req.Images), "attached, which you can't see with this model"))
+		prompt += "\n" + imageNote(len(req.Images), "attached, which you can't see with this model")
 	}
+	if req.Sticker != nil {
+		if url := b.sticker(req); url != "" {
+			prompt += "\n[sticker attached]"
+			seen = append(seen, url)
+		} else {
+			prompt += "\n[sticker attached, which you can't see]"
+		}
+	}
+	prompt = strings.TrimSpace(prompt)
 	req.Prompt = prompt
 	msgs := append(b.getHistory(req.Key), ChatMsg{Role: "user", Content: prompt, Images: seen})
 

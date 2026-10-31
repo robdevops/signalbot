@@ -39,6 +39,12 @@ type Attachment struct {
 	Thumbnail   *Attachment `json:"thumbnail"`
 }
 
+// Sticker names a sticker by its pack and its index in the pack.
+type Sticker struct {
+	PackID    string `json:"packId"`
+	StickerID int    `json:"stickerId"`
+}
+
 // image is the attachment itself if it is an image the model can be shown,
 // else its thumbnail if that is, else nil.
 func (a Attachment) image() *Attachment {
@@ -65,6 +71,7 @@ type DataMessage struct {
 	Quote       *Quote       `json:"quote"`
 	GroupInfo   *GroupInfo   `json:"groupInfo"`
 	Attachments []Attachment `json:"attachments"`
+	Sticker     *Sticker     `json:"sticker"`
 
 	// ExpiresInSeconds is the chat's disappearing-messages timer, 0 if off.
 	ExpiresInSeconds int `json:"expiresInSeconds"`
@@ -333,6 +340,22 @@ func (s *Signal) GetAttachment(ctx context.Context, t Target, id string) ([]byte
 	}
 	if err := json.Unmarshal(resp.Result, &r); err != nil {
 		return nil, errors.New("malformed getAttachment result")
+	}
+	return base64.StdEncoding.DecodeString(r.Data)
+}
+
+// GetSticker fetches a sticker's image (WebP, or APNG if animated) from
+// signal-cli, which downloads the packs of stickers it receives.
+func (s *Signal) GetSticker(ctx context.Context, st Sticker) ([]byte, error) {
+	resp, err := s.call(ctx, "getSticker", map[string]any{"packId": st.PackID, "stickerId": st.StickerID})
+	if err != nil {
+		return nil, err
+	}
+	var r struct {
+		Data string `json:"data"`
+	}
+	if err := json.Unmarshal(resp.Result, &r); err != nil {
+		return nil, errors.New("malformed getSticker result")
 	}
 	return base64.StdEncoding.DecodeString(r.Data)
 }

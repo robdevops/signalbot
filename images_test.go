@@ -96,6 +96,10 @@ func photoBot(t *testing.T, vision bool) (*Bot, *recordingAI, chan map[string]an
 			case "getAttachment":
 				params <- req["params"].(map[string]any)
 				c.Write([]byte(`{"jsonrpc":"2.0","result":{"data":"` + base64.StdEncoding.EncodeToString(data) + `"},"id":` + string(id) + "}\n"))
+			case "getSticker":
+				params <- req["params"].(map[string]any)
+				webp := base64.StdEncoding.EncodeToString([]byte("RIFF\x00\x00\x00\x00WEBPVP8 \x00\x00\x00\x00"))
+				c.Write([]byte(`{"jsonrpc":"2.0","result":{"data":"` + webp + `"},"id":` + string(id) + "}\n"))
 			case "send":
 				sent <- req["params"].(map[string]any)["message"].(string)
 			}
@@ -223,6 +227,54 @@ func TestDMQuotedPhoto(t *testing.T) {
 	ai.mu.Lock()
 	defer ai.mu.Unlock()
 	if last := ai.msgs[len(ai.msgs)-1]; last.Content != "quoted image\n[1 image attached]" || len(last.Images) != 1 {
+		t.Fatalf("model got %q with %d images", last.Content, len(last.Images))
+	}
+}
+
+// dmSticker is a sticker sent as a DM, in signal-cli 0.14's shape (ids made up).
+const dmSticker = `{"envelope":{"source":"` + alice + `","sourceNumber":null,"sourceUuid":"` + alice + `","sourceName":"Alice","sourceDevice":1,"timestamp":3,` +
+	`"dataMessage":{"timestamp":3,"message":null,"expiresInSeconds":0,"isExpirationUpdate":false,"viewOnce":false,` +
+	`"sticker":{"packId":"00aabbccddeeff00","stickerId":2}}},"account":"` + self + `"}`
+
+func TestStickerTriggers(t *testing.T) {
+	r := decide(parse(t, dmSticker), map[string]bool{alice: true})
+	if r == nil || r.Sticker == nil || r.Sticker.PackID != "00aabbccddeeff00" || r.Sticker.StickerID != 2 {
+		t.Fatalf("a DM sticker must be answered: %+v", r)
+	}
+	if !strings.HasSuffix(r.logLine(), " with a sticker") {
+		t.Errorf("log line %q", r.logLine())
+	}
+	group := strings.Replace(dmSticker, `"sticker"`, `"groupInfo":{"groupId":"`+group+`","type":"DELIVER"},"sticker"`, 1)
+	if r := decide(parse(t, group), nil); r != nil {
+		t.Fatalf("an unaddressed group sticker was answered: %+v", r)
+	}
+}
+
+// With a vision model the sticker is fetched with getSticker and shown to
+// the model; without one, the model is told it can't see it.
+func TestStickerShownToModel(t *testing.T) {
+	b, ai, params, sent := photoBot(t, true)
+	b.Handle(parse(t, dmSticker))
+	waitSent(t, sent)
+	if p := <-params; p["packId"] != "00aabbccddeeff00" || p["stickerId"] != float64(2) {
+		t.Fatalf("getSticker params %v", p)
+	}
+	ai.mu.Lock()
+	last := ai.msgs[len(ai.msgs)-1]
+	ai.mu.Unlock()
+	if last.Content != "[sticker attached]" || len(last.Images) != 1 || !strings.HasPrefix(last.Images[0], "data:image/webp;base64,") {
+		t.Fatalf("model got %q with %d images", last.Content, len(last.Images))
+	}
+
+	b, ai, params, sent = photoBot(t, false)
+	b.Handle(parse(t, dmSticker))
+	waitSent(t, sent)
+	if len(params) != 0 {
+		t.Fatal("a sticker was fetched for a model that cannot see it")
+	}
+	ai.mu.Lock()
+	defer ai.mu.Unlock()
+	if last := ai.msgs[len(ai.msgs)-1]; last.Content != "[sticker attached, which you can't see]" || last.Images != nil {
 		t.Fatalf("model got %q with %d images", last.Content, len(last.Images))
 	}
 }
