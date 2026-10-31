@@ -20,6 +20,12 @@ func Supported(mime string) bool {
 	return false
 }
 
+// Sendable reports whether data is an image Signal can show and models
+// take, small enough to send.
+func Sendable(data []byte) bool {
+	return len(data) <= MaxBytes && Supported(http.DetectContentType(data))
+}
+
 // Attachment is data as a signal-cli attachment named name, with the
 // extension its type gives.
 func Attachment(data []byte, name string) string {

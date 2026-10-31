@@ -37,7 +37,13 @@ func (b *Bot) At(name string, t time.Time, fn func(context.Context, time.Time)) 
 func (b *Bot) Env(key, def string) string { return config.Env(key, def) }
 
 func (b *Bot) Info(feature.Chat) feature.Info {
-	return feature.Info{Name: b.sig.BotName(), Model: b.cfg.Model, Images: b.images, CallsTools: b.callsTools, Tools: b.toolNames()}
+	return feature.Info{Name: b.sig.BotName(), Version: b.cfg.Version, Model: b.cfg.Model,
+		Images: b.images, CallsTools: b.callsTools, Tools: b.toolNames()}
+}
+
+func (b *Bot) Go(fn func(context.Context)) {
+	b.running.Add(1)
+	go func() { defer b.running.Done(); fn(b.ctx) }()
 }
 
 func (b *Bot) Media(ctx context.Context, msg feature.Message, i int) ([]byte, error) {

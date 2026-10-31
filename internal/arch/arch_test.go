@@ -78,10 +78,12 @@ func TestImports(t *testing.T) {
 var featureWords = regexp.MustCompile(`(?i)chart|donut|\bpies?\b|mcp|groupctx|group.?context|websearch|web.?search|\bvision\b|/example|/schedule`)
 
 // The core never mentions a feature, so deleting one leaves it unchanged.
+// The scenarios in cmd/signalbot test the whole bot, features included.
 func TestNoFeatureWordsInTheCore(t *testing.T) {
 	for _, p := range goFiles(t) {
 		core := under(p, "internal") || under(p, "cmd/signalbot")
-		if !core || under(p, "internal/features") || under(p, "internal/arch") || p == "cmd/signalbot/features.go" {
+		scenario := strings.HasPrefix(p, "cmd/signalbot/scenario_")
+		if !core || scenario || under(p, "internal/features") || under(p, "internal/arch") || p == "cmd/signalbot/features.go" {
 			continue
 		}
 		data, err := os.ReadFile(root + "/" + p)

@@ -23,3 +23,19 @@ func TestClamp(t *testing.T) {
 		t.Errorf("got %q", got)
 	}
 }
+
+func TestBool(t *testing.T) {
+	for _, s := range []string{"1", "T", "true", "Yes", " on "} {
+		if !Bool(s, false) {
+			t.Errorf("%q is not true", s)
+		}
+	}
+	for _, s := range []string{"0", "F", "FALSE", "no", "off"} {
+		if Bool(s, true) {
+			t.Errorf("%q is not false", s)
+		}
+	}
+	if !Bool("", true) || Bool("maybe", false) {
+		t.Error("an unknown value is not the default")
+	}
+}

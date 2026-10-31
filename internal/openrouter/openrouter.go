@@ -34,19 +34,21 @@ const (
 // retryDelay is the wait before a retry.
 var retryDelay = time.Second
 
+// BaseURL is OpenRouter's API, read when a client is made. Tests point it at
+// a fake.
+var BaseURL = "https://openrouter.ai/api/v1"
+
 // Client talks to OpenRouter.
 type Client struct {
-	key, model, reasoning string
-	URL, ModelsURL        string // the chat completions and model list endpoints
-	http                  *http.Client
+	key, model, reasoning, base string
+	http                        *http.Client
 }
 
 // New makes the client, keeping one idle connection per reply that can run
 // at once.
 func New(cfg *config.Config) *Client {
 	return &Client{key: cfg.APIKey, model: cfg.Model, reasoning: cfg.Reasoning,
-		URL: "https://openrouter.ai/api/v1/chat/completions", ModelsURL: "https://openrouter.ai/api/v1/models",
-		http: httpx.Client(cfg.MaxConcurrency)}
+		base: BaseURL, http: httpx.Client(cfg.MaxConcurrency)}
 }
 
 // Request is one question for the model.
@@ -256,7 +258,7 @@ func (c *Client) post(ctx context.Context, payload []byte) ([]byte, error) {
 	ctx, cancel := context.WithTimeout(ctx, 90*time.Second)
 	defer cancel()
 	for attempt := 1; ; attempt++ {
-		req, _ := http.NewRequestWithContext(ctx, http.MethodPost, c.URL, bytes.NewReader(payload))
+		req, _ := http.NewRequestWithContext(ctx, http.MethodPost, c.base+"/chat/completions", bytes.NewReader(payload))
 		req.Header.Set("Authorization", "Bearer "+c.key)
 		req.Header.Set("Content-Type", "application/json")
 		resp, err := c.http.Do(req)
@@ -302,7 +304,7 @@ func errorText(data []byte) string {
 func (c *Client) Capabilities(ctx context.Context) (images, tools bool) {
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
-	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, c.ModelsURL, nil)
+	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, c.base+"/models", nil)
 	req.Header.Set("Authorization", "Bearer "+c.key)
 	resp, err := c.http.Do(req)
 	if err != nil {

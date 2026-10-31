@@ -4,12 +4,14 @@ Step 1 of [RECODE-v3.md](RECODE-v3.md) pins the bot's behaviour at `e40dc5f` wit
 behaviour scenarios that touch only the edges: messages in on a fake signal-cli
 socket, then what the bot sends back, what a fake OpenRouter receives, and the log.
 
+All of them are in `cmd/signalbot` (package main), since step 3 moved them there from the module root:
+
 - `scenario_test.go`: the scenarios and the two golden prompt tests. They use only the harness.
 - `scenario_fakes_test.go`: the fakes and the harness API (fake signal-cli, fake OpenRouter, two fake MCP servers plus an optional third whose tools fail, the captured log). It names nothing in the bot's code.
 - `scenario_start_test.go`: `startBot`, which wires one version of the bot to the fakes. It is the only file that names the bot's code, and the only one rewritten for the new core.
-- `testdata/prompt_full.txt` and `testdata/prompt_nofeatures.txt`: the golden system prompts. `go test -run Golden -update` rewrites them.
+- `testdata/prompt_full.txt` and `testdata/prompt_nofeatures.txt`: the golden system prompts. `go test ./cmd/signalbot -run Golden -update` rewrites them.
 
-Every scenario also checks, when it ends, that no message text, model reply, tool argument or tool result it used reached any log line. Each text is looked for as a log line would hold it (newlines escaped), line by line, and by the first 24 runes of each line, so a leak that is cut short or quoted is caught too; pieces under 8 runes are skipped, and of a command only the words after its name are checked. The log is captured at `LOG_LEVEL=debug`, with journald priorities.
+Every scenario also checks, when it ends, that no message text, model reply, tool argument or tool result it used reached any log line. Each text is looked for as a log line would hold it (newlines escaped), line by line, and by the first 24 runes of each line, so a leak that is cut short or quoted is caught too; pieces under 8 runes are skipped, and of a command only the words after its name are checked. The log is captured with journald priorities. At `e40dc5f` that was at `LOG_LEVEL=debug`; the new core always writes debug.
 
 The table maps every `Test*` function in the 19 old test files to what covers it. "Unit test, moves with its code" means a test of a pure helper (drawing, splitting, parsing, config) or of code that is only reachable from inside, which moves into the new package with that code.
 

@@ -120,9 +120,11 @@ type Tool struct {
 	Run               func(ctx context.Context, args string) (string, []Picture, error)
 }
 
-// Info is what the core knows about itself in a chat.
+// Info is what the core knows about itself in a chat. All but Name and
+// Tools are known when features register.
 type Info struct {
 	Name       string   // the bot's name in the chat
+	Version    string   // the bot's version; "" if unknown
 	Model      string   // the model's OpenRouter ID, as "provider/model"
 	Images     bool     // the model takes images
 	CallsTools bool     // the model can call tools
@@ -161,4 +163,7 @@ type Host interface {
 	Deliver(msg Message)
 	// Groups lists the groups the bot shares with user.
 	Groups(ctx context.Context, user string) ([]Group, error)
+	// Go runs fn for as long as the bot runs: its ctx ends when the bot
+	// stops, which then waits for fn to return.
+	Go(fn func(ctx context.Context))
 }

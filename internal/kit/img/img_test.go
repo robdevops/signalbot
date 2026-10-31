@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"image"
 	"image/png"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -20,5 +21,18 @@ func TestAttachment(t *testing.T) {
 	data := pngBytes(t)
 	if got := Attachment(data, "image1"); !strings.HasPrefix(got, "data:image/png;filename=image1.png;base64,") {
 		t.Errorf("Attachment %q", got[:50])
+	}
+}
+
+func TestSendable(t *testing.T) {
+	data := pngBytes(t)
+	big := append(slices.Clone(data), make([]byte, MaxBytes)...)
+	for _, c := range []struct {
+		data []byte
+		want bool
+	}{{data, true}, {[]byte("RIFF\x00\x00\x00\x00WEBPVP8 \x00\x00\x00\x00"), true}, {[]byte("hello"), false}, {nil, false}, {big, false}} {
+		if got := Sendable(c.data); got != c.want {
+			t.Errorf("Sendable(%.12q) = %v", c.data, got)
+		}
 	}
 }

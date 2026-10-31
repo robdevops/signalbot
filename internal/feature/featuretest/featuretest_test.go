@@ -80,3 +80,15 @@ func TestEnvRecorded(t *testing.T) {
 		t.Errorf("read %v", r)
 	}
 }
+
+// What runs with Go has its ctx end at Stop, which waits for it.
+func TestGoUntilStop(t *testing.T) {
+	h := New()
+	done := false
+	h.Go(func(ctx context.Context) { <-ctx.Done(); time.Sleep(10 * time.Millisecond); done = true })
+	h.Stop()
+	if !done {
+		t.Fatal("Stop returned first")
+	}
+	New().Stop() // with nothing running
+}

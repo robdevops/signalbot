@@ -2,6 +2,7 @@ package feature_test
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/robdevops/signalbot/internal/feature"
@@ -46,7 +47,8 @@ func TestCommand(t *testing.T) {
 	}
 }
 
-// A name is checked when it is registered: taken names and bad spellings are refused.
+// A name is checked when it is registered: taken names, bad spellings and
+// names over 32 characters are refused.
 func TestCommandNamesRefused(t *testing.T) {
 	h := featuretest.New()
 	nop := func(context.Context, feature.Message, string) feature.Action { return feature.Action{} }
@@ -56,7 +58,10 @@ func TestCommandNamesRefused(t *testing.T) {
 	if err := feature.Command(h, "ping", nop); err == nil {
 		t.Error("a taken name was accepted")
 	}
-	for _, name := range []string{"", "Ping", "pi ng", "/ping"} {
+	if err := feature.Command(h, strings.Repeat("a", 32), nop); err != nil {
+		t.Errorf("32 letters were refused: %v", err)
+	}
+	for _, name := range []string{"", "Ping", "pi ng", "/ping", strings.Repeat("a", 33)} {
 		if err := feature.Command(h, name, nop); err == nil {
 			t.Errorf("%q was accepted", name)
 		}

@@ -4,10 +4,13 @@ import (
 	"testing"
 
 	"github.com/robdevops/signalbot/internal/feature/featuretest"
+	"github.com/robdevops/signalbot/internal/kit/logx"
 )
 
 // Every feature registers without error.
 func TestFeaturesRegister(t *testing.T) {
+	var logs logx.Buffer
+	defer logx.SetOutput(&logs, &logs, false)()
 	h := featuretest.New()
 	for _, register := range features {
 		if err := register(h); err != nil {

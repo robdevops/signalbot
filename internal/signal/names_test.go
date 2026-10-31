@@ -44,7 +44,6 @@ func TestResolveRanks(t *testing.T) {
 	if got := c.resolve(Mention{Name: "Ally", UUID: aliceID}); got != "Ally" {
 		t.Fatalf("the mention's name beats a username: %q", got)
 	}
-	c.names.minRefresh = time.Hour
 	c.names.refreshedAt = time.Now() // so LoadNames doesn't try to load
 	c.LoadNames(context.Background(), &Envelope{SourceUUID: aliceID, SourceName: "Alice S"})
 	if got := c.resolve(m); got != "Alice S" {
@@ -57,6 +56,13 @@ func TestResolveRanks(t *testing.T) {
 	if got := c.resolve(m); got != "Alice" {
 		t.Fatalf("a sender's name must not replace a profile name: %q", got)
 	}
+}
+
+// newClient is a client that loads the contact list at most every gap.
+func newClient(sock string, gap time.Duration) *Client {
+	defer func(old time.Duration) { ReloadGap = old }(ReloadGap)
+	ReloadGap = gap
+	return New(sock)
 }
 
 func TestNamesCapped(t *testing.T) {
@@ -76,8 +82,7 @@ func TestContactsReloadOnConnectAndGroupChange(t *testing.T) {
 	captureLogs(t)
 	f := newFake(t)
 	f.set("listContacts", `[{"uuid":"`+bobID+`","givenName":"Bob"}]`)
-	c := New(f.sock)
-	c.names.minRefresh = 50 * time.Millisecond
+	c := newClient(f.sock, 50*time.Millisecond)
 	got, conn := run(t, c, f)
 	eventually(t, "the load on connect", func() bool { return c.Name(bobID) == "Bob" })
 
@@ -112,8 +117,7 @@ func TestLoadNamesOnMention(t *testing.T) {
 	captureLogs(t)
 	f := newFake(t)
 	f.set("listContacts", `[{"uuid":"`+bobID+`","givenName":"Bob"},{"uuid":"`+botID+`","givenName":"Bot"}]`)
-	c := New(f.sock)
-	c.names.minRefresh = 30 * time.Millisecond
+	c := newClient(f.sock, 30*time.Millisecond)
 	run(t, c, f)
 	eventually(t, "the load on connect", func() bool { return c.Name(bobID) == "Bob" })
 	ctx := context.Background()
@@ -152,8 +156,7 @@ func TestLoadNamesOnMention(t *testing.T) {
 func TestBotName(t *testing.T) {
 	logs := captureLogs(t)
 	f := newFake(t)
-	c := New(f.sock)
-	c.names.minRefresh = time.Millisecond
+	c := newClient(f.sock, time.Millisecond)
 	run(t, c, f)
 	time.Sleep(5 * time.Millisecond)
 	c.LoadNames(context.Background(), &Envelope{SourceUUID: aliceID})

@@ -8,9 +8,11 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/robdevops/signalbot/internal/config"
 	"github.com/robdevops/signalbot/internal/feature"
 )
 
@@ -166,6 +168,24 @@ func TestOffering(t *testing.T) {
 	if info := h.b.Info(feature.Chat{}); info.Name != "Botty" || info.Model != "test/test-model" || !info.CallsTools || !info.Images || strings.Join(info.Tools, ",") != "alpha,beta" {
 		t.Fatalf("info %+v", info)
 	}
+}
+
+// Features know what the model can do, and the version, when they register.
+// What one runs with Go has its ctx end when the bot stops, and Run waits
+// for it.
+func TestRegistrationAndGo(t *testing.T) {
+	var stopped atomic.Bool
+	t.Cleanup(func() { // runs after the bot has stopped
+		if !stopped.Load() {
+			t.Error("Run returned before what Go ran")
+		}
+	})
+	start(t, options{tools: true, cfg: func(c *config.Config) { c.Version = "v1.2.3" }, features: func(b *Bot) {
+		if info := b.Info(feature.Chat{}); !info.CallsTools || !info.Images || info.Version != "v1.2.3" {
+			t.Errorf("info at registration %+v", info)
+		}
+		b.Go(func(ctx context.Context) { <-ctx.Done(); time.Sleep(10 * time.Millisecond); stopped.Store(true) })
+	}})
 }
 
 // A model that can't call tools is offered none, and {tools} is "none".

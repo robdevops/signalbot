@@ -29,6 +29,9 @@ type Host struct {
 	groups    []feature.ToolGroup
 	timers    []*Timer
 	delivered []feature.Message
+	life      context.Context // what Go passes; ended by Stop
+	end       context.CancelFunc
+	running   sync.WaitGroup
 }
 
 // Timer is a timer a feature set.
@@ -107,6 +110,29 @@ func (h *Host) Deliver(m feature.Message) {
 }
 
 func (h *Host) Groups(context.Context, string) ([]feature.Group, error) { return h.Shared, nil }
+
+// Go runs fn until Stop.
+func (h *Host) Go(fn func(context.Context)) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.life == nil {
+		h.life, h.end = context.WithCancel(context.Background())
+	}
+	h.running.Add(1)
+	go func(ctx context.Context) { defer h.running.Done(); fn(ctx) }(h.life)
+}
+
+// Stop ends the ctx of what runs with Go, as the core does when the bot
+// stops, and waits for it to return.
+func (h *Host) Stop() {
+	h.mu.Lock()
+	end := h.end
+	h.mu.Unlock()
+	if end != nil {
+		end()
+	}
+	h.running.Wait()
+}
 
 // Message runs the OnMessage hooks on m and returns the first Action that is
 // non-zero, counting only what applies to m, as the core does.

@@ -17,6 +17,7 @@ import (
 
 	"github.com/robdevops/signalbot/internal/config"
 	"github.com/robdevops/signalbot/internal/kit/logx"
+	"github.com/robdevops/signalbot/internal/openrouter"
 )
 
 const (
@@ -99,8 +100,10 @@ func start(t *testing.T, o options) *harness {
 		o.cfg(cfg)
 	}
 	ctx, cancel := context.WithCancel(context.Background())
+	url := openrouter.BaseURL
+	openrouter.BaseURL = srv.URL
 	h.b = New(ctx, cfg)
-	h.b.ai.URL, h.b.ai.ModelsURL = srv.URL+"/chat/completions", srv.URL+"/models"
+	openrouter.BaseURL = url
 	if o.features != nil {
 		o.features(h.b)
 	}

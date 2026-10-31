@@ -8,6 +8,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -31,9 +32,10 @@ type Bot struct {
 	ctx      context.Context
 	stop     context.CancelFunc // stops the timers
 	timerCtx context.Context
-	closing  atomic.Bool // no new work starts
+	closing  atomic.Bool    // no new work starts
+	running  sync.WaitGroup // what features run with Go
 
-	images, callsTools bool // what the model can do, read when Run starts
+	images, callsTools bool // what the model can do, read by New
 
 	// The hooks and tool groups, in feature order. Features register them
 	// before Run.
@@ -45,28 +47,30 @@ type Bot struct {
 
 var _ feature.Host = (*Bot)(nil)
 
-// New makes the bot. Work in progress ends with ctx, which should outlive
+// New makes the bot and reads what the model can do, so features know it
+// when they register. Work in progress ends with ctx, which should outlive
 // the shutdown signal so that Shutdown can let replies finish.
 func New(ctx context.Context, cfg *config.Config) *Bot {
 	b := &Bot{cfg: cfg, sig: signal.New(cfg.Socket), ai: openrouter.New(cfg), chats: chats.New(cfg.HistoryTurns),
 		timers: timers.New(), slots: make(chan struct{}, cfg.MaxConcurrency), ctx: ctx}
 	b.timerCtx, b.stop = context.WithCancel(ctx)
+	b.images, b.callsTools = b.ai.Capabilities(ctx)
+	logx.Noticef("model %s, reasoning %s, images %v, tools %v", cfg.Model, cfg.Reasoning, b.images, b.callsTools)
+	if !b.callsTools {
+		logx.Warnf("model %s can't call tools, so tools are off", cfg.Model)
+	}
 	return b
 }
 
-// Run reads what the model can do, then runs the timers and handles every
-// message signal-cli receives, until the bot's context ends.
+// Run runs the timers and handles every message signal-cli receives, until
+// the bot's context ends, then waits for what features run with Go.
 func (b *Bot) Run() {
-	b.images, b.callsTools = b.ai.Capabilities(b.ctx)
-	logx.Noticef("model %s, reasoning %s, images %v, tools %v", b.cfg.Model, b.cfg.Reasoning, b.images, b.callsTools)
-	if !b.callsTools {
-		logx.Warnf("model %s can't call tools, so tools are off", b.cfg.Model)
-	}
 	done := make(chan struct{})
 	go func() { defer close(done); b.timers.Run(b.timerCtx) }()
 	b.sig.Run(b.ctx, b.Handle)
 	b.stop()
 	<-done
+	b.running.Wait()
 }
 
 // Shutdown stops the timers and new work, and waits up to d for the work in
@@ -85,6 +89,10 @@ func (b *Bot) Shutdown(d time.Duration) {
 		}
 	}
 }
+
+// Idle reports whether no work holds a slot and the contact list isn't
+// loading. It is for the scenario tests in cmd/signalbot.
+func (b *Bot) Idle() bool { return len(b.slots) == 0 && !b.sig.Loading() }
 
 // Handle runs on the reader goroutine for every message received, so it
 // never blocks or calls the network.
@@ -174,8 +182,9 @@ func (b *Bot) received(env *signal.Envelope, self string) {
 	for _, p := range b.sig.People(env, self) {
 		b.chats.Learn(key, p.Name, p.ID)
 	}
-	id := msg.Sender + "\x00" + msg.Text
-	for _, m := range msg.Media { // two different photos are not a repeat
+	// Neither a renamed sender nor two different photos are a repeat.
+	id := msg.Sender + "\x00" + msg.Name + "\x00" + msg.Text
+	for _, m := range msg.Media {
 		id += fmt.Sprintf("\x00%s:%s:%d", m.ID, m.Pack, m.Sticker)
 	}
 	if b.chats.Repeat(key, id) {

@@ -12,16 +12,16 @@ import (
 var (
 	commandsMu sync.Mutex
 	commands   = map[Host]map[string]bool{} // the names taken on each host
-	validName  = regexp.MustCompile(`^[a-z0-9_-]+$`)
+	validName  = regexp.MustCompile(`^[a-z0-9_-]{1,32}$`)
 )
 
 // Command registers /name on h: an addressed message whose text is "/name"
-// or "/name args", the name in any case, gets fn's Action. A name is
+// or "/name args", the name in any case, gets fn's Action. A name is 1 to 32
 // lowercase letters, digits, _ or -, and is refused if another feature has
 // taken it on h.
 func Command(h Host, name string, fn func(ctx context.Context, m Message, args string) Action) error {
 	if !validName.MatchString(name) {
-		return fmt.Errorf("command /%s: a name is lowercase letters, digits, _ or -", name)
+		return fmt.Errorf("command /%s: a name is 1 to 32 lowercase letters, digits, _ or -", name)
 	}
 	commandsMu.Lock()
 	defer commandsMu.Unlock()

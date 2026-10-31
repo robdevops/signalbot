@@ -1,5 +1,5 @@
 // Package txt makes untrusted text safe to splice into a prompt or a log
-// line.
+// line, and reads settings written as text.
 package txt
 
 import "strings"
@@ -24,4 +24,16 @@ func Clamp(s string, max int) string {
 		return string(r[:max]) + "…"
 	}
 	return s
+}
+
+// Bool reads a yes/no setting: true, yes, on, 1 (or t, y), and their
+// opposites, in any case. Anything else is def.
+func Bool(s string, def bool) bool {
+	switch strings.ToLower(strings.TrimSpace(s)) {
+	case "1", "t", "true", "y", "yes", "on":
+		return true
+	case "0", "f", "false", "n", "no", "off":
+		return false
+	}
+	return def
 }

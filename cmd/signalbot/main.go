@@ -38,6 +38,7 @@ func main() {
 		logx.Critf("config error: %v", err)
 		os.Exit(1)
 	}
+	cfg.Version = buildVersion()
 	sigCtx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	// Work outlives the shutdown signal, so replies being written can still

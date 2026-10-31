@@ -86,7 +86,7 @@ The core's lifecycle has four stages. Each port is one stage; nothing else is a 
 
 **Services the host offers:**
 - `Env`: a feature's own settings, recorded for the docs test.
-- `Info`: the bot's name in a chat, the model, whether it takes images and can call tools, and the names of the tools.
+- `Info`: the bot's name in a chat, its version, the model, whether it takes images and can call tools, and the names of the tools. All but the name and the tools are known when features register.
 - `Media(ctx, msg, i)`: the bytes of a message's attachment. The core fills in each item's label (a sticker's emoji and pack) when it loads the message.
 - `Deliver(Message)`: act on a message as if its sender had just posted it in its chat, through the chat's mailbox. Inside the message's slot:
   - in a group, the sender must still be a member (signal-cli's `listGroups`); otherwise it's dropped and logged at info, with no content;
@@ -94,6 +94,7 @@ The core's lifecycle has four stages. Each port is one stage; nothing else is a 
   - a command or a mention of the bot is handled like any addressed message;
   - anything else the bot posts as written, with @Name linked against the group's members (never an ambiguous name), and history keeps it as the sender's message, "<name>: <text>", not as something the bot chose to say.
 - `Groups(ctx, user)`: the groups the bot shares with a user, with their names (signal-cli's `listGroups`).
+- `Go(fn)`: run `fn` for as long as the bot runs. Its ctx ends when the bot stops, which then waits for `fn` to return (MCP stops its local servers this way).
 
 **Types**, each field being a stage's natural input or output:
 ```go
@@ -109,7 +110,7 @@ type Tool      struct{ Name, Description string; Schema json.RawMessage; Server 
 - **`Context`** is "keep this text in history", which the core does under its own expiry rules.
 - **`ToolsUsed`** is what the tool loop reports.
 - **A picture's `HistoryNote`** is set by the tool that made it; without one, the core records "[sent an image]". A reply with no text is sent with its pictures' captions, one per line.
-- **`ToolGroup`:** `Names` is what it adds to the intro's `{tools}`: `["web search"]`, `["charts"]`, or an MCP server's tool names followed by its `/commands`. The core joins every group's names in feature order, so `{tools}` reads exactly as today, and is "none" when the model can't call tools. `Listing` is its item in the tools line, which the core ends with "If asked what tools you have:" and the same joined names, offered or not. `System` is a system-prompt line while the group is offered.
+- **`ToolGroup`:** `Names` is what it adds to the intro's `{tools}`: `["web search"]`, `["charts"]`, or an MCP server's tool names. The core joins every group's names in feature order, and `{tools}` is "none" when the model can't call tools. Each MCP server's `Listing` shows its tools and its own `/commands`; after every server, MCP adds one group with only `Names`, every server's `/commands` sorted (no tools, listing or keywords, so always offered, offering nothing), so `{tools}` reads exactly as today. `Listing` is its item in the tools line, which the core ends with "If asked what tools you have:" and the same joined names, offered or not. `System` is a system-prompt line while the group is offered.
 - **Offering:** a group without `Keywords` is always offered. One with `Keywords` is offered when a message matches, and for the 2 replies after any reply that matched or used one of its tools. A `ToolChoice` offers only that tool.
 - **`Turn`** is the message being answered, in its chat.
 
@@ -139,7 +140,7 @@ At(name string, t time.Time, fn func(ctx context.Context, due time.Time)) (cance
 | `websearch` | `Tools` | OpenRouter's web search tool, `MODEL_SEARCH`, the "web search on" log line |
 | `groupctx` | `OnMessage` returning `Context` | `GROUP_CONTEXT`, the `[image]`/`[sticker]` notes |
 | `vision` | `OnTurn`, `Info`, `Media` | answering photo- or sticker-only messages, the image and sticker notes (using the labels the core loads), the "images aren't kept" history note |
-| `mcp` | `Tools` (one group per server), command helper returning `ToolChoice` | `MCP_CONFIG` and every server field: `url`, `headers`, `command`, `args`, `env`, `allowed_tools`, `blocked_tools`, `disabled`, `chat_commands` (`tool`, `require_arg`), and the new optional `prompt` (else the server's own `instructions`, capped) and `keywords`; the "MCP tools:" and "chat commands:" startup lines |
+| `mcp` | `Tools` (one group per server), command helper returning `ToolChoice` | `MCP_CONFIG` and every server field: `url`, `headers`, `command`, `args`, `env`, `allowed_tools`, `blocked_tools`, `disabled`, `chat_commands` (`tool`, `require_arg`), and the new optional `prompt` and `keywords` (a server's own `instructions` are not used: they'd add text the server controls to every existing config's prompt); the "MCP tools:" and "chat commands:" startup lines |
 | `charts` | `Tools` with `Keywords`, `OnReply` | the chart tools and their keywords, each chart's caption and history note, dropping the model's text when a chart is sent |
 | `schedule` | command helper, `At`, `Deliver`, `Groups` | `/schedule` (below) |
 

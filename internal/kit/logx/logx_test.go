@@ -1,6 +1,7 @@
 package logx
 
 import (
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -60,5 +61,18 @@ func TestRecoverHidesThePanic(t *testing.T) {
 	}()
 	if got := out.String(); strings.Contains(got, "secret") || !strings.Contains(got, "internal error while answering") {
 		t.Errorf("got %q", got)
+	}
+}
+
+// In a terminal each line starts with the time; elsewhere it doesn't.
+func TestTimestampOnlyInATerminal(t *testing.T) {
+	var out strings.Builder
+	defer SetOutput(&out, &out, false)()
+	mu.Lock()
+	stamp = true
+	mu.Unlock()
+	Infof("starting")
+	if !regexp.MustCompile(`^\d{4}/\d{2}/\d{2} \d{2}:\d{2}:\d{2} starting\n$`).MatchString(out.String()) {
+		t.Fatalf("terminal: %q", out.String())
 	}
 }

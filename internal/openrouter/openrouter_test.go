@@ -90,9 +90,14 @@ func start(t *testing.T, answers ...served) (*Client, *model, *logx.Buffer) {
 	m := &model{answers: answers}
 	srv := httptest.NewServer(m)
 	t.Cleanup(srv.Close)
-	c := New(&config.Config{APIKey: "or-key", Model: "x/model", Reasoning: "low", MaxConcurrency: 8})
-	c.URL, c.ModelsURL = srv.URL, srv.URL
-	return c, m, &logs
+	return client(t, srv.URL), m, &logs
+}
+
+// client is a client of the API at url.
+func client(t *testing.T, url string) *Client {
+	defer func(old string) { BaseURL = old }(BaseURL)
+	BaseURL = url
+	return New(&config.Config{APIKey: "or-key", Model: "x/model", Reasoning: "low", MaxConcurrency: 8})
 }
 
 func TestNewClient(t *testing.T) {
@@ -298,14 +303,14 @@ func TestToolFailures(t *testing.T) {
 
 // The reply budget ends a slow request.
 func TestBudget(t *testing.T) {
-	c, _, _ := start(t, text("late"))
+	start(t) // for the logs
 	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
 	defer cancel()
 	release := make(chan struct{})
 	slow := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { <-release }))
 	defer slow.Close()
 	defer close(release)
-	c.URL = slow.URL
+	c := client(t, slow.URL)
 	if _, err := c.Ask(ctx, Request{Text: "hi"}); err == nil {
 		t.Fatal("no error")
 	}

@@ -28,6 +28,7 @@ type Config struct {
 	AllowedSenders map[string]bool // SIGNAL_DM_USER_IDS: who may DM the bot; changed in place by tests
 	MaxConcurrency int             // MAX_CONCURRENCY: messages answered at once
 	HistoryTurns   int             // HISTORY_TURNS: exchanges remembered per chat
+	Version        string          // the bot's version, set by main
 }
 
 var (

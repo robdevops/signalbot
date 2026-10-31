@@ -74,7 +74,7 @@ The bot runs as a dynamic user (`DynamicUser=yes`) in the `signal-cli` Unix grou
    ```
 2. Build and install:
    ```
-   /usr/local/go/bin/go build
+   /usr/local/go/bin/go build -o signalbot ./cmd/signalbot
    sudo install -m 755 signalbot /usr/local/bin/signalbot
    sudo cp signalbot.service /etc/systemd/system/
    sudo systemctl daemon-reload
@@ -123,7 +123,7 @@ Add the bot's account to a group and @mention it, reply to one of its messages, 
 | `MODEL_SEARCH` | `true` | Lets the model search the web (OpenRouter's web search tool) when it decides to; searches are billed. Accepts `true`/`false`, `yes`/`no`, `on`/`off`, `1`/`0` |
 | `SIGNAL_DM_USER_IDS` | empty | UUIDs/numbers allowed to DM the bot, separated by commas or whitespace |
 | `MODEL_SYSTEM_PROMPT` | empty | Extra instructions, appended to the built-in prompt (which keeps answers short and Signal-sized) |
-| `INTRO` | built-in sentence | Overrides the self-introduction; `{name}`, `{model}` (without any OpenRouter `provider/` prefix) and `{tools}` (`web search`, or `none`) are substituted |
+| `INTRO` | built-in sentence | Overrides the self-introduction; `{name}`, `{model}` (without any OpenRouter `provider/` prefix) and `{tools}` (the names of the tools, or `none`) are substituted |
 | `MAX_CONCURRENCY` | `32` | Conversations in flight at once; messages beyond this are dropped |
 | `HISTORY_TURNS` | `10` | Exchanges remembered per chat (`HISTORY_TURNS` × 2 messages) |
 | `GROUP_CONTEXT` | `true` | Remember group messages not addressed to the bot as context, so "what do you think @bot" works without replying to the message; they are never logged |
@@ -153,6 +153,11 @@ The model can call tools from [MCP](https://modelcontextprotocol.io) servers, re
 ```
 
 `chat_commands` turn a server's tools into slash commands: `/forecast sydney this weekend` asks the model, offered only that tool and made to call it. With `require_arg`, a bare `/forecast` gets a usage reply from the bot without asking the model.
+
+Two optional fields shape how a server's tools are offered:
+
+- `prompt` is a line added to the system prompt while the server's tools are offered, for example `"prompt": "Use the weather tools for any forecast, and give temperatures in °C."`. Without it, nothing is added: the server's own `instructions` (from its MCP handshake) are not used.
+- `keywords` offers the server's tools only when a message contains one of the words, ignoring capitals and matching whole words only, and for the 2 replies after one that matched or used its tools. For example `"keywords": ["weather", "forecast", "rain"]`. Without it, the tools are always offered. A chat command always gets its tool.
 
 Add `"disabled": true` to a server to leave it out without deleting it. A server that can't be reached at startup is logged and left out. A tool named in either list that the server doesn't have is a config error, so a typo can't leave a blocked tool offered. Local servers get only `PATH`, `HOME` and their `env`, never the bot's own environment.
 

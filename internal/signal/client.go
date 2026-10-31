@@ -27,6 +27,11 @@ import (
 // lists and quoted text are all sender-controlled parts of a frame.
 const maxLine = 1 << 20
 
+// Handled, if set, is called on the reader goroutine after each message is
+// handled. It is for the scenario tests in cmd/signalbot, which see the bot
+// only through its socket; set it before Run.
+var Handled func()
+
 // writeTimeout bounds one request's write, so a stalled socket can't hold
 // up every sender.
 var writeTimeout = 10 * time.Second
@@ -189,6 +194,9 @@ func (c *Client) dispatch(line []byte, handle func(*Envelope)) {
 			c.refreshSoon()
 		}
 		handle(p.Envelope)
+		if Handled != nil {
+			Handled()
+		}
 	}
 }
 
