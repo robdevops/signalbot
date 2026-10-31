@@ -18,6 +18,10 @@ import (
 	"time"
 
 	"github.com/robdevops/signalbot/internal/kit/logx/logxtest"
+
+	"github.com/robdevops/signalbot/internal/signal"
+
+	"github.com/robdevops/signalbot/internal/signal/signaltest"
 )
 
 // fakeModel answers chat completions: with a call to fake__echo for the first
@@ -116,7 +120,7 @@ func (f failAI) Complete(context.Context, string, []ChatMsg) (Completion, error)
 // a group, and leaves no history.
 func TestExample(t *testing.T) {
 	sent := make(chan map[string]any, 2)
-	sock := fakeSignal(t, func(_ int, c net.Conn, r *bufio.Reader) {
+	sock := signaltest.Socket(t, func(_ int, c net.Conn, r *bufio.Reader) {
 		for {
 			line, err := r.ReadBytes('\n')
 			if err != nil {
@@ -137,7 +141,7 @@ func TestExample(t *testing.T) {
 	})
 	cfg := testCfg()
 	cfg.Model, cfg.Search = "x/test-model", true
-	sig := NewSignal(sock)
+	sig := signal.New(sock)
 	b := NewBot(context.Background(), cfg, sig, failAI{t})
 	b.toolNames = []string{"get_forecast"}
 	ctx, cancel := context.WithCancel(context.Background())
@@ -233,7 +237,7 @@ func TestReplyCarriesImages(t *testing.T) {
 	} {
 		text := tc.text
 		sent := make(chan map[string]any, 2)
-		sock := fakeSignal(t, func(_ int, c net.Conn, r *bufio.Reader) {
+		sock := signaltest.Socket(t, func(_ int, c net.Conn, r *bufio.Reader) {
 			for {
 				line, err := r.ReadBytes('\n')
 				if err != nil {
@@ -252,7 +256,7 @@ func TestReplyCarriesImages(t *testing.T) {
 				}
 			}
 		})
-		sig := NewSignal(sock)
+		sig := signal.New(sock)
 		b := NewBot(context.Background(), testCfg(), sig, imageAI{text, tc.caption})
 		ctx, cancel := context.WithCancel(context.Background())
 		go sig.Run(ctx, b.Handle)
@@ -325,7 +329,7 @@ func TestToolListOffers(t *testing.T) {
 // all for a model that can't call them.
 func TestSystemPromptTools(t *testing.T) {
 	cfg := &Config{Model: "m", Search: true, MaxConcurrency: 1, HistoryTurns: 1}
-	b := NewBot(context.Background(), cfg, NewSignal("x"), nil)
+	b := NewBot(context.Background(), cfg, signal.New("x"), nil)
 	if p := b.systemPrompt(false); !strings.Contains(p, "\nYour tools: web search. If asked") {
 		t.Errorf("without a chart: %q", p)
 	}
@@ -341,7 +345,7 @@ func TestSystemPromptTools(t *testing.T) {
 // After a message asks for a chart or a reply draws one, the chart tools stay
 // on for 2 more replies in that chat, for follow-ups.
 func TestChartFollowUps(t *testing.T) {
-	b := NewBot(context.Background(), testCfg(), NewSignal("x"), nil)
+	b := NewBot(context.Background(), testCfg(), signal.New("x"), nil)
 	reply := func(key, text string, drew bool) bool {
 		asked := wantsChart(text)
 		chart := asked || b.chartTurns(key) > 0

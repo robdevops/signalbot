@@ -4,13 +4,15 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"os/signal"
+	ossignal "os/signal"
 	"runtime/debug"
 	"strings"
 	"syscall"
 	"time"
 
 	"github.com/robdevops/signalbot/internal/kit/logx"
+
+	"github.com/robdevops/signalbot/internal/signal"
 )
 
 // version is set at build time: go build -ldflags "-X main.version=v1.2.3"
@@ -37,14 +39,14 @@ func main() {
 		os.Exit(1)
 	}
 	logx.SetLevel(cfg.LogLevel)
-	sigCtx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	sigCtx, stop := ossignal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	// The connection outlives the shutdown signal, so replies already being
 	// written can still be sent; it closes once they finish or time runs out.
 	connCtx, closeConn := context.WithCancel(context.Background())
 	defer closeConn()
 
-	sig := NewSignal(cfg.Socket)
+	sig := signal.New(cfg.Socket)
 	var tools *MCP
 	if cfg.MCPConfig != "" {
 		servers, err := loadMCPConfig(cfg.MCPConfig)

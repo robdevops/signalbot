@@ -17,6 +17,8 @@ import (
 	"github.com/robdevops/signalbot/internal/kit/logx"
 
 	"github.com/robdevops/signalbot/internal/kit/logx/logxtest"
+
+	"github.com/robdevops/signalbot/internal/signal"
 )
 
 const (
@@ -25,9 +27,9 @@ const (
 	group = "dGVzdC1ncm91cC1pZC1maXh0dXJlLTAwMDAwMDAwMDA="
 )
 
-func parse(t *testing.T, s string) *Envelope {
+func parse(t *testing.T, s string) *signal.Envelope {
 	t.Helper()
-	var m rpcMsg
+	var m struct{ Envelope *signal.Envelope }
 	if err := json.Unmarshal([]byte(s), &m); err != nil || m.Envelope == nil {
 		t.Fatalf("bad fixture: %v", err)
 	}
@@ -138,7 +140,7 @@ func TestEndToEnd(t *testing.T) {
 
 	cfg := &Config{Socket: sock, APIKey: "k", Model: "m", Reasoning: "low", Search: true,
 		AllowedSenders: map[string]bool{}, MaxConcurrency: 4, HistoryTurns: 2}
-	sig := NewSignal(sock)
+	sig := signal.New(sock)
 	x := NewOpenRouter(cfg, nil)
 	x.url = ai.URL
 	bot := NewBot(context.Background(), cfg, sig, x)
@@ -184,7 +186,7 @@ func contextWithCancel() (context.Context, context.CancelFunc) {
 }
 
 // decide runs the trigger rules and then Decide, as the bot does.
-func decide(env *Envelope, allowed map[string]bool) *Request {
+func decide(env *signal.Envelope, allowed map[string]bool) *Request {
 	kind := trigger(env, self, allowed)
 	if kind == "" {
 		return nil
@@ -246,8 +248,8 @@ func TestLogTimestampOnlyWhenInteractive(t *testing.T) {
 
 func TestSystemPromptIntroduction(t *testing.T) {
 	cfg := &Config{Model: "test-model", ExtraPrompt: "base", Intro: defaultIntro, MaxConcurrency: 1, HistoryTurns: 1}
-	sig := NewSignal("x")
-	sig.selfID.Store(self)
+	sig := signal.New("x")
+	sig.SetSelf(self)
 	b := NewBot(context.Background(), cfg, sig, nil)
 
 	want := func(name string) string {
@@ -257,7 +259,7 @@ func TestSystemPromptIntroduction(t *testing.T) {
 	if p := b.systemPrompt(true); !strings.HasPrefix(p, basePrompt+"\n") || !strings.Contains(p, "\nbase\n") || !strings.Contains(p, want("signalbot")) {
 		t.Fatalf("default name: %q", p)
 	}
-	b.names.replaceContacts([]Contact{{UUID: self, GivenName: "Botty"}})
+	b.names.replaceContacts([]signal.Contact{{UUID: self, GivenName: "Botty"}})
 	if p := b.systemPrompt(true); !strings.Contains(p, want("Botty")) {
 		t.Fatalf("profile name: %q", p)
 	}
@@ -265,10 +267,10 @@ func TestSystemPromptIntroduction(t *testing.T) {
 
 func TestSystemPromptIntroOverride(t *testing.T) {
 	cfg := &Config{Model: "test-model", ExtraPrompt: "base", MaxConcurrency: 1, HistoryTurns: 1}
-	sig := NewSignal("x")
-	sig.selfID.Store(self)
+	sig := signal.New("x")
+	sig.SetSelf(self)
 	b := NewBot(context.Background(), cfg, sig, nil)
-	b.names.replaceContacts([]Contact{{UUID: self, GivenName: "Botty"}})
+	b.names.replaceContacts([]signal.Contact{{UUID: self, GivenName: "Botty"}})
 
 	cfg.Intro = "yo, {name} here on {model} with {tools}"
 	p := b.systemPrompt(true)
@@ -304,7 +306,7 @@ func TestSystemPromptIntroOverride(t *testing.T) {
 // The model is told its tools by name, so it can list them when asked.
 func TestSystemPromptNamesTools(t *testing.T) {
 	cfg := &Config{Model: "m", Search: true, MaxConcurrency: 1, HistoryTurns: 1}
-	b := NewBot(context.Background(), cfg, NewSignal("x"), nil)
+	b := NewBot(context.Background(), cfg, signal.New("x"), nil)
 	b.toolNames, b.toolGroups = []string{"get_quote", "filings"}, "yahoo: get_quote; scout: filings"
 	p := b.systemPrompt(true)
 	if !strings.Contains(p, "\nYour tools: web search; charts (make_chart, make_donut_chart); MCP tools by server, yahoo: get_quote; scout: filings. If asked what tools you have, name them, grouped by server.") {

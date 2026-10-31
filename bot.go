@@ -20,6 +20,10 @@ import (
 	"unicode/utf16"
 
 	"github.com/robdevops/signalbot/internal/kit/logx"
+
+	"github.com/robdevops/signalbot/internal/signal"
+
+	"github.com/robdevops/signalbot/internal/kit/txt"
 )
 
 const (
@@ -28,8 +32,6 @@ const (
 	// maxReplyRunes caps a whole reply, so one request cannot fan out into
 	// hundreds of Signal messages.
 	maxReplyRunes = 4 * signalMaxChars
-	// maxNameRunes caps any display name spliced into a prompt or a log line.
-	maxNameRunes = 64
 	// maxQuoteRunes caps quoted text spliced into a prompt.
 	maxQuoteRunes = 500
 	// maxChats bounds the chats remembered: chat keys come from the network.
@@ -39,27 +41,9 @@ const (
 	dedupeWindow = 10 * time.Second
 )
 
-// safeName makes an untrusted display name safe to splice into a prompt or a
-// log line: no newlines, no runs of whitespace, bounded length. Signal profile
-// names are chosen by their owner, so they are attacker-controlled.
-func safeName(s string) string {
-	s = strings.Join(strings.Fields(s), " ")
-	if r := []rune(s); len(r) > maxNameRunes {
-		s = strings.TrimSpace(string(r[:maxNameRunes]))
-	}
-	return s
-}
-
-func clamp(s string, max int) string {
-	if r := []rune(s); len(r) > max {
-		return string(r[:max]) + "…"
-	}
-	return s
-}
-
 type Bot struct {
 	cfg     *Config
-	sig     *Signal
+	sig     *signal.Client
 	ai      Completer
 	sem     chan struct{}
 	ctx     context.Context
@@ -83,7 +67,7 @@ type Bot struct {
 	toolCalls   bool                  // the model can call tools (web search, charts, MCP)
 }
 
-func NewBot(ctx context.Context, cfg *Config, sig *Signal, ai Completer) *Bot {
+func NewBot(ctx context.Context, cfg *Config, sig *signal.Client, ai Completer) *Bot {
 	b := &Bot{
 		cfg: cfg, sig: sig, ai: ai, ctx: ctx,
 		sem:         make(chan struct{}, cfg.MaxConcurrency),
@@ -96,7 +80,7 @@ func NewBot(ctx context.Context, cfg *Config, sig *Signal, ai Completer) *Bot {
 		typingEvery: 10 * time.Second,
 		toolCalls:   true,
 	}
-	sig.onConnect = b.refreshSoon // load names on startup and after every reconnect
+	sig.OnConnect = b.refreshSoon // load names on startup and after every reconnect
 	return b
 }
 
@@ -118,7 +102,7 @@ func (b *Bot) Shutdown(d time.Duration) {
 
 // Request is a message the bot has decided to answer.
 type Request struct {
-	Target Target
+	Target signal.Target
 	Key    string // conversation key
 	Prompt string
 
@@ -128,10 +112,10 @@ type Request struct {
 	Display string // display name, "" if unknown
 	Text    string // message text with the bot mention stripped
 
-	Expires time.Duration // the chat's disappearing-messages timer, 0 if off
-	Tool    string        // a chat command's tool, which the model must call
-	Images  []Attachment  // images in or quoted by the message, fetched when answering
-	Sticker *Sticker      // a sticker sent as the message, fetched when answering
+	Expires time.Duration       // the chat's disappearing-messages timer, 0 if off
+	Tool    string              // a chat command's tool, which the model must call
+	Images  []signal.Attachment // images in or quoted by the message, fetched when answering
+	Sticker *signal.Sticker     // a sticker sent as the message, fetched when answering
 
 	// Names the model has been shown in this message (name -> uuid), so
 	// "@Name" in its reply can become a real Signal mention. Groups only.
@@ -162,11 +146,11 @@ func replyLogLine(name string, took time.Duration, c Completion) string {
 		name, took.Seconds(), c.InputTokens, c.OutputTokens, cached, c.Cost)
 }
 
-func fromSelf(env *Envelope, self string) bool {
+func fromSelf(env *signal.Envelope, self string) bool {
 	return env.SourceUUID == self || env.Source == self || env.SourceNumber == self
 }
 
-func isAllowed(env *Envelope, allowed map[string]bool) bool {
+func isAllowed(env *signal.Envelope, allowed map[string]bool) bool {
 	return allowed[env.SourceUUID] || allowed[env.Source] || allowed[env.SourceNumber]
 }
 
@@ -174,7 +158,7 @@ func isAllowed(env *Envelope, allowed map[string]bool) bool {
 // the bot should answer ("mention", "reply" or "dm"), or "" to stay silent. It
 // runs inline on the reader goroutine so that messages the bot will ignore
 // cost nothing: no goroutine, no lock, no RPC.
-func trigger(env *Envelope, self string, allowed map[string]bool) string {
+func trigger(env *signal.Envelope, self string, allowed map[string]bool) string {
 	dm := env.DataMessage
 	if dm == nil || self == "" || fromSelf(env, self) {
 		return ""
@@ -182,7 +166,7 @@ func trigger(env *Envelope, self string, allowed map[string]bool) string {
 	// A photo or sticker alone (no text) counts too: in a DM, or as a reply
 	// to the bot.
 	if strings.TrimSpace(dm.Message) == "" && dm.Sticker == nil &&
-		!slices.ContainsFunc(dm.Attachments, func(a Attachment) bool { return a.image() != nil }) {
+		!slices.ContainsFunc(dm.Attachments, func(a signal.Attachment) bool { return a.Image() != nil }) {
 		return ""
 	}
 	if dm.GroupInfo == nil || dm.GroupInfo.GroupID == "" {
@@ -204,24 +188,24 @@ func trigger(env *Envelope, self string, allowed map[string]bool) string {
 
 // Decide builds the prompt for a message that triggered as kind. It returns
 // nil if nothing is left once the bot's own mention is stripped.
-func Decide(env *Envelope, kind, self string, names *Names) *Request {
+func Decide(env *signal.Envelope, kind, self string, names *Names) *Request {
 	dm := env.DataMessage
 	sender := cmp.Or(env.SourceUUID, env.Source)
-	target, key := Target{User: sender}, "u:"+sender
+	target, key := signal.Target{User: sender}, "u:"+sender
 	if kind != "dm" {
-		target, key = Target{GroupID: dm.GroupInfo.GroupID}, "g:"+dm.GroupInfo.GroupID
+		target, key = signal.Target{GroupID: dm.GroupInfo.GroupID}, "g:"+dm.GroupInfo.GroupID
 	}
 
 	text := stripMentions(dm.Message, dm.Mentions, self, names)
 	// Images the model may see: the message's own, then the quoted message's
 	// (a thumbnail), at most maxReplyImages.
-	var images []Attachment
+	var images []signal.Attachment
 	attached := dm.Attachments
 	if dm.Quote != nil {
 		attached = append(slices.Clone(attached), dm.Quote.Attachments...)
 	}
 	for _, a := range attached {
-		if img := a.image(); img != nil && len(images) < maxReplyImages {
+		if img := a.Image(); img != nil && len(images) < maxReplyImages {
 			images = append(images, *img)
 		}
 	}
@@ -234,7 +218,7 @@ func Decide(env *Envelope, kind, self string, names *Names) *Request {
 		// wrote. Escape it so it cannot close the wrapper and pose as a new
 		// turn, and clamp it so it cannot flood. A message the sender tagged
 		// the bot into is context they chose to share, whoever wrote it.
-		quoted := strconv.Quote(clamp(q.Text, maxQuoteRunes))
+		quoted := strconv.Quote(txt.Clamp(q.Text, maxQuoteRunes))
 		if q.AuthorUUID == self || q.Author == self {
 			text = "[Replying to a message attributed to you: " + quoted + "]\n" + text
 		} else {
@@ -242,7 +226,7 @@ func Decide(env *Envelope, kind, self string, names *Names) *Request {
 			text = "[Replying to a message by " + strconv.Quote(author) + ": " + quoted + "]\n" + text
 		}
 	}
-	name := safeName(env.SourceName)
+	name := txt.Safe(env.SourceName)
 	if target.GroupID != "" && name != "" {
 		text = name + ": " + text
 	}
@@ -256,7 +240,7 @@ func Decide(env *Envelope, kind, self string, names *Names) *Request {
 	if target.GroupID != "" {
 		req.Names = map[string]string{}
 		add := func(n, uuid string) {
-			if n = safeName(n); n != "" && uuid != "" && uuid != self {
+			if n = txt.Safe(n); n != "" && uuid != "" && uuid != self {
 				bindName(req.Names, n, uuid)
 			}
 		}
@@ -274,9 +258,9 @@ func Decide(env *Envelope, kind, self string, names *Names) *Request {
 // @name. Offsets are UTF-16 code units. Mentions are applied from the end so
 // earlier offsets stay valid, which requires sorting: signal-cli's order is
 // not guaranteed, and an out-of-order pair would splice over live text.
-func stripMentions(msg string, ms []Mention, self string, names *Names) string {
+func stripMentions(msg string, ms []signal.Mention, self string, names *Names) string {
 	u := utf16.Encode([]rune(msg))
-	sorted := append([]Mention(nil), ms...)
+	sorted := append([]signal.Mention(nil), ms...)
 	sort.SliceStable(sorted, func(i, j int) bool { return sorted[i].Start > sorted[j].Start })
 
 	applied := len(u) // lowest offset already rewritten
@@ -306,7 +290,7 @@ func stripMentions(msg string, ms []Mention, self string, names *Names) string {
 // Handle is called by the reader goroutine. It must not block, and must not
 // let a remote sender create unbounded goroutines, tickers or RPCs: the
 // concurrency slot is taken before anything is spawned.
-func (b *Bot) Handle(env *Envelope) {
+func (b *Bot) Handle(env *signal.Envelope) {
 	defer logx.QuietRecover("reading a message")
 	if env.DataMessage == nil || b.closing.Load() {
 		return
@@ -348,7 +332,7 @@ func (b *Bot) Handle(env *Envelope) {
 	}()
 }
 
-func (b *Bot) handle(env *Envelope) {
+func (b *Bot) handle(env *signal.Envelope) {
 	self := b.sig.WaitSelf(10 * time.Second)
 	kind := trigger(env, self, b.cfg.AllowedSenders)
 	if kind == "" {
@@ -357,7 +341,7 @@ func (b *Bot) handle(env *Envelope) {
 	b.names.Learn(env)
 	// Load the contact list if someone other than the bot is mentioned whose
 	// name we lack. Only messages the bot will answer get this far.
-	if slices.ContainsFunc(env.DataMessage.Mentions, func(m Mention) bool {
+	if slices.ContainsFunc(env.DataMessage.Mentions, func(m signal.Mention) bool {
 		return m.UUID != self && m.Number != self && b.names.needsRefresh(m)
 	}) {
 		b.refreshContacts()
@@ -440,10 +424,10 @@ func exampleText(req *Request, self, model, tools string) string {
 // history, so a later "what do you think?" has the conversation to go on. It
 // is kept like any other message (HISTORY_TURNS, a day at most, sooner with
 // disappearing messages) and only text is kept: images are noted, not fetched.
-func (b *Bot) rememberChatter(env *Envelope, self string) {
+func (b *Bot) rememberChatter(env *signal.Envelope, self string) {
 	dm := env.DataMessage
-	text := clamp(stripMentions(dm.Message, dm.Mentions, self, b.names), signalMaxChars)
-	if slices.ContainsFunc(dm.Attachments, func(a Attachment) bool { return a.image() != nil }) {
+	text := txt.Clamp(stripMentions(dm.Message, dm.Mentions, self, b.names), signalMaxChars)
+	if slices.ContainsFunc(dm.Attachments, func(a signal.Attachment) bool { return a.Image() != nil }) {
 		text = strings.TrimSpace(text + " [image]")
 	}
 	if dm.Sticker != nil {
@@ -454,7 +438,7 @@ func (b *Bot) rememberChatter(env *Envelope, self string) {
 	}
 	b.addHistory("g:"+dm.GroupInfo.GroupID, ChatMsg{
 		Role:    "user",
-		Content: cmp.Or(safeName(env.SourceName), "someone") + ": " + text,
+		Content: cmp.Or(txt.Safe(env.SourceName), "someone") + ": " + text,
 		Expires: historyExpiry(time.Now(), time.Duration(dm.ExpiresInSeconds)*time.Second),
 	})
 }
@@ -564,7 +548,7 @@ func (b *Bot) refreshContacts() bool {
 }
 
 // keepTyping sends a typing indicator now and every typingEvery until stopped.
-func (b *Bot) keepTyping(t Target) (stop func()) {
+func (b *Bot) keepTyping(t signal.Target) (stop func()) {
 	done := make(chan struct{})
 	b.sig.Typing(t)
 	go func() {
@@ -694,7 +678,7 @@ func replyParts(reply, self string) []string {
 // double space behind.
 func stripSelfTags(reply, self string) string {
 	rs := []rune(reply)
-	spans := findAtNames(rs, map[string]string{safeName(self): "self"})
+	spans := findAtNames(rs, map[string]string{txt.Safe(self): "self"})
 	if len(spans) == 0 {
 		return reply
 	}
@@ -827,7 +811,7 @@ var wantsChart = regexp.MustCompile(`(?i)\b(chart(s|ed|ing)?|graph(s|ed|ing)?|pl
 // systemPrompt is the prompt for one request; chart says whether the chart
 // tool is offered with it.
 func (b *Bot) systemPrompt(chart bool) string {
-	intro := strings.NewReplacer("{name}", safeName(b.introName()), "{model}", modelName(b.cfg.Model), "{tools}", b.toolsText()).Replace(b.cfg.Intro)
+	intro := strings.NewReplacer("{name}", txt.Safe(b.introName()), "{model}", modelName(b.cfg.Model), "{tools}", b.toolsText()).Replace(b.cfg.Intro)
 	var tools []string
 	ask := "name them"
 	if b.toolCalls {

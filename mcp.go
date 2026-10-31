@@ -23,6 +23,8 @@ import (
 	"time"
 
 	"github.com/robdevops/signalbot/internal/kit/logx"
+
+	"github.com/robdevops/signalbot/internal/kit/txt"
 )
 
 const (
@@ -210,9 +212,9 @@ func (m *MCP) addCommands(server string, cmds map[string]chatCommand) {
 		_, taken := m.cmds[name]
 		switch {
 		case !commandName.MatchString(name) || name == "example" || taken:
-			logx.Warnf("MCP server %s: chat command %q is not a free name of letters, digits, _ or -; skipped", server, clamp(n, 40))
+			logx.Warnf("MCP server %s: chat command %q is not a free name of letters, digits, _ or -; skipped", server, txt.Clamp(n, 40))
 		case !offered || t.Server != server:
-			logx.Warnf("MCP server %s: chat command /%s names tool %q, which isn't offered; skipped", server, name, clamp(c.Tool, 64))
+			logx.Warnf("MCP server %s: chat command /%s names tool %q, which isn't offered; skipped", server, name, txt.Clamp(c.Tool, 64))
 		default:
 			m.cmds[name] = mcpCommand{Tool: t.Model, RequireArg: c.RequireArg}
 		}
@@ -326,7 +328,7 @@ func (m *MCP) Call(ctx context.Context, model, arguments string) (result string,
 	if err != nil {
 		var re *rpcError
 		if errors.As(err, &re) {
-			return "error: " + clamp(re.Message, 500), nil, t, fmt.Errorf("rpc error %d", re.Code)
+			return "error: " + txt.Clamp(re.Message, 500), nil, t, fmt.Errorf("rpc error %d", re.Code)
 		}
 		return "error: the tool could not be reached", nil, t, err
 	}
@@ -354,7 +356,7 @@ func (m *MCP) Call(ctx context.Context, model, arguments string) (result string,
 			parts = append(parts, "[non-text content omitted]")
 		}
 	}
-	out := clamp(strings.Join(parts, "\n"), maxToolResultRunes)
+	out := txt.Clamp(strings.Join(parts, "\n"), maxToolResultRunes)
 	if r.IsError {
 		return "error: " + out, nil, t, errors.New("the tool reported an error")
 	}

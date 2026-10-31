@@ -2,23 +2,15 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"sync"
 	"time"
 
 	"github.com/robdevops/signalbot/internal/kit/logx"
-)
 
-// Contact is the subset of a signal-cli listContacts entry we use.
-type Contact struct {
-	Number    string `json:"number"`
-	UUID      string `json:"uuid"`
-	Username  string `json:"username"`
-	GivenName string `json:"givenName"`
-	Profile   struct {
-		GivenName string `json:"givenName"`
-	} `json:"profile"`
-}
+	"github.com/robdevops/signalbot/internal/signal"
+
+	"github.com/robdevops/signalbot/internal/kit/txt"
+)
 
 // Name ranks: a name is never replaced by one of lower rank.
 const (
@@ -28,11 +20,11 @@ const (
 	rankContact  = 4 // the account owner's own name for the contact
 )
 
-// DisplayName prefers the given name (the account owner's contact name, then
+// displayName prefers the given name (the account owner's contact name, then
 // the person's own profile name), else the username.
-func (c Contact) DisplayName() (name string, rank int) {
+func displayName(c signal.Contact) (name string, rank int) {
 	for _, r := range []rankedName{{c.GivenName, rankContact}, {c.Profile.GivenName, rankGiven}, {c.Username, rankUsername}} {
-		if name := safeName(r.name); name != "" {
+		if name := txt.Safe(r.name); name != "" {
 			return name, r.rank
 		}
 	}
@@ -78,8 +70,8 @@ func (n *Names) set(name string, rank int, ids ...string) {
 }
 
 // Learn records the sender's profile name from an incoming envelope.
-func (n *Names) Learn(env *Envelope) {
-	if name := safeName(env.SourceName); name != "" {
+func (n *Names) Learn(env *signal.Envelope) {
+	if name := txt.Safe(env.SourceName); name != "" {
 		n.mu.Lock()
 		defer n.mu.Unlock()
 		n.set(name, rankSeen, env.SourceUUID, env.SourceNumber)
@@ -88,12 +80,12 @@ func (n *Names) Learn(env *Envelope) {
 
 // replaceContacts swaps the whole cache for signal-cli's current list, so
 // people who left their groups are forgotten.
-func (n *Names) replaceContacts(cs []Contact) {
+func (n *Names) replaceContacts(cs []signal.Contact) {
 	n.mu.Lock()
 	defer n.mu.Unlock()
 	n.byID = map[string]rankedName{}
 	for _, c := range cs {
-		if name, rank := c.DisplayName(); rank > 0 {
+		if name, rank := displayName(c); rank > 0 {
 			n.set(name, rank, c.UUID, c.Number)
 		}
 	}
@@ -124,9 +116,9 @@ const unnamedUser = "[unnamed user]"
 
 // realMentionName is the name signal-cli put in the mention, unless that is
 // just the id. The sender chose it, so it is sanitised before use.
-func realMentionName(m Mention) string {
+func realMentionName(m signal.Mention) string {
 	if m.Name != m.UUID && m.Name != m.Number {
-		return safeName(m.Name)
+		return txt.Safe(m.Name)
 	}
 	return ""
 }
@@ -134,7 +126,7 @@ func realMentionName(m Mention) string {
 // Resolve returns the best name for a mention, or "" if none is known: a
 // contact, profile or sender name, then the name signal-cli put in the
 // mention (unless it is just an id), then a username.
-func (n *Names) Resolve(m Mention) string {
+func (n *Names) Resolve(m signal.Mention) string {
 	r := n.lookup(m.UUID, m.Number)
 	if mn := realMentionName(m); r.rank < rankSeen && mn != "" {
 		return mn
@@ -145,7 +137,7 @@ func (n *Names) Resolve(m Mention) string {
 // needsRefresh reports whether the contact list should be (re)loaded for this
 // mention: we have never loaded it, it is over a day old, or we have no real
 // name for the person.
-func (n *Names) needsRefresh(m Mention) bool {
+func (n *Names) needsRefresh(m signal.Mention) bool {
 	n.mu.Lock()
 	never := n.refreshedAt.IsZero()
 	stale := !n.loadedAt.IsZero() && time.Since(n.loadedAt) > maxNamesAge
@@ -155,7 +147,7 @@ func (n *Names) needsRefresh(m Mention) bool {
 
 // Refresh loads signal-cli contacts, at most once per minRefresh, and reports
 // whether it tried.
-func (n *Names) Refresh(ctx context.Context, s *Signal) bool {
+func (n *Names) Refresh(ctx context.Context, s *signal.Client) bool {
 	// A caller that arrives mid-load waits, and then finds the cache fresh.
 	n.loading.Lock()
 	defer n.loading.Unlock()
@@ -175,16 +167,4 @@ func (n *Names) Refresh(ctx context.Context, s *Signal) bool {
 	logx.Debugf("loaded %d contacts", len(cs))
 	n.replaceContacts(cs)
 	return true
-}
-
-func (s *Signal) ListContacts(ctx context.Context) ([]Contact, error) {
-	resp, err := s.call(ctx, "listContacts", map[string]any{"allRecipients": true})
-	if err != nil {
-		return nil, err
-	}
-	var cs []Contact
-	if err := json.Unmarshal(resp.Result, &cs); err != nil {
-		return nil, err
-	}
-	return cs, nil
 }

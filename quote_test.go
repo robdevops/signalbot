@@ -3,6 +3,8 @@ package main
 import (
 	"strings"
 	"testing"
+
+	"github.com/robdevops/signalbot/internal/signal"
 )
 
 const bob = "99999999-8888-7777-6666-555555555555"
@@ -19,7 +21,7 @@ func mentionQuoting(quoted string) string {
 func TestQuotedMessageOfSomeoneElseIsPassedAsContext(t *testing.T) {
 	env := parse(t, mentionQuoting("lunch at noon?"))
 	names := NewNames()
-	names.replaceContacts([]Contact{{UUID: bob, GivenName: "Bob"}})
+	names.replaceContacts([]signal.Contact{{UUID: bob, GivenName: "Bob"}})
 	r := Decide(env, trigger(env, self, nil), self, names)
 	want := "Alice: [Replying to a message by \"Bob\": \"lunch at noon?\"]\nwhat is up"
 	if r == nil || r.Prompt != want {

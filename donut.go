@@ -13,6 +13,8 @@ import (
 	"strings"
 
 	"golang.org/x/image/font"
+
+	"github.com/robdevops/signalbot/internal/kit/txt"
 )
 
 // donutTool is the built-in tool the model calls to draw a donut chart of
@@ -62,9 +64,9 @@ func parseDonut(arguments string) (*donutSpec, error) {
 	if err := decodeArgs(donutTool, arguments, &s); err != nil {
 		return nil, err
 	}
-	s.Title = clamp(strings.TrimSpace(s.Title), 80)
-	s.Subtitle = clamp(strings.TrimSpace(s.Subtitle), 120)
-	s.Unit, s.Suffix, s.Center = clamp(s.Unit, 4), clamp(s.Suffix, 4), clamp(strings.TrimSpace(s.Center), 16)
+	s.Title = txt.Clamp(strings.TrimSpace(s.Title), 80)
+	s.Subtitle = txt.Clamp(strings.TrimSpace(s.Subtitle), 120)
+	s.Unit, s.Suffix, s.Center = txt.Clamp(s.Unit, 4), txt.Clamp(s.Suffix, 4), txt.Clamp(strings.TrimSpace(s.Center), 16)
 	if s.Title == "" {
 		return nil, errors.New("title is required")
 	}
@@ -73,7 +75,7 @@ func parseDonut(arguments string) (*donutSpec, error) {
 	}
 	for i := range s.Slices {
 		sl := &s.Slices[i]
-		sl.Label = clamp(strings.TrimSpace(sl.Label), 60)
+		sl.Label = txt.Clamp(strings.TrimSpace(sl.Label), 60)
 		switch {
 		case sl.Label == "":
 			return nil, fmt.Errorf("slice %d has no label", i+1)

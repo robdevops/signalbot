@@ -7,6 +7,8 @@ import (
 	"time"
 
 	"github.com/robdevops/signalbot/internal/kit/logx/logxtest"
+
+	"github.com/robdevops/signalbot/internal/signal"
 )
 
 // A group message that isn't for the bot is kept as context, never logged,
@@ -62,7 +64,7 @@ func TestGroupContextOff(t *testing.T) {
 // However many messages a chat holds, it has at most one expiry timer, and
 // it is set for the earliest message to expire.
 func TestOneEraserPerChat(t *testing.T) {
-	b := NewBot(context.Background(), testCfg(), NewSignal("x"), nil)
+	b := NewBot(context.Background(), testCfg(), signal.New("x"), nil)
 	b.cfg.HistoryTurns = 100
 	now := time.Now()
 	for i := 0; i < 50; i++ {

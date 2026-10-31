@@ -7,6 +7,8 @@ import (
 	"time"
 
 	"github.com/robdevops/signalbot/internal/kit/logx/logxtest"
+
+	"github.com/robdevops/signalbot/internal/signal"
 )
 
 const secretText = "my-secret-message-text"
@@ -23,8 +25,8 @@ func (panicAI) Complete(ctx context.Context, system string, msgs []ChatMsg) (Com
 // can hold message text), must not kill the bot, and must free the slot.
 func TestPanicWhileAnsweringIsContained(t *testing.T) {
 	cfg := testCfg()
-	sig := NewSignal("x")
-	sig.selfID.Store(self)
+	sig := signal.New("x")
+	sig.SetSelf(self)
 	b := NewBot(context.Background(), cfg, sig, panicAI{})
 	logs := logxtest.Capture(t)
 
@@ -74,14 +76,5 @@ func TestBadReplyBodiesAreNotEchoed(t *testing.T) {
 		if _, err := parseChatCompletion([]byte(body)); err == nil || strings.Contains(err.Error(), secretText) {
 			t.Errorf("body %q: err = %v", body, err)
 		}
-	}
-}
-
-// A malformed frame from signal-cli is reported without quoting it.
-func TestBadFrameIsNotQuoted(t *testing.T) {
-	logs := logxtest.Capture(t)
-	NewSignal("x").dispatch([]byte(`{"params": `+secretText+`}`), func(*Envelope) {})
-	if logs.Len() == 0 || strings.Contains(logs.String(), secretText) {
-		t.Fatalf("log = %q", logs.String())
 	}
 }

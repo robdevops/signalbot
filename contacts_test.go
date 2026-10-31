@@ -7,6 +7,10 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/robdevops/signalbot/internal/signal"
+
+	"github.com/robdevops/signalbot/internal/signal/signaltest"
 )
 
 const (
@@ -26,9 +30,9 @@ func TestContactsReloadOnConnectAndGroupChange(t *testing.T) {
 	var mu sync.Mutex
 	calls, members := 0, `[{"uuid":"`+bobID+`","givenName":"Bob"}]`
 	conns := make(chan net.Conn, 1)
-	sock := fakeSignal(t, func(_ int, c net.Conn, r *bufio.Reader) {
+	sock := signaltest.Socket(t, func(_ int, c net.Conn, r *bufio.Reader) {
 		conns <- c
-		rpc(c, r, func(m string) (string, bool) {
+		signaltest.RPC(c, r, func(m string) (string, bool) {
 			mu.Lock()
 			defer mu.Unlock()
 			switch m {
@@ -41,7 +45,7 @@ func TestContactsReloadOnConnectAndGroupChange(t *testing.T) {
 			return "", false
 		})
 	})
-	sig := NewSignal(sock)
+	sig := signal.New(sock)
 	b := NewBot(context.Background(), testCfg(), sig, nil)
 	b.names.minRefresh = 50 * time.Millisecond
 	ctx, cancel := context.WithCancel(context.Background())
@@ -101,9 +105,9 @@ func TestContactsOverADayOldReloadOnAMention(t *testing.T) {
 	var mu sync.Mutex
 	calls := 0
 	conns := make(chan net.Conn, 1)
-	sock := fakeSignal(t, func(_ int, c net.Conn, r *bufio.Reader) {
+	sock := signaltest.Socket(t, func(_ int, c net.Conn, r *bufio.Reader) {
 		conns <- c
-		rpc(c, r, func(m string) (string, bool) {
+		signaltest.RPC(c, r, func(m string) (string, bool) {
 			mu.Lock()
 			defer mu.Unlock()
 			switch m {
@@ -117,7 +121,7 @@ func TestContactsOverADayOldReloadOnAMention(t *testing.T) {
 			return "", false
 		})
 	})
-	sig := NewSignal(sock)
+	sig := signal.New(sock)
 	b := NewBot(context.Background(), testCfg(), sig, okAI{})
 	b.names.minRefresh = 10 * time.Millisecond
 	ctx, cancel := context.WithCancel(context.Background())
@@ -161,7 +165,7 @@ func TestContactsOverADayOldReloadOnAMention(t *testing.T) {
 
 // A group change drops the names remembered for that group, and only that one.
 func TestGroupChangeForgetsThatChatsShownNames(t *testing.T) {
-	b := NewBot(context.Background(), testCfg(), NewSignal("x"), nil)
+	b := NewBot(context.Background(), testCfg(), signal.New("x"), nil)
 	b.remember(&Request{Key: "g:" + group, Names: map[string]string{"Bob": bobID}})
 	b.remember(&Request{Key: "g:other", Names: map[string]string{"Eve": eveID}})
 	b.Handle(parse(t, groupUpdate))

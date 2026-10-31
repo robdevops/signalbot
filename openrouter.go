@@ -15,6 +15,8 @@ import (
 	"time"
 
 	"github.com/robdevops/signalbot/internal/kit/logx"
+
+	"github.com/robdevops/signalbot/internal/kit/txt"
 )
 
 type ChatMsg struct {
@@ -371,7 +373,7 @@ func apiErrorText(data []byte) string {
 	if json.Unmarshal(data, &e) != nil {
 		return "(unreadable error body)"
 	}
-	return cmp.Or(clamp(e.Error.Message, 200), "(no message)")
+	return cmp.Or(txt.Clamp(e.Error.Message, 200), "(no message)")
 }
 
 func parseChatCompletion(data []byte) (Completion, error) {

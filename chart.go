@@ -23,13 +23,15 @@ import (
 	"golang.org/x/image/font/opentype"
 	"golang.org/x/image/math/fixed"
 	"golang.org/x/image/vector"
+
+	"github.com/robdevops/signalbot/internal/kit/txt"
+
+	"github.com/robdevops/signalbot/internal/signal"
 )
 
 const (
 	// maxReplyImages caps the images one reply may carry.
 	maxReplyImages = 4
-	// maxImageBytes caps one image, sent or received.
-	maxImageBytes = 5 << 20
 )
 
 // sendableImage reports whether data is an image Signal can show, small
@@ -37,7 +39,7 @@ const (
 func sendableImage(data []byte) bool {
 	switch http.DetectContentType(data) {
 	case "image/png", "image/jpeg", "image/gif", "image/webp":
-		return len(data) <= maxImageBytes
+		return len(data) <= signal.MaxImageBytes
 	}
 	return false
 }
@@ -195,19 +197,19 @@ func parseChart(arguments string) (*chartSpec, error) {
 	if err := decodeArgs(chartTool, arguments, &s); err != nil {
 		return nil, err
 	}
-	s.Title = clamp(strings.TrimSpace(s.Title), 80)
-	s.Subtitle = clamp(strings.TrimSpace(s.Subtitle), 120)
+	s.Title = txt.Clamp(strings.TrimSpace(s.Title), 80)
+	s.Subtitle = txt.Clamp(strings.TrimSpace(s.Subtitle), 120)
 	if s.Title == "" {
 		return nil, errors.New("title is required")
 	}
 	for k := range s.Axes {
 		if k != "left" && k != "right" {
-			return nil, fmt.Errorf(`axes may only have "left" and "right", not %q`, clamp(k, 20))
+			return nil, fmt.Errorf(`axes may only have "left" and "right", not %q`, txt.Clamp(k, 20))
 		}
 	}
 	s.left, s.right = cmp.Or(s.Axes["left"], &chartAxis{}), cmp.Or(s.Axes["right"], &chartAxis{})
 	for _, a := range []*chartAxis{s.left, s.right} {
-		a.Title, a.Unit = clamp(strings.TrimSpace(a.Title), 24), clamp(a.Unit, 4)
+		a.Title, a.Unit = txt.Clamp(strings.TrimSpace(a.Title), 24), txt.Clamp(a.Unit, 4)
 		switch a.Mode {
 		case "":
 			a.Mode = "change"
@@ -221,7 +223,7 @@ func parseChart(arguments string) (*chartSpec, error) {
 	}
 	for i := range s.Series {
 		sr := &s.Series[i]
-		sr.Name = clamp(strings.TrimSpace(sr.Name), 24)
+		sr.Name = txt.Clamp(strings.TrimSpace(sr.Name), 24)
 		switch {
 		case sr.Name == "":
 			return nil, fmt.Errorf("series %d has no name", i+1)
@@ -250,7 +252,7 @@ func parseChart(arguments string) (*chartSpec, error) {
 			p := &sr.Points[j]
 			t, err := time.Parse("2006-01-02", p.Date)
 			if err != nil {
-				return nil, fmt.Errorf("series %s: date %q is not YYYY-MM-DD", sr.Name, clamp(p.Date, 20))
+				return nil, fmt.Errorf("series %s: date %q is not YYYY-MM-DD", sr.Name, txt.Clamp(p.Date, 20))
 			}
 			p.t = t
 		}

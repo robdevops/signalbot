@@ -1,4 +1,4 @@
-package main
+package signal
 
 import (
 	"strings"
@@ -19,11 +19,20 @@ func TestUnmatchedResponsesAreLogged(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			buf := logxtest.Capture(t)
-			NewSignal("x").dispatch([]byte(tc.line), func(*Envelope) { t.Fatal("unexpected envelope") })
+			New("x").dispatch([]byte(tc.line), func(*Envelope) { t.Fatal("unexpected envelope") })
 			out := buf.String()
 			if tc.want == "" && out != "" || !strings.Contains(out, tc.want) {
 				t.Fatalf("log output %q, want containing %q", out, tc.want)
 			}
 		})
+	}
+}
+
+// A malformed frame from signal-cli is reported without quoting it.
+func TestBadFrameIsNotQuoted(t *testing.T) {
+	logs := logxtest.Capture(t)
+	New("x").dispatch([]byte(`{"params": `+"my-secret-message-text"+`}`), func(*Envelope) {})
+	if logs.Len() == 0 || strings.Contains(logs.String(), "my-secret-message-text") {
+		t.Fatalf("log = %q", logs.String())
 	}
 }
