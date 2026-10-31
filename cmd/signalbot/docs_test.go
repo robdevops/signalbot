@@ -26,7 +26,6 @@ func TestEverySettingIsDocumented(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	env.Bool("MODEL_SEARCH", true) // main reads it for the startup line
 	b := bot.New(context.Background(), &bot.Config{Model: cfg.Model, MaxConcurrency: 1, HistoryTurns: 1, Env: env,
 		Caps: feature.Caps{Vision: true, Tools: true, ServerTools: true}}, nil)
 	fs, _ := features(cfg)

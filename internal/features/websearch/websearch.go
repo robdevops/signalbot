@@ -3,7 +3,10 @@
 // plugin, which searched on every request). MODEL_SEARCH turns it off.
 package websearch
 
-import "github.com/robdevops/signalbot/internal/feature"
+import (
+	"github.com/robdevops/signalbot/internal/feature"
+	"github.com/robdevops/signalbot/internal/kit/logx"
+)
 
 type Feature struct{}
 
@@ -16,5 +19,6 @@ func (Feature) Register(h feature.Host) error {
 	h.Tools(feature.ToolGroup{Prompt: "web search", Intro: "web search", Tools: []feature.Tool{{
 		Name: "web_search", Label: "web search", Def: map[string]string{"type": "openrouter:web_search"},
 	}}})
+	logx.Infof("web search on")
 	return nil
 }
