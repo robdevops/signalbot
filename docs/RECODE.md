@@ -176,10 +176,10 @@ type Host interface {
    - Next:
      1. ~~the golden prompt test against today's code; `internal/chat`, and the client moved to `internal/transports/signal`~~ (done);
      2. ~~the adapter takes over names, message decisions, known names and mentions, emits `chat.Message`, and gets `Describe()`. `bot` works only on `chat` types, with the router~~ (done; `kit/txt` gained `Split` and `AtNames`, and `kit/bound` holds the bounded-map helper);
-     3. `history` out of `bot`; `kit/txt.Split`;
-     4. `llm` with the tool loop, and `llm/openai`. `MODEL_API_URL` and `MODEL_API_KEY` are new settings, added with it;
-     5. main moves to `cmd/signalbot`, and Docker builds `./cmd/signalbot`.
-3. **Kit:** `img`, `draw`, `linechart`, `donut`, `mcp`.
+     3. ~~`history` out of `bot`; `kit/txt.Split`~~ (done);
+     4. ~~`llm` with the tool loop, and `llm/openai`. `MODEL_API_URL` and `MODEL_API_KEY` are new settings, added with it~~ (done; the TLS 1.3 client is `kit/httpx`);
+     5. main moves to `cmd/signalbot`, and Docker builds `./cmd/signalbot`. Moved to step 4: it happens when the bot core becomes `internal/bot`.
+3. ~~**Kit:** `img`, `draw`, `linechart`, `donut`, `mcp`~~ (done; also `bound`, `httpx`, `txt`).
 4. **Ports and registry.** The core calls the hooks; tools and prompts come from the registry.
 5. **Features out**, deleting the core's copy each time, in this order:
    1. `example`
