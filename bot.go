@@ -426,6 +426,9 @@ func (b *Bot) rememberChatter(env *Envelope, self string) {
 	})
 }
 
+// notKept ends the history's marker for an image the model saw.
+const notKept = "; you see images only in the latest message, so to look again they must reply to it and mention you"
+
 // imageNote marks images in a prompt, e.g. "[1 image attached]".
 func imageNote(n int, what string) string {
 	if n == 1 {
@@ -551,13 +554,17 @@ func (b *Bot) respond(req *Request) {
 	stopTyping := b.keepTyping(req.Target)
 	defer stopTyping() // also if something below panics
 	b.ensureSelfName()
-	// The history keeps only a marker for images, never the pictures.
+	// The history keeps only a marker for images, never the pictures, saying
+	// so, or the model concludes later that it can't see images at all.
 	prompt, seen := strings.TrimSpace(req.Prompt), b.images(req)
+	kept := prompt
 	switch {
 	case len(seen) > 0:
 		prompt += "\n" + imageNote(len(seen), "attached")
+		kept += "\n" + imageNote(len(seen), "attached"+notKept)
 	case len(req.Images) > 0:
 		prompt += "\n" + imageNote(len(req.Images), "attached, which you can't see with this model")
+		kept = prompt
 	}
 	if req.Sticker != nil {
 		ctx, cancel := context.WithTimeout(b.ctx, 10*time.Second)
@@ -565,13 +572,15 @@ func (b *Bot) respond(req *Request) {
 		cancel()
 		if url := b.sticker(req); url != "" {
 			prompt += "\n[sticker attached" + label + "]"
+			kept += "\n[sticker attached" + label + notKept + "]"
 			seen = append(seen, url)
 		} else {
 			prompt += "\n[sticker attached" + label + ", which you can't see]"
+			kept += "\n[sticker attached" + label + ", which you can't see]"
 		}
 	}
 	prompt = strings.TrimSpace(prompt)
-	req.Prompt = prompt
+	req.Prompt = strings.TrimSpace(kept)
 	msgs := append(b.getHistory(req.Key), ChatMsg{Role: "user", Content: prompt, Images: seen})
 
 	start := time.Now()

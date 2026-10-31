@@ -147,7 +147,7 @@ func TestPhotoShownToModel(t *testing.T) {
 		t.Fatalf("model got %q with %d images", last.Content, len(last.Images))
 	}
 	h := b.getHistory("u:" + alice)
-	if len(h) != 2 || h[0].Content != "[1 image attached]" || h[0].Images != nil {
+	if len(h) != 2 || h[0].Content != "[1 image attached"+notKept+"]" || h[0].Images != nil {
 		t.Fatalf("history %+v", h)
 	}
 	if out := logs.String(); !strings.Contains(out, "with 1 image") || strings.Contains(out, "base64") || strings.Contains(out, "photo1") {
