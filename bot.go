@@ -526,11 +526,14 @@ func (b *Bot) respond(req *Request) {
 		prompt += "\n" + imageNote(len(req.Images), "attached, which you can't see with this model")
 	}
 	if req.Sticker != nil {
+		ctx, cancel := context.WithTimeout(b.ctx, 10*time.Second)
+		label := b.sig.StickerLabel(ctx, *req.Sticker)
+		cancel()
 		if url := b.sticker(req); url != "" {
-			prompt += "\n[sticker attached]"
+			prompt += "\n[sticker attached" + label + "]"
 			seen = append(seen, url)
 		} else {
-			prompt += "\n[sticker attached, which you can't see]"
+			prompt += "\n[sticker attached" + label + ", which you can't see]"
 		}
 	}
 	prompt = strings.TrimSpace(prompt)

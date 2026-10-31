@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -358,6 +359,46 @@ func (s *Signal) GetSticker(ctx context.Context, st Sticker) ([]byte, error) {
 		return nil, errors.New("malformed getSticker result")
 	}
 	return base64.StdEncoding.DecodeString(r.Data)
+}
+
+// StickerLabel describes a sticker from its pack's details: its emoji and
+// the pack's title, e.g. `: 🕵️ from "My Daily Life"`, or "" if signal-cli
+// doesn't know the pack. Both come from whoever made the pack, so they are
+// trimmed and the title quoted.
+func (s *Signal) StickerLabel(ctx context.Context, st Sticker) string {
+	resp, err := s.call(ctx, "listStickerPacks", nil)
+	if err != nil {
+		return ""
+	}
+	var packs []struct {
+		PackID   string `json:"packId"`
+		Title    string `json:"title"`
+		Stickers []struct {
+			ID    int    `json:"id"`
+			Emoji string `json:"emoji"`
+		} `json:"stickers"`
+	}
+	if json.Unmarshal(resp.Result, &packs) != nil {
+		return ""
+	}
+	for _, p := range packs {
+		if p.PackID != st.PackID {
+			continue
+		}
+		label := ""
+		for _, sk := range p.Stickers {
+			if sk.ID == st.StickerID {
+				if e := clamp(safeName(sk.Emoji), 8); e != "" {
+					label = ": " + e
+				}
+			}
+		}
+		if t := safeName(p.Title); t != "" {
+			label += " from " + strconv.Quote(t)
+		}
+		return label
+	}
+	return ""
 }
 
 // Send sends msg, with mentions ("start:length:uuid") and attachments (data:

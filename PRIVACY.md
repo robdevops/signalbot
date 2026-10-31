@@ -10,7 +10,7 @@ When the bot answers a message, it sends this to [OpenRouter](https://openrouter
 - the earlier messages in this chat that were addressed to the bot, with the bot's replies: at most `HISTORY_TURNS` exchanges, none older than a day. Other conversation in the group is never included, apart from a message quoted as described below;
 - the new message, with the display name of whoever sent it (in groups) and of anyone it @mentions;
 - the quoted text, when someone replies to one of the bot's messages, or mentions the bot in reply to someone else.
-- photos or a sticker in the message, and the thumbnail of a quoted photo, when the model accepts images (the bot checks this at startup).
+- photos or a sticker in the message (a sticker also by its emoji and pack title), and the thumbnail of a quoted photo, when the model accepts images (the bot checks this at startup).
 
 With web search on (`MODEL_SEARCH`), the model decides whether to search and writes the query itself. The query can contain anything the model was sent (see above), such as a name or a phrase from a message, and goes to the search service OpenRouter uses.
 
