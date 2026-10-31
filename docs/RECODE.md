@@ -180,8 +180,8 @@ type Host interface {
      4. ~~`llm` with the tool loop, and `llm/openai`. `MODEL_API_URL` and `MODEL_API_KEY` are new settings, added with it~~ (done; the TLS 1.3 client is `kit/httpx`);
      5. main moves to `cmd/signalbot`, and Docker builds `./cmd/signalbot`. Moved to step 4: it happens when the bot core becomes `internal/bot`.
 3. ~~**Kit:** `img`, `draw`, `linechart`, `donut`, `mcp`~~ (done; also `bound`, `httpx`, `txt`).
-4. **Ports and registry.** The core calls the hooks; tools and prompts come from the registry.
-5. **Features out**, deleting the core's copy each time, in this order:
+4. ~~**Ports and registry.** The core calls the hooks; tools and prompts come from the registry~~ (done, with main in `cmd/signalbot`).
+5. ~~**Features out**~~ (done, all seven), deleting the core's copy each time, in this order:
    1. `example`
    2. `intro`
    3. `websearch`

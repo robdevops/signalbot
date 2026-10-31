@@ -14,12 +14,9 @@ const module = "github.com/robdevops/signalbot"
 // root is the module root, two levels up from this package.
 var root = filepath.Join("..", "..")
 
-// oversized lists the files and packages over the limits from before the
-// recode. An entry goes when its file or package is split; none may be added.
-var oversized = map[string]bool{
-	"bot.go": true, "bot_test.go": true, "fixes_test.go": true, "images_test.go": true,
-	"mcp_test.go": true, "toolloop_test.go": true, ".": true,
-}
+// oversized lists files and packages over the limits from before the
+// recode. It is empty now, and nothing may be added.
+var oversized = map[string]bool{}
 
 func TestFileSizes(t *testing.T) {
 	files, err := Files(root)
@@ -106,11 +103,16 @@ func forbidden(dir, target string) string {
 		if f := feature(target); f != "" && f != feature(dir) {
 			return "a feature never imports another feature"
 		}
-		if feature(target) == "" && target != "internal/feature" && !strings.HasPrefix(target, "internal/kit/") {
-			return "a feature imports only internal/feature, kit and its own packages"
+		if feature(target) == "" && target != "internal/feature" && target != "internal/feature/featuretest" &&
+			target != "internal/chat" && !strings.HasPrefix(target, "internal/kit/") {
+			return "a feature imports only internal/feature, internal/chat, kit and its own packages"
 		}
 	case feature(target) != "":
 		return "the core knows no feature: only cmd/signalbot/features.go lists them"
+	case strings.HasPrefix(target, "internal/transports/") && !strings.HasPrefix(dir, "internal/transports/"):
+		return "the core knows no chat network: only cmd/signalbot wires them in"
+	case strings.HasPrefix(target, "internal/llm/") && !strings.HasPrefix(dir, "internal/llm/"):
+		return "the core knows no model provider: only cmd/signalbot wires them in"
 	}
 	return ""
 }
@@ -130,6 +132,12 @@ func TestForbidden(t *testing.T) {
 		{"internal/kit/linechart", "internal/kit/draw", true},
 		{"internal/kit/draw", "internal/logx", false},
 		{"cmd/signalbot", "internal/features/charts", true},
+		{"internal/features/charts", "internal/chat", true},
+		{"internal/features/mcp", "internal/llm", false},
+		{"internal/bot", "internal/transports/signal", false},
+		{"internal/bot", "internal/llm/openai", false},
+		{"internal/config", "internal/llm/openai", false},
+		{"cmd/signalbot", "internal/transports/signal", true},
 	} {
 		if got := forbidden(c.dir, c.target) == ""; got != c.ok {
 			t.Errorf("%s -> %s: allowed %v, want %v", c.dir, c.target, got, c.ok)
