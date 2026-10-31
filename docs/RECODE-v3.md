@@ -17,19 +17,19 @@ Out of scope: chat networks other than Signal, and providers other than OpenRout
    - loaded on connect, when a group changes, and when a mention is unknown or the list is over 24 hours old, at most every 15 seconds;
    - at most 5,000 names;
    - a group's mention names are cleared when the group changes;
-   - someone with no known name is shown to the model as `[unnamed user]`;
+   - an unresolved mention is shown to the model as `[unnamed user]`; a group sender with no known name gets no name prefix, and an unknown quote author is "someone";
    - the bot calls itself by its own profile name, or "signalbot" without one.
 4. **Answer an addressed message:**
    - show typing until the reply is ready;
    - build the prompt: the base rules, `MODEL_SYSTEM_PROMPT`, `INTRO`, the chat's history, the message (with the sender's name in groups and any quote, escaped and capped);
-   - ask the model;
+   - ask the model. If it fails, log the "OpenRouter error" line, reply "Sorry, I couldn't get an answer right now.", and add nothing to history;
    - send the reply: strip the bot's own @name, link @Name to real mentions, split at 2,000 characters, and cap the whole reply.
 5. **Ask the model** through OpenRouter:
    - with `data_collection: deny`, the `MODEL_REASONING` effort, and TLS 1.3;
-   - a 429 or 5xx gets one retry, and an error body is reduced to its message;
+   - a network error, 429 or 5xx gets one retry, and an error body is reduced to its message;
    - the cost is logged;
    - the tool loop takes at most 5 rounds and 3 minutes per reply, and 4 pictures;
-   - at startup, the model's capabilities (images, tools) are read, and tools are offered only if it can call them.
+   - at startup, the model's capabilities (images, tools) are read, and tools are offered only if it can call them. If the check fails or the model isn't listed, images are off and tools stay on.
 6. **Remember:** a short history per chat (`HISTORY_TURNS`). Each entry is dropped after 24 hours, or sooner when the chat's disappearing-messages timer runs out. It lives in memory only. When a chat's history is gone, everything kept about that chat goes too.
 7. **Run timers** (section 5).
 8. **Stay safe under load:**
@@ -39,15 +39,15 @@ Out of scope: chat networks other than Signal, and providers other than OpenRout
    - message text is never logged, including in panics and error bodies;
    - all memory is capped.
 9. **Configure from environment variables,** and print the version with `-version`.
-10. **Log** at journald priorities 2–7, all always written: `<2>` errors that stop the bot, `<3>` errors, `<4>` warnings, `<5>` startup, connect and reconnect, `<6>` info, `<7>` debug. Under journald (`JOURNAL_STREAM` set, preferred), each line carries its `<N>` prefix. Without it, as in Docker, lines are plain, with no prefix. Either way, priorities 5–7 go to stdout and 2–4 to stderr, so a log driver that only sees the stream still tells them apart. Message content is never logged. Each addressed message logs "received group chat" or "received dm" at info; a DM from a sender not in `SIGNAL_DM_USER_IDS` always logs the sender's ID.
+10. **Log** at journald priorities 2–7, all always written: `<2>` errors that stop the bot, `<3>` errors, `<4>` warnings, `<5>` startup, connect and reconnect, `<6>` info, `<7>` debug. Under journald (`JOURNAL_STREAM` set, preferred), each line carries its `<N>` prefix. Without it, as in Docker, lines are plain, with no prefix. Either way, priorities 5–7 go to stdout and 2–4 to stderr, so a log driver that only sees the stream still tells them apart. Message content is never logged, and every logged value has `\n` and `\r` escaped, so no value can start a forged line. Each addressed message logs "received group chat" or "received dm" at info; a DM from a sender not in `SIGNAL_DM_USER_IDS` always logs the sender's ID.
 
 A message with no text (only a photo or sticker) has nothing to answer in the core. It's answered only if a feature adds something to it.
 
 ## 2. Concurrency and scale
-- **Reader goroutine:** parses each frame and decides "addressed?" without allocating, locking or calling the network. Unaddressed group messages go to the `OnMessage` hooks inline (section 4).
+- **Reader goroutine:** parses each frame and decides "addressed?" without blocking or calling the network; it may briefly take a per-chat lock (to queue a message or store context). Unaddressed group messages go to the `OnMessage` hooks inline (section 4).
 - **Worker slots:** a fixed pool (`MAX_CONCURRENCY`). Anything that may call the network (waiting for the account ID, reloading contacts, fetching media, sticker labels) happens only after a slot is taken. When the pool is full, new work is dropped with one warning.
 - **Per-chat mailbox:** an addressed message, or one a feature delivers (section 4), joins its chat's queue. At most 4 can wait; more are dropped with a warning. A chat with work has one worker, holding one slot, which answers the queue in order and then exits, so each answer sees the ones before it. Different chats run in parallel. *This fixes today's behaviour: two messages in one chat are answered at the same time, so the second can't see the first, and history is stored in reply order.*
-- **Per-chat state:** one struct per chat, in one capped map: the history and its expiry timer, recent message keys (for dedupe), mention names, the tool groups' follow-up counts, and the mailbox. Its lock is held only to read or change it, never across a model call. When the history is gone, the struct goes.
+- **Per-chat state:** one struct per chat, in one capped map: the history and its expiry timer, recent message keys (for dedupe), mention names, the tool groups' follow-up counts, and the mailbox. Its lock is held only to read or change it, never across a model call. When the history is gone, the history, names and counts are cleared, but the struct is deleted (or evicted when the map is full) only once its mailbox is empty and no worker is active, so a chat never gets a second worker. History expiry uses the chat's own `time.AfterFunc`, not the core's timers.
 - **HTTP:** the model client keeps up to `MAX_CONCURRENCY` idle connections (Go's default is 2 per host).
 - **Shutdown:** timers stop, new work stops, slots in flight drain (up to 8s), then the socket closes.
 
@@ -88,7 +88,11 @@ The core's lifecycle has four stages. Each port is one stage; nothing else is a 
 - `Env`: a feature's own settings, recorded for the docs test.
 - `Info`: the bot's name in a chat, the model, whether it takes images and can call tools, and the names of the tools.
 - `Media(ctx, msg, i)`: the bytes of a message's attachment. The core fills in each item's label (a sticker's emoji and pack) when it loads the message.
-- `Deliver(Message)`: act on a message as if its sender had just posted it in its chat, through the chat's mailbox. A command or a mention of the bot is handled like any addressed message; anything else the bot posts as written, with @Name linked, and keeps in history.
+- `Deliver(Message)`: act on a message as if its sender had just posted it in its chat, through the chat's mailbox. Inside the message's slot:
+  - in a group, the sender must still be a member (signal-cli's `listGroups`); otherwise it's dropped and logged at info, with no content;
+  - the bot counts as mentioned when the text has `@` followed by its profile name or "signalbot", ignoring capitals, on a word boundary; that @name is stripped as for a real mention;
+  - a command or a mention of the bot is handled like any addressed message;
+  - anything else the bot posts as written, with @Name linked against the group's members (never an ambiguous name), and history keeps it as the sender's message, "<name>: <text>", not as something the bot chose to say.
 - `Groups(ctx, user)`: the groups the bot shares with a user, with their names (signal-cli's `listGroups`).
 
 **Types**, each field being a stage's natural input or output:
@@ -97,34 +101,36 @@ type Action    struct{ Ignore bool; Answer, ToolChoice, Context string } // zero
 type Additions struct{ System, Note, HistoryNote string; Images []string }
 type Reply     struct{ Text string; Pictures []Picture; ToolsUsed []string }
 type Picture   struct{ Data []byte; Caption, HistoryNote string }
-type ToolGroup struct{ Name, Listing, System string; Tools []Tool; Keywords *regexp.Regexp }
+type ToolGroup struct{ Names []string; Listing, System string; Tools []Tool; Keywords *regexp.Regexp }
+type Tool      struct{ Name, Description string; Schema json.RawMessage; Server string; Run func(ctx context.Context, args string) (string, []Picture, error) }
 ```
+- **`Tool`:** a function tool has `Schema` and `Run`, which returns text and any pictures (each with its caption and history note). A server tool, run by OpenRouter itself, has only `Server` (for example `openrouter:web_search`). A `ToolChoice` is required through `tool_choice` until that tool's result is in, then released.
 - **`ToolChoice`** is the model API's own concept, not a chat-command field.
 - **`Context`** is "keep this text in history", which the core does under its own expiry rules.
 - **`ToolsUsed`** is what the tool loop reports.
 - **A picture's `HistoryNote`** is set by the tool that made it; without one, the core records "[sent an image]". A reply with no text is sent with its pictures' captions, one per line.
-- **`ToolGroup`:** `Name` is how the intro's `{tools}` lists it. `Listing` is its item in the tools line, which the core ends with "If asked what tools you have:" and every group's `Name`, offered or not. `System` is a system-prompt line while the group is offered.
+- **`ToolGroup`:** `Names` is what it adds to the intro's `{tools}`: `["web search"]`, `["charts"]`, or an MCP server's tool names followed by its `/commands`. The core joins every group's names in feature order, so `{tools}` reads exactly as today, and is "none" when the model can't call tools. `Listing` is its item in the tools line, which the core ends with "If asked what tools you have:" and the same joined names, offered or not. `System` is a system-prompt line while the group is offered.
 - **Offering:** a group without `Keywords` is always offered. One with `Keywords` is offered when a message matches, and for the 2 replies after any reply that matched or used one of its tools. A `ToolChoice` offers only that tool.
 - **`Turn`** is the message being answered, in its chat.
 
-**Commands** are a helper in `internal/feature` built on `OnMessage`. A name taken by another feature is refused at registration. The core doesn't list commands: a feature names its own in its tool group's listing.
+**Commands** are a helper in `internal/feature` built on `OnMessage`. A name taken by another feature is refused at registration. The core doesn't list commands: a feature names its own in its tool group's `Names` and `Listing`.
 
 ## 5. Timers (core)
 Time is a source of work, like a message, so timers belong in the core. The `/schedule` command, reminders and digests are features on top of them.
 ```go
-At(name string, t time.Time, fn func(ctx context.Context)) (cancel func())
+At(name string, t time.Time, fn func(ctx context.Context, due time.Time)) (cancel func(), err error)
 ```
 - **One-shot:** a timer runs once and is removed. A feature that repeats sets its next timer when one runs, so the core needs no cron.
-- **One goroutine** keeps every timer in a min-heap and wakes only when one is due, so idle costs nothing.
-- **A timer's callback takes no slot:** it only does cheap work, such as setting the next timer and delivering a message. The delivered message takes a slot like any other. If the bot is busy, that one run is dropped with a warning, but a repeating schedule keeps going.
-- **Caps:** the core caps the total number of timers.
+- **Always called:** the core always runs `fn`, however late, and passes the time it was due. The feature decides what a late run means (below), so a late run can never stop a repeating schedule.
+- **One goroutine** keeps every timer in a min-heap. It sleeps until the next one is due, but at most a minute, and compares due times with the wall clock, so a suspend or clock jump is noticed within a minute.
+- **A timer's callback takes no slot:** it only does cheap work, such as setting the next timer and delivering a message. The delivered message takes a slot like any other: if the pool or the chat's mailbox is full, that run is dropped with a warning, but a repeating schedule keeps going.
+- **Caps:** at most 10,000 timers. `At` returns an error at the cap.
 - **Time zone:** the local one. Go reads `TZ` itself (UTC in the container), and the distroless image ships tzdata, so no code is needed.
 - **Logs:** the timer's name and how long the run took. Errors are logged.
 - **Memory only:** timers are lost on restart. A feature that saves its own (`/schedule`) sets them again at startup.
-- **Missed runs:** a run due while the bot was down, asleep or busy is caught up from the clock:
+- **Missed runs**, the rule features follow when a run is due while the bot was down or asleep:
   - a recurring schedule skips its missed runs, and its next time is the next one still in the future, always calculated from the clock, not from a late run;
-  - a one-shot less than an hour late runs now; an older one is dropped and logged.
-- **Sleep and clock jumps:** Go's timers fire late after a suspend rather than not at all. The rules above apply.
+  - a one-shot less than an hour late runs now; an older one is dropped, logged and deleted from what the feature saved.
 
 ## 6. Features, added one at a time on the ports
 | Feature | Ports | Owns |
@@ -133,7 +139,7 @@ At(name string, t time.Time, fn func(ctx context.Context)) (cancel func())
 | `websearch` | `Tools` | OpenRouter's web search tool, `MODEL_SEARCH`, the "web search on" log line |
 | `groupctx` | `OnMessage` returning `Context` | `GROUP_CONTEXT`, the `[image]`/`[sticker]` notes |
 | `vision` | `OnTurn`, `Info`, `Media` | answering photo- or sticker-only messages, the image and sticker notes (using the labels the core loads), the "images aren't kept" history note |
-| `mcp` | `Tools` (one group per server), command helper returning `ToolChoice` | `MCP_CONFIG`, servers, `chat_commands`, and per server an optional `prompt` (else the server's own `instructions`, capped) and `keywords` |
+| `mcp` | `Tools` (one group per server), command helper returning `ToolChoice` | `MCP_CONFIG` and every server field: `url`, `headers`, `command`, `args`, `env`, `allowed_tools`, `blocked_tools`, `disabled`, `chat_commands` (`tool`, `require_arg`), and the new optional `prompt` (else the server's own `instructions`, capped) and `keywords`; the "MCP tools:" and "chat commands:" startup lines |
 | `charts` | `Tools` with `Keywords`, `OnReply` | the chart tools and their keywords, each chart's caption and history note, dropping the model's text when a chart is sent |
 | `schedule` | command helper, `At`, `Deliver`, `Groups` | `/schedule` (below) |
 
@@ -152,7 +158,8 @@ In `features.go`, `websearch`, `charts` and `mcp` stay in that order: it's the o
   - a `/command` runs as a command.
 - The group name is the rest of the line, so it needs no quotes even with spaces. It's matched among the groups the user shares with the bot, ignoring capitals: an exact match first, otherwise with emoji and symbols removed and extra spaces collapsed on both sides ("family" matches "🏡 Family 🎉").
 - No match is refused, with the list of the user's groups; more than one match is refused as ambiguous.
-- A schedule keeps the group's ID, so it survives a rename. If the user has left the group, that run is dropped and logged, and the schedule stays in `/schedule list` until deleted.
+- A schedule keeps the group's ID, so it survives a rename. If the user has left the group, `Deliver` drops that run and logs it, and the schedule stays in `/schedule list` until deleted.
+- If `At` refuses (the timer cap), the schedule is refused; at startup, a saved schedule that can't be set is logged.
 - A time without an offset is in the bot's time zone. A monthly schedule from the 31st runs on the last day of shorter months, and a yearly one from 29 February runs on 28 February in other years. A past start is accepted for a repeating schedule, which first runs at the next time still to come; a one-shot in the past is refused.
 - Straight and curly quotes both work (phones type “ ”).
 - Scheduling `/schedule` itself is refused, and the text is never logged. There's no per-user cap: only users in `SIGNAL_DM_USER_IDS` can schedule.
@@ -162,7 +169,7 @@ In `features.go`, `websearch`, `charts` and `mcp` stay in that order: it's the o
 **If a feature can't be built on these ports, that's a design finding.** Either the port becomes more generic (and stays tied to its stage), or the feature takes on more of the work. A feature-shaped field is never the answer.
 
 ## 7. Fixes from the first recode, carried over
-- **Golden prompts:** one with every feature registered and one with none, pinned before work starts. The rebuilt bot matches them byte for byte, apart from changes approved in section 10. The fixture uses real fake MCP servers, not a hand-set list.
+- **Golden prompts:** one with every feature registered and one with none, pinned before work starts. At `e40dc5f`, the no-features prompt is the one made with a model that can't call tools: `{tools}` is "none" and there's no tools line. The new core with no tool groups renders exactly that, whatever the model can do. The rebuilt bot matches them byte for byte, apart from changes approved in section 10. The fixture uses real fake MCP servers, not a hand-set list.
 - **Behaviour scenarios:** today's tests become scenarios that touch only the edges: messages in on a fake signal-cli socket, then what's sent back, what a fake OpenRouter receives (which shows the history), and the logs. A small start function per version wires up the fakes. The scenarios and assertions pass before and after, changed only where section 10 approves. A table in the PR maps every old test to a new one.
 - Message handling stays two-phase: a cheap decision inline, and network calls only after a slot is taken.
 - The names used to link @Name mentions are forgotten with the chat's history.
@@ -172,7 +179,7 @@ In `features.go`, `websearch`, `charts` and `mcp` stay in that order: it's the o
 - Kit never imports the core (which caused an import cycle).
 - Tests that start slow work drain it before they end, or their log lines land in the next test.
 - Tests change the DM allowlist in place, because the client holds a reference to the map.
-- Docker: the `.dockerignore` and `COPY` include the packages, the build targets `./cmd/signalbot`, and the README's build step matches.
+- Docker: the `.dockerignore` and `COPY` include the packages, the build targets `./cmd/signalbot`, and both README build steps match (systemd: `go build -o signalbot ./cmd/signalbot`).
 
 ## 8. Guardrails (Go tests)
 - **Imports:** only `cmd/signalbot` imports features; features import only `internal/feature`, `internal/kit` and their own packages; kit imports no other internal package.
@@ -191,8 +198,8 @@ In `features.go`, `websearch`, `charts` and `mcp` stay in that order: it's the o
 5. Docs:
    - TECHNICAL.md: the core spec, then one paragraph per feature;
    - CONTRIBUTING.md: the port rule and the guardrails;
-   - README: the settings tables, `TZ`, `/schedule`, and the MCP `prompt` and `keywords` fields;
-   - PRIVACY.md: scheduled text is kept on disk until deleted.
+   - README: the settings tables (renamed and dropped settings), `TZ`, `/schedule`, the MCP `prompt` and `keywords` fields, the log priorities, and the Docker `-v …:/data` mount;
+   - PRIVACY.md: what the bot logs now ("received dm"/"received group chat", debug always written), and that schedules keep the user's ID, the group's ID, the time and the text on disk until deleted.
 
 ## 10. Behaviour changes
 **Approved:**
@@ -204,9 +211,9 @@ In `features.go`, `websearch`, `charts` and `mcp` stay in that order: it's the o
 - Settings: `REASONING` becomes `MODEL_REASONING`, `SYSTEM_PROMPT` becomes `MODEL_SYSTEM_PROMPT`, and `LOG_LEVEL` is dropped.
 - Logging (section 1): journald priorities 2–7, always written, with the `<N>` prefix only under journald; 5–7 to stdout and 2–4 to stderr. Each addressed message is logged at info as "received group chat" or "received dm", with no name or content.
 - The websearch feature logs "web search on", and the startup line drops `search …`. The "OpenRouter error" line keeps today's wording.
-- When the model can't call tools, the core's warning says "tools are off" in place of naming web search, charts and MCP.
-
-- The tools line ends with the full list of tools, not only those offered this turn: "If asked what tools you have: web search, charts, …". So "what tools do you have?" names charts and keyword-gated MCP servers too.
+- When the model can't call tools, the core's warning says "tools are off" in place of naming web search, charts and MCP; it replaces today's separate "chat commands are off" warning too.
+- The tools line ends with the full list of tools, not only those offered this turn: "If asked what tools you have:" and the same names as `{tools}` (web search, charts, every MCP tool and `/command`). So "what tools do you have?" names everything, including keyword-gated tools.
+- Chat commands are listed in their MCP server's item in the tools line, not in a separate "chat commands" item. `{tools}` itself is unchanged.
 
 ## 11. Expected size
 About +650 to +850 lines over 4,185, checked after the core (step 2):
