@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"image/png"
+	"math"
 	"os"
 	"strings"
 	"testing"
@@ -69,23 +70,27 @@ func TestParseChartChangeMode(t *testing.T) {
 	if got := s.summary(); got != "Chart attached to your reply. Final values: A 20.0%." {
 		t.Fatalf("summary %q", got)
 	}
-	v, _ := parseChart(`{"title":"T","mode":"value","unit":"$","series":[{"name":"A","points":[{"date":"2026-01-01","value":-1.5},{"date":"2026-01-02","value":2}]}]}`)
-	if v.format(-1.5, 2) != "-$1.50" || v.format(2, 0) != "$2" {
-		t.Fatalf("value format: %q %q", v.format(-1.5, 2), v.format(2, 0))
+	v, _ := parseChart(`{"title":"T","axes":{"left":{"mode":"value","unit":"$"}},"series":[{"name":"A","points":[{"date":"2026-01-01","value":-1.5},{"date":"2026-01-02","value":2}]}]}`)
+	if v.left.format(-1.5, 2) != "-$1.50" || v.left.format(2, 0) != "$2" {
+		t.Fatalf("value format: %q %q", v.left.format(-1.5, 2), v.left.format(2, 0))
 	}
 }
 
 func TestParseChartErrors(t *testing.T) {
 	pts := `[{"date":"2026-01-01","value":1},{"date":"2026-01-02","value":2}]`
 	for name, args := range map[string]string{
-		"not json":    `{`,
-		"no title":    `{"series":[{"name":"A","points":` + pts + `}]}`,
-		"no series":   `{"title":"T","series":[]}`,
-		"bad mode":    `{"title":"T","mode":"log","series":[{"name":"A","points":` + pts + `}]}`,
-		"no name":     `{"title":"T","series":[{"points":` + pts + `}]}`,
-		"one point":   `{"title":"T","series":[{"name":"A","points":[{"date":"2026-01-01","value":1}]}]}`,
-		"bad date":    `{"title":"T","series":[{"name":"A","points":[{"date":"1 Jan","value":1},{"date":"2026-01-02","value":2}]}]}`,
-		"starts at 0": `{"title":"T","series":[{"name":"A","points":[{"date":"2026-01-01","value":0},{"date":"2026-01-02","value":2}]}]}`,
+		"not json":            `{`,
+		"no title":            `{"series":[{"name":"A","points":` + pts + `}]}`,
+		"no series":           `{"title":"T","series":[]}`,
+		"bad mode":            `{"title":"T","axes":{"left":{"mode":"log"}},"series":[{"name":"A","points":` + pts + `}]}`,
+		"bad axis":            `{"title":"T","series":[{"name":"A","axis":"middle","points":` + pts + `}]}`,
+		"axes key":            `{"title":"T","axes":{"middle":{}},"series":[{"name":"A","points":` + pts + `}]}`,
+		"two axes, no titles": `{"title":"T","series":[{"name":"A","points":` + pts + `},{"name":"B","axis":"right","points":` + pts + `}]}`,
+		"two axes, one title": `{"title":"T","axes":{"left":{"title":"L"}},"series":[{"name":"A","points":` + pts + `},{"name":"B","axis":"right","points":` + pts + `}]}`,
+		"no name":             `{"title":"T","series":[{"points":` + pts + `}]}`,
+		"one point":           `{"title":"T","series":[{"name":"A","points":[{"date":"2026-01-01","value":1}]}]}`,
+		"bad date":            `{"title":"T","series":[{"name":"A","points":[{"date":"1 Jan","value":1},{"date":"2026-01-02","value":2}]}]}`,
+		"starts at 0":         `{"title":"T","series":[{"name":"A","points":[{"date":"2026-01-01","value":0},{"date":"2026-01-02","value":2}]}]}`,
 	} {
 		if _, err := parseChart(args); err == nil {
 			t.Errorf("%s: want an error", name)
@@ -138,5 +143,88 @@ func TestSpreadLabels(t *testing.T) {
 	}
 	if got := spreadLabels([]float64{995, 999}, 28, 0, 1000); got[1] > 1000 || got[1]-got[0] < 28 {
 		t.Fatalf("near the bottom: %v", got)
+	}
+}
+
+// Each axis has its own mode: % change is computed only for its own series.
+func TestChartTwoAxes(t *testing.T) {
+	s, err := parseChart(`{"title":"T","axes":{"left":{"title":"Price","mode":"value","unit":"$"},"right":{"title":"Change"}},"series":[` +
+		`{"name":"A","points":[{"date":"2026-01-01","value":100},{"date":"2026-01-02","value":120}]},` +
+		`{"name":"B","axis":"right","points":[{"date":"2026-01-01","value":50},{"date":"2026-01-02","value":25}]}]}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !s.right.used || s.Series[0].Points[1].Value != 120 || s.Series[1].Points[1].Value != -50 {
+		t.Fatalf("per-axis modes: %+v", s.Series)
+	}
+	if got := s.summary(); got != "Chart attached to your reply. Final values: A $120.0, B -50.0%." {
+		t.Fatalf("summary %q", got)
+	}
+	if _, err := renderChart(s); err != nil {
+		t.Fatal(err)
+	}
+	// One axis needs no title.
+	if _, err := parseChart(`{"title":"T","series":[{"name":"A","points":[{"date":"2026-01-01","value":1},{"date":"2026-01-02","value":2}]}]}`); err != nil {
+		t.Fatalf("single axis without a title: %v", err)
+	}
+	// Series only on the right are drawn on a single axis, so no titles are needed.
+	r, err := parseChart(`{"title":"T","axes":{"right":{"mode":"value","unit":"$"}},"series":[{"name":"A","axis":"right","points":[{"date":"2026-01-01","value":1},{"date":"2026-01-02","value":2}]}]}`)
+	if err != nil || r.right.used || r.left.Unit != "$" || r.Series[0].Axis != "left" {
+		t.Fatalf("right-only chart: %+v, %v", r, err)
+	}
+	// A right axis with no series on it is ignored.
+	o, err := parseChart(`{"title":"T","axes":{"right":{"title":"unused"}},"series":[{"name":"A","points":[{"date":"2026-01-01","value":1},{"date":"2026-01-02","value":2}]}]}`)
+	if err != nil || o.right.used {
+		t.Fatalf("unused right axis: %v, %v", o.right.used, err)
+	}
+}
+
+// An inverted axis puts its highest value at the bottom, and zero follows.
+func TestChartInvertedAxis(t *testing.T) {
+	for _, invert := range []bool{false, true} {
+		a := &chartAxis{Mode: "value", Invert: invert}
+		a.layout([]float64{0, 10}, 100, 500)
+		hiY, loY := a.y(a.hi), a.y(a.lo)
+		if invert && (hiY != 500 || loY != 100) || !invert && (hiY != 100 || loY != 500) {
+			t.Errorf("invert=%v: hi at %v, lo at %v", invert, hiY, loY)
+		}
+		if mid := a.y(5); mid != 300 {
+			t.Errorf("invert=%v: middle at %v", invert, mid)
+		}
+	}
+}
+
+func TestRenderTwoAxisSample(t *testing.T) {
+	type pt struct {
+		Date  string  `json:"date"`
+		Value float64 `json:"value"`
+	}
+	var a, b, y []pt
+	for i := 0; i < 30; i++ {
+		d := time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC).AddDate(0, 0, i).Format("2006-01-02")
+		a = append(a, pt{d, 180 + 10*math.Sin(float64(i)/4)})
+		b = append(b, pt{d, 120 + float64(i)*0.8})
+		y = append(y, pt{d, 4.2 + 0.3*math.Cos(float64(i)/5)})
+	}
+	args, _ := json.Marshal(map[string]any{
+		"title": "Prices vs 10-year yield", "subtitle": "October 2026",
+		"axes": map[string]any{"left": map[string]any{"title": "Price ($)", "mode": "value", "unit": "$"},
+			"right": map[string]any{"title": "Yield (inverted)", "mode": "value", "invert": true}},
+		"series": []any{map[string]any{"name": "NVDA", "points": a}, map[string]any{"name": "AMD", "points": b},
+			map[string]any{"name": "10Y", "axis": "right", "points": y}},
+	})
+	s, err := parseChart(string(args))
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, err := renderChart(s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := png.Decode(bytes.NewReader(out)); err != nil {
+		t.Fatal(err)
+	}
+	if p := os.Getenv("CHART_SAMPLE2"); p != "" {
+		os.WriteFile(p, out, 0o644)
 	}
 }

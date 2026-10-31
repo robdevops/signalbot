@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"cmp"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -57,22 +58,29 @@ var chartToolSchema = json.RawMessage(`{
   "properties": {
     "title": {"type": "string", "description": "Short title, e.g. \"NVDA vs ACMR\""},
     "subtitle": {"type": "string", "description": "e.g. \"% change over the past month, 30 Sep - 28 Oct 2026\""},
-    "mode": {"type": "string", "enum": ["change", "value"], "description": "change (default): plot each series as % change from its first point. value: plot the values as given"},
-    "unit": {"type": "string", "description": "Prefix for values in value mode, e.g. \"$\""},
+    "axes": {"type": "object", "description": "Settings for the left and right Y axes. Put series with a different unit or scale on the right axis. A chart that uses both axes must give each a title.",
+      "properties": {"left": {"$ref": "#/$defs/axis"}, "right": {"$ref": "#/$defs/axis"}}},
     "series": {"type": "array", "minItems": 1, "maxItems": 6, "items": {
       "type": "object", "required": ["name", "points"],
       "properties": {
         "name": {"type": "string", "description": "e.g. a ticker"},
+        "axis": {"type": "string", "enum": ["left", "right"], "description": "Which Y axis the series uses (default left)"},
         "points": {"type": "array", "minItems": 2, "maxItems": 1000, "items": {
           "type": "object", "required": ["date", "value"],
           "properties": {"date": {"type": "string", "description": "YYYY-MM-DD"}, "value": {"type": "number"}}
         }}
       }
     }}
-  }
+  },
+  "$defs": {"axis": {"type": "object", "properties": {
+    "title": {"type": "string", "description": "Axis title, e.g. \"Price ($)\"; required on both axes when both are used"},
+    "mode": {"type": "string", "enum": ["change", "value"], "description": "change (default): plot each series as % change from its first point. value: plot the values as given"},
+    "unit": {"type": "string", "description": "Prefix for values in value mode, e.g. \"$\""},
+    "invert": {"type": "boolean", "description": "Draw this axis upside down: higher values lower"}
+  }}}
 }`)
 
-const chartToolDescription = "Draw a line chart of one or more series over time and attach it to your reply as an image. " +
+const chartToolDescription = "Draw a line chart of one or more series over time, on one or two Y axes, and attach it to your reply as an image. " +
 	"Use it when a chart would help, e.g. to compare prices. Pass the raw values: in change mode the % change is computed for you."
 
 type chartPoint struct {
@@ -83,15 +91,39 @@ type chartPoint struct {
 
 type chartSeries struct {
 	Name   string       `json:"name"`
+	Axis   string       `json:"axis"` // "left" or "right"
 	Points []chartPoint `json:"points"`
 }
 
+// chartAxis is a Y axis: how its series are plotted and labelled, and, once
+// laid out, its range and ticks.
+type chartAxis struct {
+	Title  string `json:"title"`
+	Mode   string `json:"mode"` // "change" or "value"
+	Unit   string `json:"unit"`
+	Invert bool   `json:"invert"`
+
+	used        bool // a series is on it
+	lo, hi      float64
+	top, bottom float64 // the plot's pixel rows
+	ticks       []float64
+	decimals    int
+}
+
 type chartSpec struct {
-	Title    string        `json:"title"`
-	Subtitle string        `json:"subtitle"`
-	Mode     string        `json:"mode"`
-	Unit     string        `json:"unit"`
-	Series   []chartSeries `json:"series"`
+	Title    string                `json:"title"`
+	Subtitle string                `json:"subtitle"`
+	Axes     map[string]*chartAxis `json:"axes"`
+	Series   []chartSeries         `json:"series"`
+
+	left, right *chartAxis
+}
+
+func (s *chartSpec) axisOf(sr chartSeries) *chartAxis {
+	if sr.Axis == "right" {
+		return s.right
+	}
+	return s.left
 }
 
 // parseChart reads and checks the model's arguments. Errors are written for
@@ -103,14 +135,24 @@ func parseChart(arguments string) (*chartSpec, error) {
 	}
 	s.Title = clamp(strings.TrimSpace(s.Title), 80)
 	s.Subtitle = clamp(strings.TrimSpace(s.Subtitle), 120)
-	s.Unit = clamp(s.Unit, 4)
-	switch {
-	case s.Title == "":
+	if s.Title == "" {
 		return nil, errors.New("title is required")
-	case s.Mode == "":
-		s.Mode = "change"
-	case s.Mode != "change" && s.Mode != "value":
-		return nil, errors.New(`mode must be "change" or "value"`)
+	}
+	for k := range s.Axes {
+		if k != "left" && k != "right" {
+			return nil, fmt.Errorf(`axes may only have "left" and "right", not %q`, clamp(k, 20))
+		}
+	}
+	s.left, s.right = cmp.Or(s.Axes["left"], &chartAxis{}), cmp.Or(s.Axes["right"], &chartAxis{})
+	for _, a := range []*chartAxis{s.left, s.right} {
+		a.Title, a.Unit = clamp(strings.TrimSpace(a.Title), 24), clamp(a.Unit, 4)
+		switch a.Mode {
+		case "":
+			a.Mode = "change"
+		case "change", "value":
+		default:
+			return nil, errors.New(`an axis mode must be "change" or "value"`)
+		}
 	}
 	if len(s.Series) < 1 || len(s.Series) > 6 {
 		return nil, errors.New("give 1 to 6 series")
@@ -118,9 +160,27 @@ func parseChart(arguments string) (*chartSpec, error) {
 	for i := range s.Series {
 		sr := &s.Series[i]
 		sr.Name = clamp(strings.TrimSpace(sr.Name), 24)
-		if sr.Name == "" {
+		switch {
+		case sr.Name == "":
 			return nil, fmt.Errorf("series %d has no name", i+1)
+		case sr.Axis == "":
+			sr.Axis = "left"
+		case sr.Axis != "left" && sr.Axis != "right":
+			return nil, fmt.Errorf(`series %s: axis must be "left" or "right"`, sr.Name)
 		}
+		s.axisOf(*sr).used = true
+	}
+	if !s.left.used { // everything on the right: draw it as the only axis
+		s.left, s.right = s.right, &chartAxis{Mode: "change"}
+		for i := range s.Series {
+			s.Series[i].Axis = "left"
+		}
+	}
+	if s.right.used && (s.left.Title == "" || s.right.Title == "") {
+		return nil, errors.New("a chart that uses both axes needs a title on each: set axes.left.title and axes.right.title")
+	}
+	for i := range s.Series {
+		sr := &s.Series[i]
 		if len(sr.Points) < 2 || len(sr.Points) > 1000 {
 			return nil, fmt.Errorf("series %s needs 2 to 1000 points", sr.Name)
 		}
@@ -133,10 +193,10 @@ func parseChart(arguments string) (*chartSpec, error) {
 			p.t = t
 		}
 		sort.SliceStable(sr.Points, func(a, b int) bool { return sr.Points[a].t.Before(sr.Points[b].t) })
-		if s.Mode == "change" {
+		if s.axisOf(*sr).Mode == "change" {
 			first := sr.Points[0].Value
 			if first == 0 {
-				return nil, fmt.Errorf("series %s starts at 0, so %% change is undefined; use mode value", sr.Name)
+				return nil, fmt.Errorf("series %s starts at 0, so %% change is undefined; use mode value for its axis", sr.Name)
 			}
 			for j := range sr.Points {
 				sr.Points[j].Value = (sr.Points[j].Value - first) / first * 100
@@ -146,9 +206,9 @@ func parseChart(arguments string) (*chartSpec, error) {
 	return &s, nil
 }
 
-// format writes a value as the chart labels it.
-func (s *chartSpec) format(v float64, decimals int) string {
-	if s.Mode == "change" {
+// format writes a value as the axis labels it.
+func (a *chartAxis) format(v float64, decimals int) string {
+	if a.Mode == "change" {
 		if math.Abs(v) < 0.5*math.Pow(10, -float64(decimals)) {
 			v = 0 // no "-0%"
 		}
@@ -158,7 +218,41 @@ func (s *chartSpec) format(v float64, decimals int) string {
 	if v < 0 {
 		sign, v = "-", -v
 	}
-	return sign + s.Unit + fmt.Sprintf("%.*f", decimals, v)
+	return sign + a.Unit + fmt.Sprintf("%.*f", decimals, v)
+}
+
+// layout fits the axis to its series' values, plus 5% padding (and zero, in
+// change mode), between pixel rows top and bottom; only the round ticks
+// inside that range are kept.
+func (a *chartAxis) layout(values []float64, top, bottom float64) {
+	lo, hi := math.Inf(1), math.Inf(-1)
+	for _, v := range values {
+		lo, hi = min(lo, v), max(hi, v)
+	}
+	if a.Mode == "change" {
+		lo, hi = min(lo, 0), max(hi, 0)
+	}
+	pad := (hi - lo) * 0.05
+	if pad == 0 {
+		pad = math.Max(math.Abs(hi)*0.05, 1)
+	}
+	a.lo, a.hi, a.top, a.bottom = lo-pad, hi+pad, top, bottom
+	all, decimals := niceTicks(a.lo, a.hi, 6)
+	a.ticks, a.decimals = nil, decimals
+	for _, v := range all {
+		if v >= a.lo && v <= a.hi {
+			a.ticks = append(a.ticks, v)
+		}
+	}
+}
+
+// y is the pixel row for v; an inverted axis puts higher values lower.
+func (a *chartAxis) y(v float64) float64 {
+	f := (v - a.lo) / (a.hi - a.lo)
+	if a.Invert {
+		return a.top + f*(a.bottom-a.top)
+	}
+	return a.bottom - f*(a.bottom-a.top)
 }
 
 // summary is what the model is told after the chart is drawn: the final
@@ -166,7 +260,7 @@ func (s *chartSpec) format(v float64, decimals int) string {
 func (s *chartSpec) summary() string {
 	var parts []string
 	for _, sr := range s.Series {
-		parts = append(parts, sr.Name+" "+s.format(sr.Points[len(sr.Points)-1].Value, 1))
+		parts = append(parts, sr.Name+" "+s.axisOf(sr).format(sr.Points[len(sr.Points)-1].Value, 1))
 	}
 	return "Chart attached to your reply. Final values: " + strings.Join(parts, ", ") + "."
 }
@@ -388,60 +482,68 @@ func (cv *canvas) text(f font.Face, c color.RGBA, x, y float64, align float64, s
 // renderChart draws the chart as a 1280×800 PNG.
 func renderChart(s *chartSpec) ([]byte, error) {
 	const W, H = 1280, 800
-	const left, right, top, bottom = 100.0, 1000.0, 125.0, 700.0
+	const left, top, bottom = 100.0, 125.0, 700.0
+	two := s.right.used
+	right, labelX := 1000.0, 1030.0 // plot edge, end labels
+	if two {
+		right, labelX = 920.0, 1010.0 // room for the right axis's labels
+	}
 	cv := &canvas{img: image.NewRGBA(image.Rect(0, 0, W, H))}
 	cv.rect(chartBG, 0, 0, W, H)
 
 	titleFace, subFace := face(chartFonts.bold, 34), face(chartFonts.regular, 22)
-	axisFace, labelFace := face(chartFonts.regular, 24), face(chartFonts.regular, 20)
-	defer titleFace.Close()
-	defer subFace.Close()
-	defer axisFace.Close()
-	defer labelFace.Close()
+	axisFace, labelFace, axisTitleFace := face(chartFonts.regular, 24), face(chartFonts.regular, 20), face(chartFonts.regular, 18)
+	for _, f := range []font.Face{titleFace, subFace, axisFace, labelFace, axisTitleFace} {
+		defer f.Close()
+	}
 	cv.text(titleFace, chartTitle, 38, 46, 0, s.Title)
 	if s.Subtitle != "" {
 		cv.text(subFace, chartMuted, 38, 80, 0, s.Subtitle)
 	}
 
 	from, to := s.Series[0].Points[0].t, s.Series[0].Points[0].t
-	lo, hi := math.Inf(1), math.Inf(-1)
+	values := map[*chartAxis][]float64{}
 	for _, sr := range s.Series {
+		a := s.axisOf(sr)
 		for _, p := range sr.Points {
 			from, to = minTime(from, p.t), maxTime(to, p.t)
-			lo, hi = min(lo, p.Value), max(hi, p.Value)
+			values[a] = append(values[a], p.Value)
 		}
 	}
-	if s.Mode == "change" {
-		lo, hi = min(lo, 0), max(hi, 0)
-	}
-	pad := (hi - lo) * 0.05
-	if pad == 0 {
-		pad = math.Max(math.Abs(hi)*0.05, 1)
-	}
-	// The axis hugs the data; only the round ticks inside it are drawn.
-	ylo, yhi := lo-pad, hi+pad
-	all, decimals := niceTicks(ylo, yhi, 6)
-	var ticks []float64
-	for _, v := range all {
-		if v >= ylo && v <= yhi {
-			ticks = append(ticks, v)
-		}
+	s.left.layout(values[s.left], top, bottom)
+	if two {
+		s.right.layout(values[s.right], top, bottom)
 	}
 	span := to.Sub(from).Seconds()
 	if span == 0 {
 		span = 1
 	}
 	px := func(t time.Time) float64 { return left + t.Sub(from).Seconds()/span*(right-left) }
-	py := func(v float64) float64 { return bottom - (v-ylo)/(yhi-ylo)*(bottom-top) }
 
-	for _, v := range ticks {
-		y := py(v)
+	// Gridlines and labels from the left axis; labels only from the right.
+	for _, v := range s.left.ticks {
+		y := s.left.y(v)
 		c := chartGrid
-		if s.Mode == "change" && v == 0 {
+		if s.left.Mode == "change" && v == 0 {
 			c = chartZero
 		}
-		cv.line(c, 1.5, left, y, right+20, y)
-		cv.text(axisFace, chartMuted, left-12, y+8, 1, s.format(v, decimals))
+		cv.line(c, 1.5, left, y, right+10, y)
+		cv.text(axisFace, chartMuted, left-12, y+8, 1, s.left.format(v, s.left.decimals))
+	}
+	if two {
+		if s.right.Mode == "change" && s.left.Mode != "change" {
+			y := s.right.y(0)
+			cv.line(chartZero, 1.5, left, y, right+10, y)
+		}
+		for _, v := range s.right.ticks {
+			cv.text(axisFace, chartMuted, right+14, s.right.y(v)+8, 0, s.right.format(v, s.right.decimals))
+		}
+	}
+	if s.left.Title != "" {
+		cv.text(axisTitleFace, chartMuted, 38, top-14, 0, s.left.Title)
+	}
+	if two {
+		cv.text(axisTitleFace, chartMuted, labelX-10, top-14, 1, s.right.Title)
 	}
 	for _, tk := range dateTicks(from, to) {
 		x := px(tk.t)
@@ -451,21 +553,26 @@ func renderChart(s *chartSpec) ([]byte, error) {
 
 	ends := make([]float64, len(s.Series))
 	for i, sr := range s.Series {
+		a := s.axisOf(sr)
 		pts := make([]float64, 0, 2*len(sr.Points))
 		for _, p := range sr.Points {
-			pts = append(pts, px(p.t), py(p.Value))
+			pts = append(pts, px(p.t), a.y(p.Value))
 		}
 		cv.line(chartPalette[i], 3, pts...)
-		ends[i] = py(sr.Points[len(sr.Points)-1].Value)
+		ends[i] = a.y(sr.Points[len(sr.Points)-1].Value)
 	}
 	labels := spreadLabels(ends, 28, top, bottom)
 	for i, sr := range s.Series {
 		c := chartPalette[i]
 		lastX := px(sr.Points[len(sr.Points)-1].t)
-		cv.line(c, 1.5, lastX, ends[i], right+20, ends[i], right+30, labels[i])
-		cv.rect(c, right+30, labels[i]-6, 12, 12)
-		cv.text(labelFace, chartTitle, right+48, labels[i]+7, 0,
-			sr.Name+"  "+s.format(sr.Points[len(sr.Points)-1].Value, 1))
+		if two {
+			cv.line(c, 1.5, lastX, ends[i], right+8, ends[i]) // the right axis's labels sit beyond
+		} else {
+			cv.line(c, 1.5, lastX, ends[i], right+20, ends[i], labelX, labels[i])
+		}
+		cv.rect(c, labelX, labels[i]-6, 12, 12)
+		cv.text(labelFace, chartTitle, labelX+18, labels[i]+7, 0,
+			sr.Name+"  "+s.axisOf(sr).format(sr.Points[len(sr.Points)-1].Value, 1))
 	}
 
 	var buf bytes.Buffer
