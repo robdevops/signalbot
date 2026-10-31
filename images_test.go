@@ -13,6 +13,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/robdevops/signalbot/internal/kit/logx/logxtest"
 )
 
 // dmPhoto is a photo with no text sent as a DM, in the shape signal-cli
@@ -134,7 +136,7 @@ func waitSent(t *testing.T, sent chan string) {
 // model; the history keeps only a marker; the log never holds the image.
 func TestPhotoShownToModel(t *testing.T) {
 	b, ai, params, sent := photoBot(t, true)
-	logs := captureLogsSafely(t)
+	logs := logxtest.Capture(t)
 	b.Handle(parse(t, dmPhoto))
 	waitSent(t, sent)
 	if p := <-params; p["id"] != "photo1.png" || p["recipient"] != alice || p["groupId"] != nil {

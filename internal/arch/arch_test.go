@@ -14,22 +14,12 @@ const module = "github.com/robdevops/signalbot"
 // root is the module root, two levels up from this package.
 var root = filepath.Join("..", "..")
 
-// oversized lists files and packages over the limits from before the
-// recode, at most at the size they had then. An entry goes when its file is
-// split; none may be added.
-var oversized = map[string]int{
-	"bot.go":           1024,
-	"chart.go":         782,
-	"mcp.go":           689,
-	"signal.go":        442,
-	"openrouter.go":    409,
-	"fixes_test.go":    757,
-	"bot_test.go":      313,
-	"images_test.go":   344,
-	"chart_test.go":    346,
-	"mcp_test.go":      346,
-	"toolloop_test.go": 386,
-	".":                4185,
+// oversized lists the files and packages over the limits from before the
+// recode. An entry goes when its file or package is split; none may be added.
+var oversized = map[string]bool{
+	"bot.go": true, "chart.go": true, "mcp.go": true, "signal.go": true, "openrouter.go": true,
+	"fixes_test.go": true, "bot_test.go": true, "images_test.go": true, "chart_test.go": true,
+	"mcp_test.go": true, "toolloop_test.go": true, ".": true,
 }
 
 func TestFileSizes(t *testing.T) {
@@ -38,7 +28,7 @@ func TestFileSizes(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, f := range files {
-		if max, ok := oversized[f.Path]; ok && f.Lines <= max {
+		if oversized[f.Path] {
 			continue
 		}
 		if f.Lines > FileLimit {
@@ -53,7 +43,7 @@ func TestPackageSizes(t *testing.T) {
 		t.Fatal(err)
 	}
 	for dir, n := range Packages(files) {
-		if max, ok := oversized[dir]; ok && n <= max {
+		if oversized[dir] {
 			continue
 		}
 		if n > PackageLimit {

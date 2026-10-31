@@ -1,30 +1,31 @@
-package main
+package logx
 
 import (
+	"bytes"
 	"strings"
 	"testing"
 )
 
-// withLogMode sets the journald flag and level for one test.
-func withLogMode(t *testing.T, journal bool, l level) {
+// withLogMode sets the journald flag and Level for one test.
+func withLogMode(t *testing.T, journal bool, l Level) {
 	t.Helper()
 	oldJ, oldL := toJournal.Load(), maxLevel.Load()
 	toJournal.Store(journal)
-	setLogLevel(l)
+	SetLevel(l)
 	t.Cleanup(func() { toJournal.Store(oldJ); maxLevel.Store(oldL) })
 }
 
 func logAll() {
-	errorf("e")
-	warnf("w")
-	infof("i")
-	debugf("d")
+	Errorf("e")
+	Warnf("w")
+	Infof("i")
+	Debugf("d")
 }
 
 // Under systemd each line starts with its syslog priority, which journald
 // stores as the entry's priority and journalctl colours by.
 func TestJournalLinesCarryTheirPriority(t *testing.T) {
-	withLogMode(t, true, levelDebug)
+	withLogMode(t, true, LevelDebug)
 	logs := captureLogs(t)
 	logAll()
 	if got, want := logs.String(), "<3>e\n<4>w\n<6>i\n<7>d\n"; got != want {
@@ -34,7 +35,7 @@ func TestJournalLinesCarryTheirPriority(t *testing.T) {
 
 // Elsewhere (a terminal, Docker) a word says the level; info lines stay plain.
 func TestOtherLinesNameTheirLevel(t *testing.T) {
-	withLogMode(t, false, levelDebug)
+	withLogMode(t, false, LevelDebug)
 	logs := captureLogs(t)
 	logAll()
 	if got, want := logs.String(), "error: e\nwarning: w\ni\ndebug: d\n"; got != want {
@@ -44,18 +45,18 @@ func TestOtherLinesNameTheirLevel(t *testing.T) {
 
 func TestLogLevelFilters(t *testing.T) {
 	for _, tc := range []struct {
-		l    level
+		l    Level
 		want string
 	}{
-		{levelInfo, "<3>e\n<4>w\n<6>i\n"},
-		{levelWarn, "<3>e\n<4>w\n"},
-		{levelError, "<3>e\n"},
+		{LevelInfo, "<3>e\n<4>w\n<6>i\n"},
+		{LevelWarn, "<3>e\n<4>w\n"},
+		{LevelError, "<3>e\n"},
 	} {
 		withLogMode(t, true, tc.l)
 		logs := captureLogs(t)
 		logAll()
 		if got := logs.String(); got != tc.want {
-			t.Errorf("level %d: got %q, want %q", tc.l, got, tc.want)
+			t.Errorf("Level %d: got %q, want %q", tc.l, got, tc.want)
 		}
 	}
 }
@@ -63,36 +64,20 @@ func TestLogLevelFilters(t *testing.T) {
 // The priority prefix comes before the escaping, so a value cannot forge one
 // on a new line.
 func TestJournalPrefixCannotBeForged(t *testing.T) {
-	withLogMode(t, true, levelInfo)
+	withLogMode(t, true, LevelInfo)
 	logs := captureLogs(t)
-	infof("name %s", "x\n<3>forged")
+	Infof("name %s", "x\n<3>forged")
 	if got := logs.String(); strings.Count(got, "\n") != 1 || !strings.HasPrefix(got, "<6>") {
 		t.Fatalf("got %q", got)
-	}
-}
-
-func TestLogLevelConfig(t *testing.T) {
-	t.Setenv("SIGNALCLI_SOCKET", "/x")
-	t.Setenv("OPENROUTER_API_KEY", "k")
-	for v, want := range map[string]level{"": levelInfo, "debug": levelDebug, "INFO": levelInfo, "warn": levelWarn, "warning": levelWarn, "error": levelError} {
-		t.Setenv("LOG_LEVEL", v)
-		c, err := LoadConfig()
-		if err != nil || c.LogLevel != want {
-			t.Errorf("LOG_LEVEL=%q: level %d, err %v; want %d", v, c.LogLevel, err, want)
-		}
-	}
-	t.Setenv("LOG_LEVEL", "verbose")
-	if _, err := LoadConfig(); err == nil {
-		t.Error("an unknown LOG_LEVEL must be a config error")
 	}
 }
 
 // Without journald reading priorities, errors and warnings go to stderr and
 // the rest to stdout, so Docker's journald driver can tell them apart.
 func TestStreamsSplitWithoutJournal(t *testing.T) {
-	withLogMode(t, false, levelDebug)
+	withLogMode(t, false, LevelDebug)
 	var out, errOut strings.Builder
-	redirectLogs(t, &out, &errOut)
+	t.Cleanup(Redirect(&out, &errOut))
 	logAll()
 	if got, want := errOut.String(), "error: e\nwarning: w\n"; got != want {
 		t.Errorf("stderr: got %q, want %q", got, want)
@@ -104,11 +89,18 @@ func TestStreamsSplitWithoutJournal(t *testing.T) {
 
 // Under systemd everything goes to stdout: the prefix carries the priority.
 func TestJournalUsesStdoutOnly(t *testing.T) {
-	withLogMode(t, true, levelDebug)
+	withLogMode(t, true, LevelDebug)
 	var out, errOut strings.Builder
-	redirectLogs(t, &out, &errOut)
+	t.Cleanup(Redirect(&out, &errOut))
 	logAll()
 	if errOut.Len() != 0 || out.String() != "<3>e\n<4>w\n<6>i\n<7>d\n" {
 		t.Fatalf("stdout %q, stderr %q", out.String(), errOut.String())
 	}
+}
+
+func captureLogs(t *testing.T) *bytes.Buffer {
+	t.Helper()
+	var buf bytes.Buffer
+	t.Cleanup(Redirect(&buf, &buf))
+	return &buf
 }

@@ -18,6 +18,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/robdevops/signalbot/internal/kit/logx/logxtest"
 )
 
 // fakeSignal serves a signal-cli socket; onConn handles the n-th connection.
@@ -506,7 +508,7 @@ func TestCloseStopsNewReplies(t *testing.T) {
 	b := NewBot(context.Background(), cfg, sig, x)
 
 	b.Shutdown(time.Second) // nothing in flight: returns at once, holding every slot
-	logs := captureLogs(t)
+	logs := logxtest.Capture(t)
 	b.Handle(parse(t, groupMention))
 	if len(b.names.byID) != 0 {
 		t.Fatal("a reply started after Shutdown")
@@ -646,7 +648,7 @@ func TestUnaddressedMessagesAreNeverLogged(t *testing.T) {
 	sig := NewSignal("x")
 	sig.selfID.Store(self)
 	b := NewBot(context.Background(), cfg, sig, nil) // nil client: any call to the model would panic
-	logs := captureLogs(t)
+	logs := logxtest.Capture(t)
 
 	other := "11111111-2222-3333-4444-555555555555"
 	msgs := map[string]string{
@@ -678,7 +680,7 @@ func TestDMFromUnlistedSenderIsLoggedByIDOnly(t *testing.T) {
 	sig := NewSignal("x")
 	sig.selfID.Store(self)
 	b := NewBot(context.Background(), cfg, sig, nil) // nil client: any call to the model would panic
-	logs := captureLogs(t)
+	logs := logxtest.Capture(t)
 
 	b.Handle(parse(t, dm)) // Alice, "Test DM"
 	want := alice + " ignored because not in SIGNAL_DM_USER_IDS\n"
@@ -699,7 +701,7 @@ func TestOnlyUnlistedDMsGetTheIgnoredLine(t *testing.T) {
 	sig := NewSignal("x")
 	sig.selfID.Store(self)
 	b := NewBot(context.Background(), cfg, sig, nil)
-	logs := captureLogs(t)
+	logs := logxtest.Capture(t)
 
 	// Messages the line must not appear for, though none will be answered here.
 	noAttachmentText := `{"envelope":{"source":"` + alice + `","sourceUuid":"` + alice + `","sourceName":"Alice","dataMessage":{"message":""}},"account":"` + self + `"}`

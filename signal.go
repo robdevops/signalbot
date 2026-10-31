@@ -14,6 +14,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/robdevops/signalbot/internal/kit/logx"
 )
 
 type Mention struct {
@@ -157,7 +159,7 @@ func (s *Signal) Run(ctx context.Context, handle func(*Envelope)) {
 	for ctx.Err() == nil {
 		conn, err := s.dial()
 		if err != nil {
-			warnf("signal-cli connect failed: %v; retrying in %s", err, backoff)
+			logx.Warnf("signal-cli connect failed: %v; retrying in %s", err, backoff)
 		} else {
 			began := time.Now()
 			s.serve(ctx, conn, handle)
@@ -182,7 +184,7 @@ func (s *Signal) serve(ctx context.Context, conn net.Conn, handle func(*Envelope
 	s.mu.Lock()
 	s.conn = conn
 	s.mu.Unlock()
-	infof("connected to signal-cli at %s", s.addr)
+	logx.Infof("connected to signal-cli at %s", s.addr)
 
 	defer context.AfterFunc(ctx, func() { conn.Close() })()
 	go func() {
@@ -190,12 +192,12 @@ func (s *Signal) serve(ctx context.Context, conn net.Conn, handle func(*Envelope
 		defer cancel()
 		id, err := s.listAccounts(rctx)
 		if err != nil {
-			errorf("listAccounts failed: %v", err)
+			logx.Errorf("listAccounts failed: %v", err)
 			conn.Close()
 			return
 		}
 		s.selfID.Store(id)
-		infof("bot account %s", id)
+		logx.Infof("bot account %s", id)
 		if s.onConnect != nil {
 			s.onConnect()
 		}
@@ -207,7 +209,7 @@ func (s *Signal) serve(ctx context.Context, conn net.Conn, handle func(*Envelope
 		s.dispatch(sc.Bytes(), handle)
 	}
 	if err := sc.Err(); err != nil && ctx.Err() == nil {
-		warnf("signal-cli read failed: %v; reconnecting", err) // a frame over maxLine is bufio.ErrTooLong
+		logx.Warnf("signal-cli read failed: %v; reconnecting", err) // a frame over maxLine is bufio.ErrTooLong
 	}
 	conn.Close()
 	s.mu.Lock()
@@ -222,7 +224,7 @@ func (s *Signal) serve(ctx context.Context, conn net.Conn, handle func(*Envelope
 func (s *Signal) dispatch(line []byte, handle func(*Envelope)) {
 	var m rpcMsg
 	if err := json.Unmarshal(line, &m); err != nil {
-		warnf("bad JSON from signal-cli (%d bytes), ignored", len(line)) // not err: it can quote the frame
+		logx.Warnf("bad JSON from signal-cli (%d bytes), ignored", len(line)) // not err: it can quote the frame
 		return
 	}
 	switch {
@@ -423,7 +425,7 @@ func (s *Signal) Typing(t Target) {
 // sendTyping).
 func (s *Signal) handleUnmatched(m *rpcMsg) {
 	if m.Error != nil {
-		errorf("signal-cli request %s failed: %s", m.ID, m.Error.Message)
+		logx.Errorf("signal-cli request %s failed: %s", m.ID, m.Error.Message)
 		return
 	}
 	var r struct {
@@ -436,7 +438,7 @@ func (s *Signal) handleUnmatched(m *rpcMsg) {
 	}
 	for _, res := range r.Results {
 		if res.Type != "" && res.Type != "SUCCESS" {
-			warnf("signal-cli request %s not delivered: %s", m.ID, res.Type)
+			logx.Warnf("signal-cli request %s not delivered: %s", m.ID, res.Type)
 		}
 	}
 }

@@ -21,6 +21,8 @@ import (
 	"sync/atomic"
 	"syscall"
 	"time"
+
+	"github.com/robdevops/signalbot/internal/kit/logx"
 )
 
 const (
@@ -168,7 +170,7 @@ func StartMCP(ctx context.Context, servers map[string]mcpServerConfig) (*MCP, er
 		}
 		listed, err := startServer(ctx, conn)
 		if err != nil {
-			errorf("MCP server %s unavailable, its tools are left out: %v", name, err)
+			logx.Errorf("MCP server %s unavailable, its tools are left out: %v", name, err)
 			continue
 		}
 		for _, want := range append(slices.Clone(cfg.AllowedTools), cfg.BlockedTools...) {
@@ -208,9 +210,9 @@ func (m *MCP) addCommands(server string, cmds map[string]chatCommand) {
 		_, taken := m.cmds[name]
 		switch {
 		case !commandName.MatchString(name) || name == "example" || taken:
-			warnf("MCP server %s: chat command %q is not a free name of letters, digits, _ or -; skipped", server, clamp(n, 40))
+			logx.Warnf("MCP server %s: chat command %q is not a free name of letters, digits, _ or -; skipped", server, clamp(n, 40))
 		case !offered || t.Server != server:
-			warnf("MCP server %s: chat command /%s names tool %q, which isn't offered; skipped", server, name, clamp(c.Tool, 64))
+			logx.Warnf("MCP server %s: chat command /%s names tool %q, which isn't offered; skipped", server, name, clamp(c.Tool, 64))
 		default:
 			m.cmds[name] = mcpCommand{Tool: t.Model, RequireArg: c.RequireArg}
 		}
@@ -412,7 +414,7 @@ func (c *stdioConn) start(ctx context.Context) error {
 	go func() {
 		sc := bufio.NewScanner(stderr)
 		for sc.Scan() {
-			debugf("MCP server %s: %s", c.name, sc.Text())
+			logx.Debugf("MCP server %s: %s", c.name, sc.Text())
 		}
 	}()
 	go func() {
@@ -447,7 +449,7 @@ func (c *stdioConn) supervise(ctx context.Context) {
 			return
 		case <-done:
 		}
-		warnf("MCP server %s exited; restarting in %s", c.name, backoff)
+		logx.Warnf("MCP server %s exited; restarting in %s", c.name, backoff)
 		select {
 		case <-ctx.Done():
 			return
@@ -455,7 +457,7 @@ func (c *stdioConn) supervise(ctx context.Context) {
 		}
 		backoff = min(backoff*2, 32*time.Second)
 		if err := c.start(ctx); err != nil {
-			warnf("MCP server %s failed to start: %v", c.name, err)
+			logx.Warnf("MCP server %s failed to start: %v", c.name, err)
 			c.mu.Lock()
 			c.done = closedChan()
 			c.mu.Unlock()
@@ -463,7 +465,7 @@ func (c *stdioConn) supervise(ctx context.Context) {
 		}
 		ictx, cancel := context.WithTimeout(ctx, mcpCallTimeout)
 		if err := mcpInitialize(ictx, c); err != nil {
-			warnf("MCP server %s failed to initialize: %v", c.name, err)
+			logx.Warnf("MCP server %s failed to initialize: %v", c.name, err)
 		} else {
 			backoff = time.Second
 		}
@@ -480,7 +482,7 @@ func closedChan() chan struct{} {
 func (c *stdioConn) dispatch(line []byte) {
 	var m mcpMsg
 	if json.Unmarshal(line, &m) != nil {
-		warnf("bad JSON from MCP server %s (%d bytes), ignored", c.name, len(line))
+		logx.Warnf("bad JSON from MCP server %s (%d bytes), ignored", c.name, len(line))
 		return
 	}
 	switch {

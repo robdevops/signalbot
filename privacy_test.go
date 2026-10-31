@@ -3,35 +3,11 @@ package main
 import (
 	"context"
 	"strings"
-	"sync"
 	"testing"
 	"time"
+
+	"github.com/robdevops/signalbot/internal/kit/logx/logxtest"
 )
-
-// syncBuf is a log sink that is safe to read while the bot's goroutines write.
-type syncBuf struct {
-	mu sync.Mutex
-	sb strings.Builder
-}
-
-func (s *syncBuf) Write(p []byte) (int, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return s.sb.Write(p)
-}
-
-func (s *syncBuf) String() string {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return s.sb.String()
-}
-
-func captureLogsSafely(t *testing.T) *syncBuf {
-	t.Helper()
-	buf := &syncBuf{}
-	redirectLogs(t, buf, buf)
-	return buf
-}
 
 const secretText = "my-secret-message-text"
 
@@ -50,7 +26,7 @@ func TestPanicWhileAnsweringIsContained(t *testing.T) {
 	sig := NewSignal("x")
 	sig.selfID.Store(self)
 	b := NewBot(context.Background(), cfg, sig, panicAI{})
-	logs := captureLogsSafely(t)
+	logs := logxtest.Capture(t)
 
 	b.Handle(parse(t, strings.Replace(groupMention, "what is up", secretText, 1)))
 	deadline := time.Now().Add(5 * time.Second)
@@ -103,7 +79,7 @@ func TestBadReplyBodiesAreNotEchoed(t *testing.T) {
 
 // A malformed frame from signal-cli is reported without quoting it.
 func TestBadFrameIsNotQuoted(t *testing.T) {
-	logs := captureLogs(t)
+	logs := logxtest.Capture(t)
 	NewSignal("x").dispatch([]byte(`{"params": `+secretText+`}`), func(*Envelope) {})
 	if logs.Len() == 0 || strings.Contains(logs.String(), secretText) {
 		t.Fatalf("log = %q", logs.String())

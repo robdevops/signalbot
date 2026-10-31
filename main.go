@@ -3,13 +3,14 @@ package main
 import (
 	"context"
 	"fmt"
-	"log"
 	"os"
 	"os/signal"
 	"runtime/debug"
 	"strings"
 	"syscall"
 	"time"
+
+	"github.com/robdevops/signalbot/internal/kit/logx"
 )
 
 // version is set at build time: go build -ldflags "-X main.version=v1.2.3"
@@ -28,19 +29,14 @@ func main() {
 		fmt.Println("signalbot", buildVersion())
 		return
 	}
-	log.SetOutput(os.Stdout)
-	if st, err := os.Stdout.Stat(); err != nil || st.Mode()&os.ModeCharDevice == 0 {
-		log.SetFlags(0) // journald and Docker add their own timestamps
-	}
-	errLog.SetFlags(log.Flags())
-	toJournal.Store(stdoutIsJournal())
-	infof("signalbot %s starting", buildVersion())
+	logx.Setup()
+	logx.Infof("signalbot %s starting", buildVersion())
 	cfg, err := LoadConfig()
 	if err != nil {
-		errorf("config error: %v", err)
+		logx.Errorf("config error: %v", err)
 		os.Exit(1)
 	}
-	setLogLevel(cfg.LogLevel)
+	logx.SetLevel(cfg.LogLevel)
 	sigCtx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	// The connection outlives the shutdown signal, so replies already being
@@ -56,7 +52,7 @@ func main() {
 			tools, err = StartMCP(connCtx, servers)
 		}
 		if err != nil {
-			errorf("config error: %v", err)
+			logx.Errorf("config error: %v", err)
 			os.Exit(1)
 		}
 		defer tools.Wait() // let stdio servers stop after connCtx ends
@@ -69,26 +65,26 @@ func main() {
 	if toolCalls {
 		bot.commands = tools.Commands()
 	} else if len(tools.Commands()) > 0 {
-		warnf("model %s can't call tools, so chat commands are off", cfg.Model)
+		logx.Warnf("model %s can't call tools, so chat commands are off", cfg.Model)
 	}
-	infof("model %s, reasoning %s, search %v, images %v, tools %v", cfg.Model, cfg.Reasoning, cfg.Search, images, toolCalls)
+	logx.Infof("model %s, reasoning %s, search %v, images %v, tools %v", cfg.Model, cfg.Reasoning, cfg.Search, images, toolCalls)
 	if !toolCalls {
-		warnf("model %s can't call tools, so web search, charts and MCP tools are off", cfg.Model)
+		logx.Warnf("model %s can't call tools, so web search, charts and MCP tools are off", cfg.Model)
 	}
 	if names := tools.Names(); len(names) > 0 {
-		infof("MCP tools: %s", strings.Join(names, ", "))
+		logx.Infof("MCP tools: %s", strings.Join(names, ", "))
 	}
 	if cmds := bot.commandNames(); len(cmds) > 0 {
-		infof("chat commands: %s", strings.Join(cmds, ", "))
+		logx.Infof("chat commands: %s", strings.Join(cmds, ", "))
 	}
 
 	go func() {
 		<-sigCtx.Done()
 		stop() // a second signal now kills the process immediately
-		infof("shutting down: finishing replies in flight")
+		logx.Infof("shutting down: finishing replies in flight")
 		bot.Shutdown(8 * time.Second) // under Docker's default 10s stop timeout
 		closeConn()
 	}()
 	sig.Run(connCtx, bot.Handle)
-	infof("stopped")
+	logx.Infof("stopped")
 }

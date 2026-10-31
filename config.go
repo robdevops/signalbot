@@ -5,6 +5,8 @@ import (
 	"os"
 	"strconv"
 	"strings"
+
+	"github.com/robdevops/signalbot/internal/kit/logx"
 )
 
 type Config struct {
@@ -18,7 +20,7 @@ type Config struct {
 	Intro          string // INTRO: {name}, {model} and {tools} are substituted
 	MaxConcurrency int
 	HistoryTurns   int
-	LogLevel       level
+	LogLevel       logx.Level
 	MCPConfig      string // MCP_CONFIG: path of the MCP servers file
 	GroupContext   bool   // GROUP_CONTEXT: remember group messages not addressed to the bot
 }
@@ -77,7 +79,7 @@ func LoadConfig() (*Config, error) {
 		c.AllowedSenders[s] = true
 	}
 	var ok bool
-	if c.LogLevel, ok = parseLevel(env("LOG_LEVEL", "")); !ok {
+	if c.LogLevel, ok = logx.ParseLevel(env("LOG_LEVEL", "")); !ok {
 		return nil, fmt.Errorf("LOG_LEVEL must be debug, info, warn or error")
 	}
 	if c.Socket == "" {

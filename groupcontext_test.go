@@ -5,6 +5,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/robdevops/signalbot/internal/kit/logx/logxtest"
 )
 
 // A group message that isn't for the bot is kept as context, never logged,
@@ -12,7 +14,7 @@ import (
 func TestGroupChatterIsContext(t *testing.T) {
 	b, ai, _, sent := photoBot(t, false)
 	b.cfg.GroupContext = true
-	logs := captureLogsSafely(t)
+	logs := logxtest.Capture(t)
 	b.Handle(parse(t, strings.Replace(groupPlain, "Group test", "the moon is made of cheese", 1)))
 	if h := b.getHistory("g:" + group); len(h) != 1 || h[0].Content != "Alice: the moon is made of cheese" || h[0].Expires.IsZero() {
 		t.Fatalf("history %+v", h)

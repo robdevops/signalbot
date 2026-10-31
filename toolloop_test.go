@@ -16,6 +16,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/robdevops/signalbot/internal/kit/logx/logxtest"
 )
 
 // fakeModel answers chat completions: with a call to fake__echo for the first
@@ -56,7 +58,7 @@ func modelWithTools(t *testing.T, f *fakeModel) *OpenRouter {
 func TestToolCallLoop(t *testing.T) {
 	f := &fakeModel{calls: 1}
 	o := modelWithTools(t, f)
-	logs := captureLogsSafely(t)
+	logs := logxtest.Capture(t)
 	res, err := o.Complete(context.Background(), "s", []ChatMsg{{Role: "user", Content: "hi"}})
 	if err != nil || res.Text != "done" {
 		t.Fatalf("got %+v, %v", res, err)

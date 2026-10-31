@@ -13,6 +13,10 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/robdevops/signalbot/internal/kit/logx"
+
+	"github.com/robdevops/signalbot/internal/kit/logx/logxtest"
 )
 
 const (
@@ -198,7 +202,7 @@ var replyToOther = strings.NewReplacer(`"author":"`+self+`"`, `"author":"x"`, `"
 // logged returns what f writes to the log.
 func logged(t *testing.T, timestamps bool, f func()) string {
 	t.Helper()
-	buf := captureLogs(t)
+	buf := logxtest.Capture(t)
 	if timestamps {
 		log.SetFlags(log.LstdFlags)
 	}
@@ -214,7 +218,7 @@ func TestMessageLogLine(t *testing.T) {
 	// Nothing logged can forge extra log records.
 	r.Sender = "Bob\n\nforged record"
 	r.Text = "hi\nalso forged"
-	if out := logged(t, false, func() { infof("%s", r.logLine()) }); strings.Count(out, "\n") != 1 {
+	if out := logged(t, false, func() { logx.Infof("%s", r.logLine()) }); strings.Count(out, "\n") != 1 {
 		t.Fatalf("a value split the log line: %q", out)
 	}
 }
@@ -232,10 +236,10 @@ func TestReplyLogLine(t *testing.T) {
 
 func TestLogTimestampOnlyWhenInteractive(t *testing.T) {
 	stamp := regexp.MustCompile(`^\d{4}/\d{2}/\d{2} \d{2}:\d{2}:\d{2} starting\n$`)
-	if out := logged(t, true, func() { infof("starting") }); !stamp.MatchString(out) {
+	if out := logged(t, true, func() { logx.Infof("starting") }); !stamp.MatchString(out) {
 		t.Fatalf("interactive: want a timestamp, got %q", out)
 	}
-	if out := logged(t, false, func() { infof("starting") }); out != "starting\n" {
+	if out := logged(t, false, func() { logx.Infof("starting") }); out != "starting\n" {
 		t.Fatalf("non-interactive: want no timestamp, got %q", out)
 	}
 }

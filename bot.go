@@ -18,6 +18,8 @@ import (
 	"time"
 	"unicode"
 	"unicode/utf16"
+
+	"github.com/robdevops/signalbot/internal/kit/logx"
 )
 
 const (
@@ -108,7 +110,7 @@ func (b *Bot) Shutdown(d time.Duration) {
 		select {
 		case b.sem <- struct{}{}:
 		case <-timeout:
-			warnf("shutdown timed out with replies still in flight")
+			logx.Warnf("shutdown timed out with replies still in flight")
 			return
 		}
 	}
@@ -290,7 +292,7 @@ func stripMentions(msg string, ms []Mention, self string, names *Names) string {
 		if m.UUID != self && m.Number != self {
 			name := "@" + names.Resolve(m)
 			if name == "@" {
-				debugf("unresolved mention of %s", cmp.Or(m.UUID, m.Number))
+				logx.Debugf("unresolved mention of %s", cmp.Or(m.UUID, m.Number))
 				name = unnamedUser
 			}
 			repl = utf16.Encode([]rune(name))
@@ -305,7 +307,7 @@ func stripMentions(msg string, ms []Mention, self string, names *Names) string {
 // let a remote sender create unbounded goroutines, tickers or RPCs: the
 // concurrency slot is taken before anything is spawned.
 func (b *Bot) Handle(env *Envelope) {
-	defer quietRecover("reading a message")
+	defer logx.QuietRecover("reading a message")
 	if env.DataMessage == nil || b.closing.Load() {
 		return
 	}
@@ -328,7 +330,7 @@ func (b *Bot) Handle(env *Envelope) {
 				b.rememberChatter(env, self)
 			}
 		case !fromSelf(env, self) && !isAllowed(env, b.cfg.AllowedSenders):
-			infof("%s ignored because not in SIGNAL_DM_USER_IDS",
+			logx.Infof("%s ignored because not in SIGNAL_DM_USER_IDS",
 				cmp.Or(env.SourceUUID, env.Source, env.SourceNumber, "unknown sender"))
 		}
 		return
@@ -336,12 +338,12 @@ func (b *Bot) Handle(env *Envelope) {
 	select {
 	case b.sem <- struct{}{}:
 	default:
-		warnf("at capacity (%d), dropping message", b.cfg.MaxConcurrency)
+		logx.Warnf("at capacity (%d), dropping message", b.cfg.MaxConcurrency)
 		return
 	}
 	go func() {
 		defer func() { <-b.sem }()
-		defer quietRecover("answering a message")
+		defer logx.QuietRecover("answering a message")
 		b.handle(env)
 	}()
 }
@@ -366,7 +368,7 @@ func (b *Bot) handle(env *Envelope) {
 		return
 	}
 	if b.duplicate(req) {
-		debugf("ignored duplicate from %s", req.Name)
+		logx.Debugf("ignored duplicate from %s", req.Name)
 		return
 	}
 	b.remember(req)
@@ -381,10 +383,10 @@ func (b *Bot) handle(env *Envelope) {
 				return
 			}
 			req.Tool = c.Tool
-			infof("chat command /%s from %s", name, req.Name)
+			logx.Infof("chat command /%s from %s", name, req.Name)
 		}
 	}
-	infof("%s", req.logLine())
+	logx.Infof("%s", req.logLine())
 	b.respond(req)
 }
 
@@ -401,7 +403,7 @@ func parseCommand(text string) (name, rest string, ok bool) {
 // sendText sends the bot's own text, not the model's, to req's chat.
 func (b *Bot) sendText(req *Request, text string) {
 	if err := b.sig.Send(req.Target, text, buildMentions(text, b.knownNames(req.Key)), nil); err != nil {
-		errorf("send to %s failed: %v", req.Name, err)
+		logx.Errorf("send to %s failed: %v", req.Name, err)
 	}
 }
 
@@ -411,10 +413,10 @@ func (b *Bot) example(req *Request) {
 	b.ensureSelfName()
 	text := exampleText(req, b.introName(), modelName(b.cfg.Model), b.toolsText())
 	if err := b.sig.Send(req.Target, text, buildMentions(text, b.knownNames(req.Key)), nil); err != nil {
-		errorf("send to %s failed: %v", req.Name, err)
+		logx.Errorf("send to %s failed: %v", req.Name, err)
 		return
 	}
-	infof("example for %s", req.Name)
+	logx.Infof("example for %s", req.Name)
 }
 
 func exampleText(req *Request, self, model, tools string) string {
@@ -480,7 +482,7 @@ func (b *Bot) images(req *Request) []string {
 		data, err := b.sig.GetAttachment(ctx, req.Target, a.ID)
 		cancel()
 		if err != nil || !sendableImage(data) {
-			warnf("could not fetch an image from %s: %v", req.Name, cmp.Or(err, errors.New("not an image")))
+			logx.Warnf("could not fetch an image from %s: %v", req.Name, cmp.Or(err, errors.New("not an image")))
 			continue
 		}
 		urls = append(urls, "data:"+http.DetectContentType(data)+";base64,"+base64.StdEncoding.EncodeToString(data))
@@ -498,7 +500,7 @@ func (b *Bot) sticker(req *Request) string {
 	defer cancel()
 	data, err := b.sig.GetSticker(ctx, *req.Sticker)
 	if err != nil || !sendableImage(data) {
-		warnf("could not fetch a sticker from %s: %v", req.Name, cmp.Or(err, errors.New("not an image")))
+		logx.Warnf("could not fetch a sticker from %s: %v", req.Name, cmp.Or(err, errors.New("not an image")))
 		return ""
 	}
 	return "data:" + http.DetectContentType(data) + ";base64," + base64.StdEncoding.EncodeToString(data)
@@ -628,10 +630,10 @@ func (b *Bot) respond(req *Request) {
 	took := time.Since(start)
 	var caption string
 	if err != nil {
-		errorf("OpenRouter error for %s after %.1fs: %v", req.Name, took.Seconds(), err)
+		logx.Errorf("OpenRouter error for %s after %.1fs: %v", req.Name, took.Seconds(), err)
 		res = Completion{Text: "Sorry, I couldn't get an answer right now."}
 	} else {
-		infof("%s", replyLogLine(req.Name, took, res))
+		logx.Infof("%s", replyLogLine(req.Name, took, res))
 		// A chart is sent as one message captioned with its title, in place
 		// of the model's text.
 		if caption = chartCaptions(res); caption != "" {
@@ -645,7 +647,7 @@ func (b *Bot) respond(req *Request) {
 	}
 
 	if n := len([]rune(res.Text)); n > maxReplyRunes {
-		warnf("reply to %s truncated from %d chars", req.Name, n)
+		logx.Warnf("reply to %s truncated from %d chars", req.Name, n)
 	}
 	parts := replyParts(res.Text, b.introName())
 	if caption != "" {
@@ -657,7 +659,7 @@ func (b *Bot) respond(req *Request) {
 	}
 	if len(parts) == 0 {
 		if len(attachments) == 0 {
-			warnf("empty reply to %s, nothing sent", req.Name)
+			logx.Warnf("empty reply to %s, nothing sent", req.Name)
 			return
 		}
 		parts = []string{""} // the images alone
@@ -669,7 +671,7 @@ func (b *Bot) respond(req *Request) {
 			att = attachments // with the first message
 		}
 		if err := b.sig.Send(req.Target, part, buildMentions(part, known), att); err != nil {
-			errorf("send to %s failed: %v", req.Name, err)
+			logx.Errorf("send to %s failed: %v", req.Name, err)
 			return
 		}
 	}
@@ -731,7 +733,7 @@ func (b *Bot) selfName() string {
 // ensureSelfName loads contacts if the bot's own name is not known yet.
 func (b *Bot) ensureSelfName() {
 	if b.selfName() == "" && b.refreshContacts() && b.selfName() == "" {
-		warnf("own profile name not found; calling itself signalbot (INTRO can name it)")
+		logx.Warnf("own profile name not found; calling itself signalbot (INTRO can name it)")
 	}
 }
 

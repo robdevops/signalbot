@@ -13,6 +13,8 @@ import (
 	"slices"
 	"strings"
 	"time"
+
+	"github.com/robdevops/signalbot/internal/kit/logx"
 )
 
 type ChatMsg struct {
@@ -54,7 +56,7 @@ func (o *OpenRouter) Capabilities(ctx context.Context) (images, tools bool) {
 	req.Header.Set("Authorization", "Bearer "+o.cfg.APIKey)
 	resp, err := o.http.Do(req)
 	if err != nil {
-		warnf("could not check what %s supports, so images are off: %v", o.cfg.Model, err)
+		logx.Warnf("could not check what %s supports, so images are off: %v", o.cfg.Model, err)
 		return false, true
 	}
 	defer resp.Body.Close()
@@ -68,7 +70,7 @@ func (o *OpenRouter) Capabilities(ctx context.Context) (images, tools bool) {
 		} `json:"data"`
 	}
 	if resp.StatusCode != http.StatusOK || json.NewDecoder(io.LimitReader(resp.Body, 32<<20)).Decode(&r) != nil {
-		warnf("could not check what %s supports, so images are off: status %d", o.cfg.Model, resp.StatusCode)
+		logx.Warnf("could not check what %s supports, so images are off: status %d", o.cfg.Model, resp.StatusCode)
 		return false, true
 	}
 	for _, m := range r.Data {
@@ -76,7 +78,7 @@ func (o *OpenRouter) Capabilities(ctx context.Context) (images, tools bool) {
 			return slices.Contains(m.Architecture.InputModalities, "image"), slices.Contains(m.SupportedParameters, "tools")
 		}
 	}
-	warnf("model %s is not in OpenRouter's model list, so images are off", o.cfg.Model)
+	logx.Warnf("model %s is not in OpenRouter's model list, so images are off", o.cfg.Model)
 	return false, true
 }
 
@@ -184,7 +186,7 @@ func (o *OpenRouter) Complete(ctx context.Context, system string, msgs []ChatMsg
 			return total, nil
 		}
 		if round == maxToolRounds {
-			warnf("model still calling tools after %d requests; stopping", round)
+			logx.Warnf("model still calling tools after %d requests; stopping", round)
 			total.Text = cmp.Or(c.Text, "Sorry, I couldn't finish that.")
 			return total, nil
 		}
@@ -193,10 +195,10 @@ func (o *OpenRouter) Complete(ctx context.Context, system string, msgs []ChatMsg
 			start := time.Now()
 			out, images, caption, tool, err := o.runTool(ctx, tc)
 			if err != nil {
-				warnf("tool %s failed after %.1fs: %v", tool, time.Since(start).Seconds(), err)
-				debugf("tool %s arguments were %d bytes", tool, len(tc.Function.Arguments))
+				logx.Warnf("tool %s failed after %.1fs: %v", tool, time.Since(start).Seconds(), err)
+				logx.Debugf("tool %s arguments were %d bytes", tool, len(tc.Function.Arguments))
 			} else {
-				infof("tool %s %.1fs", tool, time.Since(start).Seconds())
+				logx.Infof("tool %s %.1fs", tool, time.Since(start).Seconds())
 				total.Charted = total.Charted || tool == chartTool || tool == donutTool
 			}
 			for _, img := range images {

@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"sync"
 	"time"
+
+	"github.com/robdevops/signalbot/internal/kit/logx"
 )
 
 // Contact is the subset of a signal-cli listContacts entry we use.
@@ -167,10 +169,10 @@ func (n *Names) Refresh(ctx context.Context, s *Signal) bool {
 
 	cs, err := s.ListContacts(ctx)
 	if err != nil {
-		warnf("listContacts failed: %v", err)
+		logx.Warnf("listContacts failed: %v", err)
 		return true
 	}
-	debugf("loaded %d contacts", len(cs))
+	logx.Debugf("loaded %d contacts", len(cs))
 	n.replaceContacts(cs)
 	return true
 }
