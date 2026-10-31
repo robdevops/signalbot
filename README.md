@@ -140,16 +140,20 @@ The model can call tools from [MCP](https://modelcontextprotocol.io) servers, re
 
 ```json
 {"mcpServers": {
-  "weather": {"url": "https://example.com/mcp", "headers": {"Authorization": "Bearer …"}, "allowed_tools": ["get_forecast"]},
-  "files":   {"command": "uvx", "args": ["some-mcp-server"], "env": {"KEY": "value"}, "blocked_tools": ["delete_file"]}
+  "weather": {
+    "url": "https://example.com/mcp",
+    "headers": {"Authorization": "Bearer …"},
+    "allowed_tools": ["get_forecast", "get_alerts"],
+    "chat_commands": {
+      "forecast": {"tool": "get_forecast", "require_arg": true},
+      "alerts": {"tool": "get_alerts"}
+    }
+  },
+  "files": {"command": "uvx", "args": ["some-mcp-server"], "env": {"KEY": "value"}, "blocked_tools": ["delete_file"]}
 }}
 ```
 
-A server's `chat_commands` turn tools into slash commands: `/quote apple vs nvidia` asks the model, offered only that tool and made to call it. With `require_arg`, a bare `/quote` gets a usage reply from the bot without asking the model:
-
-```json
-"weather": {"url": "…", "chat_commands": {"forecast": {"tool": "get_forecast", "require_arg": true}}}
-```
+`chat_commands` turn a server's tools into slash commands: `/forecast sydney this weekend` asks the model, offered only that tool and made to call it. With `require_arg`, a bare `/forecast` gets a usage reply from the bot without asking the model.
 
 Add `"disabled": true` to a server to leave it out without deleting it. A server that can't be reached at startup is logged and left out. A tool named in either list that the server doesn't have is a config error, so a typo can't leave a blocked tool offered. Local servers get only `PATH`, `HOME` and their `env`, never the bot's own environment.
 
