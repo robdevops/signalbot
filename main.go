@@ -66,12 +66,20 @@ func main() {
 	bot.toolNames, bot.toolGroups = tools.Names(), tools.ByServer()
 	images, toolCalls := ai.Capabilities(connCtx)
 	bot.vision, bot.toolCalls, ai.noTools = images, toolCalls, !toolCalls
+	if toolCalls {
+		bot.commands = tools.Commands()
+	} else if len(tools.Commands()) > 0 {
+		warnf("model %s can't call tools, so chat commands are off", cfg.Model)
+	}
 	infof("model %s, reasoning %s, search %v, images %v, tools %v", cfg.Model, cfg.Reasoning, cfg.Search, images, toolCalls)
 	if !toolCalls {
 		warnf("model %s can't call tools, so web search, charts and MCP tools are off", cfg.Model)
 	}
 	if names := tools.Names(); len(names) > 0 {
 		infof("MCP tools: %s", strings.Join(names, ", "))
+	}
+	if cmds := bot.commandNames(); len(cmds) > 0 {
+		infof("chat commands: %s", strings.Join(cmds, ", "))
 	}
 
 	go func() {
