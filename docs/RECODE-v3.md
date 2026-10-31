@@ -4,7 +4,7 @@
 - **A core written from a spec,** not carved out of the current code. It is lightweight, scales with load, and handles many chats concurrently.
 - **Features bolted on cleanly,** as separate packages using a small set of ports.
 - **The core never mirrors a feature,** including features long removed. Delete any feature and the core doesn't change.
-- **Interfaces only where they make sense,** and minimal: no copied types, no long parameter lists, no boilerplate.
+- **Plain Go, no ceremony.** Use concrete types and structs freely. Add an interface only where there are two real implementations, or a test needs a fake. Define each type once and use it everywhere, rather than copying it per package. When a function needs many inputs, pass a typed struct, never a map or a long list of positional arguments. Avoid wrappers and adapters that only pass calls through.
 
 Out of scope: chat networks other than Signal, and providers other than OpenRouter. The ports don't preclude them; they get their own plan if wanted.
 
