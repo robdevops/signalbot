@@ -1380,3 +1380,30 @@ func TestScenarioSchedulesSurviveARestart(t *testing.T) {
 		t.Fatalf("the model was asked %d times", n)
 	}
 }
+
+// A scheduled message that mentions the bot gets one answer and no more:
+// the bot's answer, even one that names it, and its own posts coming back
+// from signal-cli start nothing, and /timer and /reminder can't schedule
+// themselves either.
+func TestScenarioScheduleCannotLoop(t *testing.T) {
+	h := startBot(t, world{Contacts: map[string]string{idAlice: "Alice"}})
+	for _, cmd := range []string{`/timer "@Botty /reminder list"`, `/reminder "/schedule help"`} {
+		if s := h.ask(fromAlice(cmd + ` 2099-01-01T09:00 every day`)); s.Message != "A schedule can't make schedules." {
+			t.Fatalf("%s: sent %q", cmd, s.Message)
+		}
+	}
+	h.queue(modelReply{Text: "@Botty hello everyone"})
+	at := time.Now().Add(2 * time.Second).Truncate(time.Second)
+	if s := h.ask(fromAlice(`/timer "@Botty say hello" ` + at.Format("2006-01-02T15:04:05") + ` test group`)); !strings.HasPrefix(s.Message, "Scheduled for ") {
+		t.Fatalf("sent %q", s.Message)
+	}
+	s := h.nextSend()
+	if s.GroupID != idGroup || s.Message != "hello everyone" {
+		t.Fatalf("sent %+v", s)
+	}
+	h.ignored(atBot("hello everyone").by(idBot, "Botty"))
+	h.ignored(inGroup("@Botty hello everyone").by(idBot, "Botty"))
+	if n := len(h.requests()); n != 1 {
+		t.Fatalf("the model was asked %d times", n)
+	}
+}

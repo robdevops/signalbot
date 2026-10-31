@@ -99,8 +99,16 @@ func register(h feature.Host, loc *time.Location, now func() time.Time) error {
 	if err := s.load(); err != nil {
 		return err
 	}
-	return feature.Command(h, "schedule", s.command)
+	for _, name := range commands {
+		if err := feature.Command(h, name, s.command); err != nil {
+			return err
+		}
+	}
+	return nil
 }
+
+// commands are the command and its aliases, all the same command.
+var commands = []string{"schedule", "timer", "reminder"}
 
 // usable checks that dir can be listed and written to.
 func usable(dir string) error {
@@ -292,7 +300,8 @@ func (s *store) help() string {
 		"- Without a group name it's posted here. A message that @mentions me gets my answer.\n" +
 		"- A monthly schedule from the 31st runs on the last day of shorter months.\n" +
 		"/schedule list: your schedules, numbered\n" +
-		"/schedule del <number>: delete one"
+		"/schedule del <number>: delete one\n" +
+		"/timer and /reminder work the same as /schedule."
 }
 
 // add makes a schedule from args.
@@ -357,7 +366,7 @@ func (s *store) schedulesItself(chat feature.Chat, text string) bool {
 		}
 		if !ok {
 			name, _, ok := feature.ParseCommand(t)
-			return ok && name == "schedule"
+			return ok && slices.Contains(commands, name)
 		}
 		t = strings.TrimSpace(rest)
 	}
