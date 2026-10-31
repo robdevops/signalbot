@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"github.com/robdevops/signalbot/internal/chat"
 	"github.com/robdevops/signalbot/internal/llm"
 	"image"
 	"image/png"
@@ -89,5 +90,5 @@ func TestReplyCarriesImages(t *testing.T) {
 
 func (a imageAI) Complete(context.Context, llm.Request) (llm.Completion, error) {
 	img, _ := base64.StdEncoding.DecodeString(tinyPNG())
-	return llm.Completion{Text: a.text, Images: []llm.Image{{Data: img, Caption: a.caption}}}, nil
+	return llm.Completion{Text: a.text, Images: []chat.Picture{{Data: img, Caption: a.caption}}}, nil
 }

@@ -3,7 +3,12 @@
 // implement Model.
 package llm
 
-import "context"
+import (
+	"context"
+
+	"github.com/robdevops/signalbot/internal/chat"
+	"github.com/robdevops/signalbot/internal/feature"
+)
 
 // Message is one turn of a conversation.
 type Message struct {
@@ -24,34 +29,12 @@ type ToolCall struct {
 	} `json:"function"`
 }
 
-// Image is a picture a tool made, to send with the reply.
-type Image struct {
-	Data    []byte
-	Caption string // e.g. a chart's title; "" for none
-}
-
-// Result is what a tool returns: text for the model, and pictures for the
-// reply.
-type Result struct {
-	Text   string
-	Images []Image
-}
-
-// Tool is one tool offered to the model. Def is its entry in the request.
-// Run is nil for a provider tool, which the provider runs itself (web search).
-type Tool struct {
-	Name  string // as the model calls it
-	Label string // for the log
-	Def   any
-	Run   func(ctx context.Context, arguments string) (Result, error)
-}
-
 // Request is one reply to get: the system prompt, the conversation, the
 // tools offered, and a tool the model must call first ("" for none).
 type Request struct {
 	System   string
 	Messages []Message
-	Tools    []Tool
+	Tools    []feature.Tool
 	Force    string
 }
 
@@ -63,8 +46,8 @@ type Completion struct {
 	OutputTokens int
 	Cost         float64 // USD, as the provider reports it; 0 if it did not
 	ToolCalls    []ToolCall
-	Images       []Image  // pictures the tools made, to send with the reply
-	Used         []string // tools that ran without error, by name
+	Images       []chat.Picture // pictures the tools made, to send with the reply
+	Used         []string       // tools that ran without error, by name
 }
 
 // Turn is one request to a provider.

@@ -3,6 +3,8 @@ package llm
 import (
 	"context"
 	"errors"
+	"github.com/robdevops/signalbot/internal/chat"
+	"github.com/robdevops/signalbot/internal/feature"
 	"testing"
 )
 
@@ -27,8 +29,8 @@ func call(name, args string) ToolCall {
 	return tc
 }
 
-var echo = Tool{Name: "echo", Label: "echo", Def: "echo-def", Run: func(_ context.Context, args string) (Result, error) {
-	return Result{Text: "echo " + args, Images: []Image{{Data: []byte{1}, Caption: "pic"}}}, nil
+var echo = feature.Tool{Name: "echo", Label: "echo", Def: "echo-def", Run: func(_ context.Context, args string) (feature.Result, error) {
+	return feature.Result{Text: "echo " + args, Images: []chat.Picture{{Data: []byte{1}, Caption: "pic"}}}, nil
 }}
 
 // A tool call runs the tool and sends the result back; usage is summed, the
@@ -39,7 +41,7 @@ func TestLoopRunsTools(t *testing.T) {
 		{ToolCalls: []ToolCall{call("echo", "x")}, InputTokens: 10, Cost: 0.001},
 		{Text: "done", InputTokens: 20, Cost: 0.002},
 	}}
-	res, err := Loop{m}.Complete(context.Background(), Request{System: "s", Tools: []Tool{echo}, Force: "echo"})
+	res, err := Loop{m}.Complete(context.Background(), Request{System: "s", Tools: []feature.Tool{echo}, Force: "echo"})
 	if err != nil || res.Text != "done" || res.InputTokens != 30 || len(res.Images) != 1 || len(res.Used) != 1 {
 		t.Fatalf("got %+v, %v", res, err)
 	}
@@ -56,8 +58,8 @@ func TestLoopRunsTools(t *testing.T) {
 // error result, not a crash.
 func TestLoopUnknownTool(t *testing.T) {
 	m := &script{replies: []Completion{{ToolCalls: []ToolCall{call("nope", "")}}, {Text: "ok"}}}
-	provider := Tool{Name: "nope", Def: "server"} // no Run
-	if _, err := (Loop{m}).Complete(context.Background(), Request{Tools: []Tool{provider}}); err != nil {
+	provider := feature.Tool{Name: "nope", Def: "server"} // no Run
+	if _, err := (Loop{m}).Complete(context.Background(), Request{Tools: []feature.Tool{provider}}); err != nil {
 		t.Fatal(err)
 	}
 	if got := m.turns[1].Messages[len(m.turns[1].Messages)-1].Content; got != "error: there is no tool named nope" {
@@ -70,7 +72,7 @@ func TestLoopRoundCap(t *testing.T) {
 	for range MaxRounds + 2 {
 		m.replies = append(m.replies, Completion{ToolCalls: []ToolCall{call("echo", "")}})
 	}
-	res, err := Loop{m}.Complete(context.Background(), Request{Tools: []Tool{echo}})
+	res, err := Loop{m}.Complete(context.Background(), Request{Tools: []feature.Tool{echo}})
 	if err != nil || res.Text != "Sorry, I couldn't finish that." || len(m.turns) != MaxRounds {
 		t.Fatalf("got %q after %d requests, %v", res.Text, len(m.turns), err)
 	}

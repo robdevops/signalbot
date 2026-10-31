@@ -8,7 +8,6 @@ import (
 	"github.com/robdevops/signalbot/internal/chat"
 	"github.com/robdevops/signalbot/internal/feature"
 	"github.com/robdevops/signalbot/internal/history"
-	"github.com/robdevops/signalbot/internal/llm"
 )
 
 type commandFunc = func(ctx context.Context, t feature.Turn, rest string) (feature.Command, bool)
@@ -41,7 +40,7 @@ func (b *Bot) turn(m chat.Message, forced string) feature.Turn {
 
 // offer is the tool groups a turn offers, and their tools for the model; or
 // only the forced tool. None if the model can't call tools.
-func (b *Bot) offer(t feature.Turn) (groups []feature.ToolGroup, tools []llm.Tool) {
+func (b *Bot) offer(t feature.Turn) (groups []feature.ToolGroup, tools []feature.Tool) {
 	if !b.cfg.Caps.Tools {
 		return nil, nil
 	}
@@ -53,26 +52,11 @@ func (b *Bot) offer(t feature.Turn) (groups []feature.ToolGroup, tools []llm.Too
 	for _, g := range b.hooks.groups {
 		for _, tl := range g.Tools {
 			if t.Forced == "" && (g.Offer == nil || g.Offer(t)) || tl.Name == t.Forced {
-				tools = append(tools, llmTool(tl))
+				tools = append(tools, tl)
 			}
 		}
 	}
 	return groups, tools
-}
-
-func llmTool(t feature.Tool) llm.Tool {
-	lt := llm.Tool{Name: t.Name, Label: t.Label, Def: t.Def}
-	if t.Run != nil {
-		lt.Run = func(ctx context.Context, args string) (llm.Result, error) {
-			res, err := t.Run(ctx, args)
-			out := llm.Result{Text: res.Text}
-			for _, p := range res.Images {
-				out.Images = append(out.Images, llm.Image{Data: p.Data, Caption: p.Caption})
-			}
-			return out, err
-		}
-	}
-	return lt
 }
 
 // host is the Host a feature registers with.

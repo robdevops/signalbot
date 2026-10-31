@@ -235,7 +235,7 @@ func TestReplyLogLine(t *testing.T) {
 
 // The history records the charts a reply sent, so the model knows it did.
 func TestSentImagesNote(t *testing.T) {
-	res := llm.Completion{Images: []llm.Image{{Data: []byte{1}, Caption: "Apple revenue — Q3"}, {Data: []byte{2}}}}
+	res := llm.Completion{Images: []chat.Picture{{Data: []byte{1}, Caption: "Apple revenue — Q3"}, {Data: []byte{2}}}}
 	if got := sentImages(res); got != "[sent the chart \"Apple revenue — Q3\"]\n[sent an image]\n" {
 		t.Fatalf("got %q", got)
 	}

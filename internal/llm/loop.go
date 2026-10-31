@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/robdevops/signalbot/internal/feature"
 	"github.com/robdevops/signalbot/internal/kit/img"
 	"slices"
 	"time"
@@ -80,10 +81,10 @@ func (l Loop) Complete(ctx context.Context, r Request) (Completion, error) {
 }
 
 // run runs one tool call, and names the tool for the log.
-func run(ctx context.Context, tools []Tool, tc ToolCall) (Result, string, error) {
-	i := slices.IndexFunc(tools, func(t Tool) bool { return t.Name == tc.Function.Name && t.Run != nil })
+func run(ctx context.Context, tools []feature.Tool, tc ToolCall) (feature.Result, string, error) {
+	i := slices.IndexFunc(tools, func(t feature.Tool) bool { return t.Name == tc.Function.Name && t.Run != nil })
 	if i < 0 {
-		return Result{Text: "error: there is no tool named " + tc.Function.Name}, "unknown", errors.New("unknown tool")
+		return feature.Result{Text: "error: there is no tool named " + tc.Function.Name}, "unknown", errors.New("unknown tool")
 	}
 	res, err := tools[i].Run(ctx, tc.Function.Arguments)
 	return res, tools[i].Label, err

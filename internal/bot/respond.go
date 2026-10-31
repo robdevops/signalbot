@@ -53,7 +53,7 @@ func (b *Bot) respond(req *Request) {
 		res = llm.Completion{Text: "Sorry, I couldn't get an answer right now."}
 	} else {
 		logx.Infof("%s", replyLogLine(req.Name, took, res))
-		reply := feature.Reply{Text: res.Text, Pictures: pictures(res), Used: res.Used}
+		reply := feature.Reply{Text: res.Text, Pictures: res.Images, Used: res.Used}
 		for _, fn := range b.hooks.reply {
 			if out := fn(t, reply); out != nil {
 				replaced = out
@@ -69,7 +69,7 @@ func (b *Bot) respond(req *Request) {
 	if n := len([]rune(res.Text)); n > maxReplyRunes {
 		logx.Warnf("reply to %s truncated from %d chars", req.Name, n)
 	}
-	out := chat.Outgoing{Chat: req.Chat, Text: replyText(res.Text, self), Pictures: pictures(res)}
+	out := chat.Outgoing{Chat: req.Chat, Text: replyText(res.Text, self), Pictures: res.Images}
 	if replaced != nil {
 		out.Text = replaced.Text
 	}
@@ -88,7 +88,7 @@ type prepared struct {
 	system string
 	prompt string   // the message as the model sees it
 	images []string // shown with it
-	tools  []llm.Tool
+	tools  []feature.Tool
 }
 
 // prepare offers the turn's tools and runs the OnTurn hooks: prompt lines,
@@ -117,14 +117,6 @@ func (b *Bot) prepare(req *Request, self string) prepared {
 	}
 	req.Prompt = strings.TrimSpace(kept)
 	return prepared{turn: t, system: b.systemPrompt(req.Chat, groups, lines), prompt: strings.TrimSpace(prompt), images: images, tools: tools}
-}
-
-func pictures(res llm.Completion) []chat.Picture {
-	var out []chat.Picture
-	for _, img := range res.Images {
-		out = append(out, chat.Picture{Data: img.Data, Caption: img.Caption})
-	}
-	return out
 }
 
 const truncatedMarker = " […truncated]"
