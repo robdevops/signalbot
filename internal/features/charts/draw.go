@@ -1,5 +1,4 @@
-// Package draw is the Canvas, fonts and colours the charts share.
-package draw
+package charts
 
 import (
 	"image"

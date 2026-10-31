@@ -1,7 +1,6 @@
-package linechart
+package charts
 
 import (
-	"github.com/robdevops/signalbot/internal/kit/draw"
 	"image/color"
 	"time"
 )
@@ -10,12 +9,12 @@ import (
 // period, red if it fell, with a translucent fill down to the bottom of the
 // plot, its high and low marked and a dot on its last point. It is styling
 // only; the model isn't told.
-func drawArea(cv *draw.Canvas, s *Spec, px func(time.Time) float64, top, bottom, left, right float64) {
+func drawArea(cv *Canvas, s *lineSpec, px func(time.Time) float64, top, bottom, left, right float64) {
 	sr, a := s.Series[0], s.left
 	pts := sr.Points
-	c := draw.Up
+	c := Up
 	if pts[len(pts)-1].Value < pts[0].Value {
-		c = draw.Down
+		c = Down
 	}
 	line := make([]float64, 0, 2*len(pts))
 	for _, p := range pts {
@@ -26,7 +25,7 @@ func drawArea(cv *draw.Canvas, s *Spec, px func(time.Time) float64, top, bottom,
 	cv.Line(c, 3, line...)
 
 	hi, lo := highLow(pts)
-	markFace := draw.Face(draw.Fonts.Regular, 18)
+	markFace := Face(Fonts.Regular, 18)
 	defer markFace.Close()
 	for _, m := range []struct {
 		i     int
@@ -40,8 +39,8 @@ func drawArea(cv *draw.Canvas, s *Spec, px func(time.Time) float64, top, bottom,
 			decimals = 1
 		}
 		lines := [2]string{m.word + " " + a.format(p.Value, decimals), p.t.Format("2 Jan 2006")}
-		cv.Fill(draw.Ink, draw.Circle(x, y, 6.5))
-		cv.Fill(draw.BG, draw.Circle(x, y, 4.5))
+		cv.Fill(Ink, Circle(x, y, 6.5))
+		cv.Fill(BG, Circle(x, y, 4.5))
 		// Above the high and below the low (swapped on an inverted axis),
 		// centred on the point unless that would run off the side. Where that
 		// would cross the subtitle or the date labels, it goes beside the point.
@@ -63,17 +62,17 @@ func drawArea(cv *draw.Canvas, s *Spec, px func(time.Time) float64, top, bottom,
 			}
 		}
 		// A light backing keeps the label readable where it crosses the line.
-		w := max(draw.TextWidth(markFace, lines[0]), draw.TextWidth(markFace, lines[1]))
-		cv.Fill(color.NRGBA{0xff, 0xff, 0xff, 0xd9}, draw.RectPoly(tx-w*align-4, base-17, w+8, 45))
-		cv.Text(markFace, draw.Ink, tx, base, align, lines[0])
-		cv.Text(markFace, draw.Ink, tx, base+22, align, lines[1])
+		w := max(TextWidth(markFace, lines[0]), TextWidth(markFace, lines[1]))
+		cv.Fill(color.NRGBA{0xff, 0xff, 0xff, 0xd9}, RectPoly(tx-w*align-4, base-17, w+8, 45))
+		cv.Text(markFace, Ink, tx, base, align, lines[0])
+		cv.Text(markFace, Ink, tx, base+22, align, lines[1])
 	}
 	// The current value beside the end dot, in the line's colour.
 	last := pts[len(pts)-1]
 	x, y := px(last.t), a.y(last.Value)
-	cv.Fill(draw.BG, draw.Circle(x, y, 7.5))
-	cv.Fill(c, draw.Circle(x, y, 5.5))
-	valueFace := draw.Face(draw.Fonts.Bold, 20)
+	cv.Fill(BG, Circle(x, y, 7.5))
+	cv.Fill(c, Circle(x, y, 5.5))
+	valueFace := Face(Fonts.Bold, 20)
 	defer valueFace.Close()
 	decimals := 2
 	if a.Mode == "change" {
@@ -81,11 +80,11 @@ func drawArea(cv *draw.Canvas, s *Spec, px func(time.Time) float64, top, bottom,
 	}
 	y = min(max(y, 100), bottom-14) // keep both lines inside the image
 	cv.Text(valueFace, c, x+14, y-2, 0, a.format(last.Value, decimals))
-	cv.Text(markFace, draw.Muted, x+14, y+20, 0, last.t.Format("2 Jan 2006"))
+	cv.Text(markFace, Muted, x+14, y+20, 0, last.t.Format("2 Jan 2006"))
 }
 
 // highLow returns the indices of the first highest and first lowest points.
-func highLow(pts []Point) (hi, lo int) {
+func highLow(pts []linePoint) (hi, lo int) {
 	for i, p := range pts {
 		if p.Value > pts[hi].Value {
 			hi = i

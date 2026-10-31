@@ -2,7 +2,6 @@ package charts
 
 import (
 	"encoding/json"
-	"github.com/robdevops/signalbot/internal/kit/linechart"
 )
 
 // chartTool is the built-in tool the model calls to draw a line chart, which
@@ -42,10 +41,10 @@ const chartToolDescription = "Draw a line chart of one or more series over time,
 	"The chart is sent alone with its title as the caption, so write no other text: it would be discarded."
 
 // parseChart decodes and checks the model's arguments for make_chart.
-func parseChart(arguments string) (*linechart.Spec, error) {
-	var s linechart.Spec
+func parseChart(arguments string) (*lineSpec, error) {
+	var s lineSpec
 	if err := decodeArgs(chartTool, arguments, &s); err != nil {
 		return nil, err
 	}
-	return &s, s.Validate()
+	return &s, s.validate()
 }

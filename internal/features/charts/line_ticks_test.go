@@ -1,4 +1,4 @@
-package linechart
+package charts
 
 import (
 	"strings"

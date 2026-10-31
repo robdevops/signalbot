@@ -2,7 +2,6 @@ package charts
 
 import (
 	"encoding/json"
-	"github.com/robdevops/signalbot/internal/kit/donut"
 )
 
 // donutTool is the built-in tool the model calls to draw a donut chart of
@@ -30,10 +29,10 @@ const donutToolDescription = "Draw a donut chart of how a total splits into part
 	"The chart is sent alone with its title as the caption, so write no other text: it would be discarded."
 
 // parseDonut decodes and checks the model's arguments for make_donut_chart.
-func parseDonut(arguments string) (*donut.Spec, error) {
-	var s donut.Spec
+func parseDonut(arguments string) (*donutSpec, error) {
+	var s donutSpec
 	if err := decodeArgs(donutTool, arguments, &s); err != nil {
 		return nil, err
 	}
-	return &s, s.Validate()
+	return &s, s.validate()
 }

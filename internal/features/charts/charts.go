@@ -11,8 +11,6 @@ import (
 
 	"github.com/robdevops/signalbot/internal/chat"
 	"github.com/robdevops/signalbot/internal/feature"
-	"github.com/robdevops/signalbot/internal/kit/donut"
-	"github.com/robdevops/signalbot/internal/kit/linechart"
 )
 
 // Feature is the chart tools. Its state is the follow-ups left in each chat.
@@ -46,11 +44,11 @@ func Tools() []feature.Tool {
 				if err != nil {
 					return feature.Result{Text: "error: " + err.Error()}, err
 				}
-				img, err := linechart.Render(s)
+				img, err := renderLine(s)
 				if err != nil {
 					return feature.Result{Text: "error: the chart could not be drawn"}, err
 				}
-				return feature.Result{Text: chartNote + s.Summary(), Images: []chat.Picture{{Data: img, Caption: chartCaption(s.Title, s.Subtitle)}}}, nil
+				return feature.Result{Text: chartNote + s.summary(), Images: []chat.Picture{{Data: img, Caption: chartCaption(s.Title, s.Subtitle)}}}, nil
 			}},
 		{Name: donutTool, Label: donutTool, Def: functionDef(donutTool, donutToolDescription, donutToolSchema),
 			Run: func(_ context.Context, args string) (feature.Result, error) {
@@ -58,11 +56,11 @@ func Tools() []feature.Tool {
 				if err != nil {
 					return feature.Result{Text: "error: " + err.Error()}, err
 				}
-				img, err := donut.Render(s)
+				img, err := renderDonut(s)
 				if err != nil {
 					return feature.Result{Text: "error: the chart could not be drawn"}, err
 				}
-				return feature.Result{Text: chartNote + s.Summary(), Images: []chat.Picture{{Data: img, Caption: chartCaption(s.Title, s.Subtitle)}}}, nil
+				return feature.Result{Text: chartNote + s.summary(), Images: []chat.Picture{{Data: img, Caption: chartCaption(s.Title, s.Subtitle)}}}, nil
 			}},
 	}
 }

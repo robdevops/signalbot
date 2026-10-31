@@ -1,9 +1,8 @@
-package linechart
+package charts
 
 import (
 	"bytes"
 	"encoding/json"
-	"github.com/robdevops/signalbot/internal/kit/draw"
 	"image/png"
 	"math"
 	"os"
@@ -58,15 +57,15 @@ func TestAreaStyle(t *testing.T) {
 				t.Fatalf("high %v / low %v missed %v", pts[hi].Value, pts[lo].Value, p.Value)
 			}
 		}
-		out, err := Render(s)
+		out, err := renderLine(s)
 		if err != nil {
 			t.Fatal(err)
 		}
 		img, _ := png.Decode(bytes.NewReader(out))
 		// Somewhere in the plot is the line's colour: green when rising, red when falling.
-		want := draw.Up
+		want := Up
 		if !tc.rising {
-			want = draw.Down
+			want = Down
 		}
 		found := false
 		for x := 100; x < 1220 && !found; x++ {

@@ -1,6 +1,4 @@
-// Package linechart draws line charts of series over time, on one or two Y
-// axes, as PNGs.
-package linechart
+package charts
 
 import (
 	"cmp"
@@ -14,21 +12,21 @@ import (
 	"github.com/robdevops/signalbot/internal/kit/txt"
 )
 
-type Point struct {
+type linePoint struct {
 	Date  string  `json:"date"`
 	Value float64 `json:"value"`
 	t     time.Time
 }
 
-type Series struct {
-	Name   string  `json:"name"`
-	Axis   string  `json:"axis"` // "left" or "right"
-	Points []Point `json:"points"`
+type lineSeries struct {
+	Name   string      `json:"name"`
+	Axis   string      `json:"axis"` // "left" or "right"
+	Points []linePoint `json:"points"`
 }
 
-// Axis is a Y axis: how its series are plotted and labelled, and, once
+// lineAxis is a Y axis: how its series are plotted and labelled, and, once
 // laid out, its range and ticks.
-type Axis struct {
+type lineAxis struct {
 	Title  string `json:"title"`
 	Mode   string `json:"mode"` // "change" or "value"
 	Unit   string `json:"unit"`
@@ -41,16 +39,16 @@ type Axis struct {
 	decimals    int
 }
 
-type Spec struct {
-	Title    string           `json:"title"`
-	Subtitle string           `json:"subtitle"`
-	Axes     map[string]*Axis `json:"axes"`
-	Series   []Series         `json:"series"`
+type lineSpec struct {
+	Title    string               `json:"title"`
+	Subtitle string               `json:"subtitle"`
+	Axes     map[string]*lineAxis `json:"axes"`
+	Series   []lineSeries         `json:"series"`
 
-	left, right *Axis
+	left, right *lineAxis
 }
 
-func (s *Spec) axisOf(sr Series) *Axis {
+func (s *lineSpec) axisOf(sr lineSeries) *lineAxis {
 	if sr.Axis == "right" {
 		return s.right
 	}
@@ -59,7 +57,7 @@ func (s *Spec) axisOf(sr Series) *Axis {
 
 // parseChart reads and checks the model's arguments. Errors are written for
 // the model, so it can fix its call.
-func (s *Spec) Validate() error {
+func (s *lineSpec) validate() error {
 	s.Title = txt.Clamp(strings.TrimSpace(s.Title), 80)
 	s.Subtitle = txt.Clamp(strings.TrimSpace(s.Subtitle), 120)
 	if s.Title == "" {
@@ -70,8 +68,8 @@ func (s *Spec) Validate() error {
 			return fmt.Errorf(`axes may only have "left" and "right", not %q`, txt.Clamp(k, 20))
 		}
 	}
-	s.left, s.right = cmp.Or(s.Axes["left"], &Axis{}), cmp.Or(s.Axes["right"], &Axis{})
-	for _, a := range []*Axis{s.left, s.right} {
+	s.left, s.right = cmp.Or(s.Axes["left"], &lineAxis{}), cmp.Or(s.Axes["right"], &lineAxis{})
+	for _, a := range []*lineAxis{s.left, s.right} {
 		a.Title, a.Unit = txt.Clamp(strings.TrimSpace(a.Title), 24), txt.Clamp(a.Unit, 4)
 		switch a.Mode {
 		case "":
@@ -98,7 +96,7 @@ func (s *Spec) Validate() error {
 		s.axisOf(*sr).used = true
 	}
 	if !s.left.used { // everything on the right: draw it as the only axis
-		s.left, s.right = s.right, &Axis{Mode: "change"}
+		s.left, s.right = s.right, &lineAxis{Mode: "change"}
 		for i := range s.Series {
 			s.Series[i].Axis = "left"
 		}
@@ -134,7 +132,7 @@ func (s *Spec) Validate() error {
 }
 
 // format writes a value as the axis labels it.
-func (a *Axis) format(v float64, decimals int) string {
+func (a *lineAxis) format(v float64, decimals int) string {
 	if a.Mode == "change" {
 		if math.Abs(v) < 0.5*math.Pow(10, -float64(decimals)) {
 			v = 0 // no "-0%"
@@ -151,7 +149,7 @@ func (a *Axis) format(v float64, decimals int) string {
 // layout fits the axis to its series' values, plus 5% padding (and zero, in
 // change mode), between pixel rows top and bottom; only the round ticks
 // inside that range are kept.
-func (a *Axis) layout(values []float64, top, bottom float64) {
+func (a *lineAxis) layout(values []float64, top, bottom float64) {
 	lo, hi := math.Inf(1), math.Inf(-1)
 	for _, v := range values {
 		lo, hi = min(lo, v), max(hi, v)
@@ -174,7 +172,7 @@ func (a *Axis) layout(values []float64, top, bottom float64) {
 }
 
 // y is the pixel row for v; an inverted axis puts higher values lower.
-func (a *Axis) y(v float64) float64 {
+func (a *lineAxis) y(v float64) float64 {
 	f := (v - a.lo) / (a.hi - a.lo)
 	if a.Invert {
 		return a.top + f*(a.bottom-a.top)
@@ -185,7 +183,7 @@ func (a *Axis) y(v float64) float64 {
 // summary is what the model is told after the chart is drawn: the final
 // value of each series, so its text can quote the same numbers.
 // Summary is the chart in words: each series' final value.
-func (s *Spec) Summary() string {
+func (s *lineSpec) summary() string {
 	var parts []string
 	for _, sr := range s.Series {
 		parts = append(parts, sr.Name+" "+s.axisOf(sr).format(sr.Points[len(sr.Points)-1].Value, 1))

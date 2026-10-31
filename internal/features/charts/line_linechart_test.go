@@ -1,4 +1,4 @@
-package linechart
+package charts
 
 import (
 	"bytes"
@@ -39,7 +39,7 @@ func TestRenderChart(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	out, err := Render(s)
+	out, err := renderLine(s)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -67,7 +67,7 @@ func TestParseChartChangeMode(t *testing.T) {
 	if p[0].Date != "2026-01-01" || p[0].Value != 0 || p[1].Value != 20 {
 		t.Fatalf("points not sorted or not rebased: %+v", p)
 	}
-	if got := s.Summary(); got != "Final values: A 20.0%." {
+	if got := s.summary(); got != "Final values: A 20.0%." {
 		t.Fatalf("summary %q", got)
 	}
 	v, _ := parseChart(`{"title":"T","axes":{"left":{"mode":"value","unit":"$"}},"series":[{"name":"A","points":[{"date":"2026-01-01","value":-1.5},{"date":"2026-01-02","value":2}]}]}`)
@@ -113,17 +113,17 @@ func TestChartTwoAxes(t *testing.T) {
 	if !s.right.used || s.Series[0].Points[1].Value != 120 || s.Series[1].Points[1].Value != -50 {
 		t.Fatalf("per-axis modes: %+v", s.Series)
 	}
-	if got := s.Summary(); got != "Final values: A $120.0, B -50.0%." {
+	if got := s.summary(); got != "Final values: A $120.0, B -50.0%." {
 		t.Fatalf("summary %q", got)
 	}
-	if _, err := Render(s); err != nil {
+	if _, err := renderLine(s); err != nil {
 		t.Fatal(err)
 	}
 	// One axis needs no title.
 	if _, err := parseChart(`{"title":"T","series":[{"name":"A","points":[{"date":"2026-01-01","value":1},{"date":"2026-01-02","value":2}]}]}`); err != nil {
 		t.Fatalf("single axis without a title: %v", err)
 	}
-	// Series only on the right are drawn on a single axis, so no titles are needed.
+	// lineSeries only on the right are drawn on a single axis, so no titles are needed.
 	r, err := parseChart(`{"title":"T","axes":{"right":{"mode":"value","unit":"$"}},"series":[{"name":"A","axis":"right","points":[{"date":"2026-01-01","value":1},{"date":"2026-01-02","value":2}]}]}`)
 	if err != nil || r.right.used || r.left.Unit != "$" || r.Series[0].Axis != "left" {
 		t.Fatalf("right-only chart: %+v, %v", r, err)
@@ -138,7 +138,7 @@ func TestChartTwoAxes(t *testing.T) {
 // An inverted axis puts its highest value at the bottom, and zero follows.
 func TestChartInvertedAxis(t *testing.T) {
 	for _, invert := range []bool{false, true} {
-		a := &Axis{Mode: "value", Invert: invert}
+		a := &lineAxis{Mode: "value", Invert: invert}
 		a.layout([]float64{0, 10}, 100, 500)
 		hiY, loY := a.y(a.hi), a.y(a.lo)
 		if invert && (hiY != 500 || loY != 100) || !invert && (hiY != 100 || loY != 500) {
@@ -173,7 +173,7 @@ func TestRenderTwoAxisSample(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	out, err := Render(s)
+	out, err := renderLine(s)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -183,14 +183,4 @@ func TestRenderTwoAxisSample(t *testing.T) {
 	if p := os.Getenv("CHART_SAMPLE2"); p != "" {
 		os.WriteFile(p, out, 0o644)
 	}
-}
-
-// parseChart is what the make_chart tool does with its arguments, minus
-// its error wording for undecodable JSON.
-func parseChart(args string) (*Spec, error) {
-	var s Spec
-	if err := json.Unmarshal([]byte(args), &s); err != nil {
-		return nil, err
-	}
-	return &s, s.Validate()
 }

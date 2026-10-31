@@ -1,11 +1,9 @@
-// Package donut draws donut charts of shares of a total as PNGs.
-package donut
+package charts
 
 import (
 	"bytes"
 	"errors"
 	"fmt"
-	"github.com/robdevops/signalbot/internal/kit/draw"
 	"image"
 	"image/png"
 	"math"
@@ -18,25 +16,25 @@ import (
 	"github.com/robdevops/signalbot/internal/kit/txt"
 )
 
-type Slice struct {
+type donutSlice struct {
 	Label string  `json:"label"`
 	Value float64 `json:"value"`
 }
 
-type Spec struct {
-	Title    string  `json:"title"`
-	Subtitle string  `json:"subtitle"`
-	Slices   []Slice `json:"slices"`
-	Unit     string  `json:"unit"`
-	Suffix   string  `json:"suffix"`
-	Center   string  `json:"center"`
+type donutSpec struct {
+	Title    string       `json:"title"`
+	Subtitle string       `json:"subtitle"`
+	Slices   []donutSlice `json:"slices"`
+	Unit     string       `json:"unit"`
+	Suffix   string       `json:"suffix"`
+	Center   string       `json:"center"`
 
 	total float64
 }
 
 // parseDonut reads and checks the model's arguments; errors are written for
 // the model. Slices come back largest first.
-func (s *Spec) Validate() error {
+func (s *donutSpec) validate() error {
 	s.Title = txt.Clamp(strings.TrimSpace(s.Title), 80)
 	s.Subtitle = txt.Clamp(strings.TrimSpace(s.Subtitle), 120)
 	s.Unit, s.Suffix, s.Center = txt.Clamp(s.Unit, 4), txt.Clamp(s.Suffix, 4), txt.Clamp(strings.TrimSpace(s.Center), 16)
@@ -64,14 +62,14 @@ func (s *Spec) Validate() error {
 	return nil
 }
 
-func (s *Spec) share(sl Slice) string {
+func (s *donutSpec) share(sl donutSlice) string {
 	return fmt.Sprintf("%.1f%%", sl.Value/s.total*100)
 }
 
-// CenterText is the total, e.g. "$127.6B", unless the model gave its own. A
+// centerText is the total, e.g. "$127.6B", unless the model gave its own. A
 // K, M, B or T suffix scales the values, unless that would make the total
 // absurd (1e15 or more), which means the values were already raw.
-func (s *Spec) CenterText() string {
+func (s *donutSpec) centerText() string {
 	if s.Center != "" {
 		return s.Center
 	}
@@ -102,18 +100,18 @@ func oneDecimal(v float64) string {
 }
 
 // Summary is the chart in words: the total and each share.
-func (s *Spec) Summary() string {
+func (s *donutSpec) summary() string {
 	var parts []string
 	for _, sl := range s.Slices {
 		parts = append(parts, sl.Label+" "+s.share(sl))
 	}
-	return "Total " + s.CenterText() + "; shares: " + strings.Join(parts, ", ") + "."
+	return "Total " + s.centerText() + "; shares: " + strings.Join(parts, ", ") + "."
 }
 
-// wrapLabel splits text into at most two lines no wider than width in draw.Face
+// wrapLabel splits text into at most two lines no wider than width in Face
 // f, at spaces, cutting the second with "…" if it still doesn't fit.
 func wrapLabel(f font.Face, text string, width float64) []string {
-	if draw.TextWidth(f, text) <= width {
+	if TextWidth(f, text) <= width {
 		return []string{text}
 	}
 	words := strings.Fields(text)
@@ -121,7 +119,7 @@ func wrapLabel(f font.Face, text string, width float64) []string {
 	i := 0
 	for ; i < len(words); i++ {
 		next := strings.TrimSpace(first + " " + words[i])
-		if draw.TextWidth(f, next) > width && first != "" {
+		if TextWidth(f, next) > width && first != "" {
 			break
 		}
 		first = next
@@ -130,26 +128,26 @@ func wrapLabel(f font.Face, text string, width float64) []string {
 	if rest == "" {
 		return []string{first}
 	}
-	for draw.TextWidth(f, rest) > width && len([]rune(rest)) > 1 {
+	for TextWidth(f, rest) > width && len([]rune(rest)) > 1 {
 		r := []rune(strings.TrimSuffix(rest, "…"))
 		rest = string(r[:len(r)-1]) + "…"
 	}
 	return []string{first, rest}
 }
 
-// Render draws the chart as a 1280×800 PNG.
-func Render(s *Spec) ([]byte, error) {
+// renderDonut draws the chart as a 1280×800 PNG.
+func renderDonut(s *donutSpec) ([]byte, error) {
 	const W, H = 1280, 800
-	cv := &draw.Canvas{Img: image.NewRGBA(image.Rect(0, 0, W, H))}
-	cv.Rect(draw.BG, 0, 0, W, H)
+	cv := &Canvas{Img: image.NewRGBA(image.Rect(0, 0, W, H))}
+	cv.Rect(BG, 0, 0, W, H)
 
-	titleFace, subFace, legendFace := draw.Face(draw.Fonts.Bold, 34), draw.Face(draw.Fonts.Regular, 22), draw.Face(draw.Fonts.Regular, 26)
+	titleFace, subFace, legendFace := Face(Fonts.Bold, 34), Face(Fonts.Regular, 22), Face(Fonts.Regular, 26)
 	defer titleFace.Close()
 	defer subFace.Close()
 	defer legendFace.Close()
-	cv.Text(titleFace, draw.Ink, 38, 46, 0, s.Title)
+	cv.Text(titleFace, Ink, 38, 46, 0, s.Title)
 	if s.Subtitle != "" {
-		cv.Text(subFace, draw.Muted, 38, 80, 0, s.Subtitle)
+		cv.Text(subFace, Muted, 38, 80, 0, s.Subtitle)
 	}
 
 	// The donut grows from radius 215 up to 300 when the legend leaves room,
@@ -159,7 +157,7 @@ func Render(s *Spec) ([]byte, error) {
 	textW := 0.0
 	for i, sl := range s.Slices {
 		labels[i] = sl.Label + "  " + s.share(sl)
-		textW = max(textW, draw.TextWidth(legendFace, labels[i]))
+		textW = max(textW, TextWidth(legendFace, labels[i]))
 	}
 	outer := min(maxOuter, max(minOuter, (W-2*margin-gap-swatch-textW)/2))
 	textW = min(textW, W-2*margin-gap-swatch-2*outer)
@@ -183,24 +181,24 @@ func Render(s *Spec) ([]byte, error) {
 				a := angle + sweep*float64(k)/float64(n)
 				poly = append(poly, cx+inner*math.Cos(a), cy+inner*math.Sin(a))
 			}
-			cv.Fill(draw.Palette[i], poly)
+			cv.Fill(Palette[i], poly)
 			bounds = append(bounds, angle)
 		}
 		angle += sweep
 	}
 	if len(bounds) > 1 {
 		for _, a := range bounds {
-			cv.Line(draw.BG, 4, cx+(inner-2)*math.Cos(a), cy+(inner-2)*math.Sin(a), cx+(outer+2)*math.Cos(a), cy+(outer+2)*math.Sin(a))
+			cv.Line(BG, 4, cx+(inner-2)*math.Cos(a), cy+(inner-2)*math.Sin(a), cx+(outer+2)*math.Cos(a), cy+(outer+2)*math.Sin(a))
 		}
 	}
 
 	// The total in the hole, shrunk until it fits.
-	center := s.CenterText()
+	center := s.centerText()
 	for size := math.Round(44 * outer / minOuter); size >= 20; size -= 4 {
-		f := draw.Face(draw.Fonts.Bold, size)
-		w := draw.TextWidth(f, center)
+		f := Face(Fonts.Bold, size)
+		w := TextWidth(f, center)
 		if w <= 2*inner-30 || size <= 20 {
-			cv.Text(f, draw.Ink, cx, cy+size*0.35, 0.5, center)
+			cv.Text(f, Ink, cx, cy+size*0.35, 0.5, center)
 			f.Close()
 			break
 		}
@@ -224,9 +222,9 @@ func Render(s *Spec) ([]byte, error) {
 	height += rowGap * float64(len(rows)-1)
 	y := cy - height/2
 	for _, r := range rows {
-		cv.Rect(draw.Palette[r.i], lx, y+8, 16, 16)
+		cv.Rect(Palette[r.i], lx, y+8, 16, 16)
 		for k, l := range r.lines {
-			cv.Text(legendFace, draw.Ink, lx+swatch, y+24+float64(k)*lineH, 0, l)
+			cv.Text(legendFace, Ink, lx+swatch, y+24+float64(k)*lineH, 0, l)
 		}
 		y += float64(len(r.lines))*lineH + rowGap
 	}
