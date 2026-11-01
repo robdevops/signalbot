@@ -811,7 +811,7 @@ func TestScenarioOtherProvider(t *testing.T) {
 	if r.Body["reasoning_effort"] != "low" || r.Model != scenarioModel {
 		t.Fatalf("reasoning_effort %v, model %q", r.Body["reasoning_effort"], r.Model)
 	}
-	if !strings.Contains(r.System, "(tools: charts)") {
+	if !strings.Contains(r.System, "(tools: charts (line, pie))") {
 		t.Fatalf("system %q", r.System)
 	}
 	if n := h.modelLists(); n != 0 {
@@ -894,7 +894,7 @@ func TestScenarioSystemPromptLayering(t *testing.T) {
 func TestScenarioIntroPlaceholders(t *testing.T) {
 	h := startBot(t, world{Env: map[string]string{"INTRO": `yo, {name} here on {model} with {tools}; "quoted"` + "\nnext line"}})
 	h.ask(fromAlice("introduce yourself"))
-	want := `If asked to introduce yourself, reply with exactly this text and nothing else: "yo, Botty here on test-model with web search, charts; \"quoted\"\nnext line"`
+	want := `If asked to introduce yourself, reply with exactly this text and nothing else: "yo, Botty here on test-model with web search, charts (line, pie); \"quoted\"\nnext line"`
 	if p := h.lastRequest().System; !strings.HasSuffix(p, "\n"+want) {
 		t.Fatalf("system prompt %q", p)
 	}
@@ -1116,7 +1116,7 @@ func TestScenarioExampleWithoutModel(t *testing.T) {
 		"- Use a message you quote as context\n" +
 		"- Remember our conversation for up to a day (less with disappearing messages)\n" +
 		"- Mention people by name in my replies\n" +
-		"- Run test-model with web search, charts\n" +
+		"- Run test-model with web search, charts (line, pie)\n" +
 		"This reply didn't use the model."
 	if s.Message != want || s.GroupID != idGroup {
 		t.Fatalf("sent %q", s.Message)
@@ -1135,7 +1135,7 @@ func TestScenarioExampleWithoutModel(t *testing.T) {
 func TestScenarioBotWithoutProfileNameIsSignalbot(t *testing.T) {
 	h := startBot(t, world{NoBotName: true, MCP: true})
 	if s := h.ask(fromAlice("/example")); !strings.HasPrefix(s.Message, "Hi! I'm signalbot. ") ||
-		!strings.Contains(s.Message, "- Run test-model with web search, charts, stocks (get_quote, price_chart, /quote), weather (get_forecast, /forecast)\n") {
+		!strings.Contains(s.Message, "- Run test-model with web search, charts (line, pie), stocks (get_quote, price_chart, /quote), weather (get_forecast, /forecast)\n") {
 		t.Fatalf("sent %q", s.Message)
 	}
 }
