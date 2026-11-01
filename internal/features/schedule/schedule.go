@@ -296,7 +296,7 @@ func answer(text string) feature.Action { return feature.Action{Answer: text} }
 func (s *store) help() string {
 	now := s.now().In(s.loc)
 	return strings.Join([]string{
-		"Schedule a message, or a /command, to post as if you'd sent it:\n" + usage,
+		"Schedule a message, or a /command, to post as if you'd sent it:\n\n" + usage,
 		"- The time is ISO 8601, like " + exampleTime + " in my time zone (" + now.Format("MST") +
 			"), or with an offset, like " + exampleTime + "+10:00.",
 		"- Without a group name it's posted here. A message that @mentions me gets my answer.",
