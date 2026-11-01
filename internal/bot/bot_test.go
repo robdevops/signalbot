@@ -9,6 +9,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -176,7 +177,6 @@ func TestWaitingMessagesInAGroup(t *testing.T) {
 	h.eventually("the first request", func() bool { return len(h.requests()) == 1 })
 	h.receive(atBot("actually"))
 	h.receive(atBot("forget it"))
-	h.waitFor(groupChat, 2)
 	first.open()
 	h.nextSend()
 	h.nextSend()
@@ -288,7 +288,6 @@ func TestWaitingCommandOnItsOwn(t *testing.T) {
 	for _, s := range []string{"a", "/ping", "b"} {
 		h.receive(dm(s))
 	}
-	h.waitFor(aliceChat, 3)
 	first.open()
 	var sent []string
 	for range 4 {
@@ -320,11 +319,9 @@ func TestFourWaitDuringABatch(t *testing.T) {
 	h.eventually("the full list", func() bool { return strings.Contains(h.logs.String(), "the chat's mailbox is full, dropping message") })
 	first.open()
 	h.eventually("the batch's request", func() bool { return len(h.requests()) == 2 })
-	h.waitFor(aliceChat, 0)
 	for _, s := range []string{"f", "g", "h", "i"} {
 		h.receive(dm(s))
 	}
-	h.waitFor(aliceChat, 4)
 	if n := strings.Count(h.logs.String(), "mailbox is full"); n != 1 {
 		t.Fatalf("%d drops; logs:\n%s", n, h.logs)
 	}
@@ -360,7 +357,6 @@ func TestPanicInABatch(t *testing.T) {
 	for _, s := range []string{"b", "boom", "d"} {
 		h.receive(dm(s))
 	}
-	h.waitFor(aliceChat, 3)
 	first.open()
 	h.nextSend()
 	h.nextSend()
@@ -374,36 +370,38 @@ func TestPanicInABatch(t *testing.T) {
 	}
 }
 
-// Once shutdown begins, the rest of what was waiting is not started.
+// Once shutdown begins, nothing more of what was waiting starts: not the
+// run already gathered, not the command being handled, and not even the
+// hooks for the rest.
 func TestShutdownStopsWaiting(t *testing.T) {
+	var late atomic.Bool
+	stopped := make(chan struct{})
 	h := start(t, options{features: func(b *Bot) {
 		b.OnMessage(func(_ context.Context, m feature.Message) feature.Action {
-			if m.Text == "/ping" {
+			late.Store(late.Load() || m.Text == "b")
+			if m.Text == "/ping" { // shutdown begins while it is handled
+				go func() { defer close(stopped); b.Shutdown(5 * time.Second) }()
+				for !b.closing.Load() {
+					time.Sleep(time.Millisecond)
+				}
 				return feature.Action{Answer: "pong"}
 			}
 			return feature.Action{}
 		})
 	}})
-	first, second := h.gate(), h.gate()
-	h.answer(first.answer("one"), second.answer("two"))
+	first := h.gate()
+	h.answer(first.answer("one"))
 	h.receive(dm("first"))
 	h.eventually("the first request", func() bool { return len(h.requests()) == 1 })
 	for _, s := range []string{"a", "/ping", "b"} {
 		h.receive(dm(s))
 	}
-	h.waitFor(aliceChat, 3)
 	first.open()
-	h.eventually("a's request", func() bool { return len(h.requests()) == 2 })
-	done := make(chan struct{})
-	go func() { defer close(done); h.b.Shutdown(5 * time.Second) }()
-	h.eventually("shutdown to begin", h.b.closing.Load)
-	second.open()
-	<-done
 	h.nextSend() // one
-	h.nextSend() // two
+	<-stopped
 	h.noSend()
-	if n := len(h.requests()); n != 2 {
-		t.Fatalf("%d requests", n)
+	if n := len(h.requests()); n != 1 || late.Load() {
+		t.Fatalf("%d requests; the hooks saw b: %v", n, late.Load())
 	}
 }
 
@@ -423,7 +421,6 @@ func TestWaitingPhotosSplit(t *testing.T) {
 	h.eventually("the first request", func() bool { return len(h.requests()) == 1 })
 	h.receive(with(dm("these"), "p1", "p2", "p3"))
 	h.receive(with(dm("and these"), "p4", "p5"))
-	h.waitFor(aliceChat, 2)
 	first.open()
 	for range 3 {
 		h.nextSend()
@@ -451,7 +448,6 @@ func TestKeywordsIgnoreNames(t *testing.T) {
 	fine := atBot("fine")
 	fine.Sender, fine.Name = bobID, "Bob"
 	h.receive(fine)
-	h.waitFor(groupChat, 2)
 	first.open()
 	h.nextSend()
 	h.nextSend()
@@ -511,17 +507,12 @@ func TestBatchPictures(t *testing.T) {
 	}
 	// The model sees each sender's name; the message's text, which tool
 	// keywords match, is only what was typed.
-	quote := &feature.Quote{Author: "Carol", Text: "a lookup of it"}
+	quote := &feature.Quote{Author: "Alice", Text: "a lookup of it"}
 	m, text := merge([]feature.Message{bare, {Chat: bare.Chat, Name: "Bob", Text: "hi", Quote: quote}, {Chat: bare.Chat, Name: "Alice", Text: "and you?"}})
-	if m.Text != "hi\nand you?" || text != "Bob: [Replying to a message by \"Carol\": \"a lookup of it\"]\nhi\nAlice: and you?" {
+	if m.Text != "hi\nand you?" || text != "Bob: [Replying to a message by \"Alice\": \"a lookup of it\"]\nhi\nAlice: and you?" {
 		t.Fatalf("merged %q, model sees %q", m.Text, text)
 	}
 }
-
-var (
-	aliceChat = feature.Chat{User: aliceID}.Key()
-	groupChat = feature.Chat{GroupID: groupID}.Key()
-)
 
 // gate holds one model answer until it is opened.
 type gate struct {
@@ -539,14 +530,4 @@ func (g *gate) open() { g.once.Do(func() { close(g.c) }) }
 
 func (g *gate) answer(s string) func() (int, string) {
 	return func() (int, string) { <-g.c; return 200, reply(s) }
-}
-
-// waitFor waits until n messages are waiting in the chat.
-func (h *harness) waitFor(key string, n int) {
-	h.t.Helper()
-	h.eventually(fmt.Sprintf("%d waiting", n), func() bool {
-		h.b.waitMu.Lock()
-		defer h.b.waitMu.Unlock()
-		return len(h.b.waiting[key]) == n
-	})
 }

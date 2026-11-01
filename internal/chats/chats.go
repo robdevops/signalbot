@@ -10,7 +10,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/robdevops/signalbot/internal/kit/logx"
+	"github.com/robdevops/signalbot/internal/feature"
 )
 
 const (
@@ -43,10 +43,11 @@ type Entry struct {
 
 // Store is every chat's state.
 type Store struct {
-	mu    sync.Mutex
-	chats map[string]*chat
-	turns int // exchanges kept per chat
-	max   int // chats kept
+	mu     sync.Mutex
+	chats  map[string]*chat
+	turns  int                      // exchanges kept per chat
+	max    int                      // chats kept
+	handle func([]feature.Received) // a chat's worker hands it what waits
 }
 
 type chat struct {
@@ -55,13 +56,14 @@ type chat struct {
 	recent    map[string]time.Time // message key -> when seen
 	names     map[string]string    // lowercased name -> ID; "" if ambiguous
 	followUps map[int]int          // tool group -> replies left
-	queue     []func()
-	busy      bool // a worker is running
+	queue     []feature.Received   // waiting for the worker
+	busy      bool                 // a worker is running
 }
 
-// New keeps up to turns exchanges (2 entries each) per chat.
-func New(turns int) *Store {
-	return &Store{chats: map[string]*chat{}, turns: turns, max: MaxChats}
+// New keeps up to turns exchanges (2 entries each) per chat, and has each
+// chat's worker hand handle what waits in the mailbox.
+func New(turns int, handle func([]feature.Received)) *Store {
+	return &Store{chats: map[string]*chat{}, turns: turns, max: MaxChats, handle: handle}
 }
 
 // get returns the chat, creating it if create is set. When the map is full,
@@ -142,11 +144,12 @@ func (s *Store) tidy(key string, c *chat) {
 	}
 }
 
-// Post queues job in the chat's mailbox. A chat with work has one worker,
-// which runs its jobs in order and then exits. When the chat has none, spawn
-// is called with the worker: it must start it on a free slot without
-// blocking and return true, or return false when no slot is free.
-func (s *Store) Post(key string, job func(), spawn func(worker func()) bool) error {
+// Post adds r to the chat's mailbox. A chat with messages has one worker,
+// which hands handle everything waiting at once, in order, until nothing
+// is left, and then exits. When the chat has none, spawn is called with the
+// worker: it must start it on a free slot without blocking and return true,
+// or return false when no slot is free.
+func (s *Store) Post(key string, r feature.Received, spawn func(worker func()) bool) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	c := s.get(key, true)
@@ -156,11 +159,11 @@ func (s *Store) Post(key string, job func(), spawn func(worker func()) bool) err
 	case c.busy && len(c.queue) >= MaxQueue:
 		return ErrQueueFull
 	case c.busy:
-		c.queue = append(c.queue, job)
+		c.queue = append(c.queue, r)
 		return nil
 	}
 	c.busy = true
-	if !spawn(func() { s.work(key, c, job) }) {
+	if !spawn(func() { s.work(key, c, []feature.Received{r}) }) {
 		c.busy = false
 		s.tidy(key, c)
 		return ErrNoSlot
@@ -168,20 +171,15 @@ func (s *Store) Post(key string, job func(), spawn func(worker func()) bool) err
 	return nil
 }
 
-func (s *Store) work(key string, c *chat, job func()) {
-	for {
-		func() {
-			defer logx.Recover("handling a message")
-			job()
-		}()
+func (s *Store) work(key string, c *chat, rs []feature.Received) {
+	for len(rs) > 0 {
+		s.handle(rs)
 		s.mu.Lock()
-		if len(c.queue) == 0 {
+		rs, c.queue = c.queue, nil
+		if len(rs) == 0 {
 			c.busy = false
 			s.tidy(key, c)
-			s.mu.Unlock()
-			return
 		}
-		job, c.queue[0], c.queue = c.queue[0], nil, c.queue[1:]
 		s.mu.Unlock()
 	}
 }

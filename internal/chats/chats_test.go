@@ -5,6 +5,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/robdevops/signalbot/internal/feature"
 )
 
 // slots is a worker pool of n slots, like the bot's.
@@ -30,22 +32,32 @@ func (p *slots) spawn(worker func()) bool {
 	return true
 }
 
-// One chat's messages are handled one at a time, in order, by one worker,
-// with at most MaxQueue waiting.
+// msg is a mailbox item with text.
+func msg(text string) feature.Received { return feature.Received{Message: feature.Message{Text: text}} }
+
+// blocking is a store whose workers wait until release is closed.
+func blocking(release chan struct{}) *Store {
+	return New(10, func([]feature.Received) { <-release })
+}
+
+// One chat's messages are handled in order by one worker, which gets
+// everything waiting at once; at most MaxQueue wait.
 func TestMailboxInOrder(t *testing.T) {
-	s, pool := New(10), newSlots(8)
 	release := make(chan struct{})
-	var mu sync.Mutex
-	var got []int
+	var got []string
+	s := New(10, func(rs []feature.Received) {
+		if rs[0].Text == "0" {
+			<-release
+		}
+		var texts []string
+		for _, r := range rs {
+			texts = append(texts, r.Text)
+		}
+		got = append(got, fmt.Sprint(texts))
+	})
+	pool := newSlots(8)
 	for i := range MaxQueue + 2 {
-		err := s.Post("g:1", func() {
-			if i == 0 {
-				<-release
-			}
-			mu.Lock()
-			got = append(got, i)
-			mu.Unlock()
-		}, pool.spawn)
+		err := s.Post("g:1", msg(fmt.Sprint(i)), pool.spawn)
 		if want := i <= MaxQueue; (err == nil) != want {
 			t.Errorf("message %d: err %v", i, err)
 		}
@@ -55,7 +67,7 @@ func TestMailboxInOrder(t *testing.T) {
 	}
 	close(release)
 	pool.wg.Wait()
-	if fmt.Sprint(got) != "[0 1 2 3 4]" {
+	if fmt.Sprint(got) != "[[0] [1 2 3 4]]" {
 		t.Errorf("handled %v", got)
 	}
 	if len(s.chats) != 0 {
@@ -66,16 +78,15 @@ func TestMailboxInOrder(t *testing.T) {
 // Different chats run in parallel, each on its own slot, and a full pool
 // drops new work.
 func TestChatsInParallel(t *testing.T) {
-	s, pool := New(10), newSlots(2)
 	release := make(chan struct{})
-	block := func() { <-release }
-	if s.Post("g:1", block, pool.spawn) != nil || s.Post("g:2", block, pool.spawn) != nil {
+	s, pool := blocking(release), newSlots(2)
+	if s.Post("g:1", msg(""), pool.spawn) != nil || s.Post("g:2", msg(""), pool.spawn) != nil {
 		t.Fatal("two chats did not get two slots")
 	}
-	if err := s.Post("g:3", block, pool.spawn); err != ErrNoSlot {
+	if err := s.Post("g:3", msg(""), pool.spawn); err != ErrNoSlot {
 		t.Errorf("full pool: err %v", err)
 	}
-	if err := s.Post("g:1", func() {}, pool.spawn); err != nil {
+	if err := s.Post("g:1", msg(""), pool.spawn); err != nil {
 		t.Errorf("a busy chat refused a message: %v", err)
 	}
 	close(release)
@@ -84,17 +95,17 @@ func TestChatsInParallel(t *testing.T) {
 
 // A busy chat is never evicted, so it never gets a second worker.
 func TestBusyChatNotEvicted(t *testing.T) {
-	s, pool := New(10), newSlots(4)
-	s.max = 2
 	release := make(chan struct{})
-	s.Post("g:busy", func() { <-release }, pool.spawn)
+	s, pool := blocking(release), newSlots(4)
+	s.max = 2
+	s.Post("g:busy", msg(""), pool.spawn)
 	s.Add("g:idle", time.Now(), 0, Entry{Role: "user", Content: "hi"})
 	s.Add("g:new", time.Now(), 0, Entry{Role: "user", Content: "hi"})
 	if s.chats["g:busy"] == nil || s.chats["g:new"] == nil || s.chats["g:idle"] != nil {
 		t.Errorf("kept %v", s.chats)
 	}
-	s.Post("g:busy2", func() { <-release }, pool.spawn) // evicts g:new
-	if err := s.Post("g:third", func() {}, pool.spawn); err != ErrFull {
+	s.Post("g:busy2", msg(""), pool.spawn) // evicts g:new
+	if err := s.Post("g:third", msg(""), pool.spawn); err != ErrFull {
 		t.Errorf("all chats busy: err %v", err)
 	}
 	close(release)
@@ -102,7 +113,7 @@ func TestBusyChatNotEvicted(t *testing.T) {
 }
 
 func TestHistoryCapped(t *testing.T) {
-	s := New(2)
+	s := New(2, nil)
 	for i := range 5 {
 		s.Add("u:a", time.Now(), 0, Entry{Role: "user", Content: fmt.Sprint(i)}, Entry{Role: "assistant", Content: "ok"})
 	}
@@ -118,7 +129,7 @@ func TestHistoryCapped(t *testing.T) {
 // History goes when the chat's disappearing-messages timer runs out, and the
 // chat's names and follow-up counts go with it.
 func TestHistoryExpires(t *testing.T) {
-	s := New(10)
+	s := New(10, nil)
 	s.Learn("g:1", "Alice", "id-a")
 	s.SetFollowUp("g:1", 0, 2)
 	s.Add("g:1", time.Now(), 30*time.Millisecond, Entry{Role: "user", Content: "hi"})
@@ -145,7 +156,7 @@ func TestHistoryExpires(t *testing.T) {
 
 // Expiry counts from when the message arrived, not from when it was added.
 func TestExpiryFromStart(t *testing.T) {
-	s := New(10)
+	s := New(10, nil)
 	s.Add("u:a", time.Now().Add(-time.Hour), 2*time.Hour, Entry{Role: "user", Content: "hi"})
 	if exp := time.Until(s.History("u:a")[0].Expires); exp > time.Hour {
 		t.Errorf("expires in %v", exp)
@@ -159,12 +170,14 @@ func TestExpiryFromStart(t *testing.T) {
 // A chat that got no history keeps nothing once its worker ends, and goes
 // once its message keys lapse.
 func TestNoHistoryKeepsNothing(t *testing.T) {
-	s, pool := New(10), newSlots(1)
-	s.Post("g:1", func() {
+	var s *Store
+	s = New(10, func([]feature.Received) {
 		s.Learn("g:1", "Alice", "id-a")
 		s.SetFollowUp("g:1", 0, 2)
 		s.Repeat("g:1", "k")
-	}, pool.spawn)
+	})
+	pool := newSlots(1)
+	s.Post("g:1", msg(""), pool.spawn)
 	pool.wg.Wait()
 	if len(s.Names("g:1")) != 0 || s.FollowUp("g:1", 0) != 0 {
 		t.Error("names or counts kept with no history")
@@ -184,10 +197,10 @@ func TestNoHistoryKeepsNothing(t *testing.T) {
 
 // When history expires during a reply, the chat stays until its worker ends.
 func TestExpiryWhileBusy(t *testing.T) {
-	s, pool := New(10), newSlots(1)
 	release := make(chan struct{})
+	s, pool := blocking(release), newSlots(1)
 	s.Add("g:1", time.Now(), 10*time.Millisecond, Entry{Role: "user", Content: "hi"})
-	s.Post("g:1", func() { <-release }, pool.spawn)
+	s.Post("g:1", msg(""), pool.spawn)
 	time.Sleep(50 * time.Millisecond)
 	s.mu.Lock()
 	c := s.chats["g:1"]
@@ -203,7 +216,7 @@ func TestExpiryWhileBusy(t *testing.T) {
 }
 
 func TestRepeat(t *testing.T) {
-	s := New(10)
+	s := New(10, nil)
 	if s.Repeat("g:1", "k") || !s.Repeat("g:1", "k") || s.Repeat("g:2", "k") || s.Repeat("g:1", "other") {
 		t.Error("wrong repeats")
 	}
@@ -221,7 +234,7 @@ func TestClaim(t *testing.T) {
 }
 
 func TestNames(t *testing.T) {
-	s := New(10)
+	s := New(10, nil)
 	s.Learn("g:1", "Alice", "id-a")
 	s.Learn("g:1", "alice", "id-a")
 	s.Learn("g:1", "Bob", "id-b")
@@ -237,7 +250,7 @@ func TestNames(t *testing.T) {
 }
 
 func TestFollowUps(t *testing.T) {
-	s := New(10)
+	s := New(10, nil)
 	s.SetFollowUp("g:1", 1, 2)
 	s.SetFollowUp("g:1", 1, 1)
 	if s.FollowUp("g:1", 1) != 1 || s.FollowUp("g:1", 0) != 0 {

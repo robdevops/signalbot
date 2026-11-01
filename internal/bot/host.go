@@ -69,7 +69,7 @@ func (b *Bot) Groups(ctx context.Context, user string) ([]feature.Group, error) 
 // posted it.
 func (b *Bot) Deliver(msg feature.Message) {
 	if !b.closing.Load() {
-		b.post(msg.Chat.Key(), func() { b.delivered(msg) })
+		b.post(feature.Received{Message: msg, Delivered: true})
 	}
 }
 

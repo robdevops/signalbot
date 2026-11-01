@@ -47,9 +47,7 @@ type Bot struct {
 	ai       *model.Client // nil with no model
 	chats    *chats.Store
 	timers   *timers.Timers
-	slots    chan struct{} // one per message being handled
-	waitMu   sync.Mutex
-	waiting  map[string][]feature.Received // addressed messages queued per chat, answered together
+	slots    chan struct{} // one per chat being worked on
 	ctx      context.Context
 	stop     context.CancelFunc // stops the timers
 	timerCtx context.Context
@@ -73,8 +71,8 @@ var _ feature.Host = (*Bot)(nil)
 // answered. Work in progress ends with ctx, which should outlive the
 // shutdown signal so that Shutdown can let replies finish.
 func New(ctx context.Context, cfg *config.Config, net Network) *Bot {
-	b := &Bot{cfg: cfg, net: net, chats: chats.New(cfg.HistoryTurns),
-		timers: timers.New(), slots: make(chan struct{}, cfg.MaxConcurrency), ctx: ctx}
+	b := &Bot{cfg: cfg, net: net, timers: timers.New(), slots: make(chan struct{}, cfg.MaxConcurrency), ctx: ctx}
+	b.chats = chats.New(cfg.HistoryTurns, b.work)
 	b.timerCtx, b.stop = context.WithCancel(ctx)
 	if cfg.NoModel {
 		logx.Noticef("no model: only commands are answered")
@@ -130,30 +128,15 @@ func (b *Bot) Idle() bool { return len(b.slots) == 0 }
 
 // handle runs on the network's reader goroutine for every message received,
 // so it never blocks or calls the network. An unaddressed group message
-// goes to the OnMessage hooks here, and is never logged; an addressed one
-// is handled in its chat's slot.
+// goes to the OnMessage hooks here, and is never logged; an addressed one,
+// or one that waits for the bot's own ID, goes to its chat's mailbox.
 func (b *Bot) handle(r feature.Received) {
-	if b.closing.Load() {
-		return
-	}
-	key := r.Chat.Key()
 	switch {
+	case b.closing.Load():
 	case r.GroupChange:
-		b.chats.ForgetNames(key)
-	case r.Wait:
-		// Until the bot's own ID is known, nothing can be judged: wait in a
-		// slot. This job already holds the chat's worker, so an addressed
-		// message is handled here, in order, rather than queued again.
-		b.post(key, func() {
-			switch msg, ok := b.load(r); {
-			case ok && msg.Addressed:
-				b.respond(msg, b.onMessage(b.ctx, msg), prompt(msg))
-			case ok:
-				b.keep(msg)
-			}
-		})
-	case r.Addressed:
-		b.queue(key, r)
+		b.chats.ForgetNames(r.Chat.Key())
+	case r.Addressed, r.Wait:
+		b.post(r)
 	case len(b.messages) > 0:
 		b.keep(r.Message)
 	}
@@ -167,14 +150,10 @@ func (b *Bot) keep(msg feature.Message) {
 	}
 }
 
-// post queues job in the chat's mailbox, taking a slot for the chat's
-// worker if it has none. Queued work is skipped once shutdown begins.
-func (b *Bot) post(key string, job func()) error {
-	err := b.chats.Post(key, func() {
-		if !b.closing.Load() {
-			job()
-		}
-	}, func(worker func()) bool {
+// post adds r to its chat's mailbox, taking a slot for the chat's worker if
+// it has none.
+func (b *Bot) post(r feature.Received) {
+	err := b.chats.Post(r.Chat.Key(), r, func(worker func()) bool {
 		select {
 		case b.slots <- struct{}{}:
 			go func() { defer func() { <-b.slots }(); worker() }()
@@ -189,41 +168,16 @@ func (b *Bot) post(key string, job func()) error {
 	case err != nil:
 		logx.Warnf("%v, dropping message", err)
 	}
-	return err
 }
 
-// queue adds an addressed message to its chat's waiting list. The first
-// message waiting posts the one job that answers the whole list, so a
-// message that arrives while the bot is answering an earlier one is
-// answered with the others that arrived meanwhile: "actually" and "forget
-// it" get one reply that sees both. At most chats.MaxQueue wait.
-func (b *Bot) queue(key string, r feature.Received) {
-	b.waitMu.Lock() // held across post, so a failed post never races the job
-	defer b.waitMu.Unlock()
-	w := b.waiting[key]
-	if len(w) >= chats.MaxQueue {
-		logx.Warnf("%v, dropping message", chats.ErrQueueFull)
-		return
-	}
-	if b.waiting == nil {
-		b.waiting = map[string][]feature.Received{}
-	}
-	b.waiting[key] = append(w, r)
-	if len(w) == 0 && b.post(key, func() { b.answerWaiting(key) }) != nil {
-		delete(b.waiting, key)
-	}
-}
-
-// answerWaiting answers every message waiting in a chat, in order: one that
-// a hook acts on (a command, an answer, an ignore) on its own, and runs of
-// the rest together, as one turn, each run within one message's picture
-// limits. A panic loses only the message or turn that caused it, and
-// nothing new starts once shutdown begins.
-func (b *Bot) answerWaiting(key string) {
-	b.waitMu.Lock()
-	rs := b.waiting[key]
-	delete(b.waiting, key)
-	b.waitMu.Unlock()
+// work handles what waited in a chat's mailbox, in order. Addressed
+// messages are answered together, as one turn, so "actually" and "forget
+// it" get one reply that sees both; each run stays within one message's
+// picture limits. On its own goes a message a hook acts on (a command, an
+// answer, an ignore), a delivered one, and one that waited for the bot's
+// ID and was not addressed after all. A panic loses only the message or
+// turn that caused it, and nothing new starts once shutdown begins.
+func (b *Bot) work(rs []feature.Received) {
 	var batch []feature.Message
 	flush := func() {
 		run := batch
@@ -232,26 +186,36 @@ func (b *Bot) answerWaiting(key string) {
 			safely(func() { m, text := merge(run); b.respond(m, feature.Action{}, text) })
 		}
 	}
+	alone := func(fn func()) {
+		flush()
+		if !b.closing.Load() {
+			fn()
+		}
+	}
 	for _, r := range rs {
 		if b.closing.Load() {
 			return
 		}
 		safely(func() {
+			if r.Delivered {
+				alone(func() { b.delivered(r.Message) })
+				return
+			}
 			msg, ok := b.load(r)
-			if !ok || !msg.Addressed {
-				return
-			}
-			if act := b.onMessage(b.ctx, msg); act != (feature.Action{}) {
-				flush()
-				if !b.closing.Load() {
-					b.respond(msg, act, prompt(msg))
+			switch {
+			case !ok:
+			case !msg.Addressed:
+				alone(func() { b.keep(msg) })
+			default:
+				if act := b.onMessage(b.ctx, msg); act != (feature.Action{}) {
+					alone(func() { b.respond(msg, act, prompt(msg)) })
+					return
 				}
-				return
+				if !fits(batch, msg) {
+					flush()
+				}
+				batch = append(batch, msg)
 			}
-			if !fits(batch, msg) {
-				flush()
-			}
-			batch = append(batch, msg)
 		})
 	}
 	flush()

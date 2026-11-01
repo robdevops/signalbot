@@ -57,11 +57,13 @@ type Media struct {
 }
 
 // Received is a message as the chat network hands it to the core, on the
-// network's reader goroutine. Features never see one.
+// network's reader goroutine, or as a feature delivers it. Features never
+// see one.
 type Received struct {
 	Message          // what is known without calling the network
 	GroupChange bool // only that a group's members, name or description changed
 	Wait        bool // the bot's own ID isn't known yet, so nor is whether the message is for it
+	Delivered   bool // a feature delivered it, with no Load
 	// Load completes an addressed or waiting message in its slot, where it
 	// may call the network, calling learn with each name it shows the model
 	// and that person's ID. It reports false for a message the core has
