@@ -148,11 +148,13 @@ func TestCommands(t *testing.T) {
 }
 
 // A group with Keywords is offered when a message matches, and for the 2
-// replies after one that matched or used its tools.
+// replies after one that matched or used its tools. A group with only
+// Names is kept for the prompt's list, but isn't in {tools}.
 func TestOffering(t *testing.T) {
 	h := start(t, options{tools: true, features: func(b *Bot) {
 		b.Tools(group("alpha", "a_tool", nil))
 		b.Tools(group("beta", "b_tool", regexp.MustCompile(`\bplot\b`)))
+		b.Tools(feature.ToolGroup{Names: []string{"gamma"}})
 	}})
 	for _, c := range []struct {
 		text    string
@@ -167,8 +169,8 @@ func TestOffering(t *testing.T) {
 	} {
 		r, _ := h.ask(dm(fmt.Sprint(c.text, " ", len(h.requests())))) // not a repeat
 		equal(t, c.text, toolNames(r), c.tools)
-		want := "\n" + c.listing + "If asked what tools you have: alpha; beta.\n"
-		if s := system(r); !strings.Contains(s, want) || !strings.Contains(s, "Tools:\\nalpha\\n\\nbeta\\n") || strings.Contains(s, "beta system") != slices.Contains(c.tools, "b_tool") {
+		want := "\n" + c.listing + "If asked what tools you have: alpha; beta; gamma.\n"
+		if s := system(r); !strings.Contains(s, want) || !strings.Contains(s, "Tools:\\nalpha\\n\\nbeta\\n") || strings.Contains(s, `\ngamma`) || strings.Contains(s, "beta system") != slices.Contains(c.tools, "b_tool") {
 			t.Fatalf("%s: system %q", c.text, s)
 		}
 	}

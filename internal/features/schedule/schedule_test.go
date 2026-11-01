@@ -501,7 +501,7 @@ func TestStateDirectory(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "its state directory "+missing+" (") || !strings.Contains(err.Error(), fix) {
 		t.Fatalf("got %v", err)
 	}
-	if len(w.h.IntroLines()) != 0 || w.dm(`/schedule list`) != "" {
+	if len(w.h.IntroLines()) != 0 || len(w.h.ToolGroups()) != 0 || w.dm(`/schedule list`) != "" {
 		t.Fatal("registered anyway")
 	}
 
@@ -524,9 +524,14 @@ func TestStateDirectory(t *testing.T) {
 	}
 }
 
-// /timer, /reminder and /job are the same command as /schedule.
+// /timer, /reminder and /job are the same command as /schedule, and the
+// model is told all four, with no tools, for a near-miss such as "/time".
 func TestAliases(t *testing.T) {
 	w := newWorld(t).start()
+	want := []feature.ToolGroup{{Names: []string{"**schedules and reminders**: /schedule, /timer, /reminder, /job"}}}
+	if g := w.h.ToolGroups(); !reflect.DeepEqual(g, want) {
+		t.Fatalf("tool groups %+v", g)
+	}
 	for _, cmd := range []string{"/timer", "/reminder", "/job"} {
 		if got := w.dm(cmd + ` "hi" 2030-02-01T09:00`); !strings.HasPrefix(got, "Scheduled for ") {
 			t.Fatalf("%s: got %q", cmd, got)

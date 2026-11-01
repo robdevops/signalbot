@@ -1,6 +1,6 @@
 # Plan: what's next
 
-Items 1–4 and 7 are done (Markdown prompt, Signal text styles, bold tool labels, the A− items, optimistic capabilities). Item 5 was dropped. Items 6, 8 and 9 remain.
+Items 1–4, 7, 8 and 9 are done (Markdown prompt, Signal text styles, bold tool labels, the A− items, optimistic capabilities, the state-directory check, the model knowing the scheduling commands). Item 5 was dropped. Item 6 remains.
 
 Do each remaining item, run gofmt, `go vet` and `go test -race ./...`, then commit and push.
 
@@ -28,4 +28,4 @@ Do each remaining item, run gofmt, `go vet` and `go test -race ./...`, then comm
 Behaviour changes, approved: the prompt asks for Markdown, and replies can show bold, italic, code and spoilers.
 
 8. **Refuse to start when the state directory can't be written** (done). At startup, `/schedule` checks that its directory (`$STATE_DIRECTORY`, or the working directory) can be listed and written. If not, the bot exits with a clear message saying to add `StateDirectory=signalbot` to the systemd unit, the way the Docker `/data` check already does. Approved.
-9. **Tell the model about the scheduling commands.** The prompt's "If asked what tools you have" list names `/schedule`, `/timer`, `/reminder` and `/job`, so a near-miss like `/time …` gets pointed to the right command instead of "I can't set reminders". This needs a command-only entry the core keeps although it has no model tools. No `/time` alias. Approved.
+9. **Tell the model about the scheduling commands** (done). The prompt's "If asked what tools you have" list names `/schedule`, `/timer`, `/reminder` and `/job`, so a near-miss like `/time …` gets pointed to the right command instead of "I can't set reminders". This needs a command-only entry the core keeps although it has no model tools. No `/time` alias. Approved. A `ToolGroup` with only `Names` is kept for that list alone, not `{tools}`.

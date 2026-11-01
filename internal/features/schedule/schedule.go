@@ -114,6 +114,9 @@ func register(h feature.Host, loc *time.Location, now func() time.Time) error {
 		}
 	}
 	h.IntroLine(`Type "/schedule" for schedules and reminders.`)
+	// No model tools, so this names the commands only in the prompt's list
+	// of what the bot has, for a near-miss such as "/time" to be pointed here.
+	h.Tools(feature.ToolGroup{Names: []string{"**schedules and reminders**: /" + strings.Join(commands, ", /")}})
 	return nil
 }
 

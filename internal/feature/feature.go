@@ -87,9 +87,11 @@ type Picture struct {
 	HistoryNote string // what history keeps of it; "" keeps "[sent an image]"
 }
 
-// ToolGroup is a set of tools offered to the model together.
+// ToolGroup is a set of tools offered to the model together. One with no
+// Tools, only Names, such as a feature's chat commands, is named only in
+// the prompt's list of what the bot has, not in the intro's {tools}.
 type ToolGroup struct {
-	Names    []string // what it adds to the intro's {tools}
+	Names    []string // what it adds to the intro's {tools} and the prompt's list
 	Listing  string   // its item in the system prompt's tools line
 	System   string   // a system-prompt line while it is offered
 	Tools    []Tool
@@ -116,7 +118,7 @@ type Info struct {
 	Model      string   // the model's ID, such as "provider/model" on OpenRouter; "" with no model
 	Images     bool     // the model takes images
 	CallsTools bool     // the model can call tools
-	Tools      []string // every tool group's Names in feature order; none when it can't call tools
+	Tools      []string // the Names of every tool group with tools, in feature order; none when it can't call tools
 	Intro      string   // INTRO with {name}, {model} and {tools} filled in
 }
 

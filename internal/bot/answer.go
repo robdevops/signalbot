@@ -187,15 +187,18 @@ func (b *Bot) followUp(key string, offered []int, text string, used []string) {
 	}
 }
 
-// toolNames is every tool group's Names in feature order, for {tools}; none
+// toolNames is the Names of every tool group with tools, in feature order,
+// for {tools}, or of every group if all is set, for the prompt's list; none
 // if the model can't call tools.
-func (b *Bot) toolNames() []string {
+func (b *Bot) toolNames(all bool) []string {
 	if !b.callsTools.Load() {
 		return nil
 	}
 	var out []string
 	for _, g := range b.groups {
-		out = append(out, g.Names...)
+		if all || len(g.Tools) > 0 {
+			out = append(out, g.Names...)
+		}
 	}
 	return out
 }
@@ -208,7 +211,7 @@ func (b *Bot) system(offered []int) string {
 		p += " " + n
 	}
 	p += " " + mentionPrompt
-	names := b.toolNames()
+	names := b.toolNames(true)
 	if len(names) > 0 {
 		var items []string
 		for _, i := range offered {
@@ -243,7 +246,7 @@ func (b *Bot) intro() string {
 	}
 	more := "\n\n" + strings.Join(b.more, "\n\n") + "\n\n" // each feature line padded with blank lines
 	s := strings.NewReplacer("{name}", b.net.BotName(), "{model}", model, "{more}", more,
-		"{tools}", cmp.Or(strings.Join(b.toolNames(), "\n\n"), "none")).Replace(b.cfg.Intro)
+		"{tools}", cmp.Or(strings.Join(b.toolNames(false), "\n\n"), "none")).Replace(b.cfg.Intro)
 	s = lineEnds.ReplaceAllString(s, "\n")
 	return strings.TrimSpace(blankLines.ReplaceAllString(s, "\n\n")) // never two blank lines in a row
 }

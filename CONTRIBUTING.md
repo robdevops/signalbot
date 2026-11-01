@@ -60,7 +60,7 @@ Before sending a change: `gofmt -l .`, `go vet ./...` and `go test -race ./...`,
 ## Adding a feature
 
 1. Make `internal/features/<name>` with a `Register(h feature.Host) error`. Read settings with `h.Env`, register hooks and tool groups, and return an error only for a config error, which stops the bot.
-2. For a command, use `feature.Command(h, "name", fn)`. A name another feature has taken is refused. If the model should know the command, name it in your tool group's `Names` and `Listing`.
+2. For a command, use `feature.Command(h, "name", fn)`. A name another feature has taken is refused. If the model should know the command, name it in your tool group's `Names` and `Listing`; a command that uses no model tool can go in a group with only `Names`, which the prompt's tools list names but `{tools}` doesn't.
 3. For tools, call `h.Tools` with a `ToolGroup`: `Names` for the intro's `{tools}`, `Listing` for the tools line, `System` for a prompt line while offered, and `Keywords` to offer it only when a message matches.
 4. Test it on `featuretest`, without the core.
 5. Add one line to `features.go`. Order matters: it is the order hooks run in and of the tools line.
