@@ -79,7 +79,7 @@ The bot runs as a dynamic user (`DynamicUser=yes`) in the `signal-cli` Unix grou
    ```
 2. Build and install:
    ```
-   /usr/local/go/bin/go build -o signalbot ./cmd/signalbot
+   /usr/local/go/bin/go build -o signalbot
    sudo install -m 755 signalbot /usr/local/bin/signalbot
    sudo cp signalbot.service /etc/systemd/system/
    sudo systemctl daemon-reload

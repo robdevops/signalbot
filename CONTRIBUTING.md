@@ -3,7 +3,7 @@
 The bot is a small core and features on top. [TECHNICAL.md](TECHNICAL.md) describes the design and what each does.
 
 ```
-cmd/signalbot/          main.go (wiring), features.go (one line per feature)
+main.go, features.go    the main package at the module root: wiring, and one line per feature
 internal/signal/        the signal-cli client, names and mentions
 internal/model/         the model client (OpenRouter or another chat completions API) and the tool loop
 internal/chats/         per-chat state: history, dedupe, mention names, the mailbox
@@ -42,7 +42,7 @@ If a feature can't be built on these, that's a design finding. Either a port bec
 
 Tests in `internal/arch` enforce these:
 
-- **Imports:** only `cmd/signalbot` imports features; a feature imports only `internal/feature`, `internal/kit` and its own packages; kit imports no other internal package.
+- **Imports:** only the main package, at the module root, imports features; a feature imports only `internal/feature`, `internal/kit` and its own packages; kit imports no other internal package.
 - **No feature names in the core:** the core's source mentions no feature name or feature-only word (chart, MCP, group context, `/example`, `/schedule`, …).
 - **Docs:** every setting read, the core's or a feature's (`h.Env("NAME", …)`), is in the README's configuration table.
 
@@ -50,7 +50,7 @@ And by convention:
 
 - **Zero features:** the core's own tests run with no features registered.
 - **Each feature alone:** each feature's tests run on `featuretest`, a fake host.
-- **Scenarios:** `cmd/signalbot/scenario_test.go` drives the whole bot through a fake signal-cli socket and a fake model API (OpenRouter's, or another provider's), and checks no message text reaches the log. The golden prompts in `cmd/signalbot/testdata` pin the system prompt byte for byte (`go test ./cmd/signalbot -run Golden -update` rewrites them).
+- **Scenarios:** `scenario_test.go` drives the whole bot through a fake signal-cli socket and a fake model API (OpenRouter's, or another provider's), and checks no message text reaches the log. The golden prompts in `testdata` pin the system prompt byte for byte (`go test . -run Golden -update` rewrites them).
 - **Sizes:** `go run ./internal/arch/sizes` reports lines per package; CI reports them on each PR, not enforced.
 - **Never log message text,** including in errors and panics. `logx` escapes line breaks; don't log what a user wrote.
 - Tests use only the names Alice and Bob.
@@ -63,7 +63,7 @@ Before sending a change: `gofmt -l .`, `go vet ./...` and `go test -race ./...`,
 2. For a command, use `feature.Command(h, "name", fn)`. A name another feature has taken is refused. If the model should know the command, name it in your tool group's `Names` and `Listing`.
 3. For tools, call `h.Tools` with a `ToolGroup`: `Names` for the intro's `{tools}`, `Listing` for the tools line, `System` for a prompt line while offered, and `Keywords` to offer it only when a message matches.
 4. Test it on `featuretest`, without the core.
-5. Add one line to `cmd/signalbot/features.go`. Order matters: it is the order hooks run in and of the tools line.
+5. Add one line to `features.go`. Order matters: it is the order hooks run in and of the tools line.
 6. Add its settings to the README's configuration table, and a row in TECHNICAL.md's features table and a paragraph under it.
 
 `internal/features/example` is the smallest feature to copy.

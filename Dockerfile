@@ -12,9 +12,9 @@ WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
 ENV GOPROXY=off
-COPY cmd ./cmd
+COPY *.go ./
 COPY internal ./internal
-RUN go build -trimpath -ldflags "-s -w -X main.version=${VERSION}" -o /signalbot ./cmd/signalbot
+RUN go build -trimpath -ldflags "-s -w -X main.version=${VERSION}" -o /signalbot .
 # The bot's state directory, owned by the nonroot user. There is no shell in
 # the final image to make it, so it is made here and copied.
 RUN mkdir /data

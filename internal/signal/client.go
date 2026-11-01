@@ -28,7 +28,7 @@ import (
 const maxLine = 1 << 20
 
 // Handled, if set, is called on the reader goroutine after each message is
-// handled. It is for the scenario tests in cmd/signalbot, which see the bot
+// handled. It is for the scenario tests at the module root, which see the bot
 // only through its socket; set it before Run.
 var Handled func()
 

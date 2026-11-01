@@ -107,7 +107,7 @@ func (b *Bot) Shutdown(d time.Duration) {
 }
 
 // Idle reports whether no work holds a slot and the contact list isn't
-// loading. It is for the scenario tests in cmd/signalbot.
+// loading. It is for the scenario tests at the module root.
 func (b *Bot) Idle() bool { return len(b.slots) == 0 && !b.sig.Loading() }
 
 // Handle runs on the reader goroutine for every message received, so it

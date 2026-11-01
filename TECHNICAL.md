@@ -7,7 +7,7 @@ Go, the standard library plus `golang.org/x/image` (for chart text, with the bun
 ## Design rules
 
 - **A core written from a spec.** It is lightweight, scales with load, and handles many chats concurrently. With no features it still answers messages (below).
-- **Features bolted on.** Each feature is a package that registers on the core's ports (`internal/feature`). `cmd/signalbot/features.go` lists them, one line each.
+- **Features bolted on.** Each feature is a package that registers on the core's ports (`internal/feature`). `features.go` lists them, one line each.
 - **The core never mirrors a feature.** Delete any feature and the core doesn't change. If a feature can't be built on the ports, either a port becomes more generic (and stays tied to its stage), or the feature takes on more of the work. A feature-shaped field in the core is never the answer.
 - **Plain Go, no ceremony.** Concrete types and structs. An interface only where there are two real implementations, or a test needs a fake. Each type defined once and used everywhere. Many inputs go in a typed struct, never a map or a long list of positional arguments. No wrappers or adapters that only pass calls through.
 - **Scope.** Signal only; the ports don't preclude other chat networks. The model is any chat completions API in OpenAI's format, OpenRouter's by default, or none at all.
@@ -42,7 +42,7 @@ What the bot does with no features registered.
 ## Layout
 
 ```
-cmd/signalbot/          main.go (wiring), features.go (one line per feature)
+main.go, features.go    the main package at the module root: wiring, and one line per feature
 internal/signal/        the signal-cli client, names and mentions
 internal/model/         the model client (OpenRouter or another chat completions API) and the tool loop
 internal/chats/         per-chat state: history, dedupe, mention names, the mailbox
@@ -206,7 +206,7 @@ For how to add a feature and the checks to run before a change, see [CONTRIBUTIN
 
 Enforced by tests in `internal/arch`:
 
-- **Imports:** only `cmd/signalbot` imports features; a feature imports only `internal/feature`, `internal/kit` and its own packages; `internal/feature` imports only kit; kit imports no other internal package, so it never imports the core.
+- **Imports:** only the main package, at the module root, imports features; a feature imports only `internal/feature`, `internal/kit` and its own packages; `internal/feature` imports only kit; kit imports no other internal package, so it never imports the core.
 - **No feature names in the core:** the core's source mentions no feature name or feature-only word (chart, pie, MCP, group context, web search, vision, `/example`, `/schedule`).
 - **Docs:** every setting read, the core's or a feature's (`h.Env("NAME", …)`), is in the README's configuration table.
 
@@ -214,8 +214,8 @@ By convention:
 
 - **Zero features:** the core's own tests (`internal/bot`) run with no features registered.
 - **Each feature alone:** each feature's tests run on `featuretest`, a fake host.
-- **Golden prompts** in `cmd/signalbot/testdata` pin the system prompt byte for byte: `prompt_full.txt` with every feature registered, against real fake MCP servers rather than a hand-set list, and `prompt_nofeatures.txt`, checked by the core's own tests with no features (with tool calling on and off) and by a scenario with every feature registered and a model that can't call tools. `go test ./cmd/signalbot -run Golden -update` rewrites both files from the scenarios.
-- **Edge-only scenarios:** `cmd/signalbot/scenario_test.go` drives the whole bot, features included, through a fake signal-cli socket and a fake model API (OpenRouter's or another provider's), and checks what is sent back, what the model receives (which shows the history), and the log, including that no message text, reply, tool argument or result reaches it. [docs/SCENARIOS.md](docs/SCENARIOS.md) describes the harness and maps the tests from before the core was written to the scenarios that cover them.
+- **Golden prompts** in `testdata` pin the system prompt byte for byte: `prompt_full.txt` with every feature registered, against real fake MCP servers rather than a hand-set list, and `prompt_nofeatures.txt`, checked by the core's own tests with no features (with tool calling on and off) and by a scenario with every feature registered and a model that can't call tools. `go test . -run Golden -update` rewrites both files from the scenarios.
+- **Edge-only scenarios:** `scenario_test.go` drives the whole bot, features included, through a fake signal-cli socket and a fake model API (OpenRouter's or another provider's), and checks what is sent back, what the model receives (which shows the history), and the log, including that no message text, reply, tool argument or result reaches it. [docs/SCENARIOS.md](docs/SCENARIOS.md) describes the harness and maps the tests from before the core was written to the scenarios that cover them.
 - **One picture cap:** `feature.MaxPictures` (4) caps the pictures in a message, in or out, everywhere.
 - **Tests** that start slow work drain it before they end, and change the DM allowlist in place, since the client holds a reference to the map.
 - **Sizes:** `go run ./internal/arch/sizes` reports lines per package; CI reports them on each PR, not enforced.

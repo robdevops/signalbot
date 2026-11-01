@@ -36,7 +36,7 @@ func goFiles(t *testing.T) []string {
 // under reports whether p is dir or inside it.
 func under(p, dir string) bool { return p == dir || strings.HasPrefix(p, dir+"/") }
 
-// Only cmd/signalbot imports features; a feature imports only
+// Only the main package, at the module root, imports features; a feature imports only
 // internal/feature, kit and its own packages; internal/feature imports only
 // kit; kit imports no other internal package.
 func TestImports(t *testing.T) {
@@ -65,7 +65,7 @@ func TestImports(t *testing.T) {
 			case under(dir, "internal/kit"):
 				ok = under(imp, "internal/kit")
 			default:
-				ok = !under(imp, "internal/features") || dir == "cmd/signalbot"
+				ok = !under(imp, "internal/features") || dir == "."
 			}
 			if !ok {
 				t.Errorf("%s imports %s", p, imp)
@@ -78,12 +78,12 @@ func TestImports(t *testing.T) {
 var featureWords = regexp.MustCompile(`(?i)chart|donut|\bpies?\b|mcp|groupctx|group.?context|websearch|web.?search|\bvision\b|/example|/schedule`)
 
 // The core never mentions a feature, so deleting one leaves it unchanged.
-// The scenarios in cmd/signalbot test the whole bot, features included.
+// The scenarios at the module root test the whole bot, features included.
 func TestNoFeatureWordsInTheCore(t *testing.T) {
 	for _, p := range goFiles(t) {
-		core := under(p, "internal") || under(p, "cmd/signalbot")
-		scenario := strings.HasPrefix(p, "cmd/signalbot/scenario_")
-		if !core || scenario || under(p, "internal/features") || under(p, "internal/arch") || p == "cmd/signalbot/features.go" {
+		core := under(p, "internal") || path.Dir(p) == "."
+		scenario := strings.HasPrefix(p, "scenario_")
+		if !core || scenario || under(p, "internal/features") || under(p, "internal/arch") || p == "features.go" {
 			continue
 		}
 		data, err := os.ReadFile(root + "/" + p)

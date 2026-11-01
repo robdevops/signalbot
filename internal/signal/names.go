@@ -62,7 +62,7 @@ func newNames() names {
 }
 
 // Loading reports whether the contact list is loading. It is for the
-// scenario tests in cmd/signalbot, which wait for the bot to be idle.
+// scenario tests at the module root, which wait for the bot to be idle.
 func (c *Client) Loading() bool {
 	if !c.names.loading.TryLock() {
 		return true
