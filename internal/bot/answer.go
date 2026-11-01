@@ -23,6 +23,9 @@ const (
 		"Aim for a single line. Two or three sentences at the very most, and only when asked for detail."
 	mentionPrompt = "A mention shown as [unnamed user] is someone whose name you don't know; don't invent one. " +
 		"To mention someone, write @ followed by their exact name. Never write your own name with an @."
+	// sourcePrompt joins them when the model can call tools and has some.
+	sourcePrompt = "If your answer uses a tool or search, name the source briefly, e.g. \"(Yahoo Finance)\", " +
+		"or give its url when that helps."
 	// maxQuote caps quoted text in a prompt.
 	maxQuote = 500
 	// followUps is how many replies after one that matched a tool group's
@@ -222,8 +225,8 @@ func (b *Bot) toolNames(all bool) []string {
 	return out
 }
 
-// system is the system prompt: the base rules with the network's line, the
-// tools line, the offered groups' lines, MODEL_SYSTEM_PROMPT and the intro.
+// system is the system prompt: the base rules with the network's line (and
+// the source rule when there are tools), the tools line, the offered groups' lines, MODEL_SYSTEM_PROMPT and the intro.
 func (b *Bot) system(offered []int) string {
 	p := basePrompt
 	if n := b.net.Prompt(); n != "" {
@@ -232,6 +235,7 @@ func (b *Bot) system(offered []int) string {
 	p += " " + mentionPrompt
 	names := b.toolNames(true)
 	if len(names) > 0 {
+		p += " " + sourcePrompt
 		var items []string
 		for _, i := range offered {
 			if l := b.groups[i].Listing; l != "" {

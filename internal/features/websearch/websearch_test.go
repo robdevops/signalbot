@@ -23,6 +23,7 @@ func TestWebSearchOnByDefault(t *testing.T) {
 	want := []feature.ToolGroup{{
 		Names:   []string{label},
 		Listing: "web search",
+		System:  system,
 		Tools:   []feature.Tool{{Server: "openrouter:web_search"}},
 	}}
 	if g := h.ToolGroups(); !reflect.DeepEqual(g, want) {
