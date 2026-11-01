@@ -2,7 +2,6 @@ package bot
 
 import (
 	"cmp"
-	"fmt"
 	"slices"
 	"strconv"
 	"strings"
@@ -10,7 +9,6 @@ import (
 
 	"github.com/robdevops/signalbot/internal/chats"
 	"github.com/robdevops/signalbot/internal/feature"
-	"github.com/robdevops/signalbot/internal/kit/img"
 	"github.com/robdevops/signalbot/internal/kit/logx"
 	"github.com/robdevops/signalbot/internal/kit/txt"
 	"github.com/robdevops/signalbot/internal/model"
@@ -90,17 +88,18 @@ func (b *Bot) respond(msg feature.Message, act feature.Action, text string) {
 	// History notes the pictures sent, which the model would otherwise not
 	// know it did. A reply with no text is sent with their captions.
 	var notes string
-	var captions, attachments []string
-	for i, p := range reply.Pictures {
+	var captions []string
+	var pics [][]byte
+	for _, p := range reply.Pictures {
 		notes += cmp.Or(p.HistoryNote, "[sent an image]") + "\n"
 		if p.Caption != "" {
 			captions = append(captions, p.Caption)
 		}
-		attachments = append(attachments, img.Attachment(p.Data, fmt.Sprintf("image%d", i+1)))
+		pics = append(pics, p.Data)
 	}
 	b.chats.Add(key, start, msg.Expires, chats.Entry{Role: "user", Content: strings.TrimSpace(kept)},
 		chats.Entry{Role: "assistant", Content: notes + reply.Text})
-	b.net.Send(msg.Chat, cmp.Or(reply.Text, strings.Join(captions, "\n")), attachments, b.chats.Names(key))
+	b.net.Send(msg.Chat, cmp.Or(reply.Text, strings.Join(captions, "\n")), pics, b.chats.Names(key))
 }
 
 // prompt is the message as the model sees it: its quote, escaped and capped

@@ -42,7 +42,7 @@ If a feature can't be built on these, that's a design finding. Either a port bec
 
 Tests in `internal/arch` enforce these:
 
-- **Imports:** only the main package, at the module root, imports features and `internal/signal`; a feature imports only `internal/feature`, `internal/kit` and its own packages; kit imports no other internal package.
+- **Imports:** only the main package, at the module root, imports features and `internal/signal`; a feature imports only `internal/feature`, `internal/kit` and its own packages; `internal/signal` imports only `internal/feature` and kit; kit imports no other internal package.
 - **No feature names in the core:** the core's source mentions no feature name or feature-only word (chart, MCP, group context, `/example`, `/schedule`, …).
 - **Docs:** every setting read, the core's or a feature's (`h.Env("NAME", …)`), is in the README's configuration table.
 

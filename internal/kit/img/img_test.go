@@ -5,7 +5,6 @@ import (
 	"image"
 	"image/png"
 	"slices"
-	"strings"
 	"testing"
 )
 
@@ -15,13 +14,6 @@ func pngBytes(t *testing.T) []byte {
 		t.Fatal(err)
 	}
 	return b.Bytes()
-}
-
-func TestAttachment(t *testing.T) {
-	data := pngBytes(t)
-	if got := Attachment(data, "image1"); !strings.HasPrefix(got, "data:image/png;filename=image1.png;base64,") {
-		t.Errorf("Attachment %q", got[:50])
-	}
 }
 
 func TestSendable(t *testing.T) {

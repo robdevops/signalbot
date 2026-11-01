@@ -16,7 +16,7 @@ const MaxPictures = 4
 // Chat is a conversation: a group, or a DM with one user.
 type Chat struct {
 	GroupID string // set for a group
-	User    string // in a DM, the other person: an ACI, else a phone number
+	User    string // in a DM, the other person: the network's ID for them
 }
 
 // Key names the chat in the core's maps.
@@ -30,7 +30,7 @@ func (c Chat) Key() string {
 // Message is a message posted in a chat.
 type Message struct {
 	Chat      Chat
-	Sender    string        // the sender's ID: an ACI, else a phone number
+	Sender    string        // the network's ID for the sender
 	Name      string        // the sender's display name, made safe; "" if unknown
 	Text      string        // the text, without the bot's @mention, other mentions as @Name or [unnamed user]
 	Quote     *Quote        // the message it replies to, if any
@@ -48,12 +48,12 @@ type Quote struct {
 
 // Media is an image a message carries, or its sticker.
 type Media struct {
-	ID      string // signal-cli's attachment ID; "" for a sticker
+	ID      string // the network's attachment ID; "" for a sticker
 	Type    string // an image's MIME type; "" for a sticker
 	Quoted  bool   // a thumbnail of an image in the quoted message
 	Pack    string // a sticker's pack ID; "" for an image
 	Sticker int    // a sticker's index in its pack
-	Label   string // a sticker's emoji and pack title, e.g. `: 🙂 from "Pack"`; filled in by the core
+	Label   string // a sticker's emoji and pack title, e.g. `: 🙂 from "Pack"`; filled in by the network
 }
 
 // Received is a message as the chat network hands it to the core, on the

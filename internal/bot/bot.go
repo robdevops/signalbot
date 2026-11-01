@@ -24,23 +24,16 @@ import (
 // tests' fake. Media, Groups and Redact are the host's services of those
 // names.
 type Network interface {
-	// Run calls handle on one goroutine for each message received, until
-	// ctx ends. handle must not block.
+	// Run calls handle for each message received until ctx ends. handle
+	// must not block.
 	Run(ctx context.Context, handle func(feature.Received))
-	// WaitID returns the bot's own ID once it is connected, or "" if ctx
-	// ends first.
 	WaitID(ctx context.Context) string
-	// Send posts text to chat, linking each @Name in known (lowercased name
-	// to ID), with the attachments (data: URIs). Failures are logged.
-	Send(chat feature.Chat, text string, attachments []string, known map[string]string)
-	// Typing shows the bot typing in chat until stop is called.
+	Send(chat feature.Chat, text string, images [][]byte, known map[string]string)
 	Typing(chat feature.Chat) (stop func())
-	// Delivered readies a message a feature delivers, as if its sender had
-	// just posted it, passing claim the name and ID of each person in a
-	// group's chat to link @Name to. It returns msg without the bot's
-	// @name, and whether that was there; false, logged, if msg is dropped.
+	// Delivered returns msg without the bot's @name, and whether that was
+	// there; ok is false, logged, if msg is dropped.
 	Delivered(ctx context.Context, msg feature.Message, claim func(name, id string)) (out feature.Message, mentioned, ok bool)
-	// BotName is the bot's own name. It never blocks.
+	// BotName never blocks.
 	BotName() string
 	Media(ctx context.Context, msg feature.Message, i int) ([]byte, error)
 	Groups(ctx context.Context, user string) ([]feature.Group, error)

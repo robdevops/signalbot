@@ -17,7 +17,7 @@ func TestSendSplitsAndCaps(t *testing.T) {
 	c := New(f.sock, nil)
 	run(t, c, f)
 	dm := feature.Chat{User: aliceID}
-	c.Send(dm, strings.Repeat("z ", 3*maxChars), []string{"data:image/png;base64,AA=="}, nil)
+	c.Send(dm, strings.Repeat("z ", 3*maxChars), [][]byte{[]byte("PNG")}, nil)
 	eventually(t, "four sends", func() bool { return len(f.calls("send")) == 4 })
 	for i, s := range f.calls("send") {
 		if (s["attachments"] != nil) != (i == 0) {
@@ -28,7 +28,7 @@ func TestSendSplitsAndCaps(t *testing.T) {
 		t.Errorf("logs %q", logs)
 	}
 	c.Send(dm, " ", nil, nil)
-	c.Send(dm, "", []string{"data:image/png;base64,AA=="}, nil)
+	c.Send(dm, "", [][]byte{[]byte("PNG")}, nil)
 	eventually(t, "the pictures alone", func() bool { return len(f.calls("send")) == 5 })
 	if s := f.calls("send")[4]; s["message"] != "" || s["attachments"] == nil {
 		t.Errorf("pictures sent as %v", s)

@@ -230,7 +230,7 @@ func TestStalledWriteReconnects(t *testing.T) {
 }
 
 // A reply loses the bot's own @name, links @Name to the names it is given,
-// and carries its attachments.
+// and carries its images, each named and encoded for signal-cli.
 func TestSendAndTyping(t *testing.T) {
 	captureLogs(t)
 	f := newFake(t)
@@ -238,12 +238,13 @@ func TestSendAndTyping(t *testing.T) {
 	c.typingEvery = 20 * time.Millisecond
 	run(t, c, f)
 	group, dm := feature.Chat{GroupID: groupID}, feature.Chat{User: aliceID}
-	c.Send(group, "@signalbot hi @Alice", []string{"data:image/png;base64,AA=="}, map[string]string{"alice": aliceID})
+	png := []byte("\x89PNG\r\n\x1a\n")
+	c.Send(group, "@signalbot hi @Alice", [][]byte{png, png}, map[string]string{"alice": aliceID})
 	c.Send(dm, "plain @Alice", nil, nil)
 	eventually(t, "two sends", func() bool { return len(f.calls("send")) == 2 })
 	s := f.calls("send")
 	if s[0]["groupId"] != groupID || s[0]["message"] != "hi @Alice" || fmt.Sprint(s[0]["mention"]) != "[3:6:"+aliceID+"]" ||
-		fmt.Sprint(s[0]["attachments"]) != "[data:image/png;base64,AA==]" {
+		fmt.Sprint(s[0]["attachments"]) != "[data:image/png;filename=image1.png;base64,iVBORw0KGgo= data:image/png;filename=image2.png;base64,iVBORw0KGgo=]" {
 		t.Errorf("group send %v", s[0])
 	}
 	if fmt.Sprint(s[1]["recipient"]) != "["+aliceID+"]" || s[1]["mention"] != nil || s[1]["attachments"] != nil {

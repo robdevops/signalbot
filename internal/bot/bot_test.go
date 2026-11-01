@@ -43,7 +43,7 @@ func TestGroupMentionIsAnswered(t *testing.T) {
 	h.answer(text("hi @Alice, ask @Bob"))
 	r, s := h.ask(atBot("hello there"))
 	equal(t, "model got", contents(r), []string{"user: Alice: hello there"})
-	// Alice was named to the model; Bob was not, so he stays plain text.
+	// Only Alice was named to the model, so only she reaches the known map.
 	if s.text != "hi @Alice, ask @Bob" || s.chat.GroupID != groupID || len(s.known) != 1 || s.known["alice"] != aliceID {
 		t.Fatalf("sent %+v", s)
 	}

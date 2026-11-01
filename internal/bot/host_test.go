@@ -69,7 +69,7 @@ func TestHooks(t *testing.T) {
 	if parts := messages(r)[2]["content"].([]any); len(parts) != 2 {
 		t.Fatalf("content %v", parts)
 	}
-	if s.text != "a caption" || len(s.attachments) != 2 || !strings.HasPrefix(s.attachments[0], "data:image/png;filename=image1.png;base64,") {
+	if s.text != "a caption" || len(s.images) != 2 || string(s.images[0]) != string(png) {
 		t.Fatalf("sent %+v", s)
 	}
 	if len(turns) != 1 || turns[0].Text != "look" || turns[0].Chat.GroupID != groupID {
@@ -238,8 +238,9 @@ func TestDeliver(t *testing.T) {
 	}
 }
 
-// A message delivered as the bot starts waits until it is connected.
-func TestDeliverWaitsToConnect(t *testing.T) {
+// A delivered message holds a slot, and nothing is sent, until the network
+// has it ready.
+func TestDeliverHoldsASlot(t *testing.T) {
 	h := start(t, options{waitID: true})
 	h.b.Deliver(feature.Message{Chat: feature.Chat{User: aliceID}, Sender: aliceID, Text: "@Botty are you up?"})
 	h.eventually("the delivery to wait", func() bool { return len(h.b.slots) == 1 })

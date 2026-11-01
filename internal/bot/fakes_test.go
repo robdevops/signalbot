@@ -57,10 +57,10 @@ type fakeNet struct {
 }
 
 type sent struct {
-	chat        feature.Chat
-	text        string
-	attachments []string
-	known       map[string]string
+	chat   feature.Chat
+	text   string
+	images [][]byte
+	known  map[string]string
 }
 
 func (n *fakeNet) Run(ctx context.Context, handle func(feature.Received)) {
@@ -78,8 +78,8 @@ func (n *fakeNet) WaitID(ctx context.Context) string {
 	}
 }
 
-func (n *fakeNet) Send(chat feature.Chat, text string, attachments []string, known map[string]string) {
-	n.sent <- sent{chat, text, attachments, known}
+func (n *fakeNet) Send(chat feature.Chat, text string, images [][]byte, known map[string]string) {
+	n.sent <- sent{chat, text, images, known}
 }
 
 func (n *fakeNet) Typing(feature.Chat) func() {
@@ -232,9 +232,9 @@ func (h *harness) release() {
 }
 
 // receive hands m to the bot as the network would: an addressed message
-// to be loaded in its slot, where the names it shows are learned; any other
-// as it is; and before the bot is connected, any message to wait in its
-// slot.
+// to be loaded in its slot, where the names it shows are learned; other
+// group messages as they are; an unaddressed DM not at all; and before the
+// bot is connected, any message to wait in its slot.
 func (h *harness) receive(m feature.Message) {
 	load := func(ctx context.Context, learn func(name, id string)) (feature.Message, bool) {
 		if h.net.WaitID(ctx) == "" {
@@ -248,8 +248,11 @@ func (h *harness) receive(m feature.Message) {
 	r := feature.Received{Message: m}
 	select {
 	case <-h.net.id:
-		if m.Addressed {
+		switch {
+		case m.Addressed:
 			r = feature.Received{Message: feature.Message{Chat: m.Chat, Addressed: true}, Load: load}
+		case m.Chat.GroupID == "":
+			return
 		}
 	default:
 		r = feature.Received{Message: feature.Message{Chat: m.Chat}, Wait: true, Load: load}

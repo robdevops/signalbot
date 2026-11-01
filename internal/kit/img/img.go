@@ -1,11 +1,7 @@
-// Package img checks images and encodes them for signal-cli.
+// Package img checks images.
 package img
 
-import (
-	"encoding/base64"
-	"net/http"
-	"strings"
-)
+import "net/http"
 
 // MaxBytes caps one image, sent or received.
 const MaxBytes = 5 << 20
@@ -24,12 +20,4 @@ func Supported(mime string) bool {
 // take, small enough to send.
 func Sendable(data []byte) bool {
 	return len(data) <= MaxBytes && Supported(http.DetectContentType(data))
-}
-
-// Attachment is data as a signal-cli attachment named name, with the
-// extension its type gives.
-func Attachment(data []byte, name string) string {
-	mime := http.DetectContentType(data)
-	ext := strings.TrimPrefix(mime, "image/")
-	return "data:" + mime + ";filename=" + name + "." + ext + ";base64," + base64.StdEncoding.EncodeToString(data)
 }

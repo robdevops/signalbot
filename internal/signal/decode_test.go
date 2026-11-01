@@ -253,7 +253,9 @@ func TestLoad(t *testing.T) {
 // A delivered message is checked as if its sender had just posted it: a
 // DM's sender must still be allowed, by ACI or number, and a group's still
 // a member. Its sender's name is filled in, the bot's @name is taken out,
-// and the members' names are passed on. A drop is logged without content.
+// and the members' names are passed on. One delivered before the client
+// connects waits, and loads the bot's name to take out. A drop is logged
+// without content.
 func TestDelivered(t *testing.T) {
 	logs := captureLogs(t)
 	f := newFake(t)
@@ -261,9 +263,25 @@ func TestDelivered(t *testing.T) {
 	f.set("listGroups", `[{"id":"`+groupID+`","name":"Family","isMember":true,"members":[{"uuid":"`+aliceID+`"},{"uuid":"`+bobID+`"}]}]`)
 	allowed := map[string]bool{"+1555": true}
 	c := New(f.sock, allowed)
-	run(t, c, f)
-	eventually(t, "the contacts", func() bool { return c.BotName() == "Botty" })
 	ctx := context.Background()
+	type result struct {
+		m             feature.Message
+		mentioned, ok bool
+	}
+	early := make(chan result, 1)
+	go func() {
+		m, mentioned, ok := c.Delivered(ctx, feature.Message{Chat: feature.Chat{User: aliceID}, Sender: aliceID, Text: "@Botty up?"}, nil)
+		early <- result{m, mentioned, ok}
+	}()
+	run(t, c, f)
+	select {
+	case r := <-early:
+		if !r.ok || !r.mentioned || r.m.Text != "up?" || r.m.Name != "Alice" {
+			t.Fatalf("delivered before connecting: %+v", r)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("the early delivery never returned")
+	}
 	deliver := func(m feature.Message) (feature.Message, []string, bool, bool) {
 		var claimed []string
 		out, mentioned, ok := c.Delivered(ctx, m, func(name, id string) { claimed = append(claimed, name+" "+id) })

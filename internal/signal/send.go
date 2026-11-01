@@ -1,7 +1,9 @@
 package signal
 
 import (
+	"encoding/base64"
 	"fmt"
+	"net/http"
 	"sort"
 	"strings"
 	"sync"
@@ -26,12 +28,16 @@ const (
 
 // Send posts text to chat: without the bot's own @name, with each @Name in
 // known (lowercased name to ID) made a real mention, cut short past maxReply
-// with a warning, and split at Signal's limit, with the attachments (data:
-// URIs, see img.Attachment) on the first message. A failure is logged, and
-// whether a message was delivered is logged when signal-cli says.
-func (c *Client) Send(chat feature.Chat, text string, attachments []string, known map[string]string) {
+// with a warning, and split at Signal's limit, with the images on the first
+// message. A failure is logged, and whether a message was delivered is
+// logged when signal-cli says.
+func (c *Client) Send(chat feature.Chat, text string, images [][]byte, known map[string]string) {
 	if n := utf8.RuneCountInString(text); n > maxReply {
 		logx.Warnf("reply truncated from %d chars", n)
+	}
+	var attachments []string
+	for i, data := range images {
+		attachments = append(attachments, attachmentURI(data, fmt.Sprintf("image%d", i+1)))
 	}
 	ps := parts(text, c.BotName())
 	if len(ps) == 0 {
@@ -64,6 +70,14 @@ func (c *Client) send(chat feature.Chat, text string, mentions, attachments []st
 		p["attachments"] = attachments
 	}
 	return c.write(c.nextID.Add(1), "send", p)
+}
+
+// attachmentURI is data as a signal-cli attachment named name, with the
+// extension its type gives.
+func attachmentURI(data []byte, name string) string {
+	mime := http.DetectContentType(data)
+	ext := strings.TrimPrefix(mime, "image/")
+	return "data:" + mime + ";filename=" + name + "." + ext + ";base64," + base64.StdEncoding.EncodeToString(data)
 }
 
 func target(chat feature.Chat) map[string]any {
