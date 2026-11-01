@@ -111,13 +111,11 @@ func (b *Bot) respond(msg feature.Message, act feature.Action, text string) {
 	// the text, which neither goes out nor is kept.
 	var notes string
 	var captions []string
-	var pics [][]byte
 	for _, p := range reply.Pictures {
 		notes += cmp.Or(p.HistoryNote, "[sent an image]") + "\n"
 		if p.Caption != "" {
 			captions = append(captions, p.Caption)
 		}
-		pics = append(pics, p.Data)
 	}
 	sent := reply.Text
 	if len(captions) > 0 {
@@ -125,7 +123,7 @@ func (b *Bot) respond(msg feature.Message, act feature.Action, text string) {
 	}
 	b.chats.Add(key, start, msg.Expires, chats.Entry{Role: "user", Content: strings.TrimSpace(kept)},
 		chats.Entry{Role: "assistant", Content: notes + reply.Text})
-	b.net.Send(msg.Chat, sent, pics, b.chats.Names(key))
+	b.net.Send(msg.Chat, sent, reply.Pictures, b.chats.Names(key))
 }
 
 // fallBack reports whether err is the API rejecting a request for its

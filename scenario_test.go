@@ -12,6 +12,7 @@ import (
 	"flag"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -1329,7 +1330,7 @@ func TestScenarioToolImageIsSentWithReply(t *testing.T) {
 	h := startBot(t, world{MCP: true})
 	h.queue(modelReply{Tool: "stocks__price_chart", Args: `{"q":"AAPL"}`}, modelReply{Text: "Here is the AAPL chart."})
 	s := h.ask(fromAlice("show me the AAPL price"))
-	if s.Message != "Here is the AAPL chart." || len(s.Attachments) != 1 || !strings.HasPrefix(s.Attachments[0], "data:image/png;filename=image1.png;base64,") {
+	if s.Message != "Here is the AAPL chart." || len(s.Attachments) != 1 || !regexp.MustCompile(`^data:image/png;filename=image_\d{8}-\d{6}\.png;base64,`).MatchString(s.Attachments[0]) {
 		t.Fatalf("sent %q with %d attachments", s.Message, len(s.Attachments))
 	}
 	if res := h.lastRequest().last(); res.Role != "tool" || res.Content != "[image sent to the chat]\nchart of AAPL" {
@@ -1429,7 +1430,7 @@ func TestScenarioChartReply(t *testing.T) {
 	h := startBot(t, world{})
 	h.queue(modelReply{Tool: "make_chart", Args: chartArgs}, modelReply{Text: "Done"})
 	s := h.ask(fromAlice("chart NVDA vs AMD for a month"))
-	if s.Message != "NVDA vs AMD, 1 month" || len(s.Attachments) != 1 || !strings.HasPrefix(s.Attachments[0], "data:image/png;filename=image1.png;base64,") {
+	if s.Message != "NVDA vs AMD, 1 month" || len(s.Attachments) != 1 || !strings.HasPrefix(s.Attachments[0], "data:image/png;filename=NVDA vs AMD 1 month.png;base64,") {
 		t.Fatalf("sent %q with %d attachments", s.Message, len(s.Attachments))
 	}
 	h.noMoreSends()
@@ -1480,7 +1481,7 @@ func TestScenarioPieChartReply(t *testing.T) {
 	}
 	h.queue(modelReply{Tool: tool, Args: pieArgs}, modelReply{Text: "Done"})
 	s := h.ask(fromAlice("a donut of revenue by segment"))
-	if s.Message != "Revenue by segment, Q3" || len(s.Attachments) != 1 || !strings.HasPrefix(s.Attachments[0], "data:image/png;filename=image1.png;base64,") {
+	if s.Message != "Revenue by segment, Q3" || len(s.Attachments) != 1 || !strings.HasPrefix(s.Attachments[0], "data:image/png;filename=Revenue by segment Q3.png;base64,") {
 		t.Fatalf("sent %q with %d attachments", s.Message, len(s.Attachments))
 	}
 	h.noMoreSends()

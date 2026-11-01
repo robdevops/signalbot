@@ -83,6 +83,7 @@ type Additions struct {
 // Picture is an image sent with a reply.
 type Picture struct {
 	Data        []byte
+	Name        string // its file name without the extension, e.g. a title; "" lets the network choose
 	Caption     string // sent in place of the reply's text
 	HistoryNote string // what history keeps of it; "" keeps "[sent an image]"
 }

@@ -58,7 +58,7 @@ type fakeNet struct {
 type sent struct {
 	chat   feature.Chat
 	text   string
-	images [][]byte
+	images []feature.Picture
 	known  map[string]string
 }
 
@@ -77,7 +77,7 @@ func (n *fakeNet) WaitID(ctx context.Context) string {
 	}
 }
 
-func (n *fakeNet) Send(chat feature.Chat, text string, images [][]byte, known map[string]string) {
+func (n *fakeNet) Send(chat feature.Chat, text string, images []feature.Picture, known map[string]string) {
 	n.sent <- sent{chat, text, images, known}
 }
 

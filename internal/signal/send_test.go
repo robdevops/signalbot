@@ -17,7 +17,7 @@ func TestSendSplitsAndCaps(t *testing.T) {
 	c := newClient(f.sock, nil, nil)
 	run(t, c, f)
 	dm := feature.Chat{User: aliceID}
-	c.Send(dm, strings.Repeat("z ", 3*maxChars), [][]byte{[]byte("PNG")}, nil)
+	c.Send(dm, strings.Repeat("z ", 3*maxChars), []feature.Picture{{Data: []byte("PNG")}}, nil)
 	eventually(t, "four sends", func() bool { return len(f.calls("send")) == 4 })
 	for i, s := range f.calls("send") {
 		if (s["attachments"] != nil) != (i == 0) {
@@ -28,7 +28,7 @@ func TestSendSplitsAndCaps(t *testing.T) {
 		t.Errorf("logs %q", logs)
 	}
 	c.Send(dm, " ", nil, nil)
-	c.Send(dm, "", [][]byte{[]byte("PNG")}, nil)
+	c.Send(dm, "", []feature.Picture{{Data: []byte("PNG")}}, nil)
 	eventually(t, "the pictures alone", func() bool { return len(f.calls("send")) == 5 })
 	if s := f.calls("send")[4]; s["message"] != "" || s["attachments"] == nil {
 		t.Errorf("pictures sent as %v", s)
@@ -116,5 +116,19 @@ func TestParts(t *testing.T) {
 	}
 	if len(got) != 4 || total > maxReply || !strings.HasSuffix(got[3], "[…truncated]") {
 		t.Errorf("capped: %d parts, %d chars, ends %q", len(got), total, fmt.Sprint(got[len(got)-1][max(0, len(got[len(got)-1])-20):]))
+	}
+}
+
+// A picture's name is made safe for a file name, or left to the fallback.
+func TestFileName(t *testing.T) {
+	for in, want := range map[string]string{
+		"NVDA vs AMD, 1 month":           "NVDA vs AMD 1 month",
+		"  a/b\\c:d*e?f\"g<h>i|j;k\n l ": "abcdefghijk l",
+		"/;:":                            "",
+		strings.Repeat("x", 90):          strings.Repeat("x", 80),
+	} {
+		if got := fileName(in); got != want {
+			t.Errorf("fileName(%q) = %q, want %q", in, got, want)
+		}
 	}
 }

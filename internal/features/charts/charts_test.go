@@ -8,6 +8,7 @@ import (
 	"image/png"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/robdevops/signalbot/internal/feature"
 	"github.com/robdevops/signalbot/internal/feature/featuretest"
@@ -85,7 +86,7 @@ func TestChartTool(t *testing.T) {
 		t.Fatalf("got %q, %d pictures, %v", out, len(pics), err)
 	}
 	// The subtitle is too long for one line, so the caption is the title.
-	if p := pics[0]; p.Caption != "NVDA vs ACMR" || p.HistoryNote != `[sent the chart "NVDA vs ACMR"]` {
+	if p := pics[0]; p.Caption != "NVDA vs ACMR" || p.Name != "NVDA vs ACMR" || p.HistoryNote != `[sent the chart "NVDA vs ACMR"]` {
 		t.Fatalf("caption %q, note %q", p.Caption, p.HistoryNote)
 	}
 	img, err := png.Decode(bytes.NewReader(pics[0].Data))
@@ -100,7 +101,7 @@ func TestPieTool(t *testing.T) {
 	if err != nil || !strings.Contains(out, "Total $127.6B") || len(pics) != 1 {
 		t.Fatalf("got %q, %d pictures, %v", out, len(pics), err)
 	}
-	if p := pics[0]; p.Caption != "GOOGL Q3 FY2026 revenue by type ($B)" || p.HistoryNote != `[sent the chart "GOOGL Q3 FY2026 revenue by type ($B)"]` {
+	if p := pics[0]; p.Caption != "GOOGL Q3 FY2026 revenue by type ($B)" || p.Name != "GOOGL Q3 FY2026 revenue by type ($B)" || p.HistoryNote != `[sent the chart "GOOGL Q3 FY2026 revenue by type ($B)"]` {
 		t.Fatalf("caption %q, note %q", p.Caption, p.HistoryNote)
 	}
 	if _, err := png.Decode(bytes.NewReader(pics[0].Data)); err != nil {
@@ -122,6 +123,18 @@ func TestChartToolBadArguments(t *testing.T) {
 		}
 		if !errors.Is(err, errArgs) || err.Error() != errArgs.Error()+": "+strings.TrimPrefix(out, "error: ") {
 			t.Errorf("%s: log error %v", name, err)
+		}
+	}
+}
+
+// A chart's file is named after its title, or its kind and the time when the
+// title has no letter or digit.
+func TestChartFileName(t *testing.T) {
+	defer func(f func() time.Time) { now = f }(now)
+	now = func() time.Time { return time.Date(2026, 11, 1, 22, 31, 15, 0, time.Local) }
+	for title, want := range map[string]string{"NVDA, 1 month": "NVDA, 1 month", "📈 — !": "line_20261101-223115"} {
+		if got := fileName("line", title); got != want {
+			t.Errorf("fileName(%q) = %q, want %q", title, got, want)
 		}
 	}
 }

@@ -86,7 +86,7 @@ func TestReplyPictures(t *testing.T) {
 	}})
 	h.answer(toolCall("draw"), text("Done"))
 	h.receive(dm("draw"))
-	if s := h.nextSend(); s.text != "a caption" || len(s.images) != 2 || string(s.images[0]) != string(png) {
+	if s := h.nextSend(); s.text != "a caption" || len(s.images) != 2 || string(s.images[0].Data) != string(png) {
 		t.Fatalf("sent %+v", s)
 	}
 	h.answer(toolCall("snap"), text("Done"))

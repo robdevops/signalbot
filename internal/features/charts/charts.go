@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/robdevops/signalbot/internal/feature"
 	"github.com/robdevops/signalbot/internal/kit/logx"
@@ -66,7 +67,7 @@ func Register(h feature.Host) error {
 					return "error: " + err.Error(), nil, fmt.Errorf("%w: %v", errArgs, err)
 				}
 				data, err := renderChart(s, themeFor(mode))
-				return drawn(s.summary(), chartCaption(s.Title, s.Subtitle), data, err)
+				return drawn(s.summary(), chartCaption(s.Title, s.Subtitle), fileName("line", s.Title), data, err)
 			}},
 			{Name: pieTool, Description: pieToolDescription, Schema: pieToolSchema, Run: func(_ context.Context, args string) (string, []feature.Picture, error) {
 				s, err := parsePie(args)
@@ -74,7 +75,7 @@ func Register(h feature.Host) error {
 					return "error: " + err.Error(), nil, fmt.Errorf("%w: %v", errArgs, err)
 				}
 				data, err := renderPie(s, themeFor(mode))
-				return drawn(s.summary(), chartCaption(s.Title, s.Subtitle), data, err)
+				return drawn(s.summary(), chartCaption(s.Title, s.Subtitle), fileName("pie", s.Title), data, err)
 			}},
 		},
 	})
@@ -83,11 +84,20 @@ func Register(h feature.Host) error {
 
 // drawn is a chart tool's result: the summary for the model and the chart,
 // or what went wrong drawing it.
-func drawn(summary, caption string, data []byte, err error) (string, []feature.Picture, error) {
+func drawn(summary, caption, name string, data []byte, err error) (string, []feature.Picture, error) {
 	if err != nil {
 		return "error: the chart could not be drawn", nil, err
 	}
-	return summary, []feature.Picture{{Data: data, Caption: caption, HistoryNote: sentNote(caption)}}, nil
+	return summary, []feature.Picture{{Data: data, Name: name, Caption: caption, HistoryNote: sentNote(caption)}}, nil
+}
+
+// fileName is what a chart's file is called: its title, or, if that has no
+// letter or digit, its kind and the local time, e.g. "pie_20261101-223115".
+func fileName(kind, title string) string {
+	if strings.IndexFunc(title, func(r rune) bool { return unicode.IsLetter(r) || unicode.IsDigit(r) }) >= 0 {
+		return title
+	}
+	return kind + "_" + now().Format("20060102-150405")
 }
 
 // sentNote is what history keeps of a chart, which the model would

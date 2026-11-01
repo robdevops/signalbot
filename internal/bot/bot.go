@@ -28,7 +28,7 @@ type Network interface {
 	// must not block.
 	Run(ctx context.Context, handle func(Received))
 	WaitID(ctx context.Context) string
-	Send(chat feature.Chat, text string, images [][]byte, known map[string]string)
+	Send(chat feature.Chat, text string, pics []feature.Picture, known map[string]string)
 	Typing(chat feature.Chat) (stop func())
 	// Delivered readies a delivered message in its slot: its sender's name
 	// filled in, the bot's @name stripped (Mentioned if it was there), and

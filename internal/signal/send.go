@@ -34,17 +34,25 @@ func (c *Client) Prompt() string {
 
 // Send posts text to chat as parts makes it, with each @Name in known
 // (lowercased name to ID) made a real mention and the images on the first
-// message. A failure is logged, as is a message signal-cli says it could
-// not deliver.
-func (c *Client) Send(chat feature.Chat, text string, images [][]byte, known map[string]string) {
+// message, each named after its Name or else image_<local time>. A failure
+// is logged, as is a message signal-cli says it could not deliver.
+func (c *Client) Send(chat feature.Chat, text string, pics []feature.Picture, known map[string]string) {
 	if n := utf8.RuneCountInString(text); n > maxReply {
 		logx.Warnf("reply truncated from %d chars", n)
 	}
 	var attachments []string
-	for i, data := range images { // named with the extension their type gives
-		mime := http.DetectContentType(data)
-		attachments = append(attachments, fmt.Sprintf("data:%s;filename=image%d.%s;base64,%s",
-			mime, i+1, strings.TrimPrefix(mime, "image/"), base64.StdEncoding.EncodeToString(data)))
+	stamp := time.Now().Format("20060102-150405")
+	for i, p := range pics { // with the extension their type gives
+		name := fileName(p.Name)
+		if name == "" {
+			name = "image_" + stamp
+		}
+		if i > 0 {
+			name += fmt.Sprintf("_%d", i+1)
+		}
+		mime := http.DetectContentType(p.Data)
+		attachments = append(attachments, fmt.Sprintf("data:%s;filename=%s.%s;base64,%s",
+			mime, name, strings.TrimPrefix(mime, "image/"), base64.StdEncoding.EncodeToString(p.Data)))
 	}
 	ps := parts(text, c.BotName())
 	if len(ps) == 0 {
@@ -64,6 +72,20 @@ func (c *Client) Send(chat feature.Chat, text string, images [][]byte, known map
 			return
 		}
 	}
+}
+
+// fileName is name made safe as a file name in a data URI: characters that
+// file systems or the URI reserve are dropped, spaces are collapsed, and it is
+// cut to 80 characters.
+func fileName(name string) string {
+	name = strings.Map(func(r rune) rune {
+		if r < ' ' || r == 0x7f || strings.ContainsRune(`/\:*?"<>|;,`, r) {
+			return -1
+		}
+		return r
+	}, name)
+	r := []rune(strings.Join(strings.Fields(name), " "))
+	return strings.TrimSpace(string(r[:min(len(r), 80)]))
 }
 
 // send posts one message.
