@@ -27,7 +27,6 @@ type Host struct {
 	read      []string
 	messages  []func(context.Context, feature.Message) feature.Action
 	turns     []func(context.Context, feature.Message) feature.Additions
-	replies   []func(feature.Message, *feature.Reply)
 	groups    []feature.ToolGroup
 	timers    []*Timer
 	delivered []feature.Message
@@ -58,12 +57,6 @@ func (h *Host) OnTurn(fn func(context.Context, feature.Message) feature.Addition
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	h.turns = append(h.turns, fn)
-}
-
-func (h *Host) OnReply(fn func(feature.Message, *feature.Reply)) {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	h.replies = append(h.replies, fn)
 }
 
 func (h *Host) Tools(g feature.ToolGroup) {
@@ -171,16 +164,6 @@ func (h *Host) Turn(ctx context.Context, m feature.Message) []feature.Additions 
 		out = append(out, fn(ctx, m))
 	}
 	return out
-}
-
-// Reply runs the OnReply hooks on r.
-func (h *Host) Reply(m feature.Message, r *feature.Reply) {
-	h.mu.Lock()
-	hooks := slices.Clone(h.replies)
-	h.mu.Unlock()
-	for _, fn := range hooks {
-		fn(m, r)
-	}
 }
 
 // Fire runs the earliest timer named name, as the core would when it is due,

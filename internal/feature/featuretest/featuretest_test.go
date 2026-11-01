@@ -21,12 +21,6 @@ func TestHooksRunInOrder(t *testing.T) {
 	if adds := h.Turn(context.Background(), feature.Message{}); len(adds) != 1 || adds[0].Note != "n" {
 		t.Errorf("got %+v", adds)
 	}
-	h.OnReply(func(_ feature.Message, r *feature.Reply) { r.Text += "!" })
-	r := &feature.Reply{Text: "hi"}
-	h.Reply(feature.Message{}, r)
-	if r.Text != "hi!" {
-		t.Errorf("got %q", r.Text)
-	}
 }
 
 // As in the core, only what applies to a message counts: Context on an

@@ -23,7 +23,7 @@ What the bot does with no features registered.
 - **Nothing to answer.** A message with no text (only a photo or sticker) is answered only if an `OnTurn` hook adds something to it.
 - **The model.** A chat completions API in OpenAI's format at `MODEL_API_URL` (OpenRouter's by default, `internal/model`), with `MODEL_API_KEY` as a bearer token if set, over a keep-alive client that requires TLS 1.3 for `https://`. Requests to OpenRouter (host `openrouter.ai`) set `provider.data_collection: deny` and `usage.include` for the real cost, plus the `MODEL_REASONING` effort as `reasoning.effort`; requests elsewhere carry only `reasoning_effort`. Either effort is left out when `MODEL_REASONING` is `none`. The tokens are logged with each reply, and the cost when the API reports it. A network error, 429 or 5xx gets one retry; an error body is reduced to its message ("status N: message"). The tool loop takes at most 5 requests and 3 minutes per reply, and 4 pictures.
 - **Capabilities.** At startup OpenRouter's model list says whether the model takes images and can call tools; tools are offered only if it can (otherwise one warning says "tools are off"). If the check fails, the model isn't listed, or the API isn't OpenRouter's (one startup line says so), images are off and tools stay on. A server tool (`Tool.Server`, `provider:name`) is offered only when the API is that provider's (`openrouter` for OpenRouter); otherwise it is left out with one startup warning naming it, and a tool group left with no tools is dropped. The core never names a server tool.
-- **No model.** With neither `MODEL_API_URL` nor `MODEL_API_KEY` set, startup logs "no model: only commands are answered" and checks no capabilities: `Info.Model` is "", and images and tool calling are off. A message a hook answers (a command) is answered as usual, and a delivered plain text is posted; anything else addressed gets no reply, no typing and no model request, so `OnTurn`, `OnReply` and tool groups are never used. No history is kept at all: no turns, no `Context` from unaddressed messages, no delivered text.
+- **No model.** With neither `MODEL_API_URL` nor `MODEL_API_KEY` set, startup logs "no model: only commands are answered" and checks no capabilities: `Info.Model` is "", and images and tool calling are off. A message a hook answers (a command) is answered as usual, and a delivered plain text is posted; anything else addressed gets no reply, no typing and no model request, so `OnTurn` and tool groups are never used. No history is kept at all: no turns, no `Context` from unaddressed messages, no delivered text.
 - **History.** Per chat, `HISTORY_TURNS` exchanges, in memory only, for at most 500 chats. Each entry expires after 24 hours, or sooner when the chat's disappearing-messages timer (`expiresInSeconds`) runs out, on one `time.AfterFunc` per chat set for its earliest entry. When a chat's history is gone, everything kept about it goes too: its remembered names and tool follow-up counts.
 - **Safe under load.** Concurrency, mailboxes, history, chats, names, timers and frames are capped. The same message from the same sender in the same chat within 10 seconds is dropped. Display names and quotes are sanitised before they reach the model or the log.
 - **Logging.** journald priorities 2–7, all always written: `<2>` errors that stop the bot, `<3>` errors, `<4>` warnings, `<5>` startup, connect and reconnect, `<6>` info, `<7>` debug. Under journald (`JOURNAL_STREAM` matches stdout) each line carries its `<N>` prefix; elsewhere, as in Docker, lines are plain, with a timestamp only in a terminal. Priorities 5–7 go to stdout and 2–4 to stderr, so a log driver that sees only the stream still tells them apart. Each addressed message logs "received group chat" or "received dm" at info, with no name or content. No line holds anyone's name or ID, except the ID of a sender not in `SIGNAL_DM_USER_IDS` whose DM was dropped; the bot's own account ID is logged at startup. Names and message bodies are never logged: a panic while handling a message is recovered and reported without its value or stack; API error bodies are reduced to their message; malformed frames are reported by size. Every logged value has `\n` and `\r` escaped, so no value can start a forged line.
@@ -31,7 +31,7 @@ What the bot does with no features registered.
 
 ## Concurrency and scale
 
-- **Reader goroutine.** The Signal client's reader parses each frame and decides "addressed?" without blocking or calling the network, then hands the bot a `feature.Received`: an addressed message (with a `Load` to complete it in its slot), an unaddressed group message, a group change, or, before the bot's own ID is known, a message to wait. The bot may briefly take the chat store's lock (to queue a message or keep context). Unaddressed group messages go to the `OnMessage` hooks here.
+- **Reader goroutine.** The Signal client's reader parses each frame and decides "addressed?" without blocking or calling the network, then hands the bot a `feature.Received`: an addressed message (with a `Load` to complete it in its slot), an unaddressed group message, a group change, or, before the bot's own ID is known, a message to wait, also with a `Load`. Only a message with a `Load` goes to its chat's mailbox from here, and a delivered one is the only one there without. The bot may briefly take the chat store's lock (to queue a message or keep context). Unaddressed group messages go to the `OnMessage` hooks here.
 - **Worker slots.** A fixed pool of `MAX_CONCURRENCY`. Message handling that may call the network (waiting for the account ID, contacts a message needs, sticker labels, media, the model) runs only in a slot. The contact reloads on connect and on group changes run on their own timer, one at a time, and `listAccounts` on each connection's own goroutine. Until the bot's own ID is known, a message waits for it in a slot, up to 10s. A full pool drops the message with a warning.
 - **Per-chat mailbox.** An addressed message, one a feature delivers, or one waiting for the bot's own ID joins its chat's mailbox (`chats.Store.Post`); at most 4 wait, and more are dropped with a warning. A chat with work has one worker, holding one slot, which takes everything waiting at once, handles it in order, and exits when nothing is left, so each answer sees the ones before it. Different chats run in parallel.
 - **Answered together.** Messages that arrive while the worker is busy are answered as one turn, a line each (in a group with the sender's name), so "actually" and "forget it" get one reply that sees both. On its own, in order, goes a message a hook acts on (such as a command), a delivered one, and one that waited for the bot's ID and was not addressed after all; a run is split where it would carry more than 4 images or a second sticker. A panic loses only the message or turn that caused it, and once shutdown begins nothing more that waited starts, not even its hooks.
@@ -43,11 +43,11 @@ What the bot does with no features registered.
 
 ```
 main.go, features.go    the main package at the module root: wiring, and one line per feature
-internal/signal/        the chat network, outside the core: the socket, decoding, sending, names; only main imports it
+internal/signal/        the chat network, outside the core: its settings, the socket, decoding, sending, names; only main imports it
 internal/model/         the model client (OpenRouter or another chat completions API) and the tool loop
 internal/chats/         per-chat state: history, dedupe, mention names, the mailbox
 internal/timers/        one-shot timers
-internal/config/        settings from the environment, each name recorded for the docs test; config.Test, the test hooks
+internal/config/        the core's settings from the environment; config.Test, the test hooks
 internal/bot/           the decision, the prompt, the hooks; wires the core packages, and reaches the network through Network
 internal/feature/       the ports and shared types (the only part of the core features import), the command helper, featuretest
 internal/features/*     one package per feature
@@ -62,23 +62,22 @@ internal/arch/          the guardrail tests and the sizes report
 
 ## Lifecycle and ports
 
-The core's lifecycle has four stages. Each port is one stage; nothing else is a port.
+The core's lifecycle has three stages. Each port is one stage; nothing else is a port.
 
 | Stage | Port | Returns |
 |---|---|---|
-| A message arrives | `OnMessage(func(ctx, Message) Action)` | carry on, ignore it, answer with text without the model, choose a tool, or keep text as context |
-| The model is asked | `OnTurn(func(ctx, Message) Additions)`, plus `Tools(ToolGroup)` | a system-prompt line, a note on the message (with its own version for history), and images |
-| The reply goes out | `OnReply(func(Message, *Reply))` | may change the text or pictures |
+| A message arrives | `OnMessage(func(ctx, Message) Action)` | carry on, answer with text without the model, choose a tool, or keep text as context |
+| The model is asked | `OnTurn(func(ctx, Message) Additions)`, plus `Tools(ToolGroup)` | a note on the message (with its own version for history), and images |
 | Time arrives | `At` ([Timers](#timers)) | nothing: the timer may deliver a message |
 
 **Hook rules:**
 - Hooks run in feature order (`features.go`).
 - For an unaddressed message, `OnMessage` runs on the reader goroutine, so it must not block or call the network. For an addressed or delivered one it runs in the message's slot. The first non-zero `Action` wins.
 - `Answer` and `ToolChoice` count only on an addressed message, and `Context` only on an unaddressed one.
-- `OnTurn` runs only when the model is about to be asked; `OnReply` only after it replies.
+- `OnTurn` runs only when the model is about to be asked.
 
 **Services the host offers:**
-- `Env(key, def)`: a feature's own setting, recorded for the docs test.
+- `Env(key, def)`: a feature's own setting. The docs guardrail finds each name passed to it.
 - `Info()`: the bot's name, its version, the model ("" with no model), whether it takes images and can call tools, and the names of the tools (none when it can't call tools). All but the name and the tools are known when features register.
 - `Media(ctx, msg, i)`: the bytes of a message's image or sticker (15s). The core fills in each sticker's `Label` (its emoji and pack title) when it loads the message.
 - `Deliver(msg)`: act on a message as if its sender had just posted it in its chat, through the chat's mailbox. Inside the message's slot:
@@ -95,19 +94,17 @@ The core's lifecycle has four stages. Each port is one stage; nothing else is a 
 
 **Types**, each field being a stage's natural input or output:
 ```go
-type Action    struct{ Ignore bool; Answer, ToolChoice, Context string } // zero value: carry on
-type Additions struct{ System, Note, HistoryNote string; Images []string }
-type Reply     struct{ Text string; Pictures []Picture; ToolsUsed []string }
+type Action    struct{ Answer, ToolChoice, Context string } // zero value: carry on
+type Additions struct{ Note, HistoryNote string; Images []string }
 type Picture   struct{ Data []byte; Caption, HistoryNote string }
 type ToolGroup struct{ Names []string; Listing, System string; Tools []Tool; Keywords *regexp.Regexp }
 type Tool      struct{ Name, Description string; Schema json.RawMessage; Server string; Run func(ctx context.Context, args string) (string, []Picture, error) }
 ```
-- **`Message`** is a message in a chat: sender, name, text (mentions as `@Name` or `[unnamed user]`), quote, media (its images, then the quoted message's thumbnails, at most 4, then its sticker), the disappearing-messages timer, and whether it is addressed. `OnTurn` and `OnReply` get the message being answered.
+- **`Message`** is a message in a chat: sender, name, text (mentions as `@Name` or `[unnamed user]`), quote, media (its images, then the quoted message's thumbnails, at most 4, then its sticker), the disappearing-messages timer, and whether it is addressed. `OnTurn` gets the message being answered. A `Media` is an image or a sticker, by an ID only the network reads.
 - **`Tool`:** a function tool has `Schema` and `Run`, which returns text and any pictures. A server tool, run by the model's provider itself, has only `Server`, as `provider:name` (for example `openrouter:web_search`).
 - **`ToolChoice`** is the model API's own concept, not a chat-command field: that tool is required through `tool_choice` until its result is in, then released.
 - **`Context`** is "keep this text in history", which the core does under its own expiry rules.
-- **`ToolsUsed`** is what the tool loop reports.
-- **A picture's `HistoryNote`** is set by the tool that made it; without one, the core records "[sent an image]". A reply with no text is sent with its pictures' captions, one per line.
+- **A picture's `HistoryNote`** is set by the tool that made it; without one, the core records "[sent an image]". When pictures have captions, those are sent, one per line, in place of the model's text, which history then doesn't keep either.
 - **`ToolGroup`:** `Names` is what it adds to the intro's `{tools}`; the core joins every group's names in feature order. `Listing` is its item in the tools line. `System` is a system-prompt line while the group is offered. A group with no tools the model's API can run is dropped.
 
 **Offering:** a group without `Keywords` is offered with every message. One with `Keywords` is offered when what was typed matches (never a name or a quote), and for the 2 replies after any reply that matched or used one of its tools. A `ToolChoice` offers only that tool.
@@ -125,7 +122,7 @@ The system prompt is, in order:
    > You are a helpful assistant in a Signal chat. Reply in plain text: Signal does not render markdown. Aim for a single line. Two or three sentences at the very most, and only when asked for detail. Never exceed 2000 characters, which is Signal's limit for one message. A mention shown as [unnamed user] is someone whose name you don't know; don't invent one. To mention someone, write @ followed by their exact name. Never write your own name with an @.
 
 2. When the model can call tools and any are registered, the tools line: `Your tools: ` and the listing of each tool group offered for this message, then `If asked what tools you have:` and the names of every group, offered or not. For example: `Your tools: web search; charts (make_chart, make_pie_chart); weather: get_forecast, /forecast. If asked what tools you have: web search, charts, get_forecast, /forecast.`
-3. The `System` line of each offered tool group (an MCP server's `instructions`), then the lines `OnTurn` hooks add for this message.
+3. The `System` line of each offered tool group (an MCP server's `instructions`).
 4. `MODEL_SYSTEM_PROMPT`, if set. It adds to the built-in prompt and never replaces it.
 5. The introduction rule, always last: `If asked to introduce yourself, reply with exactly this text and nothing else: "…"`. The quoted text is `INTRO` with `{name}` (the bot's profile name, else `signalbot`), `{model}` (without the `provider/` prefix) and `{tools}` (every group's names in feature order, or `none` when there are none or the model can't call tools) filled in. It is quoted so a newline or quote in it can't escape into the rest of the prompt.
 
@@ -160,7 +157,7 @@ In `features.go` order, which is the order hooks run in and of the tools line an
 | `websearch` | `Tools`, `Info` |
 | `groupctx` | `OnMessage` returning `Context` |
 | `vision` | `OnTurn`, `Info`, `Media` |
-| `charts` | `Tools` with `Keywords`, `OnReply` |
+| `charts` | `Tools` with `Keywords` |
 | `mcp` | `Tools` (one group per server), command helper returning `ToolChoice`, `Info`, `Redact`, `Go` |
 | `schedule` | command helper, `At`, `Deliver`, `Groups`, `Info` |
 
@@ -219,8 +216,8 @@ By convention:
 - **Each feature alone:** each feature's tests run on `featuretest`, a fake host.
 - **Golden prompts** in `testdata` pin the system prompt byte for byte: `prompt_full.txt` with every feature registered, against real fake MCP servers rather than a hand-set list, and `prompt_nofeatures.txt`, checked by the core's own tests with no features (with tool calling on and off) and by a scenario with every feature registered and a model that can't call tools. `go test . -run Golden -update` rewrites both files from the scenarios.
 - **Edge-only scenarios:** `scenario_test.go` drives the whole bot, features included, through a fake signal-cli socket and a fake model API (OpenRouter's or another provider's), and checks what is sent back, what the model receives (which shows the history), and the log, including that no message text, reply, tool argument or result reaches it. [docs/SCENARIOS.md](docs/SCENARIOS.md) describes the harness and maps the tests from before the core was written to the scenarios that cover them.
-- **One picture cap:** `feature.MaxPictures` (4) caps the pictures in a message, in or out, everywhere.
-- **One test hook:** `config.Test`, nil in production, is the only test hook that changes how the core behaves: the contact reload gap, the API host treated as OpenRouter, a callback after each frame the client reads, and `Begin` and `Idle`, which count chats' workers and contact loads so a scenario can wait for the bot to be idle. The only other exports for tests read rather than change: `logx.SetOutput` and `logx.Buffer` capture the log (kit can't import config), `config.Read` lists the settings read, for the docs guardrail, and `config.DefaultIntro` gives the bot's tests the default `INTRO`.
+- **One picture cap:** `feature.MaxPictures` (4) caps the images in a message, which may also carry a sticker, and the pictures in a reply, everywhere.
+- **One test hook:** `config.Test`, nil in production, is the only test hook that changes how the core behaves: the contact reload gap, the API host treated as OpenRouter, a callback after each frame the client reads, and `Begin` and `Idle`, which count chats' workers and contact loads so a scenario can wait for the bot to be idle. The only other exports for tests read rather than change: `logx.SetOutput` and `logx.Buffer` capture the log (kit can't import config), and `config.DefaultIntro` gives the bot's tests the default `INTRO`.
 - **Tests** that start slow work drain it before they end, and change the DM allowlist in place, since the client holds a reference to the map.
 - **Sizes:** `go run ./internal/arch/sizes` reports lines per package; CI reports them on each PR, not enforced.
 

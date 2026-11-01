@@ -34,7 +34,7 @@ func additions(ctx context.Context, h feature.Host, m feature.Message) feature.A
 	var notes, kept, seen []string
 	images, sticker := 0, -1
 	for i, md := range m.Media {
-		if md.Pack != "" {
+		if md.Sticker {
 			sticker = i
 			continue
 		}

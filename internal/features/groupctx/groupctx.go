@@ -31,10 +31,10 @@ func Register(h feature.Host) error {
 // never logs it. Only text is kept: images are noted, not fetched.
 func chatter(m feature.Message) string {
 	text := txt.Clamp(m.Text, maxChars)
-	if slices.ContainsFunc(m.Media, func(md feature.Media) bool { return md.ID != "" && !md.Quoted }) {
+	if slices.ContainsFunc(m.Media, func(md feature.Media) bool { return !md.Sticker && !md.Quoted }) {
 		text = strings.TrimSpace(text + " [image]")
 	}
-	if slices.ContainsFunc(m.Media, func(md feature.Media) bool { return md.Pack != "" }) {
+	if slices.ContainsFunc(m.Media, func(md feature.Media) bool { return md.Sticker }) {
 		text = strings.TrimSpace(text + " [sticker]")
 	}
 	if text == "" {

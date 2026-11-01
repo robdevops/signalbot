@@ -37,9 +37,9 @@ var (
 
 // Entry is one message in a chat's history.
 type Entry struct {
-	Role    string    `json:"role"` // "user" or "assistant"
-	Content string    `json:"content"`
-	Expires time.Time `json:"-"`
+	Role    string // "user" or "assistant"
+	Content string
+	Expires time.Time
 }
 
 // Store is every chat's state.

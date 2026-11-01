@@ -6,12 +6,12 @@ import (
 	"os"
 	"path"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
 
 	"github.com/robdevops/signalbot/internal/arch"
-	"github.com/robdevops/signalbot/internal/config"
 )
 
 const (
@@ -103,30 +103,32 @@ func TestNoFeatureWordsInTheCore(t *testing.T) {
 	}
 }
 
-// Every setting the bot reads is in the README's configuration table: the
-// core's, recorded as config reads them, and each feature's, as it names
-// them to Env.
+// Every setting the bot reads is in the README's configuration table: each
+// one its code names to Env, the core's (and number's, in config) and each
+// feature's.
 func TestSettingsAreDocumented(t *testing.T) {
-	config.Load() // records the core's settings, whatever it returns
-	settings := config.Read()
-	env := regexp.MustCompile(`\.Env\("([A-Z0-9_]+)"`)
+	var settings []string
+	env := regexp.MustCompile(`\b(?:Env|number)\("([A-Z0-9_]+)"`)
 	for _, p := range goFiles(t) {
-		if under(p, "internal/features") {
-			data, err := os.ReadFile(root + "/" + p)
-			if err != nil {
-				t.Fatal(err)
-			}
-			for _, m := range env.FindAllStringSubmatch(string(data), -1) {
-				settings = append(settings, m[1])
-			}
+		if strings.HasSuffix(p, "_test.go") {
+			continue
+		}
+		data, err := os.ReadFile(root + "/" + p)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, m := range env.FindAllStringSubmatch(string(data), -1) {
+			settings = append(settings, m[1])
 		}
 	}
 	readme, err := os.ReadFile(root + "/README.md")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(settings) < 5 {
-		t.Fatalf("only %v read", settings)
+	for _, s := range []string{"MAX_CONCURRENCY", "SIGNAL_DM_USER_IDS", "MCP_CONFIG"} { // one each from config, signal and a feature
+		if !slices.Contains(settings, s) {
+			t.Fatalf("%s not found in %v", s, settings)
+		}
 	}
 	for _, s := range settings {
 		if !strings.Contains(string(readme), "\n| `"+s+"` |") {

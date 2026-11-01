@@ -55,7 +55,7 @@ func (w *world) start() *world {
 func (w *world) dm(text string) string {
 	w.t.Helper()
 	a := w.h.Message(context.Background(), feature.Message{Chat: feature.Chat{User: alice}, Sender: alice, Name: "Alice", Text: text, Addressed: true})
-	if a.Ignore || a.ToolChoice != "" || a.Context != "" {
+	if a.ToolChoice != "" || a.Context != "" {
 		w.t.Fatalf("%q: got %+v", text, a)
 	}
 	return a.Answer

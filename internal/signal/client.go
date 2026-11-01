@@ -18,6 +18,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+	"unicode"
 
 	"github.com/robdevops/signalbot/internal/config"
 	"github.com/robdevops/signalbot/internal/feature"
@@ -63,9 +64,27 @@ type Client struct {
 	test        *config.Test // nil in production
 }
 
-// New makes a client for the socket at addr, a unix socket path or
-// host:port, answering DMs from the senders in allowed.
-func New(addr string, allowed map[string]bool, test *config.Test) *Client {
+// New makes the client its settings say: SIGNALCLI_SOCKET, a unix socket
+// path or host:port, and SIGNAL_DM_USER_IDS, who may DM the bot.
+func New(test *config.Test) (*Client, error) {
+	addr := config.Env("SIGNALCLI_SOCKET", "")
+	if addr == "" {
+		return nil, errors.New("SIGNALCLI_SOCKET is required")
+	}
+	allowed := map[string]bool{}
+	// Split on commas, semicolons and any white space, so a CRLF env file or
+	// a tab-separated list cannot leave an unmatchable ID in the list.
+	for _, id := range strings.FieldsFunc(config.Env("SIGNAL_DM_USER_IDS", ""), func(r rune) bool {
+		return r == ',' || r == ';' || unicode.IsSpace(r)
+	}) {
+		allowed[id] = true
+	}
+	return newClient(addr, allowed, test), nil
+}
+
+// newClient makes a client for the socket at addr, answering DMs from the
+// senders in allowed.
+func newClient(addr string, allowed map[string]bool, test *config.Test) *Client {
 	c := &Client{addr: addr, allowed: allowed, typingEvery: 10 * time.Second, pending: map[string]chan *rpcMsg{},
 		known: make(chan struct{}), test: test}
 	c.names.byID, c.names.numbers, c.names.minRefresh = map[string]rankedName{}, map[string]string{}, 15*time.Second
@@ -316,8 +335,8 @@ func (c *Client) Media(ctx context.Context, msg feature.Message, i int) ([]byte,
 	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
 	m := msg.Media[i]
-	if m.Pack != "" {
-		return c.data(ctx, "getSticker", map[string]any{"packId": m.Pack, "stickerId": m.Sticker})
+	if m.Sticker {
+		return c.data(ctx, "getSticker", stickerOf(m.ID)) // {"packId", "stickerId"}
 	}
 	p := map[string]any{"id": m.ID}
 	if msg.Chat.GroupID != "" {
@@ -331,7 +350,7 @@ func (c *Client) Media(ctx context.Context, msg feature.Message, i int) ([]byte,
 // stickerLabel describes a sticker by its emoji and its pack's title, e.g.
 // `: 🙂 from "Pack"`, or "" if signal-cli doesn't know the pack. Both come
 // from whoever made the pack, so they are made safe and the title quoted.
-func (c *Client) stickerLabel(ctx context.Context, pack string, id int) string {
+func (c *Client) stickerLabel(ctx context.Context, s sticker) string {
 	var packs []struct {
 		PackID   string `json:"packId"`
 		Title    string `json:"title"`
@@ -344,12 +363,12 @@ func (c *Client) stickerLabel(ctx context.Context, pack string, id int) string {
 		return ""
 	}
 	for _, p := range packs {
-		if p.PackID != pack {
+		if p.PackID != s.PackID {
 			continue
 		}
 		label := ""
-		for _, s := range p.Stickers {
-			if e := txt.Clamp(txt.SafeName(s.Emoji), 8); s.ID == id && e != "" {
+		for _, st := range p.Stickers {
+			if e := txt.Clamp(txt.SafeName(st.Emoji), 8); st.ID == s.StickerID && e != "" {
 				label = ": " + e
 			}
 		}

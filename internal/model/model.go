@@ -79,6 +79,13 @@ type Request struct {
 	ToolChoice string // a function tool the model must call before it answers
 }
 
+// Reply is the model's answer.
+type Reply struct {
+	Text      string
+	Pictures  []feature.Picture
+	ToolsUsed []string // the tools the model ran, as the tool loop reports them
+}
+
 // message is a chat message as the API takes it.
 type message struct {
 	Role       string     `json:"role"`
@@ -127,7 +134,7 @@ type answer struct {
 // tools it runs them and asks again, up to maxRounds requests in budget,
 // keeping up to MaxPictures pictures from them. The tokens of every request
 // are summed and logged, with the cost when the API reports it.
-func (c *Client) Ask(ctx context.Context, r Request) (feature.Reply, error) {
+func (c *Client) Ask(ctx context.Context, r Request) (Reply, error) {
 	ctx, cancel := context.WithTimeout(ctx, budget)
 	defer cancel()
 	start := time.Now()
@@ -155,7 +162,7 @@ func (c *Client) Ask(ctx context.Context, r Request) (feature.Reply, error) {
 		choice = r.ToolChoice
 	}
 
-	var reply feature.Reply
+	var reply Reply
 	var total answer
 	for round := 1; ; round++ {
 		a, err := c.request(ctx, msgs, defs, choice)

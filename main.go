@@ -35,19 +35,20 @@ func main() {
 	}
 	logx.Init()
 	logx.Noticef("signalbot %s starting", buildVersion())
-	cfg, err := config.Load()
+	cfg := config.Load()
+	cfg.Version = buildVersion()
+	net, err := signal.New(cfg.Test)
 	if err != nil {
 		logx.Critf("config error: %v", err)
 		os.Exit(1)
 	}
-	cfg.Version = buildVersion()
 	sigCtx, stop := ossignal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	// Work outlives the shutdown signal, so replies being written can still
 	// be sent; it ends once they finish or time runs out.
 	ctx, closeConn := context.WithCancel(context.Background())
 	defer closeConn()
-	b := bot.New(ctx, cfg, signal.New(cfg.Socket, cfg.AllowedSenders, cfg.Test))
+	b := bot.New(ctx, cfg, net)
 	for _, register := range features {
 		if err := register(b); err != nil {
 			logx.Critf("config error: %v", err)

@@ -20,8 +20,6 @@ func (b *Bot) OnTurn(fn func(context.Context, feature.Message) feature.Additions
 	b.turns = append(b.turns, fn)
 }
 
-func (b *Bot) OnReply(fn func(feature.Message, *feature.Reply)) { b.replies = append(b.replies, fn) }
-
 // Tools keeps g with only the tools the model's API can run, and drops a
 // group whose tools it can run none of.
 func (b *Bot) Tools(g feature.ToolGroup) {
@@ -69,7 +67,7 @@ func (b *Bot) Groups(ctx context.Context, user string) ([]feature.Group, error) 
 // posted it.
 func (b *Bot) Deliver(msg feature.Message) {
 	if !b.closing.Load() {
-		b.post(feature.Received{Message: msg, Delivered: true})
+		b.post(feature.Received{Message: msg})
 	}
 }
 

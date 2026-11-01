@@ -23,11 +23,8 @@ func TestHooks(t *testing.T) {
 	var turns []feature.Message
 	h := start(t, options{features: func(b *Bot) {
 		b.OnMessage(func(_ context.Context, m feature.Message) feature.Action {
-			switch {
-			case !m.Addressed:
+			if !m.Addressed {
 				return feature.Action{Context: m.Name + " said: " + m.Text, Answer: "never sent"}
-			case m.Text == "drop it":
-				return feature.Action{Ignore: true}
 			}
 			return feature.Action{Context: "never kept"}
 		})
@@ -39,18 +36,14 @@ func TestHooks(t *testing.T) {
 		})
 		b.OnTurn(func(_ context.Context, m feature.Message) feature.Additions {
 			turns = append(turns, m)
-			return feature.Additions{System: "Be brief.", Note: "[a note]", HistoryNote: "[kept note]", Images: []string{"data:image/png;base64,AA=="}}
+			// As many as a message carries: 4 images and its sticker.
+			return feature.Additions{Note: "[a note]", HistoryNote: "[kept note]", Images: slices.Repeat([]string{"data:image/png;base64,AA=="}, feature.MaxPictures+1)}
 		})
 		b.OnTurn(func(context.Context, feature.Message) feature.Additions {
 			return feature.Additions{Note: "[second note]"}
 		})
-		b.OnReply(func(_ feature.Message, r *feature.Reply) {
-			r.Text = ""
-			r.Pictures = append(r.Pictures, feature.Picture{Data: png, Caption: "a caption", HistoryNote: "[sent a picture]"}, feature.Picture{Data: png})
-		})
 	}})
 	h.receive(chatter("the moon is cheese"))
-	h.receive(dm("drop it"))
 	// The first hook's Context doesn't count for this one, so the second
 	// answers it.
 	h.receive(dm("hello"))
@@ -64,21 +57,45 @@ func TestHooks(t *testing.T) {
 
 	// When no hook acts, the model is asked.
 	r, s := h.ask(atBot("look"))
-	if !strings.Contains(system(r), "\nBe brief.\nIf asked to introduce yourself") {
-		t.Fatalf("system %q", system(r))
-	}
 	equal(t, "model got", contents(r), []string{"user: Bob said: the moon is cheese", "user: Alice: look\n[a note]\n[second note]"})
-	if parts := messages(r)[2]["content"].([]any); len(parts) != 2 {
+	if parts := messages(r)[2]["content"].([]any); len(parts) != 1+feature.MaxPictures+1 {
 		t.Fatalf("content %v", parts)
 	}
-	if s.text != "a caption" || len(s.images) != 2 || string(s.images[0]) != string(png) {
+	if s.text != "ok" {
 		t.Fatalf("sent %+v", s)
 	}
 	if len(turns) != 1 || turns[0].Text != "look" || turns[0].Chat.GroupID != groupID {
 		t.Fatalf("turns %+v", turns)
 	}
 	r, _ = h.ask(atBot("again"))
-	equal(t, "history", contents(r)[1:3], []string{"user: Alice: look\n[kept note]\n[second note]", "assistant: [sent a picture]\n[sent an image]\n"})
+	equal(t, "history", contents(r)[1:3], []string{"user: Alice: look\n[kept note]\n[second note]", "assistant: ok"})
+}
+
+// A reply's pictures are sent with it, and history notes each one. Their
+// captions are sent in place of the model's text, which history then
+// doesn't keep either.
+func TestReplyPictures(t *testing.T) {
+	tool := func(name string, pics ...feature.Picture) feature.Tool {
+		return feature.Tool{Name: name, Run: func(context.Context, string) (string, []feature.Picture, error) { return "drawn", pics, nil }}
+	}
+	h := start(t, options{tools: true, features: func(b *Bot) {
+		b.Tools(feature.ToolGroup{Names: []string{"pictures"}, Tools: []feature.Tool{
+			tool("draw", feature.Picture{Data: png, Caption: "a caption", HistoryNote: "[sent a picture]"}, feature.Picture{Data: png}),
+			tool("snap", feature.Picture{Data: png}),
+		}})
+	}})
+	h.answer(toolCall("draw"), text("Done"))
+	h.receive(dm("draw"))
+	if s := h.nextSend(); s.text != "a caption" || len(s.images) != 2 || string(s.images[0]) != string(png) {
+		t.Fatalf("sent %+v", s)
+	}
+	h.answer(toolCall("snap"), text("Done"))
+	h.receive(dm("snap"))
+	if s := h.nextSend(); s.text != "Done" || len(s.images) != 1 {
+		t.Fatalf("sent %+v", s)
+	}
+	r, _ := h.ask(dm("again"))
+	equal(t, "history", contents(r)[:4], []string{"user: draw", "assistant: [sent a picture]\n[sent an image]\n", "user: snap", "assistant: [sent an image]\nDone"})
 }
 
 // A photo alone is answered only when a hook adds something to it.

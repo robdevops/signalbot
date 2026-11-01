@@ -5,6 +5,7 @@ import (
 	"context"
 	"slices"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 	"unicode/utf16"
@@ -66,6 +67,14 @@ type attachment struct {
 type sticker struct {
 	PackID    string `json:"packId"`
 	StickerID int    `json:"stickerId"`
+}
+
+// stickerOf is the sticker a feature.Media's ID names, "<packId>:<stickerId>"
+// as message writes it.
+func stickerOf(id string) sticker {
+	pack, n, _ := strings.Cut(id, ":")
+	i, _ := strconv.Atoi(n)
+	return sticker{pack, i}
 }
 
 type groupInfo struct {
@@ -147,7 +156,7 @@ func (c *Client) event(env *envelope) (feature.Received, bool) {
 	}
 	self := c.self()
 	if self == "" {
-		return feature.Received{Message: feature.Message{Chat: chat}, Wait: true, Load: load}, true
+		return feature.Received{Message: feature.Message{Chat: chat}, Load: load}, true
 	}
 	switch addressed, other := c.judge(env, self); {
 	case addressed:
@@ -193,9 +202,9 @@ func (c *Client) load(ctx context.Context, env *envelope, learn func(name, id st
 	msg := c.message(env, self)
 	c.people(env, self, learn)
 	for i := range msg.Media {
-		if m := &msg.Media[i]; m.Pack != "" {
+		if m := &msg.Media[i]; m.Sticker {
 			ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
-			m.Label = c.stickerLabel(ctx, m.Pack, m.Sticker)
+			m.Label = c.stickerLabel(ctx, stickerOf(m.ID))
 			cancel()
 		}
 	}
@@ -226,7 +235,7 @@ func (c *Client) message(env *envelope, self string) feature.Message {
 		m.Quote = &feature.Quote{Text: q.Text, Author: c.name(q.AuthorUUID, q.Author), Bot: q.AuthorUUID == self || q.Author == self}
 	}
 	if s := d.Sticker; s != nil {
-		m.Media = append(m.Media, feature.Media{Pack: s.PackID, Sticker: s.StickerID})
+		m.Media = append(m.Media, feature.Media{ID: s.PackID + ":" + strconv.Itoa(s.StickerID), Sticker: true})
 	}
 	return m
 }

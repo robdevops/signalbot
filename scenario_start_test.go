@@ -56,14 +56,15 @@ func startBot(t *testing.T, w world) *harness {
 	}
 
 	// What main does.
-	cfg, err := config.Load()
+	cfg := config.Load()
+	cfg.Test = test
+	net, err := signal.New(cfg.Test)
 	if err != nil {
 		t.Fatal(err)
 	}
-	cfg.Test = test
 	ctx, closeConn := context.WithCancel(context.Background())
 	t.Cleanup(closeConn)
-	b := bot.New(ctx, cfg, signal.New(cfg.Socket, cfg.AllowedSenders, cfg.Test))
+	b := bot.New(ctx, cfg, net)
 	for _, register := range features {
 		if err := register(b); err != nil {
 			t.Fatal(err)

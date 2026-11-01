@@ -251,7 +251,7 @@ func (h *harness) receive(m feature.Message) {
 			return
 		}
 	default:
-		r = feature.Received{Message: feature.Message{Chat: m.Chat}, Wait: true, Load: load}
+		r = feature.Received{Message: feature.Message{Chat: m.Chat}, Load: load}
 	}
 	h.net.handle(r)
 }

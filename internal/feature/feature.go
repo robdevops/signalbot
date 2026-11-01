@@ -10,7 +10,8 @@ import (
 	"time"
 )
 
-// MaxPictures caps the pictures in a message, in or out.
+// MaxPictures caps a message's images, besides its sticker, and a reply's
+// pictures.
 const MaxPictures = 4
 
 // Chat is a conversation: a group, or a DM with one user.
@@ -48,10 +49,9 @@ type Quote struct {
 
 // Media is an image a message carries, or its sticker.
 type Media struct {
-	ID      string // the network's attachment ID; "" for a sticker
+	ID      string // the network's ID for it
 	Quoted  bool   // a thumbnail of an image in the quoted message
-	Pack    string // a sticker's pack ID; "" for an image
-	Sticker int    // a sticker's index in its pack
+	Sticker bool   // a sticker, not an image
 	Label   string // a sticker's emoji and pack title, e.g. `: 🙂 from "Pack"`; filled in by the network
 }
 
@@ -61,18 +61,16 @@ type Media struct {
 type Received struct {
 	Message          // what is known without calling the network
 	GroupChange bool // only that a group's members, name or description changed
-	Wait        bool // the bot's own ID isn't known yet, so nor is whether the message is for it
-	Delivered   bool // a feature delivered it, with no Load
-	// Load completes an addressed or waiting message in its slot, where it
-	// may call the network, calling learn with each name it shows the model
-	// and that person's ID. It reports false for a message the core has
-	// nothing to do with.
+	// Load completes, in its slot, an addressed message, or one that arrived
+	// before the bot's own ID was known. It may call the network, and calls
+	// learn with each name it shows the model and that person's ID. It
+	// reports false for a message the core has nothing to do with. It is nil
+	// for an unaddressed group message and for a delivered one.
 	Load func(ctx context.Context, learn func(name, id string)) (Message, bool)
 }
 
 // Action is what an OnMessage hook decides. The zero value carries on.
 type Action struct {
-	Ignore     bool   // drop the message
 	Answer     string // reply with this text, without the model (addressed messages only)
 	ToolChoice string // make the model call this tool before answering (addressed messages only)
 	Context    string // keep this text in the chat's history (unaddressed messages only)
@@ -91,23 +89,15 @@ func (a Action) For(m Message) Action {
 
 // Additions is what an OnTurn hook adds to the model's request.
 type Additions struct {
-	System      string   // a system-prompt line
 	Note        string   // a line added to the message
 	HistoryNote string   // the line history keeps in Note's place; "" keeps Note
 	Images      []string // data: URLs shown to the model with the message
 }
 
-// Reply is the model's answer as it is about to be sent.
-type Reply struct {
-	Text      string
-	Pictures  []Picture
-	ToolsUsed []string // the tools the model ran, as the tool loop reports them
-}
-
 // Picture is an image sent with a reply.
 type Picture struct {
 	Data        []byte
-	Caption     string // sent as the text when a reply has none
+	Caption     string // sent in place of the reply's text
 	HistoryNote string // what history keeps of it; "" keeps "[sent an image]"
 }
 
@@ -157,16 +147,14 @@ type Host interface {
 	// OnTurn adds to the model's request for the addressed message being
 	// answered.
 	OnTurn(func(context.Context, Message) Additions)
-	// OnReply may change the reply to a message. It runs only after the
-	// model replies.
-	OnReply(func(Message, *Reply))
 	// Tools offers a group of tools to the model.
 	Tools(ToolGroup)
 	// At runs fn once at t, however late, passing the time it was due. It
 	// fails when too many timers are set.
 	At(name string, t time.Time, fn func(ctx context.Context, due time.Time)) (cancel func(), err error)
 
-	// Env reads a feature's own setting, recorded for the docs test.
+	// Env reads a feature's own setting. The docs test finds each name
+	// passed to it.
 	Env(key, def string) string
 	// Info says what the bot is.
 	Info() Info

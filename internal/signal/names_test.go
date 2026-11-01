@@ -32,7 +32,7 @@ func TestContactBest(t *testing.T) {
 }
 
 func TestResolveRanks(t *testing.T) {
-	c := New("x", nil, nil)
+	c := newClient("x", nil, nil)
 	m := mention{Name: aliceID, UUID: aliceID}
 	if got := c.resolve(m); got != "" {
 		t.Fatalf("an unknown ID must resolve to nothing, not the ID: %q", got)
@@ -65,7 +65,7 @@ func TestResolveRanks(t *testing.T) {
 // sent, so an allowlist of numbers can be checked against an ACI. Each load
 // replaces them, and they are capped.
 func TestNumber(t *testing.T) {
-	c := New("x", nil, nil)
+	c := newClient("x", nil, nil)
 	c.names.replace([]contact{{UUID: aliceID, Number: "+1555"}, {UUID: bobID}})
 	if c.number(aliceID) != "+1555" || c.number(bobID) != "" || c.number("") != "" {
 		t.Fatalf("numbers %v", c.names.numbers)
@@ -87,9 +87,9 @@ func TestNumber(t *testing.T) {
 	}
 }
 
-// newClient is a client that loads the contact list at most every gap.
-func newClient(sock string, gap time.Duration) *Client {
-	return New(sock, nil, &config.Test{ReloadGap: gap})
+// gapClient is a client that loads the contact list at most every gap.
+func gapClient(sock string, gap time.Duration) *Client {
+	return newClient(sock, nil, &config.Test{ReloadGap: gap})
 }
 
 // The test hooks: a contact load counts as work until it ends, and each
@@ -100,7 +100,7 @@ func TestTestHooks(t *testing.T) {
 	delete(f.res, "listContacts") // never answered
 	var frames atomic.Int32
 	test := &config.Test{Handled: func() { frames.Add(1) }}
-	c := New(f.sock, nil, test)
+	c := newClient(f.sock, nil, test)
 	_, conn := run(t, c, f)
 	eventually(t, "the load on connect", func() bool { return len(f.calls("listContacts")) == 1 })
 	if test.Idle() {
@@ -113,7 +113,7 @@ func TestTestHooks(t *testing.T) {
 }
 
 func TestNamesCapped(t *testing.T) {
-	n := &New("x", nil, nil).names
+	n := &newClient("x", nil, nil).names
 	for i := range maxNames + 10 {
 		n.set(rankedName{"Bob", rankSeen}, fmt.Sprint(i))
 	}
@@ -129,7 +129,7 @@ func TestContactsReloadOnConnectAndGroupChange(t *testing.T) {
 	captureLogs(t)
 	f := newFake(t)
 	f.set("listContacts", `[{"uuid":"`+bobID+`","givenName":"Bob"}]`)
-	c := newClient(f.sock, 50*time.Millisecond)
+	c := gapClient(f.sock, 50*time.Millisecond)
 	got, conn := run(t, c, f)
 	eventually(t, "the load on connect", func() bool { return c.name(bobID) == "Bob" })
 
@@ -166,7 +166,7 @@ func TestLoadNamesOnMention(t *testing.T) {
 	captureLogs(t)
 	f := newFake(t)
 	f.set("listContacts", `[{"uuid":"`+bobID+`","givenName":"Bob"},{"uuid":"`+botID+`","givenName":"Bot"}]`)
-	c := newClient(f.sock, 30*time.Millisecond)
+	c := gapClient(f.sock, 30*time.Millisecond)
 	run(t, c, f)
 	eventually(t, "the load on connect", func() bool { return c.name(bobID) == "Bob" })
 	ctx := context.Background()
@@ -205,7 +205,7 @@ func TestLoadNamesOnMention(t *testing.T) {
 func TestBotName(t *testing.T) {
 	logs := captureLogs(t)
 	f := newFake(t)
-	c := newClient(f.sock, time.Millisecond)
+	c := gapClient(f.sock, time.Millisecond)
 	run(t, c, f)
 	time.Sleep(5 * time.Millisecond)
 	c.loadNames(context.Background(), &envelope{SourceUUID: aliceID})
@@ -226,7 +226,7 @@ func TestBotName(t *testing.T) {
 // Redact scrubs every name the bot knows but its own, as whole words and
 // ignoring capitals, longest first, and every UUID and phone number.
 func TestRedact(t *testing.T) {
-	c := New("x", nil, nil)
+	c := newClient("x", nil, nil)
 	c.id.Store(botID)
 	c.names.set(rankedName{"Alice", rankContact}, aliceID)
 	c.names.set(rankedName{"Alice Smith", rankContact}, "u-as")

@@ -124,33 +124,3 @@ func TestChartToolBadArguments(t *testing.T) {
 		}
 	}
 }
-
-// A reply with a chart is sent alone with its caption, so the model's text is
-// dropped; a reply with only other pictures, or none, keeps its text.
-func TestChartReplyDropsText(t *testing.T) {
-	h := register(t)
-	_, chart, err := tool(t, h, "make_pie_chart").Run(context.Background(), alphabetPie)
-	if err != nil {
-		t.Fatal(err)
-	}
-	other := feature.Picture{Data: []byte{1}}
-	captioned := feature.Picture{Data: []byte{2}, Caption: "Bob's photo", HistoryNote: "[sent Bob's photo]"}
-	turn := feature.Message{Chat: feature.Chat{User: "alice"}, Sender: "alice", Name: "Alice", Text: "a pie chart", Addressed: true}
-	for _, tc := range []struct {
-		name string
-		pics []feature.Picture
-		want string
-	}{
-		{"chart", chart, ""},
-		{"chart after another picture", append([]feature.Picture{other}, chart...), ""},
-		{"another picture", []feature.Picture{other}, "Done"},
-		{"another feature's captioned picture", []feature.Picture{captioned}, "Done"},
-		{"no pictures", nil, "Done"},
-	} {
-		r := &feature.Reply{Text: "Done", Pictures: tc.pics, ToolsUsed: []string{"make_pie_chart"}}
-		h.Reply(turn, r)
-		if r.Text != tc.want || len(r.Pictures) != len(tc.pics) {
-			t.Errorf("%s: text %q, %d pictures", tc.name, r.Text, len(r.Pictures))
-		}
-	}
-}

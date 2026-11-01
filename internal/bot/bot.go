@@ -20,8 +20,8 @@ import (
 	"github.com/robdevops/signalbot/internal/timers"
 )
 
-// Network is the chat network the bot answers on: Signal, or the bot's
-// tests' fake. Media, Groups and Redact are the host's services of those
+// Network is the chat network the bot answers on, or the bot's tests'
+// fake. Media, Groups and Redact are the host's services of those
 // names.
 type Network interface {
 	// Run calls handle for each message received until ctx ends. handle
@@ -60,7 +60,6 @@ type Bot struct {
 	// before Run.
 	messages []func(context.Context, feature.Message) feature.Action
 	turns    []func(context.Context, feature.Message) feature.Additions
-	replies  []func(feature.Message, *feature.Reply)
 	groups   []feature.ToolGroup
 }
 
@@ -121,17 +120,17 @@ func (b *Bot) Shutdown(d time.Duration) {
 }
 
 // handle runs on the network's reader goroutine for every message received,
-// so it never blocks or calls the network. An unaddressed group message
-// goes to the OnMessage hooks here, and is never logged; an addressed one,
-// or one that waits for the bot's own ID, goes to its chat's mailbox.
+// so it never blocks or calls the network. A message to load goes to its
+// chat's mailbox; an unaddressed group message goes to the OnMessage hooks
+// here, and is never logged.
 func (b *Bot) handle(r feature.Received) {
 	switch {
 	case b.closing.Load():
 	case r.GroupChange:
 		b.chats.ForgetNames(r.Chat.Key())
-	case r.Addressed, r.Wait:
+	case r.Load != nil:
 		b.post(r)
-	case len(b.messages) > 0:
+	default:
 		b.keep(r.Message)
 	}
 }
@@ -139,7 +138,7 @@ func (b *Bot) handle(r feature.Received) {
 // keep runs the OnMessage hooks for an unaddressed group message, and keeps
 // the Context one returns in history.
 func (b *Bot) keep(msg feature.Message) {
-	if a := b.onMessage(b.ctx, msg); a.Context != "" && !a.Ignore && b.ai != nil { // with no model, nothing would read it
+	if a := b.onMessage(b.ctx, msg); a.Context != "" && b.ai != nil { // with no model, nothing would read it
 		b.chats.Add(msg.Chat.Key(), time.Now(), msg.Expires, chats.Entry{Role: "user", Content: a.Context})
 	}
 }
@@ -169,8 +168,8 @@ func (b *Bot) post(r feature.Received) {
 // work handles what waited in a chat's mailbox, in order. Addressed
 // messages are answered together, as one turn, so "actually" and "forget
 // it" get one reply that sees both; each run stays within one message's
-// picture limits. On its own goes a message a hook acts on (a command, an
-// answer, an ignore), a delivered one, and one that waited for the bot's
+// picture limits. On its own goes a message a hook acts on (a command or
+// an answer), a delivered one, and one that waited for the bot's
 // ID and was not addressed after all. A panic loses only the message or
 // turn that caused it, and nothing new starts once shutdown begins.
 func (b *Bot) work(rs []feature.Received) {
@@ -193,7 +192,7 @@ func (b *Bot) work(rs []feature.Received) {
 			return
 		}
 		safely(func() {
-			if r.Delivered {
+			if r.Load == nil { // delivered
 				alone(func() { b.delivered(r.Message) })
 				return
 			}
@@ -227,7 +226,7 @@ func safely(fn func()) {
 // pictures counts a message's images and stickers.
 func pictures(m feature.Message) (images, stickers int) {
 	for _, md := range m.Media {
-		if md.Pack != "" {
+		if md.Sticker {
 			stickers++
 		} else {
 			images++
@@ -273,7 +272,7 @@ func merge(msgs []feature.Message) (feature.Message, string) {
 			typed = append(typed, x.Text)
 		}
 		for _, md := range x.Media {
-			if md.Pack != "" {
+			if md.Sticker {
 				stickers = append(stickers, md)
 			} else {
 				images = append(images, md)
@@ -306,7 +305,7 @@ func (b *Bot) load(r feature.Received) (feature.Message, bool) {
 	// Neither a renamed sender nor two different photos are a repeat.
 	id := msg.Sender + "\x00" + msg.Name + "\x00" + msg.Text
 	for _, m := range msg.Media {
-		id += fmt.Sprintf("\x00%s:%s:%d", m.ID, m.Pack, m.Sticker)
+		id += fmt.Sprintf("\x00%s:%t", m.ID, m.Sticker)
 	}
 	if b.chats.Repeat(key, id) {
 		logx.Debugf("ignored duplicate")

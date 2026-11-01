@@ -14,7 +14,7 @@ import (
 func TestSendSplitsAndCaps(t *testing.T) {
 	logs := captureLogs(t)
 	f := newFake(t)
-	c := New(f.sock, nil, nil)
+	c := newClient(f.sock, nil, nil)
 	run(t, c, f)
 	dm := feature.Chat{User: aliceID}
 	c.Send(dm, strings.Repeat("z ", 3*maxChars), [][]byte{[]byte("PNG")}, nil)
@@ -33,7 +33,7 @@ func TestSendSplitsAndCaps(t *testing.T) {
 	if s := f.calls("send")[4]; s["message"] != "" || s["attachments"] == nil {
 		t.Errorf("pictures sent as %v", s)
 	}
-	New("x", nil, nil).Send(dm, "secret words", nil, nil)
+	newClient("x", nil, nil).Send(dm, "secret words", nil, nil)
 	if out := logs.String(); !strings.Contains(out, "empty reply, nothing sent") || !strings.Contains(out, "send failed: not connected") || strings.Contains(out, "secret") {
 		t.Errorf("logs %q", out)
 	}

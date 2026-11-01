@@ -37,8 +37,6 @@ const (
 // quote.
 func (b *Bot) respond(msg feature.Message, act feature.Action, text string) {
 	switch {
-	case act.Ignore:
-		return
 	case act.Answer != "":
 		b.net.Send(msg.Chat, act.Answer, nil, b.chats.Names(msg.Chat.Key()))
 		return
@@ -51,12 +49,9 @@ func (b *Bot) respond(msg feature.Message, act feature.Action, text string) {
 	defer stop() // also if something below panics
 	key := msg.Chat.Key()
 	kept, added := text, false
-	var systems, images []string
+	var images []string
 	for _, fn := range b.turns {
 		a := fn(b.ctx, msg)
-		if a.System != "" {
-			systems = append(systems, a.System)
-		}
 		if a.Note != "" {
 			text, kept, added = text+"\n"+a.Note, kept+"\n"+cmp.Or(a.HistoryNote, a.Note), true
 		}
@@ -68,10 +63,10 @@ func (b *Bot) respond(msg feature.Message, act feature.Action, text string) {
 	offered, tools := b.offer(key, msg.Text, act.ToolChoice)
 	start := time.Now() // history expires from here, not from when it is stored
 	reply, err := b.ai.Ask(b.ctx, model.Request{
-		System:     b.system(offered, systems),
+		System:     b.system(offered),
 		History:    b.chats.History(key),
 		Text:       strings.TrimSpace(text),
-		Images:     images[:min(len(images), feature.MaxPictures)],
+		Images:     images,
 		Tools:      tools,
 		ToolChoice: act.ToolChoice,
 	})
@@ -82,11 +77,9 @@ func (b *Bot) respond(msg feature.Message, act feature.Action, text string) {
 		return
 	}
 	b.followUp(key, offered, msg.Text, reply.ToolsUsed)
-	for _, fn := range b.replies {
-		fn(msg, &reply)
-	}
 	// History notes the pictures sent, which the model would otherwise not
-	// know it did. A reply with no text is sent with their captions.
+	// know it did. Pictures with captions are sent with those in place of
+	// the text, which neither goes out nor is kept.
 	var notes string
 	var captions []string
 	var pics [][]byte
@@ -97,9 +90,13 @@ func (b *Bot) respond(msg feature.Message, act feature.Action, text string) {
 		}
 		pics = append(pics, p.Data)
 	}
+	sent := reply.Text
+	if len(captions) > 0 {
+		reply.Text, sent = "", strings.Join(captions, "\n")
+	}
 	b.chats.Add(key, start, msg.Expires, chats.Entry{Role: "user", Content: strings.TrimSpace(kept)},
 		chats.Entry{Role: "assistant", Content: notes + reply.Text})
-	b.net.Send(msg.Chat, cmp.Or(reply.Text, strings.Join(captions, "\n")), pics, b.chats.Names(key))
+	b.net.Send(msg.Chat, sent, pics, b.chats.Names(key))
 }
 
 // prompt is the message as the model sees it: its quote, escaped and capped
@@ -175,8 +172,8 @@ func (b *Bot) toolNames() []string {
 }
 
 // system is the system prompt: the base rules, the tools line, the offered
-// groups' and the hooks' lines, MODEL_SYSTEM_PROMPT and the intro.
-func (b *Bot) system(offered []int, lines []string) string {
+// groups' lines, MODEL_SYSTEM_PROMPT and the intro.
+func (b *Bot) system(offered []int) string {
 	p := basePrompt
 	names := b.toolNames()
 	if len(names) > 0 {
@@ -196,9 +193,6 @@ func (b *Bot) system(offered []int, lines []string) string {
 		if s := b.groups[i].System; s != "" {
 			p += "\n" + s
 		}
-	}
-	for _, l := range lines {
-		p += "\n" + l
 	}
 	if b.cfg.SystemPrompt != "" {
 		p += "\n" + b.cfg.SystemPrompt

@@ -18,7 +18,7 @@ import (
 var (
 	photo   = feature.Media{ID: "photo1.png"}
 	quoted  = feature.Media{ID: "thumb1.jpg", Quoted: true}
-	sticker = feature.Media{Pack: "00aabbccddeeff00", Sticker: 2, Label: `: 🕵️ from "My Daily Life"`}
+	sticker = feature.Media{ID: "00aabbccddeeff00:2", Sticker: true, Label: `: 🕵️ from "My Daily Life"`}
 	webp    = []byte("RIFF\x00\x00\x00\x00WEBPVP8 \x00\x00\x00\x00")
 )
 
@@ -40,7 +40,7 @@ func host(t *testing.T, see bool, fetched *[]int) *featuretest.Host {
 	data := pngBytes(t)
 	h.Fetch = func(m feature.Message, i int) ([]byte, error) {
 		*fetched = append(*fetched, i)
-		if m.Media[i].Pack != "" {
+		if m.Media[i].Sticker {
 			return webp, nil
 		}
 		return data, nil
@@ -71,7 +71,7 @@ func TestPhotoShownToModel(t *testing.T) {
 	var fetched []int
 	h := host(t, true, &fetched)
 	a := additionsOf(t, h, turn("", photo))
-	if a.Note != "[1 image attached]" || a.HistoryNote != "[1 image attached"+notKept+"]" || a.System != "" {
+	if a.Note != "[1 image attached]" || a.HistoryNote != "[1 image attached"+notKept+"]" {
 		t.Fatalf("got %+v", a)
 	}
 	if len(a.Images) != 1 || !strings.HasPrefix(a.Images[0], "data:image/png;base64,") || len(fetched) != 1 || fetched[0] != 0 {

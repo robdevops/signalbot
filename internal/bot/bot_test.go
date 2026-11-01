@@ -495,7 +495,7 @@ func TestBatchPictures(t *testing.T) {
 		}
 		return m
 	}
-	sticker := feature.Message{Chat: feature.Chat{User: aliceID}, Media: []feature.Media{{Pack: "p", Sticker: 1}}}
+	sticker := feature.Message{Chat: feature.Chat{User: aliceID}, Media: []feature.Media{{ID: "p:1", Sticker: true}}}
 	for _, c := range []struct {
 		batch []feature.Message
 		msg   feature.Message
@@ -512,7 +512,7 @@ func TestBatchPictures(t *testing.T) {
 		}
 	}
 	m, _ := merge([]feature.Message{sticker, photos(2)})
-	if len(m.Media) != 3 || m.Media[2].Pack != "p" || m.Text != "look" {
+	if len(m.Media) != 3 || !m.Media[2].Sticker || m.Text != "look" {
 		t.Fatalf("merged %+v", m)
 	}
 	bare := feature.Message{Chat: feature.Chat{GroupID: groupID}, Name: "Alice"}

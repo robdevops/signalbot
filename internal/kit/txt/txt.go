@@ -9,7 +9,7 @@ const maxName = 64
 
 // SafeName makes an untrusted name safe to splice into a prompt or a log
 // line: no line breaks, no runs of white space, at most maxName runes.
-// Signal profile names are chosen by their owner, so anyone can set one.
+// Display names are chosen by their owner, so anyone can set one.
 func SafeName(s string) string {
 	s = strings.Join(strings.Fields(s), " ")
 	if r := []rune(s); len(r) > maxName {
