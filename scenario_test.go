@@ -1234,9 +1234,9 @@ func TestScenarioExampleWithoutModel(t *testing.T) {
 	if s.Message != want || s.GroupID != idGroup {
 		t.Fatalf("sent %q", s.Message)
 	}
-	// The tool labels are Markdown, so they arrive in bold.
+	// The tool labels and the name are Markdown, so they arrive in bold and italic.
 	equal(t, "styles", s.Styles, []string{strconv.Itoa(strings.Index(want, "web search")) + ":10:BOLD",
-		strconv.Itoa(strings.Index(want, "charts")) + ":6:BOLD"})
+		strconv.Itoa(strings.Index(want, "charts")) + ":6:BOLD", strconv.Itoa(strings.Index(want, "Botty")) + ":5:ITALIC"})
 	if s := h.ask(fromAlice("/INTRO")); s.Message != want || s.Mentions != nil {
 		t.Fatalf("DM sent %q", s.Message)
 	}
