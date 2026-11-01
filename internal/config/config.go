@@ -12,9 +12,10 @@ import (
 
 // DefaultIntro is the self-introduction when INTRO is unset. {name},
 // {model} and {tools} are filled in.
-const DefaultIntro = "hi, I'm {name}, your open source assistant running {model} (tools: {tools}).\n\n" +
-	"I respond to @mentions and replies to my messages. See " +
-	"https://github.com/robdevops/signalbot/blob/main/README.md for details."
+const DefaultIntro = "hi, I'm {name}, your open source assistant running {model}.\n\n" +
+	"Tools:\n{tools}\n\n" +
+	"I respond to @mentions and replies to my messages.\n\n" +
+	"See https://github.com/robdevops/signalbot/blob/main/README.md for details."
 
 // Config is the core's settings.
 type Config struct {

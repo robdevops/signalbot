@@ -149,7 +149,7 @@ Add the bot's account to a group and @mention it, reply to one of its messages, 
 
 `OPENROUTER_API_KEY` is now `MODEL_API_KEY`, and `REASONING` and `SYSTEM_PROMPT` are now `MODEL_REASONING` and `MODEL_SYSTEM_PROMPT`; the old names are ignored. `LOG_LEVEL` is gone: every level is always written (see [Logs](TECHNICAL.md#logs)).
 
-The default `INTRO` is: `hi, I'm {name}, your open source assistant running {model} (tools: {tools}).` then a blank line, then `I respond to @mentions and replies to my messages. See https://github.com/robdevops/signalbot/blob/main/README.md for details.`
+The default `INTRO` is four short paragraphs: `hi, I'm {name}, your open source assistant running {model}.`, `Tools:` then `{tools}`, one tool category per line, `I respond to @mentions and replies to my messages.` and `See https://github.com/robdevops/signalbot/blob/main/README.md for details.`
 
 The cost logged with each reply is the amount OpenRouter reports billing for it. An API that reports no cost gets none logged.
 

@@ -207,5 +207,5 @@ func (b *Bot) intro() string {
 		model = "no model"
 	}
 	return strings.NewReplacer("{name}", b.net.BotName(), "{model}", model,
-		"{tools}", cmp.Or(strings.Join(b.toolNames(), ", "), "none")).Replace(b.cfg.Intro)
+		"{tools}", cmp.Or(strings.Join(b.toolNames(), "\n"), "none")).Replace(b.cfg.Intro) // a line per tool category
 }

@@ -168,7 +168,7 @@ func TestOffering(t *testing.T) {
 		r, _ := h.ask(dm(fmt.Sprint(c.text, " ", len(h.requests())))) // not a repeat
 		equal(t, c.text, toolNames(r), c.tools)
 		want := "\n" + c.listing + "If asked what tools you have: alpha, beta.\n"
-		if s := system(r); !strings.Contains(s, want) || !strings.Contains(s, "(tools: alpha, beta)") || strings.Contains(s, "beta system") != slices.Contains(c.tools, "b_tool") {
+		if s := system(r); !strings.Contains(s, want) || !strings.Contains(s, "Tools:\\nalpha\\nbeta\\n") || strings.Contains(s, "beta system") != slices.Contains(c.tools, "b_tool") {
 			t.Fatalf("%s: system %q", c.text, s)
 		}
 	}
@@ -209,7 +209,7 @@ func TestRegistrationAndGo(t *testing.T) {
 func TestNoToolsWithoutToolCalls(t *testing.T) {
 	h := start(t, options{features: func(b *Bot) { b.Tools(group("alpha", "a_tool", nil)) }})
 	r, _ := h.ask(dm("hello"))
-	if _, ok := r["tools"]; ok || strings.Contains(system(r), "If asked what tools you have") || !strings.Contains(system(r), "(tools: none)") {
+	if _, ok := r["tools"]; ok || strings.Contains(system(r), "If asked what tools you have") || !strings.Contains(system(r), "Tools:\\nnone\\n") {
 		t.Fatalf("tools %v, system %q", r["tools"], system(r))
 	}
 	if !strings.Contains(h.logs.String(), "<4>model test/test-model can't call tools, so tools are off\n") {
@@ -364,7 +364,7 @@ func TestOtherAPI(t *testing.T) {
 	}})
 	r, _ := h.ask(dm("hello"))
 	equal(t, "tools", toolNames(r), []string{"a_tool"})
-	if sys := system(r); !strings.Contains(sys, "(tools: alpha)") || strings.Contains(sys, "served") {
+	if sys := system(r); !strings.Contains(sys, "Tools:\\nalpha\\n") || strings.Contains(sys, "served") {
 		t.Fatalf("system %q", sys)
 	}
 	if _, ok := r["provider"]; ok {
