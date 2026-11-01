@@ -197,8 +197,9 @@ func start(ctx context.Context, h feature.Host, servers map[string]server) error
 		slices.Sort(own)
 		cmds = append(cmds, own...)
 		if len(g.Tools) > 0 {
-			g.Names = append(g.Names, own...)
-			g.Listing = name + ": " + strings.Join(g.Names, ", ")
+			all := strings.Join(append(g.Names, own...), ", ")
+			g.Listing = name + ": " + all
+			g.Names = []string{name + " (" + all + ")"} // grouped by server in {tools}
 			h.Tools(g)
 		}
 		if s, ok := c.(*stdioConn); ok {

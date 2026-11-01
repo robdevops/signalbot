@@ -1135,7 +1135,7 @@ func TestScenarioExampleWithoutModel(t *testing.T) {
 func TestScenarioBotWithoutProfileNameIsSignalbot(t *testing.T) {
 	h := startBot(t, world{NoBotName: true, MCP: true})
 	if s := h.ask(fromAlice("/example")); !strings.HasPrefix(s.Message, "Hi! I'm signalbot. ") ||
-		!strings.Contains(s.Message, "- Run test-model with web search, charts, get_quote, price_chart, /quote, get_forecast, /forecast\n") {
+		!strings.Contains(s.Message, "- Run test-model with web search, charts, stocks (get_quote, price_chart, /quote), weather (get_forecast, /forecast)\n") {
 		t.Fatalf("sent %q", s.Message)
 	}
 }

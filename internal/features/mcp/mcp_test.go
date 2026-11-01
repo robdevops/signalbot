@@ -62,10 +62,13 @@ func tools(h *featuretest.Host) map[string]feature.Tool {
 	return out
 }
 
+// names is every offered tool and command, from each server's listing
+// ("server: tool, /command").
 func names(h *featuretest.Host) string {
 	var out []string
 	for _, g := range h.ToolGroups() {
-		out = append(out, g.Names...)
+		_, list, _ := strings.Cut(g.Listing, ": ")
+		out = append(out, strings.Split(list, ", ")...)
 	}
 	return strings.Join(out, ",")
 }
@@ -355,9 +358,9 @@ func TestToolGroups(t *testing.T) {
 	}
 	plain, scout, yahoo := gs[0], gs[1], gs[2] // in name order
 	if plain.Listing != "plain: echo" || plain.System != "" || plain.Keywords != nil ||
-		scout.Listing != "scout: fail, /scout" || !slices.Equal(scout.Names, []string{"fail", "/scout"}) ||
+		scout.Listing != "scout: fail, /scout" || !slices.Equal(scout.Names, []string{"scout (fail, /scout)"}) ||
 		scout.System != "Use scout for everything." || scout.Keywords != nil || // the server's own instructions
-		yahoo.Listing != "yahoo: echo, pic" || !slices.Equal(yahoo.Names, []string{"echo", "pic"}) || yahoo.System != "Use yahoo for prices." {
+		yahoo.Listing != "yahoo: echo, pic" || !slices.Equal(yahoo.Names, []string{"yahoo (echo, pic)"}) || !slices.Equal(plain.Names, []string{"plain (echo)"}) || yahoo.System != "Use yahoo for prices." {
 		t.Fatalf("groups %+v", gs)
 	}
 	if len(scout.Tools) != 1 || scout.Tools[0].Name != "scout__fail" {
