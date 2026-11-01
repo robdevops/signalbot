@@ -34,7 +34,7 @@ A small, [privacy-conscious](PRIVACY.md) chat bot that connects to a running [si
 - Modify the bot to add your own /commands (see `/intro`)
 - A private assistant in your DMs, or just the fun of a sassy LLM in your Signal groups
 
-The messages the bot answers, and the names in them, are sent to the model's API (OpenRouter, unless you [choose another](#other-providers)) and on to the model's provider. See [TECHNICAL.md](TECHNICAL.md) and [PRIVACY.md](PRIVACY.md) for details on how it works.
+The messages the bot answers, and the names in them, are sent to the model's API (OpenRouter, unless you [choose another](#other-providers)). See [TECHNICAL.md](TECHNICAL.md) and [PRIVACY.md](PRIVACY.md) for details on how it works.
 
 ## Prerequisites
 
