@@ -55,20 +55,6 @@ type Media struct {
 	Label   string // a sticker's emoji and pack title, e.g. `: 🙂 from "Pack"`; filled in by the network
 }
 
-// Received is a message as the chat network hands it to the core, on the
-// network's reader goroutine, or as a feature delivers it. Features never
-// see one.
-type Received struct {
-	Message          // what is known without calling the network
-	GroupChange bool // only that a group's members, name or description changed
-	// Load completes, in its slot, an addressed message, or one that arrived
-	// before the bot's own ID was known. It may call the network, and calls
-	// learn with each name it shows the model and that person's ID. It
-	// reports false for a message the core has nothing to do with. It is nil
-	// for an unaddressed group message and for a delivered one.
-	Load func(ctx context.Context, learn func(name, id string)) (Message, bool)
-}
-
 // Action is what an OnMessage hook decides. The zero value carries on.
 type Action struct {
 	Answer     string // reply with this text, without the model (addressed messages only)

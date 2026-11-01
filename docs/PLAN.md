@@ -1,6 +1,6 @@
 # Plan: what's next
 
-Items 1–3 are done (Markdown prompt, Signal text styles, bold tool labels). Item 5 was dropped. Items 4, 6, 7, 8 and 9 remain.
+Items 1–4 are done (Markdown prompt, Signal text styles, bold tool labels, the A− items). Item 5 was dropped. Items 6, 7, 8 and 9 remain.
 
 Do each remaining item, run gofmt, `go vet` and `go test -race ./...`, then commit and push.
 
@@ -13,7 +13,7 @@ Do each remaining item, run gofmt, `go vet` and `go test -race ./...`, then comm
 
    First check that the installed signal-cli supports `--text-style`.
 3. **Bold tool-category labels in the intro.** Each tool group writes its entry in Markdown: `**charts** (line, pie)`, `**stocks** (get_quote, …)`, `**web search**`. This shows in the intro, the closing tools list and `/intro`. Re-pin the goldens and the `/intro` scenarios.
-4. **A− items:**
+4. **A− items** (done):
    - `feature.Received` moves out of the feature API into `internal/bot`, next to `Network`; signal imports bot, network to core;
    - `Network.Delivered` is simplified to the message plus ok: no callback, mention detection becomes a field, and the names to remember come back with the message;
    - keep the mention names on `Send` and the caption rule as they are, and document why.

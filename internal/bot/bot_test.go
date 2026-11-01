@@ -78,7 +78,7 @@ func TestGroupChangeForgetsNames(t *testing.T) {
 	if len(h.b.chats.Names(key)) == 0 {
 		t.Fatal("no names learned")
 	}
-	h.net.handle(feature.Received{Message: feature.Message{Chat: feature.Chat{GroupID: groupID}}, GroupChange: true})
+	h.net.handle(Received{Message: feature.Message{Chat: feature.Chat{GroupID: groupID}}, GroupChange: true})
 	if names := h.b.chats.Names(key); len(names) != 0 {
 		t.Fatalf("names %v", names)
 	}

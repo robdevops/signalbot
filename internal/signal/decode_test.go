@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/robdevops/signalbot/internal/bot"
 	"github.com/robdevops/signalbot/internal/feature"
 )
 
@@ -162,7 +163,7 @@ func TestEvents(t *testing.T) {
 	c := newClient("x", map[string]bool{aliceID: true}, nil)
 	c.closed.Store(true) // so a group change schedules no contact load
 	connected(c)
-	event := func(env string) (feature.Received, bool) { return c.event(parse(t, env)) }
+	event := func(env string) (bot.Received, bool) { return c.event(parse(t, env)) }
 
 	if r, ok := event(`{` + fromBob + `,"dataMessage":{"message":"￼ hi",` + atBot + `,` + inGroup + `}}`); !ok ||
 		!reflect.DeepEqual(r.Message, feature.Message{Chat: feature.Chat{GroupID: groupID}, Addressed: true}) || r.Load == nil || r.GroupChange {
@@ -197,7 +198,7 @@ func TestEventsBeforeTheIDIsKnown(t *testing.T) {
 	logs := captureLogs(t)
 	c := newClient("x", map[string]bool{aliceID: true}, nil)
 	c.names.refreshedAt = time.Now() // so loading names doesn't try the socket
-	var rs []feature.Received
+	var rs []bot.Received
 	for _, env := range []string{
 		`{"sourceUuid":"` + aliceID + `","sourceName":"Alice","dataMessage":{"message":"hi"}}`,
 		`{` + fromBob + `,"dataMessage":{"message":"the moon",` + inGroup + `}}`,
@@ -253,7 +254,7 @@ func TestLoad(t *testing.T) {
 // A delivered message is checked as if its sender had just posted it: a
 // DM's sender must still be allowed, by ACI or number, and a group's still
 // a member. Its sender's name is filled in, the bot's @name is taken out,
-// and the members' names are passed on. One delivered before the client
+// and a group's members come back with it. One delivered before the client
 // connects waits, and loads the bot's name to take out. A drop is logged
 // without content.
 func TestDelivered(t *testing.T) {
@@ -265,50 +266,45 @@ func TestDelivered(t *testing.T) {
 	c := newClient(f.sock, allowed, nil)
 	ctx := context.Background()
 	type result struct {
-		m             feature.Message
-		mentioned, ok bool
+		r  bot.Received
+		ok bool
 	}
 	early := make(chan result, 1)
 	go func() {
-		m, mentioned, ok := c.Delivered(ctx, feature.Message{Chat: feature.Chat{User: aliceID}, Sender: aliceID, Text: "@Botty up?"}, nil)
-		early <- result{m, mentioned, ok}
+		r, ok := c.Delivered(ctx, feature.Message{Chat: feature.Chat{User: aliceID}, Sender: aliceID, Text: "@Botty up?"})
+		early <- result{r, ok}
 	}()
 	run(t, c, f)
 	select {
-	case r := <-early:
-		if !r.ok || !r.mentioned || r.m.Text != "up?" || r.m.Name != "Alice" {
-			t.Fatalf("delivered before connecting: %+v", r)
+	case e := <-early:
+		if !e.ok || !e.r.Mentioned || e.r.Text != "up?" || e.r.Name != "Alice" {
+			t.Fatalf("delivered before connecting: %+v", e)
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("the early delivery never returned")
 	}
-	deliver := func(m feature.Message) (feature.Message, []string, bool, bool) {
-		var claimed []string
-		out, mentioned, ok := c.Delivered(ctx, m, func(name, id string) { claimed = append(claimed, name+" "+id) })
-		return out, claimed, mentioned, ok
-	}
 
-	m, claimed, mentioned, ok := deliver(feature.Message{Chat: feature.Chat{GroupID: groupID}, Sender: aliceID, Text: "@BOTTY what's new, @Bob?"})
-	if !ok || !mentioned || m.Text != "what's new, @Bob?" || m.Name != "Alice" || !reflect.DeepEqual(claimed, []string{"Alice " + aliceID, "Bob " + bobID}) {
-		t.Fatalf("group: %+v %q %v %v", m, claimed, mentioned, ok)
+	r, ok := c.Delivered(ctx, feature.Message{Chat: feature.Chat{GroupID: groupID}, Sender: aliceID, Text: "@BOTTY what's new, @Bob?"})
+	if want := []bot.Member{{Name: "Alice", ID: aliceID}, {Name: "Bob", ID: bobID}}; !ok || !r.Mentioned || r.Text != "what's new, @Bob?" || r.Name != "Alice" || !reflect.DeepEqual(r.Members, want) {
+		t.Fatalf("group: %+v %v", r, ok)
 	}
-	if m, _, mentioned, ok := deliver(feature.Message{Chat: feature.Chat{User: aliceID}, Sender: aliceID, Name: "Alice S", Text: "water the plants"}); !ok || mentioned || m.Name != "Alice S" {
-		t.Fatalf("DM allowed by number: %+v %v %v", m, mentioned, ok)
+	if r, ok := c.Delivered(ctx, feature.Message{Chat: feature.Chat{User: aliceID}, Sender: aliceID, Name: "Alice S", Text: "water the plants"}); !ok || r.Mentioned || r.Name != "Alice S" || r.Members != nil {
+		t.Fatalf("DM allowed by number: %+v %v", r, ok)
 	}
-	if _, _, _, ok := deliver(feature.Message{Chat: feature.Chat{GroupID: groupID}, Sender: bobID, Text: "hello all"}); !ok {
+	if _, ok := c.Delivered(ctx, feature.Message{Chat: feature.Chat{GroupID: groupID}, Sender: bobID, Text: "hello all"}); !ok {
 		t.Fatal("a group member not allowed to DM was dropped")
 	}
 	for _, m := range []feature.Message{
 		{Chat: feature.Chat{GroupID: "other"}, Sender: aliceID, Text: "secret words"},
 		{Chat: feature.Chat{User: bobID}, Sender: bobID, Text: "secret words"},
 	} {
-		if _, _, _, ok := deliver(m); ok {
+		if _, ok := c.Delivered(ctx, m); ok {
 			t.Errorf("delivered %+v", m)
 		}
 	}
 	gone, cancel := context.WithCancel(ctx)
 	cancel()
-	if _, _, ok := newClient("x", nil, nil).Delivered(gone, feature.Message{Text: "secret words"}, nil); ok {
+	if _, ok := newClient("x", nil, nil).Delivered(gone, feature.Message{Text: "secret words"}); ok {
 		t.Error("delivered while not connected")
 	}
 	out := logs.String()

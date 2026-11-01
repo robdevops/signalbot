@@ -10,6 +10,7 @@ import (
 	"time"
 	"unicode/utf16"
 
+	"github.com/robdevops/signalbot/internal/bot"
 	"github.com/robdevops/signalbot/internal/feature"
 	"github.com/robdevops/signalbot/internal/kit/img"
 	"github.com/robdevops/signalbot/internal/kit/logx"
@@ -139,32 +140,32 @@ func isAddressed(env *envelope, self string, allowed map[string]bool) bool {
 
 // event is env as the core gets it, decided on the reader goroutine without
 // calling the network; false if the core has nothing to do with it.
-func (c *Client) event(env *envelope) (feature.Received, bool) {
+func (c *Client) event(env *envelope) (bot.Received, bool) {
 	d := env.DataMessage
 	if d == nil {
-		return feature.Received{}, false
+		return bot.Received{}, false
 	}
 	chat := env.chat()
 	if g := d.GroupInfo; g != nil && g.Type == "UPDATE" {
 		// Reload the contact list, so new members are known and departed
 		// ones forgotten.
 		c.refreshSoon()
-		return feature.Received{Message: feature.Message{Chat: chat}, GroupChange: true}, true
+		return bot.Received{Message: feature.Message{Chat: chat}, GroupChange: true}, true
 	}
 	load := func(ctx context.Context, learn func(name, id string)) (feature.Message, bool) {
 		return c.load(ctx, env, learn)
 	}
 	self := c.self()
 	if self == "" {
-		return feature.Received{Message: feature.Message{Chat: chat}, Load: load}, true
+		return bot.Received{Message: feature.Message{Chat: chat}, Load: load}, true
 	}
 	switch addressed, other := c.judge(env, self); {
 	case addressed:
-		return feature.Received{Message: feature.Message{Chat: chat, Addressed: true}, Load: load}, true
+		return bot.Received{Message: feature.Message{Chat: chat, Addressed: true}, Load: load}, true
 	case other:
-		return feature.Received{Message: c.message(env, self)}, true
+		return bot.Received{Message: c.message(env, self)}, true
 	}
-	return feature.Received{}, false
+	return bot.Received{}, false
 }
 
 // judge decides whether env is addressed, or another group message, for
@@ -291,40 +292,42 @@ func (c *Client) text(msg string, ms []mention, self string) string {
 // Delivered readies a message a feature delivers, in its slot, as if its
 // sender had just posted it. It waits up to 10s for the bot to be connected
 // and loads its own name. A DM's sender must still be allowed, by ACI or
-// number, and a group's still a member; claim is passed each member's name
-// and ID. It returns msg with its sender's name filled in and without the
-// bot's @name, and whether that was there; false, logged without content,
-// if msg is dropped.
-func (c *Client) Delivered(ctx context.Context, msg feature.Message, claim func(name, id string)) (out feature.Message, mentioned, ok bool) {
+// number, and a group's still a member. It returns msg with its sender's
+// name filled in and without the bot's @name, Mentioned if that was there,
+// and in a group its members; false, logged without content, if msg is
+// dropped.
+func (c *Client) Delivered(ctx context.Context, msg feature.Message) (bot.Received, bool) {
 	wait, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
 	if c.WaitID(wait) == "" {
 		logx.Warnf("delivered message dropped: not connected to signal-cli after 10s")
-		return msg, false, false
+		return bot.Received{}, false
 	}
 	c.loadNames(wait, &envelope{})
 	if msg.Chat.GroupID == "" && !c.allowed[msg.Sender] && !c.allowed[c.number(msg.Sender)] {
 		logx.Infof("delivered message from %s dropped because not in SIGNAL_DM_USER_IDS", cmp.Or(msg.Sender, "unknown sender"))
-		return msg, false, false
+		return bot.Received{}, false
 	}
 	msg.Name = cmp.Or(msg.Name, c.name(msg.Sender))
+	var r bot.Received
 	if msg.Chat.GroupID != "" {
 		ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 		gs, err := c.groups(ctx)
 		cancel()
 		if err != nil {
 			logx.Warnf("delivered message dropped: listGroups failed: %v", err)
-			return msg, false, false
+			return bot.Received{}, false
 		}
 		i := slices.IndexFunc(gs, func(g group) bool { return g.ID == msg.Chat.GroupID && g.has(msg.Sender) })
 		if i < 0 {
 			logx.Infof("delivered message dropped: its sender is not in the group")
-			return msg, false, false
+			return bot.Received{}, false
 		}
 		for _, m := range gs[i].members {
-			claim(c.name(m.UUID, m.Number), m.UUID) // a member without an ACI is never linked
+			r.Members = append(r.Members, bot.Member{Name: c.name(m.UUID, m.Number), ID: m.UUID}) // a member without an ACI is never linked
 		}
 	}
-	msg.Text, mentioned = stripAt(msg.Text, c.BotName(), defaultName)
-	return msg, mentioned, true
+	msg.Text, r.Mentioned = stripAt(msg.Text, c.BotName(), defaultName)
+	r.Message = msg
+	return r, true
 }

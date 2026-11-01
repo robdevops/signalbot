@@ -20,6 +20,7 @@ import (
 	"time"
 	"unicode"
 
+	"github.com/robdevops/signalbot/internal/bot"
 	"github.com/robdevops/signalbot/internal/config"
 	"github.com/robdevops/signalbot/internal/feature"
 	"github.com/robdevops/signalbot/internal/kit/logx"
@@ -123,7 +124,7 @@ func (c *Client) network() string {
 // Run connects, learns the bot's own account ID, and calls handle on this
 // goroutine for every message received that the core may act on. It
 // reconnects with backoff until ctx ends. handle must not block.
-func (c *Client) Run(ctx context.Context, handle func(feature.Received)) {
+func (c *Client) Run(ctx context.Context, handle func(bot.Received)) {
 	defer c.closed.Store(true)
 	backoff := time.Second
 	for ctx.Err() == nil {
@@ -148,7 +149,7 @@ func (c *Client) Run(ctx context.Context, handle func(feature.Received)) {
 	}
 }
 
-func (c *Client) serve(ctx context.Context, conn net.Conn, handle func(feature.Received)) {
+func (c *Client) serve(ctx context.Context, conn net.Conn, handle func(bot.Received)) {
 	c.mu.Lock()
 	c.conn = conn
 	c.mu.Unlock()
@@ -188,7 +189,7 @@ func (c *Client) serve(ctx context.Context, conn net.Conn, handle func(feature.R
 	c.mu.Unlock()
 }
 
-func (c *Client) dispatch(line []byte, handle func(feature.Received)) {
+func (c *Client) dispatch(line []byte, handle func(bot.Received)) {
 	defer logx.Recover("reading a message")
 	var m rpcMsg
 	if err := json.Unmarshal(line, &m); err != nil {

@@ -15,6 +15,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/robdevops/signalbot/internal/bot"
 	"github.com/robdevops/signalbot/internal/feature"
 	"github.com/robdevops/signalbot/internal/kit/logx"
 )
@@ -129,12 +130,12 @@ func receive(c net.Conn, envelope string) {
 
 // run starts c on f and returns what it hands the core and the server side
 // of the first connection. Run has returned by the time the test ends.
-func run(t *testing.T, c *Client, f *fake) (<-chan feature.Received, net.Conn) {
+func run(t *testing.T, c *Client, f *fake) (<-chan bot.Received, net.Conn) {
 	t.Helper()
-	got := make(chan feature.Received, 16)
+	got := make(chan bot.Received, 16)
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
-	go func() { defer close(done); c.Run(ctx, func(r feature.Received) { got <- r }) }()
+	go func() { defer close(done); c.Run(ctx, func(r bot.Received) { got <- r }) }()
 	t.Cleanup(func() { cancel(); <-done })
 	wctx, wcancel := context.WithTimeout(ctx, 5*time.Second)
 	defer wcancel()
@@ -160,14 +161,14 @@ func eventually(t *testing.T, what string, ok func() bool) {
 	}
 }
 
-func next(t *testing.T, got <-chan feature.Received) feature.Received {
+func next(t *testing.T, got <-chan bot.Received) bot.Received {
 	t.Helper()
 	select {
 	case r := <-got:
 		return r
 	case <-time.After(5 * time.Second):
 		t.Fatal("nothing received")
-		return feature.Received{}
+		return bot.Received{}
 	}
 }
 
@@ -216,10 +217,10 @@ func TestStalledWriteReconnects(t *testing.T) {
 		}
 	}()
 	c := newClient(sock, allowAll(), nil)
-	got := make(chan feature.Received, 4)
+	got := make(chan bot.Received, 4)
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
-	go func() { defer close(done); c.Run(ctx, func(r feature.Received) { got <- r }) }()
+	go func() { defer close(done); c.Run(ctx, func(r bot.Received) { got <- r }) }()
 	defer func() { cancel(); <-done }()
 
 	srv := <-conns
@@ -292,7 +293,7 @@ func TestUnmatchedAndBadFramesAreLogged(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			logs := captureLogs(t)
-			newClient("x", nil, nil).dispatch([]byte(tc.line), func(feature.Received) { t.Fatal("unexpected message") })
+			newClient("x", nil, nil).dispatch([]byte(tc.line), func(bot.Received) { t.Fatal("unexpected message") })
 			out := logs.String()
 			if tc.want == "" && out != "" || !strings.Contains(out, tc.want) || strings.Contains(out, "secret") {
 				t.Fatalf("logged %q, want %q", out, tc.want)
@@ -305,7 +306,7 @@ func TestUnmatchedAndBadFramesAreLogged(t *testing.T) {
 // reader carries on.
 func TestDispatchRecovers(t *testing.T) {
 	logs := captureLogs(t)
-	newClient("x", nil, nil).dispatch([]byte(`{"method":"receive","params":{"envelope":{"dataMessage":{"message":"hi"}}}}`), func(feature.Received) { panic("secret text") })
+	newClient("x", nil, nil).dispatch([]byte(`{"method":"receive","params":{"envelope":{"dataMessage":{"message":"hi"}}}}`), func(bot.Received) { panic("secret text") })
 	if out := logs.String(); !strings.Contains(out, "internal error") || strings.Contains(out, "secret") {
 		t.Fatalf("logged %q", out)
 	}
@@ -414,7 +415,7 @@ func TestReconnectsDoNotLeakGoroutines(t *testing.T) {
 	for range 50 {
 		c1, c2 := net.Pipe()
 		c2.Close()
-		c.serve(ctx, c1, func(feature.Received) {})
+		c.serve(ctx, c1, func(bot.Received) {})
 	}
 	time.Sleep(100 * time.Millisecond)
 	if delta := runtime.NumGoroutine() - before; delta > 5 {

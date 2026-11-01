@@ -69,7 +69,7 @@ func (b *Bot) Groups(ctx context.Context, user string) ([]feature.Group, error) 
 // posted it.
 func (b *Bot) Deliver(msg feature.Message) {
 	if !b.closing.Load() {
-		b.post(feature.Received{Message: msg})
+		b.post(Received{Message: msg})
 	}
 }
 
@@ -78,19 +78,23 @@ func (b *Bot) Deliver(msg feature.Message) {
 // message; anything else the bot posts as written, with @Name linked to
 // the group's members.
 func (b *Bot) delivered(msg feature.Message) {
-	known := map[string]string{}
-	msg, mentioned, ok := b.net.Delivered(b.ctx, msg, func(name, id string) { chats.Claim(known, name, id) })
+	r, ok := b.net.Delivered(b.ctx, msg)
 	if !ok {
 		return
 	}
+	msg = r.Message
 	key := msg.Chat.Key()
 	if msg.Chat.GroupID != "" {
 		b.chats.Learn(key, msg.Name, msg.Sender)
 	}
 	msg.Addressed = true
-	if act := b.onMessage(b.ctx, msg); act != (feature.Action{}) || mentioned {
+	if act := b.onMessage(b.ctx, msg); act != (feature.Action{}) || r.Mentioned {
 		b.respond(msg, act, prompt(msg))
 		return
+	}
+	known := map[string]string{}
+	for _, m := range r.Members {
+		chats.Claim(known, m.Name, m.ID)
 	}
 	b.net.Send(msg.Chat, msg.Text, nil, known)
 	if b.ai != nil { // with no model, nothing would read it
