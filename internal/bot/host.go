@@ -22,6 +22,8 @@ func (b *Bot) OnTurn(fn func(context.Context, feature.Message) feature.Additions
 
 // Tools keeps g with only the tools the model's API can run, and drops a
 // group whose tools it can run none of.
+func (b *Bot) IntroLine(line string) { b.more = append(b.more, line) }
+
 func (b *Bot) Tools(g feature.ToolGroup) {
 	if b.ai != nil {
 		if g.Tools = b.ai.Usable(g.Tools); len(g.Tools) == 0 {

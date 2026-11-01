@@ -2,6 +2,7 @@ package bot
 
 import (
 	"cmp"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -185,7 +186,7 @@ func (b *Bot) system(offered []int) string {
 		if len(items) > 0 {
 			p += "Your tools: " + strings.Join(items, "; ") + ". "
 		}
-		p += "If asked what tools you have: " + strings.Join(names, ", ") + "."
+		p += "If asked what tools you have: " + strings.Join(names, "; ") + "."
 	}
 	for _, i := range offered {
 		if s := b.groups[i].System; s != "" {
@@ -206,6 +207,14 @@ func (b *Bot) intro() string {
 	if b.ai == nil {
 		model = "no model"
 	}
-	return strings.NewReplacer("{name}", b.net.BotName(), "{model}", model,
-		"{tools}", cmp.Or(strings.Join(b.toolNames(), ", "), "none")).Replace(b.cfg.Intro)
+	more := "\n\n" + strings.Join(b.more, "\n\n") + "\n\n" // each feature line padded with blank lines
+	s := strings.NewReplacer("{name}", b.net.BotName(), "{model}", model, "{more}", more,
+		"{tools}", cmp.Or(strings.Join(b.toolNames(), "\n\n"), "none")).Replace(b.cfg.Intro)
+	s = lineEnds.ReplaceAllString(s, "\n")
+	return strings.TrimSpace(blankLines.ReplaceAllString(s, "\n\n")) // never two blank lines in a row
 }
+
+var (
+	lineEnds   = regexp.MustCompile(`[ \t]*\n[ \t]*`) // spaces either side of a line break
+	blankLines = regexp.MustCompile(`\n{3,}`)         // two or more blank lines in a row
+)

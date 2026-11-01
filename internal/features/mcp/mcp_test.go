@@ -358,9 +358,9 @@ func TestToolGroups(t *testing.T) {
 	}
 	plain, scout, yahoo := gs[0], gs[1], gs[2] // in name order
 	if plain.Listing != "plain: echo" || plain.System != "" || plain.Keywords != nil ||
-		scout.Listing != "scout: fail, /scout" || !slices.Equal(scout.Names, []string{"**scout** (fail, /scout)"}) ||
+		scout.Listing != "scout: fail, /scout" || !slices.Equal(scout.Names, []string{"**scout**: fail, /scout"}) ||
 		scout.System != "Use scout for everything." || scout.Keywords != nil || // the server's own instructions
-		yahoo.Listing != "yahoo: echo, pic" || !slices.Equal(yahoo.Names, []string{"**yahoo** (echo, pic)"}) || !slices.Equal(plain.Names, []string{"**plain** (echo)"}) || yahoo.System != "Use yahoo for prices." {
+		yahoo.Listing != "yahoo: echo, pic" || !slices.Equal(yahoo.Names, []string{"**yahoo**: echo, pic"}) || !slices.Equal(plain.Names, []string{"**plain**: echo"}) || yahoo.System != "Use yahoo for prices." {
 		t.Fatalf("groups %+v", gs)
 	}
 	if len(scout.Tools) != 1 || scout.Tools[0].Name != "scout__fail" {

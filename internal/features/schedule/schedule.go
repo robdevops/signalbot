@@ -104,6 +104,7 @@ func register(h feature.Host, loc *time.Location, now func() time.Time) error {
 			return err
 		}
 	}
+	h.IntroLine(`Type "/schedule" for schedules and reminders.`)
 	return nil
 }
 
@@ -294,14 +295,18 @@ func (s *store) command(ctx context.Context, m feature.Message, args string) fea
 func answer(text string) feature.Action { return feature.Action{Answer: text} }
 
 func (s *store) help() string {
-	return "Schedule a message, or a /command, to post as if you'd sent it:\n" + usage + "\n" +
-		"- The time is ISO 8601, like " + exampleTime + " in my time zone (" + s.now().In(s.loc).Format("MST") +
-		"), or with an offset, like " + exampleTime + "+10:00.\n" +
-		"- Without a group name it's posted here. A message that @mentions me gets my answer.\n" +
-		"- A monthly schedule from the 31st runs on the last day of shorter months.\n" +
-		"/schedule list: your schedules, numbered\n" +
-		"/schedule del <number>: delete one\n" +
-		"/timer, /reminder and /job work the same as /schedule."
+	now := s.now().In(s.loc)
+	return strings.Join([]string{
+		"Schedule a message, or a /command, to post as if you'd sent it:\n\n" + usage,
+		"- The time is ISO 8601, like " + exampleTime + " in my time zone (" + now.Format("MST") +
+			"), or with an offset, like " + exampleTime + "+10:00.",
+		"- Without a group name it's posted here. A message that @mentions me gets my answer.",
+		"- A monthly schedule from the 31st runs on the last day of shorter months.",
+		"/schedule list: your schedules, numbered",
+		"/schedule del <number>: delete one",
+		"/timer, /reminder and /job work the same as /schedule.",
+		"The current time is " + now.Format("2006-01-02T15:04Z07:00"),
+	}, "\n\n")
 }
 
 // add makes a schedule from args.
@@ -342,7 +347,7 @@ func (s *store) add(ctx context.Context, m feature.Message, args string) string 
 		e.cancel()
 		s.all = s.all[:len(s.all)-1]
 		s.last[e.User]--
-		return "Sorry, I couldn't save that schedule."
+		return "Sorry, I couldn't save that schedule: I can't write to my storage. Please let my owner know."
 	}
 	repeat := ""
 	if e.Every != "" {
@@ -501,7 +506,7 @@ func (s *store) del(user, arg string) string {
 	if err := s.save(); err != nil {
 		s.all = old
 		logx.Errorf("schedules not saved, so none was deleted: %v", err)
-		return "Sorry, I couldn't delete that schedule."
+		return "Sorry, I couldn't delete that schedule: I can't write to my storage. Please let my owner know."
 	}
 	if e.cancel != nil {
 		e.cancel()

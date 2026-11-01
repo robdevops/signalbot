@@ -28,6 +28,7 @@ type Host struct {
 	messages  []func(context.Context, feature.Message) feature.Action
 	turns     []func(context.Context, feature.Message) feature.Additions
 	groups    []feature.ToolGroup
+	more      []string
 	timers    []*Timer
 	delivered []feature.Message
 	life      context.Context // what Go passes; ended by Stop
@@ -57,6 +58,19 @@ func (h *Host) OnTurn(fn func(context.Context, feature.Message) feature.Addition
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	h.turns = append(h.turns, fn)
+}
+
+// IntroLine records an introduction line; IntroLines returns them.
+func (h *Host) IntroLine(line string) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.more = append(h.more, line)
+}
+
+func (h *Host) IntroLines() []string {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return slices.Clone(h.more)
 }
 
 func (h *Host) Tools(g feature.ToolGroup) {

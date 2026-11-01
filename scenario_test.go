@@ -824,7 +824,7 @@ func TestScenarioOtherProvider(t *testing.T) {
 	if r.Body["reasoning_effort"] != "low" || r.Model != scenarioModel {
 		t.Fatalf("reasoning_effort %v, model %q", r.Body["reasoning_effort"], r.Model)
 	}
-	if !strings.Contains(r.System, "(tools: **charts** (line, pie))") {
+	if !strings.Contains(r.System, "Tools:\\n**charts**: line, pie\\n") {
 		t.Fatalf("system %q", r.System)
 	}
 	if n := h.modelLists(); n != 0 {
@@ -862,7 +862,7 @@ func TestScenarioNoModel(t *testing.T) {
 		t.Fatalf("web search logged as on: %v", h.logLines())
 	}
 	s := h.ask(atBot("/intro"))
-	if !strings.HasPrefix(s.Message, "hi, I'm Botty, your open source assistant running no model (tools: none).\n\n") {
+	if !strings.HasPrefix(s.Message, "hi, I'm Botty, your open source assistant running no model.\n\nTools:\nnone\n\n") {
 		t.Fatalf("sent %q", s.Message)
 	}
 	h.ignored(inGroup("the moon is made of cheese"))
@@ -906,7 +906,7 @@ func TestScenarioSystemPromptLayering(t *testing.T) {
 func TestScenarioIntroPlaceholders(t *testing.T) {
 	h := startBot(t, world{Env: map[string]string{"INTRO": `yo, {name} here on {model} with {tools}; "quoted"` + "\nnext line"}})
 	h.ask(fromAlice("introduce yourself"))
-	want := `If asked to introduce yourself, reply with exactly this text and nothing else: "yo, Botty here on test-model with **web search**, **charts** (line, pie); \"quoted\"\nnext line"`
+	want := `If asked to introduce yourself, reply with exactly this text and nothing else: "yo, Botty here on test-model with **web search**\n\n**charts**: line, pie; \"quoted\"\nnext line"`
 	if p := h.lastRequest().System; !strings.HasSuffix(p, "\n"+want) {
 		t.Fatalf("system prompt %q", p)
 	}
@@ -1125,8 +1125,8 @@ func TestScenarioExampleWithoutModel(t *testing.T) {
 	s := h.ask(atBot("/intro"))
 	// /intro sends INTRO, the same text the model gives when asked to
 	// introduce itself.
-	want := "hi, I'm Botty, your open source assistant running test-model (tools: web search, charts (line, pie)).\n\n" +
-		"I respond to @mentions and replies to my messages. See https://github.com/robdevops/signalbot/blob/main/README.md for details.\n\nThis message did not use the model."
+	want := "hi, I'm Botty, your open source assistant running test-model.\n\nTools:\nweb search\n\ncharts: line, pie\n\n" +
+		"Type \"/schedule\" for schedules and reminders.\n\nI respond to @mentions and replies to my messages.\n\nSee https://github.com/robdevops/signalbot/blob/main/README.md for details.\n\nThis message did not use the model."
 	if s.Message != want || s.GroupID != idGroup {
 		t.Fatalf("sent %q", s.Message)
 	}
@@ -1145,7 +1145,7 @@ func TestScenarioExampleWithoutModel(t *testing.T) {
 
 func TestScenarioBotWithoutProfileNameIsSignalbot(t *testing.T) {
 	h := startBot(t, world{NoBotName: true, MCP: true})
-	if s := h.ask(fromAlice("/intro")); !strings.HasPrefix(s.Message, "hi, I'm signalbot, your open source assistant running test-model (tools: web search, charts (line, pie), stocks (get_quote, price_chart, /quote), weather (get_forecast, /forecast)).\n\n") {
+	if s := h.ask(fromAlice("/intro")); !strings.HasPrefix(s.Message, "hi, I'm signalbot, your open source assistant running test-model.\n\nTools:\nweb search\n\ncharts: line, pie\n\nstocks: get_quote, price_chart, /quote\n\nweather: get_forecast, /forecast\n\n") {
 		t.Fatalf("sent %q", s.Message)
 	}
 }
@@ -1424,7 +1424,7 @@ func TestScenarioGoldenPromptFull(t *testing.T) {
 func TestScenarioGoldenPromptNoFeatures(t *testing.T) {
 	h := startBot(t, world{NoTools: true})
 	h.ask(atBot("chart AAPL against the S&P 500 for a year"))
-	golden(t, "prompt_nofeatures.txt", h.lastRequest().System)
+	golden(t, "prompt_notools.txt", h.lastRequest().System)
 }
 
 // --- /schedule ---------------------------------------------------------------------

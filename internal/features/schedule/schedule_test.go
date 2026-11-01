@@ -204,7 +204,8 @@ func TestAddListDel(t *testing.T) {
 	if got := w.dm("/schedule del 1"); !strings.HasPrefix(got, "Schedule 1 has already run or been deleted.") {
 		t.Fatalf("got %q", got)
 	}
-	if got := w.dm("/schedule"); !strings.Contains(got, usage) || !strings.Contains(got, "my time zone (UTC)") || w.dm("/schedule help") != got {
+	if got := w.dm("/schedule"); !strings.Contains(got, usage) || !strings.Contains(got, "my time zone (UTC)") || w.dm("/schedule help") != got ||
+		!strings.Contains(got, "+10:00.\n\n- Without a group name") || !strings.HasSuffix(got, "/schedule.\n\nThe current time is "+w.now.Format("2006-01-02T15:04Z07:00")) {
 		t.Fatalf("help %q", got)
 	}
 	w.noTextLogged("Morning all", "forecast Paris")
@@ -461,7 +462,7 @@ func TestWorkingDirectory(t *testing.T) {
 	}
 	os.Remove(filepath.Join(w.dir, fileName))
 	os.Mkdir(filepath.Join(w.dir, fileName), 0o700) // so the rename fails
-	if got := w.dm(`/schedule "hi" 2030-02-01T09:00`); got != "Sorry, I couldn't save that schedule." || len(w.h.Timers()) != 1 {
+	if got := w.dm(`/schedule "hi" 2030-02-01T09:00`); got != "Sorry, I couldn't save that schedule: I can't write to my storage. Please let my owner know." || len(w.h.Timers()) != 1 {
 		t.Fatalf("got %q, %d timers", got, len(w.h.Timers()))
 	}
 }

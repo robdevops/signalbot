@@ -140,7 +140,7 @@ func TestCommands(t *testing.T) {
 	if c, _ := json.Marshal(r["tool_choice"]); string(c) != `{"function":{"name":"b_tool"},"type":"function"}` {
 		t.Fatalf("tool_choice %s", c)
 	}
-	if !strings.Contains(system(r), "\nYour tools: alpha; beta. If asked what tools you have: alpha, beta.\n") {
+	if !strings.Contains(system(r), "\nYour tools: alpha; beta. If asked what tools you have: alpha; beta.\n") {
 		t.Fatalf("system %q", system(r))
 	}
 	h.receive(chatter("/hi")) // not addressed: not a command
@@ -167,8 +167,8 @@ func TestOffering(t *testing.T) {
 	} {
 		r, _ := h.ask(dm(fmt.Sprint(c.text, " ", len(h.requests())))) // not a repeat
 		equal(t, c.text, toolNames(r), c.tools)
-		want := "\n" + c.listing + "If asked what tools you have: alpha, beta.\n"
-		if s := system(r); !strings.Contains(s, want) || !strings.Contains(s, "(tools: alpha, beta)") || strings.Contains(s, "beta system") != slices.Contains(c.tools, "b_tool") {
+		want := "\n" + c.listing + "If asked what tools you have: alpha; beta.\n"
+		if s := system(r); !strings.Contains(s, want) || !strings.Contains(s, "Tools:\\nalpha\\n\\nbeta\\n") || strings.Contains(s, "beta system") != slices.Contains(c.tools, "b_tool") {
 			t.Fatalf("%s: system %q", c.text, s)
 		}
 	}
@@ -209,7 +209,7 @@ func TestRegistrationAndGo(t *testing.T) {
 func TestNoToolsWithoutToolCalls(t *testing.T) {
 	h := start(t, options{features: func(b *Bot) { b.Tools(group("alpha", "a_tool", nil)) }})
 	r, _ := h.ask(dm("hello"))
-	if _, ok := r["tools"]; ok || strings.Contains(system(r), "If asked what tools you have") || !strings.Contains(system(r), "(tools: none)") {
+	if _, ok := r["tools"]; ok || strings.Contains(system(r), "If asked what tools you have") || !strings.Contains(system(r), "Tools:\\nnone\\n") {
 		t.Fatalf("tools %v, system %q", r["tools"], system(r))
 	}
 	if !strings.Contains(h.logs.String(), "<4>model test/test-model can't call tools, so tools are off\n") {
@@ -364,7 +364,7 @@ func TestOtherAPI(t *testing.T) {
 	}})
 	r, _ := h.ask(dm("hello"))
 	equal(t, "tools", toolNames(r), []string{"a_tool"})
-	if sys := system(r); !strings.Contains(sys, "(tools: alpha)") || strings.Contains(sys, "served") {
+	if sys := system(r); !strings.Contains(sys, "Tools:\\nalpha\\n") || strings.Contains(sys, "served") {
 		t.Fatalf("system %q", sys)
 	}
 	if _, ok := r["provider"]; ok {
@@ -377,5 +377,23 @@ func TestOtherAPI(t *testing.T) {
 	if lists != 0 || !strings.Contains(logs, "<4>tool openrouter:served left out") || !strings.Contains(logs, "<4>tool openrouter:other left out") ||
 		!strings.Contains(logs, "images are off and tools on") {
 		t.Fatalf("%d model lists; logs:\n%s", lists, logs)
+	}
+}
+
+// Features' introduction lines go where INTRO has {more}, each padded with
+// a blank line, and the introduction never has two blank lines in a row.
+func TestIntroLines(t *testing.T) {
+	for intro, want := range map[string]string{
+		"hi\n\n{more}\n\nbye": "hi\n\nType one.\n\nType two.\n\nbye",
+		"hi {more} bye":       "hi\n\nType one.\n\nType two.\n\nbye",
+		"hi\n\n\n\nbye{more}": "hi\n\nbye\n\nType one.\n\nType two.",
+	} {
+		h := start(t, options{cfg: func(c *config.Config) { c.Intro = intro }, features: func(b *Bot) {
+			b.IntroLine("Type one.")
+			b.IntroLine("Type two.")
+		}})
+		if got := h.b.Info().Intro; got != want {
+			t.Errorf("INTRO %q gave %q, want %q", intro, got, want)
+		}
 	}
 }

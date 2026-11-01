@@ -150,6 +150,9 @@ type Host interface {
 	OnTurn(func(context.Context, Message) Additions)
 	// Tools offers a group of tools to the model.
 	Tools(ToolGroup)
+	// IntroLine adds a paragraph to the bot's introduction, where INTRO has
+	// {more}, such as a pointer to a command.
+	IntroLine(line string)
 	// At runs fn once at t, however late, passing the time it was due. It
 	// fails when too many timers are set.
 	At(name string, t time.Time, fn func(ctx context.Context, due time.Time)) (cancel func(), err error)

@@ -55,7 +55,7 @@ func themeFor(mode string) *theme {
 func Register(h feature.Host) error {
 	mode := darkMode(h)
 	h.Tools(feature.ToolGroup{
-		Names:    []string{"**charts** (line, pie)"},
+		Names:    []string{"**charts**: line, pie"},
 		Listing:  "charts (" + chartTool + ", " + pieTool + ")",
 		Keywords: wantsChart,
 		Tools: []feature.Tool{
