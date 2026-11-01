@@ -886,7 +886,7 @@ func TestScenarioSystemPromptLayering(t *testing.T) {
 	h := startBot(t, world{Env: map[string]string{"MODEL_SYSTEM_PROMPT": "Talk like a pirate."}})
 	h.ask(fromAlice("what is up"))
 	p := h.lastRequest().System
-	if !strings.HasPrefix(p, "You are a helpful assistant in a Signal chat. ") || !strings.Contains(p, "\nTalk like a pirate.\nIf asked to introduce yourself") {
+	if !strings.HasPrefix(p, "You are a helpful assistant in a chat. ") || !strings.Contains(p, " This is a Signal chat. ") || !strings.Contains(p, "\nTalk like a pirate.\nIf asked to introduce yourself") {
 		t.Fatalf("system prompt %q", p)
 	}
 }

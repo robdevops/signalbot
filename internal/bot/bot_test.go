@@ -17,10 +17,9 @@ import (
 	"github.com/robdevops/signalbot/internal/feature"
 )
 
-// With no features, the prompt is the golden one pinned at e40dc5f, whatever
-// the model can do.
+// With no features, the prompt is the golden one, whatever the model can do.
 func TestGoldenPromptNoFeatures(t *testing.T) {
-	want, err := os.ReadFile("../../testdata/prompt_nofeatures.txt") // the one pinned at e40dc5f
+	want, err := os.ReadFile("../../testdata/prompt_nofeatures.txt")
 	if err != nil {
 		t.Fatal(err)
 	}

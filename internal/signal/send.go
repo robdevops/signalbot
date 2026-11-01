@@ -26,6 +26,11 @@ const (
 	truncated = " […truncated]"
 )
 
+// Prompt is Signal's line in the system prompt.
+func (c *Client) Prompt() string {
+	return fmt.Sprintf("This is a Signal chat. Never exceed %d characters, which is Signal's limit for one message.", maxChars)
+}
+
 // Send posts text to chat: without the bot's own @name, with each @Name in
 // known (lowercased name to ID) made a real mention, cut short past maxReply
 // with a warning, and split at Signal's limit, with the images on the first

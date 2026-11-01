@@ -56,7 +56,7 @@ internal/arch/          the guardrail tests and the sizes report
 ```
 
 - Core packages are concrete and call each other directly, with no interfaces between them. Files by role, no line limit.
-- **The network seam.** The bot reaches Signal only through `bot.Network` (defined in bot, feature types only); `*signal.Client` implements it, only main imports `internal/signal`, and the interface exists for the bot's in-memory test fake. The base prompt still names Signal and its 2,000-character limit, and the golden prompts pin it.
+- **The network seam.** The bot reaches Signal only through `bot.Network` (defined in bot, feature types only); `*signal.Client` implements it, only main imports `internal/signal`, and the interface exists for the bot's in-memory test fake. The core's prompt names no network: Signal's line, with its 2,000-character limit, comes from `Network.Prompt`, and the golden prompts pin it.
 - `Message`, `Media`, `Picture`, the port types and `Received` (a message as the network hands it to the core, or as a feature delivers it; what a chat's mailbox holds) are defined once, in `internal/feature`, and the core uses them directly: nothing is copied or converted.
 - Kit holds what both the core and features use: `logx`, `txt`, `img` and `httpx`. It gains a package only when a second user appears, and never imports the core.
 
@@ -117,9 +117,9 @@ Each request sends a system prompt, then the chat's history, then the new messag
 
 The system prompt is, in order:
 
-1. The built-in prompt:
+1. The built-in prompt, with the network's own line (`Network.Prompt`, here Signal's) after the brevity rules:
 
-   > You are a helpful assistant in a Signal chat. Reply in plain text: Signal does not render markdown. Aim for a single line. Two or three sentences at the very most, and only when asked for detail. Never exceed 2000 characters, which is Signal's limit for one message. A mention shown as [unnamed user] is someone whose name you don't know; don't invent one. To mention someone, write @ followed by their exact name. Never write your own name with an @.
+   > You are a helpful assistant in a chat. Reply in Markdown. Aim for a single line. Two or three sentences at the very most, and only when asked for detail. This is a Signal chat. Never exceed 2000 characters, which is Signal's limit for one message. A mention shown as [unnamed user] is someone whose name you don't know; don't invent one. To mention someone, write @ followed by their exact name. Never write your own name with an @.
 
 2. When the model can call tools and any are registered, the tools line: `Your tools: ` and the listing of each tool group offered for this message, then `If asked what tools you have:` and the names of every group, offered or not. For example: `Your tools: web search; charts (make_chart, make_pie_chart); weather: get_forecast, /forecast. If asked what tools you have: web search, charts, get_forecast, /forecast.`
 3. The `System` line of each offered tool group (an MCP server's `instructions`).

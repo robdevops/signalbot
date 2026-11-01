@@ -104,6 +104,11 @@ func (n *fakeNet) Delivered(ctx context.Context, msg feature.Message, claim func
 
 func (n *fakeNet) BotName() string { return "Botty" }
 
+// Prompt is Signal's, so the golden prompt holds with no features.
+func (n *fakeNet) Prompt() string {
+	return "This is a Signal chat. Never exceed 2000 characters, which is Signal's limit for one message."
+}
+
 func (n *fakeNet) Media(_ context.Context, msg feature.Message, i int) ([]byte, error) {
 	n.mu.Lock()
 	defer n.mu.Unlock()

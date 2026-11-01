@@ -35,6 +35,9 @@ type Network interface {
 	Delivered(ctx context.Context, msg feature.Message, claim func(name, id string)) (out feature.Message, mentioned, ok bool)
 	// BotName never blocks.
 	BotName() string
+	// Prompt is the network's own line in the system prompt, such as its
+	// message limit.
+	Prompt() string
 	Media(ctx context.Context, msg feature.Message, i int) ([]byte, error)
 	Groups(ctx context.Context, user string) ([]feature.Group, error)
 	Redact(text string) string

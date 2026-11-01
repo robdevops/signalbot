@@ -15,12 +15,11 @@ import (
 )
 
 const (
-	// basePrompt always applies; MODEL_SYSTEM_PROMPT is added to it.
-	basePrompt = "You are a helpful assistant in a Signal chat. " +
-		"Reply in plain text: Signal does not render markdown. " +
-		"Aim for a single line. Two or three sentences at the very most, and only when asked for detail. " +
-		"Never exceed 2000 characters, which is Signal's limit for one message. " +
-		"A mention shown as [unnamed user] is someone whose name you don't know; don't invent one. " +
+	// basePrompt and mentionPrompt always apply, with the network's own
+	// line between them; MODEL_SYSTEM_PROMPT is added to them.
+	basePrompt = "You are a helpful assistant in a chat. Reply in Markdown. " +
+		"Aim for a single line. Two or three sentences at the very most, and only when asked for detail."
+	mentionPrompt = "A mention shown as [unnamed user] is someone whose name you don't know; don't invent one. " +
 		"To mention someone, write @ followed by their exact name. Never write your own name with an @."
 	// maxQuote caps quoted text in a prompt.
 	maxQuote = 500
@@ -171,10 +170,14 @@ func (b *Bot) toolNames() []string {
 	return out
 }
 
-// system is the system prompt: the base rules, the tools line, the offered
-// groups' lines, MODEL_SYSTEM_PROMPT and the intro.
+// system is the system prompt: the base rules with the network's line, the
+// tools line, the offered groups' lines, MODEL_SYSTEM_PROMPT and the intro.
 func (b *Bot) system(offered []int) string {
 	p := basePrompt
+	if n := b.net.Prompt(); n != "" {
+		p += " " + n
+	}
+	p += " " + mentionPrompt
 	names := b.toolNames()
 	if len(names) > 0 {
 		var items []string
