@@ -3,9 +3,11 @@ package charts
 import (
 	"bytes"
 	"encoding/json"
+	"image"
 	"image/png"
 	"math"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -39,7 +41,7 @@ func TestRenderChart(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	out, err := renderChart(s)
+	out, err := renderChart(s, lightTheme)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -160,7 +162,7 @@ func TestChartTwoAxes(t *testing.T) {
 	if got := s.summary(); got != chartNote+"Final values: A $120.0, B -50.0%." {
 		t.Fatalf("summary %q", got)
 	}
-	if _, err := renderChart(s); err != nil {
+	if _, err := renderChart(s, lightTheme); err != nil {
 		t.Fatal(err)
 	}
 	// One axis needs no title.
@@ -217,7 +219,7 @@ func TestRenderTwoAxisSample(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	out, err := renderChart(s)
+	out, err := renderChart(s, lightTheme)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -254,14 +256,16 @@ func areaSample(n int, rising bool) string {
 	return string(args)
 }
 
-// A single series is drawn as an area: green if it rose, red if it fell,
-// with its high and low found.
+// A single series is drawn as an area: green if it rose, red if it fell, in
+// each theme's colours, with its high and low found. The dark theme draws no
+// pure white; set CHART_THEMES to a directory to write its samples.
 func TestAreaStyle(t *testing.T) {
 	for _, tc := range []struct {
 		rising bool
 		n      int
 		env    string
-	}{{true, 250, "CHART_UP"}, {false, 22, "CHART_DOWN"}} {
+		name   string
+	}{{true, 250, "CHART_UP", "up"}, {false, 22, "CHART_DOWN", "down"}} {
 		s, err := parseChart(areaSample(tc.n, tc.rising))
 		if err != nil {
 			t.Fatal(err)
@@ -276,30 +280,32 @@ func TestAreaStyle(t *testing.T) {
 				t.Fatalf("high %v / low %v missed %v", pts[hi].Value, pts[lo].Value, p.Value)
 			}
 		}
-		out, err := renderChart(s)
-		if err != nil {
-			t.Fatal(err)
-		}
-		img, _ := png.Decode(bytes.NewReader(out))
-		// Somewhere in the plot is the line's colour: green when rising, red when falling.
-		want := chartUp
-		if !tc.rising {
-			want = chartDown
-		}
-		found := false
-		for x := 100; x < 1220 && !found; x++ {
-			for y := 125; y < 700; y++ {
-				if r, g, b, _ := img.At(x, y).RGBA(); uint8(r>>8) == want.R && uint8(g>>8) == want.G && uint8(b>>8) == want.B {
-					found = true
-					break
-				}
+		for _, th := range []*theme{lightTheme, darkTheme} {
+			out, err := renderChart(s, th)
+			if err != nil {
+				t.Fatal(err)
 			}
-		}
-		if !found {
-			t.Errorf("rising=%v: no line in %v", tc.rising, want)
-		}
-		if p := os.Getenv(tc.env); p != "" {
-			os.WriteFile(p, out, 0o644)
+			img := decode(t, out)
+			// Somewhere in the plot is the line's colour: up when rising, down when falling.
+			want := th.up
+			if !tc.rising {
+				want = th.down
+			}
+			if countColour(img, image.Rect(100, 125, 1220, 700), want) == 0 {
+				t.Errorf("rising=%v dark=%v: no line in %v", tc.rising, th == darkTheme, want)
+			}
+			if th == lightTheme {
+				if p := os.Getenv(tc.env); p != "" {
+					os.WriteFile(p, out, 0o644)
+				}
+				continue
+			}
+			if n := countColour(img, img.Bounds(), white); n > 0 {
+				t.Errorf("rising=%v: %d white pixels in the dark theme", tc.rising, n)
+			}
+			if dir := os.Getenv("CHART_THEMES"); dir != "" {
+				os.WriteFile(filepath.Join(dir, "dark-line-single-"+tc.name+".png"), out, 0o644)
+			}
 		}
 	}
 }

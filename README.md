@@ -145,7 +145,8 @@ Add the bot's account to a group and @mention it, reply to one of its messages, 
 | `GROUP_CONTEXT` | `true` | Remember group messages not addressed to the bot as context, so "what do you think @bot" works without replying to the message; they are never logged |
 | `MCP_CONFIG` | empty | Path of an MCP servers file; see [MCP tools](#mcp-tools) |
 | `STATE_DIRECTORY` | working directory | Where `/schedule` saves `schedules.json`. Set by systemd's `StateDirectory=signalbot` (`/var/lib/private/signalbot`) and by the Docker image (`/data`, which must be writable by user 65532) |
-| `TZ` | `UTC` in Docker, the host's under systemd | Time zone for `/schedule` times without an offset, e.g. `Australia/Sydney` |
+| `DARKMODE` | `off` | Chart colours: `off` for light charts, `on` for dark, `auto` for dark from 21:00 to 07:00 in `TZ` and light otherwise |
+| `TZ` | `UTC` in Docker, the host's under systemd | Time zone for `/schedule` times without an offset and for `DARKMODE=auto`, e.g. `Australia/Sydney` |
 
 `OPENROUTER_API_KEY` is now `MODEL_API_KEY`, and `REASONING` and `SYSTEM_PROMPT` are now `MODEL_REASONING` and `MODEL_SYSTEM_PROMPT`; the old names are ignored. `LOG_LEVEL` is gone: every level is always written (see [Logs](#logs)).
 

@@ -161,9 +161,10 @@ func wrapLabel(f font.Face, text string, width float64) []string {
 	return []string{first, rest}
 }
 
-// renderPie draws the chart, a ring with the total in its hole, as a PNG.
-func renderPie(s *pieSpec) ([]byte, error) {
-	cv := newCanvas(s.Title, s.Subtitle)
+// renderPie draws the chart, a ring with the total in its hole, in theme th
+// as a PNG.
+func renderPie(s *pieSpec, th *theme) ([]byte, error) {
+	cv := newCanvas(th, s.Title, s.Subtitle)
 	legendFace := face(chartFonts.regular, 26)
 	defer legendFace.Close()
 
@@ -182,7 +183,7 @@ func renderPie(s *pieSpec) ([]byte, error) {
 	cx := (width-(2*outer+gap+swatch+textW))/2 + outer
 	const cy = 445.0
 
-	// Slices clockwise from 12 o'clock, then a white gap along each boundary.
+	// Slices clockwise from 12 o'clock, then a gap in the background colour along each boundary.
 	angle := -math.Pi / 2
 	var bounds []float64
 	for i, sl := range s.Slices {
@@ -198,14 +199,14 @@ func renderPie(s *pieSpec) ([]byte, error) {
 				a := angle + sweep*float64(k)/float64(n)
 				poly = append(poly, cx+inner*math.Cos(a), cy+inner*math.Sin(a))
 			}
-			cv.fill(chartPalette[i], poly)
+			cv.fill(th.palette[i], poly)
 			bounds = append(bounds, angle)
 		}
 		angle += sweep
 	}
 	if len(bounds) > 1 {
 		for _, a := range bounds {
-			cv.line(chartBG, 4, cx+(inner-2)*math.Cos(a), cy+(inner-2)*math.Sin(a), cx+(outer+2)*math.Cos(a), cy+(outer+2)*math.Sin(a))
+			cv.line(th.bg, 4, cx+(inner-2)*math.Cos(a), cy+(inner-2)*math.Sin(a), cx+(outer+2)*math.Cos(a), cy+(outer+2)*math.Sin(a))
 		}
 	}
 
@@ -215,7 +216,7 @@ func renderPie(s *pieSpec) ([]byte, error) {
 		f := face(chartFonts.bold, size)
 		w := textWidth(f, center)
 		if w <= 2*inner-30 || size <= 20 {
-			cv.text(f, chartTitle, cx, cy+size*0.35, 0.5, center)
+			cv.text(f, th.title, cx, cy+size*0.35, 0.5, center)
 			f.Close()
 			break
 		}
@@ -233,9 +234,9 @@ func renderPie(s *pieSpec) ([]byte, error) {
 	}
 	y := cy - (legendH+rowGap*float64(len(rows)-1))/2
 	for i, lines := range rows {
-		cv.rect(chartPalette[i], lx, y+8, 16, 16)
+		cv.rect(th.palette[i], lx, y+8, 16, 16)
 		for k, l := range lines {
-			cv.text(legendFace, chartTitle, lx+swatch, y+24+float64(k)*lineH, 0, l)
+			cv.text(legendFace, th.title, lx+swatch, y+24+float64(k)*lineH, 0, l)
 		}
 		y += float64(len(lines))*lineH + rowGap
 	}

@@ -11,8 +11,11 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/robdevops/signalbot/internal/feature"
+	"github.com/robdevops/signalbot/internal/kit/logx"
+	"github.com/robdevops/signalbot/internal/kit/txt"
 )
 
 // wantsChart matches a message that asks for a chart, so the chart tools are
@@ -23,9 +26,34 @@ var wantsChart = regexp.MustCompile(`(?i)\b(chart(s|ed|ing)?|graph(s|ed|ing)?|pl
 // is told what to fix, which can quote its arguments.
 var errArgs = errors.New("invalid arguments")
 
+// now is the clock DARKMODE=auto reads; tests replace it.
+var now = time.Now
+
+// darkMode reads DARKMODE: "off" (the default), "on" or "auto". Any other
+// value is taken as off, with a warning.
+func darkMode(h feature.Host) string {
+	v := h.Env("DARKMODE", "off")
+	switch m := strings.ToLower(v); m {
+	case "off", "on", "auto":
+		return m
+	}
+	logx.Warnf("DARKMODE=%q is not off, on or auto; charts are light", txt.Clamp(v, 20))
+	return "off"
+}
+
+// themeFor is the theme a chart is drawn in now: dark when mode is "on", or
+// "auto" from 21:00 to 07:00 local time (TZ); otherwise light.
+func themeFor(mode string) *theme {
+	if hour := now().In(time.Local).Hour(); mode == "on" || mode == "auto" && (hour >= 21 || hour < 7) {
+		return darkTheme
+	}
+	return lightTheme
+}
+
 // Register offers the chart tools on h, and sends a chart alone with its
 // caption.
 func Register(h feature.Host) error {
+	mode := darkMode(h)
 	h.Tools(feature.ToolGroup{
 		Names:    []string{"charts"},
 		Listing:  "charts (" + chartTool + ", " + pieTool + ")",
@@ -36,7 +64,7 @@ func Register(h feature.Host) error {
 				if err != nil {
 					return "error: " + err.Error(), nil, errArgs
 				}
-				data, err := renderChart(s)
+				data, err := renderChart(s, themeFor(mode))
 				return drawn(s.summary(), chartCaption(s.Title, s.Subtitle), data, err)
 			}},
 			{Name: pieTool, Description: pieToolDescription, Schema: pieToolSchema, Run: func(_ context.Context, args string) (string, []feature.Picture, error) {
@@ -44,7 +72,7 @@ func Register(h feature.Host) error {
 				if err != nil {
 					return "error: " + err.Error(), nil, errArgs
 				}
-				data, err := renderPie(s)
+				data, err := renderPie(s, themeFor(mode))
 				return drawn(s.summary(), chartCaption(s.Title, s.Subtitle), data, err)
 			}},
 		},

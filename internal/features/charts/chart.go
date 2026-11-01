@@ -341,16 +341,24 @@ func spreadLabels(ys []float64, gap, lo, hi float64) []float64 {
 	return out
 }
 
-var (
-	chartBG    = color.RGBA{0xff, 0xff, 0xff, 0xff}
-	chartTitle = color.RGBA{0x11, 0x18, 0x27, 0xff}
-	chartMuted = color.RGBA{0x6b, 0x72, 0x80, 0xff}
-	chartGrid  = color.RGBA{0xe5, 0xe7, 0xeb, 0xff}
-	chartZero  = color.RGBA{0x9c, 0xa3, 0xaf, 0xff}
-	chartUp    = color.RGBA{0x16, 0xa3, 0x4a, 0xff} // a single series that rose
-	chartDown  = color.RGBA{0xdc, 0x26, 0x26, 0xff} // a single series that fell
-	// chartPalette serves both chart types; line charts use the first 6.
-	chartPalette = []color.RGBA{
+// theme is the colours a chart is drawn in.
+type theme struct {
+	bg, title, muted, grid, zero color.RGBA
+	up, down                     color.RGBA // a single series that rose or fell
+	palette                      []color.RGBA
+}
+
+// lightTheme is dark text on white.
+var lightTheme = &theme{
+	bg:    color.RGBA{0xff, 0xff, 0xff, 0xff},
+	title: color.RGBA{0x11, 0x18, 0x27, 0xff},
+	muted: color.RGBA{0x6b, 0x72, 0x80, 0xff},
+	grid:  color.RGBA{0xe5, 0xe7, 0xeb, 0xff},
+	zero:  color.RGBA{0x9c, 0xa3, 0xaf, 0xff},
+	up:    color.RGBA{0x16, 0xa3, 0x4a, 0xff},
+	down:  color.RGBA{0xdc, 0x26, 0x26, 0xff},
+	// The palette serves both chart types; line charts use the first 6.
+	palette: []color.RGBA{
 		{0x25, 0x63, 0xeb, 0xff}, // blue
 		{0xf9, 0x73, 0x16, 0xff}, // orange
 		{0x16, 0xa3, 0x4a, 0xff}, // green
@@ -363,8 +371,34 @@ var (
 		{0x65, 0xa3, 0x0d, 0xff}, // lime
 		{0x47, 0x55, 0x69, 0xff}, // slate
 		{0x92, 0x40, 0x0e, 0xff}, // brown
-	}
-)
+	},
+}
+
+// darkTheme is light text on near-black navy, with the palette's colours in
+// the same order, lighter so they stand out.
+var darkTheme = &theme{
+	bg:    color.RGBA{0x14, 0x18, 0x20, 0xff},
+	title: color.RGBA{0xf1, 0xf3, 0xf7, 0xff},
+	muted: color.RGBA{0x9c, 0xa3, 0xaf, 0xff},
+	grid:  color.RGBA{0x2a, 0x30, 0x3c, 0xff},
+	zero:  color.RGBA{0x6b, 0x72, 0x80, 0xff},
+	up:    color.RGBA{0x34, 0xc7, 0x6f, 0xff},
+	down:  color.RGBA{0xf4, 0x3f, 0x5e, 0xff},
+	palette: []color.RGBA{
+		{0x3b, 0x8b, 0xe8, 0xff}, // blue
+		{0xe0, 0x62, 0x2d, 0xff}, // orange
+		{0x34, 0xc7, 0x6f, 0xff}, // green
+		{0xf4, 0x3f, 0x5e, 0xff}, // red, toward crimson to stay clear of the orange
+		{0xa8, 0x6e, 0xf5, 0xff}, // purple
+		{0x22, 0xb8, 0xd4, 0xff}, // teal
+		{0xe8, 0xb0, 0x20, 0xff}, // amber
+		{0xf0, 0x7a, 0xc8, 0xff}, // pink, toward magenta to stay clear of the red
+		{0x81, 0x7c, 0xf5, 0xff}, // indigo
+		{0x8c, 0xc8, 0x3a, 0xff}, // lime
+		{0x94, 0xa3, 0xb8, 0xff}, // slate
+		{0xa3, 0x78, 0x5f, 0xff}, // brown, duller to stay clear of the orange
+	},
+}
 
 // chartFonts are the bundled Go fonts, parsed once.
 var chartFonts = func() (f struct{ bold, regular *opentype.Font }) {
@@ -386,9 +420,10 @@ func face(f *opentype.Font, size float64) font.Face {
 	return fc
 }
 
-// canvas draws anti-aliased shapes and text on an image.
+// canvas draws anti-aliased shapes and text on an image, in its theme.
 type canvas struct {
 	img *image.RGBA
+	th  *theme
 }
 
 // fill paints polygons, each given as x,y pairs, in c.
@@ -466,16 +501,16 @@ func (cv *canvas) text(f font.Face, c color.RGBA, x, y float64, align float64, s
 // width and height are the size of every chart, in pixels.
 const width, height = 1280, 800
 
-// newCanvas is a blank chart with its title and subtitle drawn.
-func newCanvas(title, subtitle string) *canvas {
-	cv := &canvas{img: image.NewRGBA(image.Rect(0, 0, width, height))}
-	cv.rect(chartBG, 0, 0, width, height)
+// newCanvas is a blank chart in theme th with its title and subtitle drawn.
+func newCanvas(th *theme, title, subtitle string) *canvas {
+	cv := &canvas{img: image.NewRGBA(image.Rect(0, 0, width, height)), th: th}
+	cv.rect(th.bg, 0, 0, width, height)
 	titleFace, subFace := face(chartFonts.bold, 34), face(chartFonts.regular, 22)
 	defer titleFace.Close()
 	defer subFace.Close()
-	cv.text(titleFace, chartTitle, 38, 46, 0, title)
+	cv.text(titleFace, th.title, 38, 46, 0, title)
 	if subtitle != "" {
-		cv.text(subFace, chartMuted, 38, 80, 0, subtitle)
+		cv.text(subFace, th.muted, 38, 80, 0, subtitle)
 	}
 	return cv
 }
@@ -487,8 +522,8 @@ func (cv *canvas) encode() ([]byte, error) {
 	return buf.Bytes(), err
 }
 
-// renderChart draws the chart as a PNG.
-func renderChart(s *chartSpec) ([]byte, error) {
+// renderChart draws the chart in theme th as a PNG.
+func renderChart(s *chartSpec, th *theme) ([]byte, error) {
 	const left, top, bottom = 100.0, 125.0, 700.0
 	two, single := s.right.used, len(s.Series) == 1
 	right, labelX := 1000.0, 1030.0 // plot edge, end labels
@@ -498,7 +533,7 @@ func renderChart(s *chartSpec) ([]byte, error) {
 	case single:
 		right = 1140 // room for the current value beside the end dot
 	}
-	cv := newCanvas(s.Title, s.Subtitle)
+	cv := newCanvas(th, s.Title, s.Subtitle)
 	axisFace, axisTitleFace := face(chartFonts.regular, 24), face(chartFonts.regular, 18)
 	defer axisFace.Close()
 	defer axisTitleFace.Close()
@@ -525,32 +560,32 @@ func renderChart(s *chartSpec) ([]byte, error) {
 	// Gridlines and labels from the left axis; labels only from the right.
 	for _, v := range s.left.ticks {
 		y := s.left.y(v)
-		c := chartGrid
+		c := th.grid
 		if s.left.Mode == "change" && v == 0 {
-			c = chartZero
+			c = th.zero
 		}
 		cv.line(c, 1.5, left, y, right+10, y)
-		cv.text(axisFace, chartMuted, left-12, y+8, 1, s.left.format(v, s.left.decimals))
+		cv.text(axisFace, th.muted, left-12, y+8, 1, s.left.format(v, s.left.decimals))
 	}
 	if two {
 		if s.right.Mode == "change" && s.left.Mode != "change" {
 			y := s.right.y(0)
-			cv.line(chartZero, 1.5, left, y, right+10, y)
+			cv.line(th.zero, 1.5, left, y, right+10, y)
 		}
 		for _, v := range s.right.ticks {
-			cv.text(axisFace, chartMuted, right+14, s.right.y(v)+8, 0, s.right.format(v, s.right.decimals))
+			cv.text(axisFace, th.muted, right+14, s.right.y(v)+8, 0, s.right.format(v, s.right.decimals))
 		}
 	}
 	if s.left.Title != "" {
-		cv.text(axisTitleFace, chartMuted, 38, top-14, 0, s.left.Title)
+		cv.text(axisTitleFace, th.muted, 38, top-14, 0, s.left.Title)
 	}
 	if two {
-		cv.text(axisTitleFace, chartMuted, labelX-10, top-14, 1, s.right.Title)
+		cv.text(axisTitleFace, th.muted, labelX-10, top-14, 1, s.right.Title)
 	}
 	for _, tk := range dateTicks(from, to) {
 		x := px(tk.t)
-		cv.line(chartMuted, 1.5, x, bottom+14, x, bottom+24)
-		cv.text(axisFace, chartMuted, x, bottom+60, 0.5, tk.label)
+		cv.line(th.muted, 1.5, x, bottom+14, x, bottom+24)
+		cv.text(axisFace, th.muted, x, bottom+60, 0.5, tk.label)
 	}
 
 	if single {
@@ -563,7 +598,7 @@ func renderChart(s *chartSpec) ([]byte, error) {
 
 // drawLines draws two or more series, each with an end label.
 func drawLines(cv *canvas, s *chartSpec, px func(time.Time) float64, top, bottom, right, labelX float64, two bool) {
-	labelFace := face(chartFonts.regular, 20)
+	th, labelFace := cv.th, face(chartFonts.regular, 20)
 	defer labelFace.Close()
 	ends := make([]float64, len(s.Series))
 	for i, sr := range s.Series {
@@ -572,12 +607,12 @@ func drawLines(cv *canvas, s *chartSpec, px func(time.Time) float64, top, bottom
 		for _, p := range sr.Points {
 			pts = append(pts, px(p.t), a.y(p.Value))
 		}
-		cv.line(chartPalette[i], 3, pts...)
+		cv.line(th.palette[i], 3, pts...)
 		ends[i] = a.y(sr.Points[len(sr.Points)-1].Value)
 	}
 	labels := spreadLabels(ends, 28, top, bottom)
 	for i, sr := range s.Series {
-		c := chartPalette[i]
+		c := th.palette[i]
 		lastX := px(sr.Points[len(sr.Points)-1].t)
 		if two {
 			cv.line(c, 1.5, lastX, ends[i], right+8, ends[i]) // the right axis's labels sit beyond
@@ -585,7 +620,7 @@ func drawLines(cv *canvas, s *chartSpec, px func(time.Time) float64, top, bottom
 			cv.line(c, 1.5, lastX, ends[i], right+20, ends[i], labelX, labels[i])
 		}
 		cv.rect(c, labelX, labels[i]-6, 12, 12)
-		cv.text(labelFace, chartTitle, labelX+18, labels[i]+7, 0,
+		cv.text(labelFace, th.title, labelX+18, labels[i]+7, 0,
 			sr.Name+"  "+s.axisOf(sr).format(sr.Points[len(sr.Points)-1].Value, 1))
 	}
 }
@@ -595,10 +630,10 @@ func drawLines(cv *canvas, s *chartSpec, px func(time.Time) float64, top, bottom
 // plot, its high and low marked and a dot on its last point. It is styling
 // only; the model isn't told.
 func drawArea(cv *canvas, s *chartSpec, px func(time.Time) float64, bottom, left, right float64) {
-	a, pts := s.left, s.Series[0].Points
-	c := chartUp
+	a, pts, th := s.left, s.Series[0].Points, cv.th
+	c := th.up
 	if pts[len(pts)-1].Value < pts[0].Value {
-		c = chartDown
+		c = th.down
 	}
 	decimals := 2
 	if a.Mode == "change" {
@@ -623,8 +658,8 @@ func drawArea(cv *canvas, s *chartSpec, px func(time.Time) float64, bottom, left
 		p := pts[m.i]
 		x, y := px(p.t), a.y(p.Value)
 		lines := [2]string{m.word + " " + a.format(p.Value, decimals), p.t.Format("2 Jan 2006")}
-		cv.fill(chartTitle, circle(x, y, 6.5))
-		cv.fill(chartBG, circle(x, y, 4.5))
+		cv.fill(th.title, circle(x, y, 6.5))
+		cv.fill(th.bg, circle(x, y, 4.5))
 		// Above the high and below the low (swapped on an inverted axis),
 		// centred on the point unless that would run off the side. Where that
 		// would cross the subtitle or the date labels, it goes beside the point.
@@ -645,22 +680,23 @@ func drawArea(cv *canvas, s *chartSpec, px func(time.Time) float64, bottom, left
 				align, tx = 0, x+14 // to the right, near the left edge
 			}
 		}
-		// A light backing keeps the label readable where it crosses the line.
+		// A translucent backing in the background colour keeps the label
+		// readable where it crosses the line.
 		w := max(textWidth(markFace, lines[0]), textWidth(markFace, lines[1]))
-		cv.fill(color.NRGBA{0xff, 0xff, 0xff, 0xd9}, rectPoly(tx-w*align-4, base-17, w+8, 45))
-		cv.text(markFace, chartTitle, tx, base, align, lines[0])
-		cv.text(markFace, chartTitle, tx, base+22, align, lines[1])
+		cv.fill(color.NRGBA{th.bg.R, th.bg.G, th.bg.B, 0xd9}, rectPoly(tx-w*align-4, base-17, w+8, 45))
+		cv.text(markFace, th.title, tx, base, align, lines[0])
+		cv.text(markFace, th.title, tx, base+22, align, lines[1])
 	}
 	// The current value beside the end dot, in the line's colour.
 	last := pts[len(pts)-1]
 	x, y := px(last.t), a.y(last.Value)
-	cv.fill(chartBG, circle(x, y, 7.5))
+	cv.fill(th.bg, circle(x, y, 7.5))
 	cv.fill(c, circle(x, y, 5.5))
 	valueFace := face(chartFonts.bold, 20)
 	defer valueFace.Close()
 	y = min(max(y, 100), bottom-14) // keep both lines inside the image
 	cv.text(valueFace, c, x+14, y-2, 0, a.format(last.Value, decimals))
-	cv.text(markFace, chartMuted, x+14, y+20, 0, last.t.Format("2 Jan 2006"))
+	cv.text(markFace, th.muted, x+14, y+20, 0, last.t.Format("2 Jan 2006"))
 }
 
 // textWidth is how wide s is in pixels in face f.

@@ -34,8 +34,8 @@ func tool(t *testing.T, h *featuretest.Host, name string) feature.Tool {
 	return feature.Tool{}
 }
 
-// One group, offered on its keywords, with both chart tools; it reads no
-// settings.
+// One group, offered on its keywords, with both chart tools; it reads only
+// DARKMODE.
 func TestChartsToolGroup(t *testing.T) {
 	h := register(t)
 	g := h.ToolGroups()
@@ -57,7 +57,7 @@ func TestChartsToolGroup(t *testing.T) {
 	if d := tool(t, h, "make_pie_chart").Description; !strings.Contains(d, "donut") {
 		t.Errorf("pie description %q", d)
 	}
-	if r := h.EnvRead(); len(r) != 0 {
+	if r := h.EnvRead(); len(r) != 1 || r[0] != "DARKMODE" {
 		t.Errorf("read %v", r)
 	}
 }

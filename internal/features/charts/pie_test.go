@@ -76,7 +76,7 @@ func TestWrapLabel(t *testing.T) {
 
 func TestRenderPie(t *testing.T) {
 	s, _ := parsePie(alphabetPie)
-	out, err := renderPie(s)
+	out, err := renderPie(s, lightTheme)
 	if err != nil {
 		t.Fatal(err)
 	}
