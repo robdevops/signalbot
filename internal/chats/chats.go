@@ -16,21 +16,20 @@ import (
 const (
 	// MaxChats caps the chats kept: chat keys come from the network.
 	MaxChats = 500
-	// MaxQueue caps the messages waiting in one chat's mailbox.
-	MaxQueue = 4
 	// MaxAge is the longest anything is kept in history. A chat's shorter
 	// disappearing-messages timer wins.
 	MaxAge = 24 * time.Hour
 	// Window is how long a message key is remembered, to drop a repeat.
 	Window = 10 * time.Second
 
+	maxQueue  = 4   // messages waiting in one chat's mailbox
 	maxNames  = 256 // names per chat
 	maxRecent = 64  // message keys per chat
 )
 
 var (
-	ErrFull      = errors.New("too many chats")
-	ErrQueueFull = errors.New("the chat's mailbox is full")
+	errFull      = errors.New("too many chats")
+	errQueueFull = errors.New("the chat's mailbox is full")
 	ErrNoSlot    = errors.New("no worker slot is free")
 )
 
@@ -48,6 +47,7 @@ type Store struct {
 	turns  int                      // exchanges kept per chat
 	max    int                      // chats kept
 	handle func([]feature.Received) // a chat's worker hands it what waits
+	spawn  func(worker func()) bool // starts a chat's worker on a free slot
 }
 
 type chat struct {
@@ -60,10 +60,13 @@ type chat struct {
 	busy      bool                 // a worker is running
 }
 
-// New keeps up to turns exchanges (2 entries each) per chat, and has each
-// chat's worker hand handle what waits in the mailbox.
-func New(turns int, handle func([]feature.Received)) *Store {
-	return &Store{chats: map[string]*chat{}, turns: turns, max: MaxChats, handle: handle}
+// New keeps up to turns exchanges (2 entries each) per chat. A chat with
+// messages has one worker, which hands handle everything waiting in the
+// mailbox at once, in order, until nothing is left, and then exits. spawn
+// must start the worker on a free slot without blocking and return true, or
+// return false when no slot is free.
+func New(turns int, handle func([]feature.Received), spawn func(worker func()) bool) *Store {
+	return &Store{chats: map[string]*chat{}, turns: turns, max: MaxChats, handle: handle, spawn: spawn}
 }
 
 // get returns the chat, creating it if create is set. When the map is full,
@@ -144,26 +147,24 @@ func (s *Store) tidy(key string, c *chat) {
 	}
 }
 
-// Post adds r to the chat's mailbox. A chat with messages has one worker,
-// which hands handle everything waiting at once, in order, until nothing
-// is left, and then exits. When the chat has none, spawn is called with the
-// worker: it must start it on a free slot without blocking and return true,
-// or return false when no slot is free.
-func (s *Store) Post(key string, r feature.Received, spawn func(worker func()) bool) error {
+// Post adds r to its chat's mailbox, starting the chat's worker if it has
+// none. It returns ErrNoSlot when no slot is free for the worker.
+func (s *Store) Post(r feature.Received) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	key := r.Chat.Key()
 	c := s.get(key, true)
 	switch {
 	case c == nil:
-		return ErrFull
-	case c.busy && len(c.queue) >= MaxQueue:
-		return ErrQueueFull
+		return errFull
+	case c.busy && len(c.queue) >= maxQueue:
+		return errQueueFull
 	case c.busy:
 		c.queue = append(c.queue, r)
 		return nil
 	}
 	c.busy = true
-	if !spawn(func() { s.work(key, c, []feature.Received{r}) }) {
+	if !s.spawn(func() { s.work(key, c, []feature.Received{r}) }) {
 		c.busy = false
 		s.tidy(key, c)
 		return ErrNoSlot

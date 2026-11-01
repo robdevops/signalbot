@@ -8,7 +8,7 @@ internal/signal/        the chat network: the signal-cli client, decoding, sendi
 internal/model/         the model client (OpenRouter or another chat completions API) and the tool loop
 internal/chats/         per-chat state: history, dedupe, mention names, the mailbox
 internal/timers/        one-shot timers
-internal/config/        settings from the environment
+internal/config/        settings from the environment; config.Test, the test hooks
 internal/bot/           the decision, the prompt, the hooks; wires the core, and reaches Signal through Network
 internal/feature/       the ports and shared types, the command helper, featuretest
 internal/features/*     one package per feature
@@ -26,7 +26,7 @@ Features reach the core only through the ports in `internal/feature`, one per st
 | The reply goes out | `OnReply`: change the text or pictures |
 | Time arrives | `At`: a one-shot timer |
 
-and the host's services: `Env`, `Info`, `Media`, `Deliver`, `Groups` and `Go`. Hooks run in `features.go` order. An `OnMessage` hook for an unaddressed message runs on the reader goroutine, so it must not block or call the network.
+and the host's services: `Env`, `Info`, `Media`, `Deliver`, `Groups`, `Redact` and `Go`. Hooks run in `features.go` order. An `OnMessage` hook for an unaddressed message runs on the reader goroutine, so it must not block or call the network.
 
 If a feature can't be built on these, that's a design finding. Either a port becomes more generic, and stays tied to its stage, or the feature takes on more of the work. A feature-shaped field in the core is never the answer: delete any feature and the core doesn't change.
 
@@ -51,7 +51,7 @@ And by convention:
 - **Zero features:** the core's own tests run with no features registered, on an in-memory fake network.
 - **Each feature alone:** each feature's tests run on `featuretest`, a fake host.
 - **Scenarios:** `scenario_test.go` drives the whole bot through a fake signal-cli socket and a fake model API (OpenRouter's, or another provider's), and checks no message text reaches the log. The golden prompts in `testdata` pin the system prompt byte for byte (`go test . -run Golden -update` rewrites them).
-- **One test hook:** what a test needs to set or see inside the bot goes in `config.Test` (nil in production), never in an exported variable or method.
+- **One test hook:** what a test needs to change inside the bot goes in `config.Test` (nil in production), never in an exported variable or method. The only other exports for tests only read: `logx.SetOutput` and `logx.Buffer` capture the log (kit can't import config), and `config.Read` serves the docs guardrail.
 - **Sizes:** `go run ./internal/arch/sizes` reports lines per package; CI reports them on each PR, not enforced.
 - **Never log message text,** including in errors and panics. `logx` escapes line breaks; don't log what a user wrote.
 - Tests use only the names Alice and Bob.

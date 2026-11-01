@@ -320,7 +320,7 @@ func TestWaitingCommandOnItsOwn(t *testing.T) {
 }
 
 // While a batch is being answered, 4 more messages can wait, and they are
-// answered together after it: no job left over takes a place in the mailbox.
+// answered together after it, in one batch.
 func TestFourWaitDuringABatch(t *testing.T) {
 	h := start(t, options{})
 	first, second := h.gate(), h.gate()
@@ -330,7 +330,7 @@ func TestFourWaitDuringABatch(t *testing.T) {
 	for _, s := range []string{"b", "c", "d", "e", "dropped"} {
 		h.receive(dm(s))
 	}
-	h.eventually("the full list", func() bool { return strings.Contains(h.logs.String(), "the chat's mailbox is full, dropping message") })
+	h.eventually("the full mailbox", func() bool { return strings.Contains(h.logs.String(), "the chat's mailbox is full, dropping message") })
 	first.open()
 	h.eventually("the batch's request", func() bool { return len(h.requests()) == 2 })
 	for _, s := range []string{"f", "g", "h", "i"} {

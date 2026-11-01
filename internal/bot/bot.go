@@ -72,7 +72,7 @@ var _ feature.Host = (*Bot)(nil)
 // shutdown signal so that Shutdown can let replies finish.
 func New(ctx context.Context, cfg *config.Config, net Network) *Bot {
 	b := &Bot{cfg: cfg, net: net, timers: timers.New(), slots: make(chan struct{}, cfg.MaxConcurrency), ctx: ctx}
-	b.chats = chats.New(cfg.HistoryTurns, b.work)
+	b.chats = chats.New(cfg.HistoryTurns, b.work, b.spawn)
 	b.timerCtx, b.stop = context.WithCancel(ctx)
 	if cfg.NoModel {
 		logx.Noticef("no model: only commands are answered")
@@ -146,20 +146,21 @@ func (b *Bot) keep(msg feature.Message) {
 	}
 }
 
-// post adds r to its chat's mailbox, taking a slot for the chat's worker if
-// it has none.
+// spawn starts a chat's worker on a free slot, or returns false with none.
+func (b *Bot) spawn(worker func()) bool {
+	select {
+	case b.slots <- struct{}{}:
+		end := b.cfg.Test.Begin()
+		go func() { defer func() { end(); <-b.slots }(); worker() }()
+		return true
+	default:
+		return false
+	}
+}
+
+// post adds r to its chat's mailbox.
 func (b *Bot) post(r feature.Received) {
-	err := b.chats.Post(r.Chat.Key(), r, func(worker func()) bool {
-		select {
-		case b.slots <- struct{}{}:
-			end := b.cfg.Test.Begin()
-			go func() { defer func() { end(); <-b.slots }(); worker() }()
-			return true
-		default:
-			return false
-		}
-	})
-	switch {
+	switch err := b.chats.Post(r); {
 	case errors.Is(err, chats.ErrNoSlot):
 		logx.Warnf("at capacity (%d), dropping message", b.cfg.MaxConcurrency)
 	case err != nil:
