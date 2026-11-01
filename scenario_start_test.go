@@ -7,14 +7,12 @@ package main
 import (
 	"context"
 	"net/url"
-	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/robdevops/signalbot/internal/bot"
 	"github.com/robdevops/signalbot/internal/config"
 	"github.com/robdevops/signalbot/internal/kit/logx"
-	"github.com/robdevops/signalbot/internal/model"
 	"github.com/robdevops/signalbot/internal/signal"
 )
 
@@ -48,29 +46,24 @@ func startBot(t *testing.T, w world) *harness {
 	}
 
 	// Every log line goes to the harness, prefixed with its priority. The
-	// hooks make the fake model API OpenRouter's unless it is another
-	// provider's, and say when the bot has read a frame.
-	restore := logx.SetOutput(h, h, true)
-	host, gap := model.OpenRouterHost, signal.ReloadGap
+	// test hooks make the fake model API OpenRouter's unless it is another
+	// provider's, let a scenario see contacts reload, and say when the bot
+	// has read a frame and when it is idle.
+	t.Cleanup(logx.SetOutput(h, h, true)) // runs last
+	test := &config.Test{ReloadGap: contactReloadGap, Handled: func() { h.handled <- struct{}{} }}
 	if u, _ := url.Parse(h.modelURL); !w.OtherProvider {
-		model.OpenRouterHost = u.Hostname()
+		test.OpenRouter = u.Hostname()
 	}
-	signal.ReloadGap = contactReloadGap // so a scenario can see contacts reload
-	signal.Handled = func() { h.handled <- struct{}{} }
-	t.Cleanup(func() { // runs last
-		restore()
-		model.OpenRouterHost, signal.ReloadGap, signal.Handled = host, gap, nil
-	})
 
 	// What main does.
 	cfg, err := config.Load()
 	if err != nil {
 		t.Fatal(err)
 	}
+	cfg.Test = test
 	ctx, closeConn := context.WithCancel(context.Background())
 	t.Cleanup(closeConn)
-	client := signal.New(cfg.Socket, cfg.AllowedSenders)
-	b := bot.New(ctx, cfg, client)
+	b := bot.New(ctx, cfg, signal.New(cfg.Socket, cfg.AllowedSenders, cfg.Test))
 	for _, register := range features {
 		if err := register(b); err != nil {
 			t.Fatal(err)
@@ -79,10 +72,8 @@ func startBot(t *testing.T, w world) *harness {
 	stopped := make(chan struct{})
 	go func() { defer close(stopped); b.Run() }()
 
-	var shutDown atomic.Bool // Shutdown holds every slot once it returns
-	idle := func() bool { return shutDown.Load() || b.Idle() && !client.Loading() }
-	h.settle = func() { h.waitFor("the bot to finish its work", idle) }
-	h.shutdown = func() { b.Shutdown(8 * time.Second); shutDown.Store(true) }
+	h.settle = func() { h.waitFor("the bot to finish its work", test.Idle) }
+	h.shutdown = func() { b.Shutdown(8 * time.Second) }
 	t.Cleanup(func() {
 		closeConn()
 		select {
@@ -92,7 +83,7 @@ func startBot(t *testing.T, w world) *harness {
 		}
 		// With the client stopped no contact reload starts; wait for one
 		// under way, so that none logs after the test.
-		h.waitFor("the contact list to load", idle)
+		h.waitFor("the contact list to load", test.Idle)
 		h.checkNoSecretsLogged()
 	})
 	t.Cleanup(h.settle) // runs first

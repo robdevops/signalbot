@@ -42,7 +42,7 @@ If a feature can't be built on these, that's a design finding. Either a port bec
 
 Tests in `internal/arch` enforce these:
 
-- **Imports:** only the main package, at the module root, imports features and `internal/signal`; a feature imports only `internal/feature`, `internal/kit` and its own packages; `internal/signal` imports only `internal/feature` and kit; kit imports no other internal package.
+- **Imports:** only the main package, at the module root, imports features and `internal/signal`; a feature imports only `internal/feature`, `internal/kit` and its own packages; `internal/signal` imports only `internal/feature`, kit and `internal/config`; `internal/config` and kit import no other internal package.
 - **No feature names in the core:** the core's source mentions no feature name or feature-only word (chart, MCP, group context, `/example`, `/schedule`, …).
 - **Docs:** every setting read, the core's or a feature's (`h.Env("NAME", …)`), is in the README's configuration table.
 
@@ -51,6 +51,7 @@ And by convention:
 - **Zero features:** the core's own tests run with no features registered, on an in-memory fake network.
 - **Each feature alone:** each feature's tests run on `featuretest`, a fake host.
 - **Scenarios:** `scenario_test.go` drives the whole bot through a fake signal-cli socket and a fake model API (OpenRouter's, or another provider's), and checks no message text reaches the log. The golden prompts in `testdata` pin the system prompt byte for byte (`go test . -run Golden -update` rewrites them).
+- **One test hook:** what a test needs to set or see inside the bot goes in `config.Test` (nil in production), never in an exported variable or method.
 - **Sizes:** `go run ./internal/arch/sizes` reports lines per package; CI reports them on each PR, not enforced.
 - **Never log message text,** including in errors and panics. `logx` escapes line breaks; don't log what a user wrote.
 - Tests use only the names Alice and Bob.

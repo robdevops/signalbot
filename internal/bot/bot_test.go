@@ -191,6 +191,20 @@ func TestWaitingMessagesInAGroup(t *testing.T) {
 	}
 }
 
+// A chat's worker counts as work for config.Test, so a test can wait for
+// the bot to be idle.
+func TestWorkerIsBusy(t *testing.T) {
+	h := start(t, options{})
+	h.holdModel()
+	h.receive(dm("first"))
+	if h.b.cfg.Test.Idle() {
+		t.Fatal("idle with a message to answer")
+	}
+	h.release()
+	h.nextSend()
+	h.eventually("the bot to be idle", h.b.cfg.Test.Idle)
+}
+
 func TestAtCapacity(t *testing.T) {
 	h := start(t, options{cfg: func(c *config.Config) { c.MaxConcurrency = 1 }})
 	h.holdModel()

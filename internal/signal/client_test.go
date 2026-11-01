@@ -160,7 +160,7 @@ func allowAll() map[string]bool { return map[string]bool{aliceID: true, bobID: t
 func TestReceiveAndReconnect(t *testing.T) {
 	captureLogs(t)
 	f := newFake(t)
-	c := New(f.sock, allowAll())
+	c := New(f.sock, allowAll(), nil)
 	got, conn := run(t, c, f)
 	receive(conn, `{"sourceUuid":"`+aliceID+`","dataMessage":{"message":"hi"}}`)
 	if r := next(t, got); r.Chat.User != aliceID || !r.Addressed {
@@ -196,7 +196,7 @@ func TestStalledWriteReconnects(t *testing.T) {
 			conns <- c
 		}
 	}()
-	c := New(sock, allowAll())
+	c := New(sock, allowAll(), nil)
 	got := make(chan feature.Received, 4)
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
@@ -234,7 +234,7 @@ func TestStalledWriteReconnects(t *testing.T) {
 func TestSendAndTyping(t *testing.T) {
 	captureLogs(t)
 	f := newFake(t)
-	c := New(f.sock, nil)
+	c := New(f.sock, nil, nil)
 	c.typingEvery = 20 * time.Millisecond
 	run(t, c, f)
 	group, dm := feature.Chat{GroupID: groupID}, feature.Chat{User: aliceID}
@@ -273,7 +273,7 @@ func TestUnmatchedAndBadFramesAreLogged(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			logs := captureLogs(t)
-			New("x", nil).dispatch([]byte(tc.line), func(feature.Received) { t.Fatal("unexpected message") })
+			New("x", nil, nil).dispatch([]byte(tc.line), func(feature.Received) { t.Fatal("unexpected message") })
 			out := logs.String()
 			if tc.want == "" && out != "" || !strings.Contains(out, tc.want) || strings.Contains(out, "secret") {
 				t.Fatalf("logged %q, want %q", out, tc.want)
@@ -286,7 +286,7 @@ func TestUnmatchedAndBadFramesAreLogged(t *testing.T) {
 // reader carries on.
 func TestDispatchRecovers(t *testing.T) {
 	logs := captureLogs(t)
-	New("x", nil).dispatch([]byte(`{"method":"receive","params":{"envelope":{"dataMessage":{"message":"hi"}}}}`), func(feature.Received) { panic("secret text") })
+	New("x", nil, nil).dispatch([]byte(`{"method":"receive","params":{"envelope":{"dataMessage":{"message":"hi"}}}}`), func(feature.Received) { panic("secret text") })
 	if out := logs.String(); !strings.Contains(out, "internal error") || strings.Contains(out, "secret") {
 		t.Fatalf("logged %q", out)
 	}
@@ -295,7 +295,7 @@ func TestDispatchRecovers(t *testing.T) {
 func TestFrameTooLong(t *testing.T) {
 	logs := captureLogs(t)
 	f := newFake(t)
-	_, conn := run(t, New(f.sock, nil), f)
+	_, conn := run(t, New(f.sock, nil, nil), f)
 	go fmt.Fprintf(conn, `{"x":"%s"}`+"\n", strings.Repeat("a", maxLine))
 	eventually(t, "the warning", func() bool { return strings.Contains(logs.String(), "signal-cli read failed") })
 }
@@ -303,7 +303,7 @@ func TestFrameTooLong(t *testing.T) {
 func TestFilesStickersAndGroups(t *testing.T) {
 	captureLogs(t)
 	f := newFake(t)
-	c := New(f.sock, nil)
+	c := New(f.sock, nil, nil)
 	run(t, c, f)
 	ctx := context.Background()
 	f.set("getAttachment", `{"data":"`+base64.StdEncoding.EncodeToString([]byte("PNG"))+`"}`)
@@ -367,7 +367,7 @@ func TestFilesStickersAndGroups(t *testing.T) {
 }
 
 func TestCallsFailWhenNotConnected(t *testing.T) {
-	c := New("x", nil)
+	c := New("x", nil, nil)
 	if err := c.send(feature.Chat{User: aliceID}, "hi", nil, nil); err == nil {
 		t.Error("send while not connected")
 	}
@@ -378,7 +378,7 @@ func TestCallsFailWhenNotConnected(t *testing.T) {
 
 func TestNetwork(t *testing.T) {
 	for addr, want := range map[string]string{"/run/s": "unix", "./s": "unix", "@abs": "unix", "localhost:7583": "tcp", "[::1]:7583": "tcp"} {
-		if got := New(addr, nil).network(); got != want {
+		if got := New(addr, nil, nil).network(); got != want {
 			t.Errorf("%s: %s", addr, got)
 		}
 	}
@@ -390,7 +390,7 @@ func TestReconnectsDoNotLeakGoroutines(t *testing.T) {
 	captureLogs(t)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	c := New("x", nil)
+	c := New("x", nil, nil)
 	before := runtime.NumGoroutine()
 	for range 50 {
 		c1, c2 := net.Pipe()

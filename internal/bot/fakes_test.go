@@ -17,7 +17,6 @@ import (
 	"github.com/robdevops/signalbot/internal/config"
 	"github.com/robdevops/signalbot/internal/feature"
 	"github.com/robdevops/signalbot/internal/kit/logx"
-	"github.com/robdevops/signalbot/internal/model"
 )
 
 const (
@@ -139,18 +138,15 @@ func start(t *testing.T, o options) *harness {
 	t.Cleanup(srv.Close)
 
 	cfg := &config.Config{APIURL: srv.URL, APIKey: "k", Model: "test/test-model", Reasoning: "low", Intro: config.DefaultIntro,
-		MaxConcurrency: 4, HistoryTurns: 10}
+		MaxConcurrency: 4, HistoryTurns: 10, Test: &config.Test{}}
+	if u, _ := url.Parse(srv.URL); !o.otherAPI {
+		cfg.Test.OpenRouter = u.Hostname() // the fake is OpenRouter
+	}
 	if o.cfg != nil {
 		o.cfg(cfg)
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	host := model.OpenRouterHost
-	u, _ := url.Parse(srv.URL)
-	if !o.otherAPI {
-		model.OpenRouterHost = u.Hostname() // the fake is OpenRouter
-	}
 	h.b = New(ctx, cfg, h.net)
-	model.OpenRouterHost = host
 	if o.features != nil {
 		o.features(h.b)
 	}

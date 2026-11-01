@@ -104,11 +104,11 @@ func startAt(t *testing.T, openRouter bool, answers ...served) (*Client, *model,
 
 // client is a client of the API at base, OpenRouter's if openRouter.
 func client(t *testing.T, base string, openRouter bool) *Client {
-	defer func(old string) { OpenRouterHost = old }(OpenRouterHost)
+	cfg := &config.Config{APIURL: base, APIKey: "or-key", Model: "x/model", Reasoning: "low", MaxConcurrency: 8}
 	if u, _ := url.Parse(base); openRouter {
-		OpenRouterHost = u.Hostname()
+		cfg.Test = &config.Test{OpenRouter: u.Hostname()}
 	}
-	return New(&config.Config{APIURL: base, APIKey: "or-key", Model: "x/model", Reasoning: "low", MaxConcurrency: 8})
+	return New(cfg)
 }
 
 func TestNewClient(t *testing.T) {

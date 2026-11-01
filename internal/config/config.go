@@ -9,6 +9,8 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
+	"time"
 )
 
 // DefaultIntro is the self-introduction when INTRO is unset. {name},
@@ -31,7 +33,30 @@ type Config struct {
 	MaxConcurrency int             // MAX_CONCURRENCY: messages answered at once
 	HistoryTurns   int             // HISTORY_TURNS: exchanges remembered per chat
 	Version        string          // the bot's version, set by main
+	Test           *Test           // nil in production
 }
+
+// Test is for tests only, and nil in production. A field left zero keeps
+// what production does.
+type Test struct {
+	ReloadGap  time.Duration // the least time between two contact list loads, instead of 15s
+	OpenRouter string        // the API host given OpenRouter's extras, instead of openrouter.ai
+	Handled    func()        // called on the network's reader goroutine after each frame received
+	busy       atomic.Int64  // work under way, as Begin counts it
+}
+
+// Begin counts work starting, a chat's worker or a contact load, until end
+// is called. On a nil Test it does nothing.
+func (t *Test) Begin() (end func()) {
+	if t == nil {
+		return func() {}
+	}
+	t.busy.Add(1)
+	return func() { t.busy.Add(-1) }
+}
+
+// Idle reports whether no work Begin counted is under way.
+func (t *Test) Idle() bool { return t.busy.Load() == 0 }
 
 var (
 	mu   sync.Mutex

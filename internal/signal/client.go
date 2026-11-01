@@ -19,6 +19,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/robdevops/signalbot/internal/config"
 	"github.com/robdevops/signalbot/internal/feature"
 	"github.com/robdevops/signalbot/internal/kit/logx"
 	"github.com/robdevops/signalbot/internal/kit/txt"
@@ -27,11 +28,6 @@ import (
 // maxLine caps one JSON-RPC frame from signal-cli. Message bodies, mention
 // lists and quoted text are all sender-controlled parts of a frame.
 const maxLine = 1 << 20
-
-// Handled, if set, is called on the reader goroutine after each message is
-// handled. It is for the scenario tests at the module root, which see the bot
-// only through its socket; set it before Run.
-var Handled func()
 
 // writeTimeout bounds one request's write, so a stalled socket can't hold
 // up every sender.
@@ -64,13 +60,18 @@ type Client struct {
 	knownOnce   sync.Once
 	closed      atomic.Bool // Run has returned
 	names       names
+	test        *config.Test // nil in production
 }
 
 // New makes a client for the socket at addr, a unix socket path or
 // host:port, answering DMs from the senders in allowed.
-func New(addr string, allowed map[string]bool) *Client {
-	return &Client{addr: addr, allowed: allowed, typingEvery: 10 * time.Second, pending: map[string]chan *rpcMsg{},
-		known: make(chan struct{}), names: newNames()}
+func New(addr string, allowed map[string]bool, test *config.Test) *Client {
+	c := &Client{addr: addr, allowed: allowed, typingEvery: 10 * time.Second, pending: map[string]chan *rpcMsg{},
+		known: make(chan struct{}), names: newNames(), test: test}
+	if test != nil && test.ReloadGap > 0 {
+		c.names.minRefresh = test.ReloadGap
+	}
+	return c
 }
 
 // self is the bot's account ID (ACI, else number), or "" until signal-cli
@@ -193,8 +194,8 @@ func (c *Client) dispatch(line []byte, handle func(feature.Received)) {
 		if r, ok := c.event(p.Envelope); ok {
 			handle(r)
 		}
-		if Handled != nil {
-			Handled()
+		if c.test != nil && c.test.Handled != nil {
+			c.test.Handled()
 		}
 	}
 }

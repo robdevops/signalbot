@@ -53,22 +53,8 @@ type names struct {
 	pending     atomic.Bool // a reload is already scheduled
 }
 
-// ReloadGap is the least time between two loads of the contact list, read
-// when a client is made. Tests lower it.
-var ReloadGap = 15 * time.Second
-
 func newNames() names {
-	return names{byID: map[string]rankedName{}, numbers: map[string]string{}, minRefresh: ReloadGap}
-}
-
-// Loading reports whether the contact list is loading. It is for the
-// scenario tests at the module root, which wait for the bot to be idle.
-func (c *Client) Loading() bool {
-	if !c.names.loading.TryLock() {
-		return true
-	}
-	c.names.loading.Unlock()
-	return false
+	return names{byID: map[string]rankedName{}, numbers: map[string]string{}, minRefresh: 15 * time.Second}
 }
 
 // contact is the part of a listContacts entry the bot uses.
@@ -291,6 +277,7 @@ func (c *Client) refreshSoon() {
 // whether it tried.
 func (c *Client) refresh(ctx context.Context) bool {
 	n := &c.names
+	defer c.test.Begin()()
 	// A caller that arrives mid-load waits, then finds the list fresh.
 	n.loading.Lock()
 	defer n.loading.Unlock()

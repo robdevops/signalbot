@@ -58,7 +58,7 @@ func TestAddressed(t *testing.T) {
 
 func TestMessageInGroup(t *testing.T) {
 	captureLogs(t)
-	c := New("x", nil)
+	c := New("x", nil, nil)
 	k := contact{UUID: aliceID}
 	k.Profile.GivenName = "Alice"
 	c.names.replace([]contact{k})
@@ -86,7 +86,7 @@ func TestMessageInGroup(t *testing.T) {
 }
 
 func TestMessageInDM(t *testing.T) {
-	c := New("x", map[string]bool{aliceID: true})
+	c := New("x", map[string]bool{aliceID: true}, nil)
 	e := parse(t, `{"sourceUuid":"`+aliceID+`","sourceName":"Alice\nSmith","dataMessage":{"message":"hi","quote":{"authorUuid":"`+bobID+`","text":"x"}}}`)
 	m := c.message(e, botID)
 	if m.Chat != (feature.Chat{User: aliceID}) || m.Name != "Alice Smith" || !m.Addressed || m.Quote.Author != "" || m.Quote.Bot {
@@ -106,7 +106,7 @@ func TestMessageInDM(t *testing.T) {
 // text.
 func TestMentionsOddOffsets(t *testing.T) {
 	captureLogs(t)
-	c := New("x", nil)
+	c := New("x", nil, nil)
 	for _, tc := range []struct {
 		ms   []mention
 		want string
@@ -126,7 +126,7 @@ func TestMentionsOddOffsets(t *testing.T) {
 // addressed or not.
 func TestUnresolvedMentionNotLogged(t *testing.T) {
 	logs := captureLogs(t)
-	c := New("x", nil)
+	c := New("x", nil, nil)
 	unknown := `"mentions":[{"uuid":"` + aliceID + `","start":0,"length":1}]`
 	if m := c.message(parse(t, `{`+fromBob+`,"dataMessage":{"message":"￼ hi",`+unknown+`,`+inGroup+`}}`), botID); m.Text != "[unnamed user] hi" {
 		t.Fatalf("text %q", m.Text)
@@ -159,7 +159,7 @@ func connected(c *Client) {
 // stranger is logged by ID only.
 func TestEvents(t *testing.T) {
 	logs := captureLogs(t)
-	c := New("x", map[string]bool{aliceID: true})
+	c := New("x", map[string]bool{aliceID: true}, nil)
 	c.closed.Store(true) // so a group change schedules no contact load
 	connected(c)
 	event := func(env string) (feature.Received, bool) { return c.event(parse(t, env)) }
@@ -195,7 +195,7 @@ func TestEvents(t *testing.T) {
 // decides it once the ID is known.
 func TestEventsBeforeTheIDIsKnown(t *testing.T) {
 	logs := captureLogs(t)
-	c := New("x", map[string]bool{aliceID: true})
+	c := New("x", map[string]bool{aliceID: true}, nil)
 	c.names.refreshedAt = time.Now() // so loading names doesn't try the socket
 	var rs []feature.Received
 	for _, env := range []string{
@@ -235,7 +235,7 @@ func TestLoad(t *testing.T) {
 	f := newFake(t)
 	f.set("listContacts", `[{"uuid":"`+botID+`","givenName":"Botty"},{"uuid":"`+aliceID+`","givenName":"Alice"}]`)
 	f.set("listStickerPacks", `[{"packId":"p","title":"Pack","stickers":[{"id":2,"emoji":"🙂"}]}]`)
-	c := New(f.sock, nil)
+	c := New(f.sock, nil, nil)
 	got, conn := run(t, c, f)
 	receive(conn, `{`+fromBob+`,"dataMessage":{"message":"￼ ask ￼","sticker":{"packId":"p","stickerId":2},`+
 		`"mentions":[{"uuid":"`+botID+`","start":0,"length":1},{"uuid":"`+aliceID+`","start":6,"length":1}],`+inGroup+`}}`)
@@ -262,7 +262,7 @@ func TestDelivered(t *testing.T) {
 	f.set("listContacts", `[{"uuid":"`+botID+`","givenName":"Botty"},{"uuid":"`+aliceID+`","number":"+1555","givenName":"Alice"},{"uuid":"`+bobID+`","givenName":"Bob"}]`)
 	f.set("listGroups", `[{"id":"`+groupID+`","name":"Family","isMember":true,"members":[{"uuid":"`+aliceID+`"},{"uuid":"`+bobID+`"}]}]`)
 	allowed := map[string]bool{"+1555": true}
-	c := New(f.sock, allowed)
+	c := New(f.sock, allowed, nil)
 	ctx := context.Background()
 	type result struct {
 		m             feature.Message
@@ -308,7 +308,7 @@ func TestDelivered(t *testing.T) {
 	}
 	gone, cancel := context.WithCancel(ctx)
 	cancel()
-	if _, _, ok := New("x", nil).Delivered(gone, feature.Message{Text: "secret words"}, nil); ok {
+	if _, _, ok := New("x", nil, nil).Delivered(gone, feature.Message{Text: "secret words"}, nil); ok {
 		t.Error("delivered while not connected")
 	}
 	out := logs.String()

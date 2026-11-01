@@ -35,11 +35,6 @@ const (
 // retryDelay is the wait before a retry.
 var retryDelay = time.Second
 
-// OpenRouterHost is the host name of OpenRouter's API, read when a client
-// is made: only that API (in any case, on any port) gets OpenRouter's
-// extras, model list and server tools. Tests point it at a fake.
-var OpenRouterHost = "openrouter.ai"
-
 // Client talks to the model's API.
 type Client struct {
 	key, model, reasoning, base string
@@ -48,11 +43,16 @@ type Client struct {
 }
 
 // New makes the client of cfg.APIURL, keeping one idle connection per reply
-// that can run at once.
+// that can run at once. Only OpenRouter's API (in any case, on any port)
+// gets OpenRouter's extras, model list and server tools.
 func New(cfg *config.Config) *Client {
+	host := "openrouter.ai"
+	if cfg.Test != nil && cfg.Test.OpenRouter != "" {
+		host = cfg.Test.OpenRouter
+	}
 	u, err := url.Parse(cfg.APIURL)
 	return &Client{key: cfg.APIKey, model: cfg.Model, reasoning: cfg.Reasoning, base: cfg.APIURL,
-		openRouter: err == nil && strings.EqualFold(u.Hostname(), OpenRouterHost), http: httpx.Client(cfg.MaxConcurrency)}
+		openRouter: err == nil && strings.EqualFold(u.Hostname(), host), http: httpx.Client(cfg.MaxConcurrency)}
 }
 
 // provider is the name server tools use for the API: "openrouter" for

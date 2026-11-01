@@ -47,7 +47,7 @@ func main() {
 	// be sent; it ends once they finish or time runs out.
 	ctx, closeConn := context.WithCancel(context.Background())
 	defer closeConn()
-	b := bot.New(ctx, cfg, signal.New(cfg.Socket, cfg.AllowedSenders))
+	b := bot.New(ctx, cfg, signal.New(cfg.Socket, cfg.AllowedSenders, cfg.Test))
 	for _, register := range features {
 		if err := register(b); err != nil {
 			logx.Critf("config error: %v", err)

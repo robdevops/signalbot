@@ -47,7 +47,7 @@ internal/signal/        the chat network, outside the core: the socket, decoding
 internal/model/         the model client (OpenRouter or another chat completions API) and the tool loop
 internal/chats/         per-chat state: history, dedupe, mention names, the mailbox
 internal/timers/        one-shot timers
-internal/config/        settings from the environment, each name recorded for the docs test
+internal/config/        settings from the environment, each name recorded for the docs test; config.Test, the test hooks
 internal/bot/           the decision, the prompt, the hooks; wires the core packages, and reaches the network through Network
 internal/feature/       the ports and shared types (the only part of the core features import), the command helper, featuretest
 internal/features/*     one package per feature
@@ -209,7 +209,7 @@ For how to add a feature and the checks to run before a change, see [CONTRIBUTIN
 
 Enforced by tests in `internal/arch`:
 
-- **Imports:** only the main package, at the module root, imports features and `internal/signal`; a feature imports only `internal/feature`, `internal/kit` and its own packages; `internal/signal` imports only `internal/feature` and kit; `internal/feature` imports only kit; kit imports no other internal package, so it never imports the core.
+- **Imports:** only the main package, at the module root, imports features and `internal/signal`; a feature imports only `internal/feature`, `internal/kit` and its own packages; `internal/signal` imports only `internal/feature`, kit and `internal/config` (for `config.Test`); `internal/feature` imports only kit; `internal/config` and kit import no other internal package, so neither imports the core.
 - **No feature names in the core:** the core's source mentions no feature name or feature-only word (chart, pie, MCP, group context, web search, vision, `/example`, `/schedule`).
 - **Docs:** every setting read, the core's or a feature's (`h.Env("NAME", …)`), is in the README's configuration table.
 
@@ -220,6 +220,7 @@ By convention:
 - **Golden prompts** in `testdata` pin the system prompt byte for byte: `prompt_full.txt` with every feature registered, against real fake MCP servers rather than a hand-set list, and `prompt_nofeatures.txt`, checked by the core's own tests with no features (with tool calling on and off) and by a scenario with every feature registered and a model that can't call tools. `go test . -run Golden -update` rewrites both files from the scenarios.
 - **Edge-only scenarios:** `scenario_test.go` drives the whole bot, features included, through a fake signal-cli socket and a fake model API (OpenRouter's or another provider's), and checks what is sent back, what the model receives (which shows the history), and the log, including that no message text, reply, tool argument or result reaches it. [docs/SCENARIOS.md](docs/SCENARIOS.md) describes the harness and maps the tests from before the core was written to the scenarios that cover them.
 - **One picture cap:** `feature.MaxPictures` (4) caps the pictures in a message, in or out, everywhere.
+- **One test hook:** `config.Test`, nil in production, is the only way tests reach inside: the contact reload gap, the API host treated as OpenRouter, a callback after each frame the client reads, and `Begin` and `Idle`, which count chats' workers and contact loads so a scenario can wait for the bot to be idle. Nothing else is exported for tests.
 - **Tests** that start slow work drain it before they end, and change the DM allowlist in place, since the client holds a reference to the map.
 - **Sizes:** `go run ./internal/arch/sizes` reports lines per package; CI reports them on each PR, not enforced.
 

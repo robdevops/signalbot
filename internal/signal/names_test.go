@@ -5,8 +5,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/robdevops/signalbot/internal/config"
 )
 
 func TestContactBest(t *testing.T) {
@@ -29,7 +32,7 @@ func TestContactBest(t *testing.T) {
 }
 
 func TestResolveRanks(t *testing.T) {
-	c := New("x", nil)
+	c := New("x", nil, nil)
 	m := mention{Name: aliceID, UUID: aliceID}
 	if got := c.resolve(m); got != "" {
 		t.Fatalf("an unknown ID must resolve to nothing, not the ID: %q", got)
@@ -62,7 +65,7 @@ func TestResolveRanks(t *testing.T) {
 // sent, so an allowlist of numbers can be checked against an ACI. Each load
 // replaces them, and they are capped.
 func TestNumber(t *testing.T) {
-	c := New("x", nil)
+	c := New("x", nil, nil)
 	c.names.replace([]contact{{UUID: aliceID, Number: "+1555"}, {UUID: bobID}})
 	if c.number(aliceID) != "+1555" || c.number(bobID) != "" || c.number("") != "" {
 		t.Fatalf("numbers %v", c.names.numbers)
@@ -86,9 +89,27 @@ func TestNumber(t *testing.T) {
 
 // newClient is a client that loads the contact list at most every gap.
 func newClient(sock string, gap time.Duration) *Client {
-	defer func(old time.Duration) { ReloadGap = old }(ReloadGap)
-	ReloadGap = gap
-	return New(sock, nil)
+	return New(sock, nil, &config.Test{ReloadGap: gap})
+}
+
+// The test hooks: a contact load counts as work until it ends, and each
+// frame received calls Handled.
+func TestTestHooks(t *testing.T) {
+	captureLogs(t)
+	f := newFake(t)
+	delete(f.res, "listContacts") // never answered
+	var frames atomic.Int32
+	test := &config.Test{Handled: func() { frames.Add(1) }}
+	c := New(f.sock, nil, test)
+	_, conn := run(t, c, f)
+	eventually(t, "the load on connect", func() bool { return len(f.calls("listContacts")) == 1 })
+	if test.Idle() {
+		t.Fatal("idle while the contacts load")
+	}
+	receive(conn, `{"sourceUuid":"`+aliceID+`","dataMessage":{"message":"hi"}}`)
+	eventually(t, "the frame", func() bool { return frames.Load() == 1 })
+	conn.Close()
+	eventually(t, "the load to end", test.Idle)
 }
 
 func TestNamesCapped(t *testing.T) {
@@ -205,7 +226,7 @@ func TestBotName(t *testing.T) {
 // Redact scrubs every name the bot knows but its own, as whole words and
 // ignoring capitals, longest first, and every UUID and phone number.
 func TestRedact(t *testing.T) {
-	c := New("x", nil)
+	c := New("x", nil, nil)
 	c.id.Store(botID)
 	c.names.set(rankedName{"Alice", rankContact}, aliceID)
 	c.names.set(rankedName{"Alice Smith", rankContact}, "u-as")

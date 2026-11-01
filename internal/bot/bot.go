@@ -122,10 +122,6 @@ func (b *Bot) Shutdown(d time.Duration) {
 	}
 }
 
-// Idle reports whether no work holds a slot. It is for the scenario tests
-// at the module root.
-func (b *Bot) Idle() bool { return len(b.slots) == 0 }
-
 // handle runs on the network's reader goroutine for every message received,
 // so it never blocks or calls the network. An unaddressed group message
 // goes to the OnMessage hooks here, and is never logged; an addressed one,
@@ -156,7 +152,8 @@ func (b *Bot) post(r feature.Received) {
 	err := b.chats.Post(r.Chat.Key(), r, func(worker func()) bool {
 		select {
 		case b.slots <- struct{}{}:
-			go func() { defer func() { <-b.slots }(); worker() }()
+			end := b.cfg.Test.Begin()
+			go func() { defer func() { end(); <-b.slots }(); worker() }()
 			return true
 		default:
 			return false
