@@ -42,7 +42,7 @@ If a feature can't be built on these, that's a design finding. Either a port bec
 Tests in `internal/arch` enforce these:
 
 - **Imports:** only the main package, at the module root, imports features and `internal/signal`; a feature imports only `internal/feature`, `internal/kit` and its own packages; `internal/signal` imports only `internal/feature`, kit and `internal/config`; `internal/config` and kit import no other internal package.
-- **No feature names in the core:** the core's source mentions no feature name or feature-only word (chart, MCP, group context, `/example`, `/schedule`, …).
+- **No feature names in the core:** the core's source mentions no feature name or feature-only word (chart, MCP, group context, `/intro`, `/schedule`, …).
 - **Docs:** every setting read, the core's or a feature's (`h.Env("NAME", …)`), is in the README's configuration table.
 
 And by convention:
@@ -66,4 +66,4 @@ Before sending a change: `gofmt -l .`, `go vet ./...` and `go test -race ./...`,
 5. Add one line to `features.go`. Order matters: it is the order hooks run in and of the tools line.
 6. Add its settings to the README's configuration table, and a row in TECHNICAL.md's features table and a paragraph under it.
 
-`internal/features/example` is the smallest feature to copy.
+`internal/features/intro` is the smallest feature to copy.

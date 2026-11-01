@@ -77,7 +77,7 @@ func TestImports(t *testing.T) {
 }
 
 // featureWords are the names of features and words only they use.
-var featureWords = regexp.MustCompile(`(?i)chart|donut|\bpies?\b|mcp|groupctx|group.?context|websearch|web.?search|\bvision\b|/example|/schedule`)
+var featureWords = regexp.MustCompile(`(?i)chart|donut|\bpies?\b|mcp|groupctx|group.?context|websearch|web.?search|\bvision\b|/intro|/schedule`)
 
 // The core never mentions a feature, so deleting one leaves it unchanged.
 // The scenarios at the module root test the whole bot, features included.

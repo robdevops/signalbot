@@ -1,6 +1,6 @@
-// Package example answers "/example" without the model: what the bot can
+// Package intro answers "/intro" without the model: what the bot can
 // do, with a real @mention of whoever asked in a group.
-package example
+package intro
 
 import (
 	"context"
@@ -9,11 +9,11 @@ import (
 	"github.com/robdevops/signalbot/internal/feature"
 )
 
-// Register adds /example to h.
+// Register adds /intro to h.
 func Register(h feature.Host) error {
-	return feature.Command(h, "example", func(_ context.Context, m feature.Message, args string) feature.Action {
+	return feature.Command(h, "intro", func(_ context.Context, m feature.Message, args string) feature.Action {
 		if args != "" {
-			return feature.Action{} // only "/example" itself; anything more carries on
+			return feature.Action{} // only "/intro" itself; anything more carries on
 		}
 		return feature.Action{Answer: text(m, h.Info())}
 	})
@@ -39,5 +39,5 @@ func text(m feature.Message, info feature.Info) string {
 	return hi + " I'm " + info.Name + ". Here's what I can do:\n" + chat +
 		"- Mention people by name in my replies\n" +
 		"- " + run + "\n" +
-		"This reply didn't use the model."
+		"This message did not use the model."
 }

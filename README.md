@@ -31,7 +31,7 @@ A small, [privacy-conscious](PRIVACY.md) chat bot that connects to a running [si
 - Your group's brain trust: ask it to explain things, check facts or settle debates
 - Explain or translate any message or photo by replying to it and tagging the bot
 - Connect MCP tools, data, and charting to your group chat
-- Modify the bot to add your own /commands (see `/example`)
+- Modify the bot to add your own /commands (see `/intro`)
 - A private assistant in your DMs, or just the fun or convenience of a sassy LLM in your Signal groups
 
 The messages the bot answers, and the names in them, are sent to the model's API (OpenRouter, unless you [choose another](#other-providers)) and on to the model's provider. See [TECHNICAL.md](TECHNICAL.md) and [PRIVACY.md](PRIVACY.md) for details on how it works.
@@ -125,7 +125,7 @@ Docker's journald driver records stderr at priority 3 (err) and stdout at 6 (inf
 
 ### Then
 
-Add the bot's account to a group and @mention it, reply to one of its messages, or DM it from an allowed sender. Send it `/example` to see what it can do; that reply never goes to the model.
+Add the bot's account to a group and @mention it, reply to one of its messages, or DM it from an allowed sender. Send it `/intro` to see what it can do; that reply never goes to the model.
 
 ## Configuration
 
@@ -175,7 +175,7 @@ What differs from OpenRouter:
 
 ### No model
 
-With neither `MODEL_API_KEY` nor `MODEL_API_URL` set, the bot runs without a model, and its startup log says "no model: only commands are answered". Commands still work: `/example`, `/schedule` and its aliases, and scheduled plain text is posted as written; `/example` then lists only what the bot does without a model. Anything else addressed to it, a mention, a reply or a DM, gets no reply, no typing indicator and no model request. Nothing is kept in history, not even group context, and MCP servers aren't started.
+With neither `MODEL_API_KEY` nor `MODEL_API_URL` set, the bot runs without a model, and its startup log says "no model: only commands are answered". Commands still work: `/intro`, `/schedule` and its aliases, and scheduled plain text is posted as written; `/intro` then lists only what the bot does without a model. Anything else addressed to it, a mention, a reply or a DM, gets no reply, no typing indicator and no model request. Nothing is kept in history, not even group context, and MCP servers aren't started.
 
 ### MCP tools
 
@@ -184,7 +184,7 @@ The model can call tools from [MCP](https://modelcontextprotocol.io) servers, re
 ```json
 {"mcpServers": {
   "weather": {
-    "url": "https://example.com/mcp",
+    "url": "https://intro.com/mcp",
     "headers": {"Authorization": "Bearer …"},
     "allowed_tools": ["get_forecast", "get_alerts"],
     "instructions": "Use the weather tools for any forecast, and give temperatures in °C.",

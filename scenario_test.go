@@ -848,7 +848,7 @@ func TestScenarioNoModel(t *testing.T) {
 	if _, ok := h.logged("web search on"); ok {
 		t.Fatalf("web search logged as on: %v", h.logLines())
 	}
-	s := h.ask(atBot("/example"))
+	s := h.ask(atBot("/intro"))
 	if !strings.HasPrefix(s.Message, "Hi @Alice! I'm Botty. ") || !strings.Contains(s.Message, "\n- Run no model, so I answer only commands\n") ||
 		strings.Contains(s.Message, "@mention me") || strings.Contains(s.Message, "Remember") || strings.Contains(s.Message, "quote") {
 		t.Fatalf("sent %q", s.Message)
@@ -1106,35 +1106,35 @@ func TestScenarioStickerWithoutVision(t *testing.T) {
 	}
 }
 
-// --- /example and chat commands ----------------------------------------------------------
+// --- /intro and chat commands ----------------------------------------------------------
 
 func TestScenarioExampleWithoutModel(t *testing.T) {
 	h := startBot(t, world{})
-	s := h.ask(atBot("/example"))
+	s := h.ask(atBot("/intro"))
 	want := "Hi @Alice! I'm Botty. Here's what I can do:\n" +
 		"- Answer when you @mention me, reply to one of my messages, or DM me (if you're on my list)\n" +
 		"- Use a message you quote as context\n" +
 		"- Remember our conversation for up to a day (less with disappearing messages)\n" +
 		"- Mention people by name in my replies\n" +
 		"- Run test-model with web search, charts (line, pie)\n" +
-		"This reply didn't use the model."
+		"This message did not use the model."
 	if s.Message != want || s.GroupID != idGroup {
 		t.Fatalf("sent %q", s.Message)
 	}
 	equal(t, "mentions", s.Mentions, []string{"3:6:" + idAlice})
-	if s := h.ask(fromAlice("/EXAMPLE")); !strings.HasPrefix(s.Message, "Hi! I'm Botty. Here's what I can do:\n") || s.Mentions != nil {
+	if s := h.ask(fromAlice("/INTRO")); !strings.HasPrefix(s.Message, "Hi! I'm Botty. Here's what I can do:\n") || s.Mentions != nil {
 		t.Fatalf("DM sent %q", s.Message)
 	}
 	if n := len(h.requests()); n != 0 {
 		t.Fatalf("the model was asked %d times", n)
 	}
 	h.ask(fromAlice("what did I ask"))
-	equal(t, "conversation", h.lastRequest().contents(), []string{"user: what did I ask"}) // /example left no history
+	equal(t, "conversation", h.lastRequest().contents(), []string{"user: what did I ask"}) // /intro left no history
 }
 
 func TestScenarioBotWithoutProfileNameIsSignalbot(t *testing.T) {
 	h := startBot(t, world{NoBotName: true, MCP: true})
-	if s := h.ask(fromAlice("/example")); !strings.HasPrefix(s.Message, "Hi! I'm signalbot. ") ||
+	if s := h.ask(fromAlice("/intro")); !strings.HasPrefix(s.Message, "Hi! I'm signalbot. ") ||
 		!strings.Contains(s.Message, "- Run test-model with web search, charts (line, pie), stocks (get_quote, price_chart, /quote), weather (get_forecast, /forecast)\n") {
 		t.Fatalf("sent %q", s.Message)
 	}
@@ -1453,22 +1453,22 @@ func TestScenarioScheduleRunsInAGroup(t *testing.T) {
 func TestScenarioSchedulesSurviveARestart(t *testing.T) {
 	dir := t.TempDir()
 	h := startBot(t, world{StateDir: dir})
-	if s := h.ask(atBot(`/schedule "/example" 2099-01-01T09:00 every month`)); s.GroupID != idGroup || !strings.HasPrefix(s.Message, "Schedules are made in a DM with me.") {
+	if s := h.ask(atBot(`/schedule "/intro" 2099-01-01T09:00 every month`)); s.GroupID != idGroup || !strings.HasPrefix(s.Message, "Schedules are made in a DM with me.") {
 		t.Fatalf("sent %+v", s)
 	}
-	if s := h.ask(fromAlice(`/schedule "/example" 2099-01-01T09:00 every month chess club`)); s.Message != "We aren't in a group called chess club together. Your groups with me: Test group." {
+	if s := h.ask(fromAlice(`/schedule "/intro" 2099-01-01T09:00 every month chess club`)); s.Message != "We aren't in a group called chess club together. Your groups with me: Test group." {
 		t.Fatalf("sent %q", s.Message)
 	}
-	if s := h.ask(fromAlice(`/schedule "/example" 2099-01-01T09:00 every month`)); !strings.HasPrefix(s.Message, "Scheduled for Thu 1 Jan 2099 09:00 ") || !strings.HasSuffix(s.Message, ", then every month, here.") {
+	if s := h.ask(fromAlice(`/schedule "/intro" 2099-01-01T09:00 every month`)); !strings.HasPrefix(s.Message, "Scheduled for Thu 1 Jan 2099 09:00 ") || !strings.HasSuffix(s.Message, ", then every month, here.") {
 		t.Fatalf("sent %q", s.Message)
 	}
 	h.shutdown()
 
 	h = startBot(t, world{StateDir: dir})
-	if s := h.ask(fromAlice("/schedule list")); !strings.HasPrefix(s.Message, "Your schedules:\n1. \"/example\" Thu 1 Jan 2099 09:00 ") {
+	if s := h.ask(fromAlice("/schedule list")); !strings.HasPrefix(s.Message, "Your schedules:\n1. \"/intro\" Thu 1 Jan 2099 09:00 ") {
 		t.Fatalf("list %q", s.Message)
 	}
-	if s := h.ask(fromAlice("/schedule del 1")); s.Message != `Deleted schedule 1: "/example".` {
+	if s := h.ask(fromAlice("/schedule del 1")); s.Message != `Deleted schedule 1: "/intro".` {
 		t.Fatalf("sent %q", s.Message)
 	}
 	if n := len(h.requests()); n != 0 {

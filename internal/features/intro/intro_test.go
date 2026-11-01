@@ -1,4 +1,4 @@
-package example
+package intro
 
 import (
 	"context"
@@ -19,24 +19,24 @@ func host(t *testing.T, tools ...string) *featuretest.Host {
 	return h
 }
 
-// "/example" is answered without the model, greeting the sender by @name in
+// "/intro" is answered without the model, greeting the sender by @name in
 // a group so the core can link a real mention.
 func TestExample(t *testing.T) {
 	h := host(t, "web search", "charts", "get_forecast")
-	group := feature.Message{Chat: feature.Chat{GroupID: "g1"}, Sender: "u-alice", Name: "Alice", Text: "/example", Addressed: true}
+	group := feature.Message{Chat: feature.Chat{GroupID: "g1"}, Sender: "u-alice", Name: "Alice", Text: "/intro", Addressed: true}
 	want := "Hi @Alice! I'm Botty. Here's what I can do:\n" +
 		"- Answer when you @mention me, reply to one of my messages, or DM me (if you're on my list)\n" +
 		"- Use a message you quote as context\n" +
 		"- Remember our conversation for up to a day (less with disappearing messages)\n" +
 		"- Mention people by name in my replies\n" +
 		"- Run test-model with web search, charts, get_forecast\n" +
-		"This reply didn't use the model."
+		"This message did not use the model."
 	if a := h.Message(context.Background(), group); a != (feature.Action{Answer: want}) {
 		t.Fatalf("got %+v", a)
 	}
 
 	// In a DM, or with no name, there is no one to mention.
-	dm := feature.Message{Chat: feature.Chat{User: "u-alice"}, Sender: "u-alice", Name: "Alice", Text: "/EXAMPLE", Addressed: true}
+	dm := feature.Message{Chat: feature.Chat{User: "u-alice"}, Sender: "u-alice", Name: "Alice", Text: "/INTRO", Addressed: true}
 	if a := h.Message(context.Background(), dm); !strings.HasPrefix(a.Answer, "Hi! I'm Botty. ") {
 		t.Fatalf("DM got %q", a.Answer)
 	}
@@ -48,7 +48,7 @@ func TestExample(t *testing.T) {
 
 func TestExampleWithoutTools(t *testing.T) {
 	h := host(t)
-	m := feature.Message{Chat: feature.Chat{User: "u-bob"}, Text: "/example", Addressed: true}
+	m := feature.Message{Chat: feature.Chat{User: "u-bob"}, Text: "/intro", Addressed: true}
 	if a := h.Message(context.Background(), m); !strings.Contains(a.Answer, "- Run test-model with no tools\n") {
 		t.Fatalf("got %q", a.Answer)
 	}
@@ -62,23 +62,23 @@ func TestExampleWithNoModel(t *testing.T) {
 	if err := Register(h); err != nil {
 		t.Fatal(err)
 	}
-	m := feature.Message{Chat: feature.Chat{User: "u-bob"}, Text: "/example", Addressed: true}
+	m := feature.Message{Chat: feature.Chat{User: "u-bob"}, Text: "/intro", Addressed: true}
 	want := "Hi! I'm Botty. Here's what I can do:\n" +
 		"- Mention people by name in my replies\n" +
 		"- Run no model, so I answer only commands\n" +
-		"This reply didn't use the model."
+		"This message did not use the model."
 	if a := h.Message(context.Background(), m); a.Answer != want {
 		t.Fatalf("got %q", a.Answer)
 	}
 }
 
-// Only "/example" itself, addressed, is answered; anything else carries on.
+// Only "/intro" itself, addressed, is answered; anything else carries on.
 func TestExampleIgnoresOtherMessages(t *testing.T) {
 	h := host(t)
 	for _, m := range []feature.Message{
-		{Chat: feature.Chat{User: "u-bob"}, Text: "/example please", Addressed: true},
+		{Chat: feature.Chat{User: "u-bob"}, Text: "/intro please", Addressed: true},
 		{Chat: feature.Chat{User: "u-bob"}, Text: "an example", Addressed: true},
-		{Chat: feature.Chat{GroupID: "g1"}, Text: "/example"}, // not addressed
+		{Chat: feature.Chat{GroupID: "g1"}, Text: "/intro"}, // not addressed
 	} {
 		if a := h.Message(context.Background(), m); a != (feature.Action{}) {
 			t.Errorf("%+v got %+v", m, a)

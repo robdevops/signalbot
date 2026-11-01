@@ -161,7 +161,7 @@ In `features.go` order, which is the order hooks run in and of the tools line an
 | `mcp` | `Tools` (one group per server), command helper returning `ToolChoice`, `Info`, `Redact`, `Go` |
 | `schedule` | command helper, `At`, `Deliver`, `Groups`, `Info` |
 
-- **`example`** answers `/example` itself, never through the model, with what the bot can do, its model and tools (or "no model", leaving out what only the model does), and a real @mention of whoever asked in a group. It leaves no history. `/example` with anything after it carries on as a normal message.
+- **`example`** answers `/intro` itself, never through the model, with what the bot can do, its model and tools (or "no model", leaving out what only the model does), and a real @mention of whoever asked in a group. It leaves no history. `/intro` with anything after it carries on as a normal message.
 - **`websearch`** offers OpenRouter's server-side web search tool (`openrouter:web_search`), which the model calls only when it decides to, unless `MODEL_SEARCH` is off. It logs "web search on" only when the core kept the tool: on another API the core leaves it out and warns ([Capabilities](#the-core)), and with no model nothing is offered or logged.
 - **`groupctx`** (`GROUP_CONTEXT`, on by default) keeps each unaddressed group message as context: `Name: text`, capped at 2,000 characters, with photos and stickers noted as `[image]`/`[sticker]` but never fetched. The core keeps it like any history entry and never logs it.
 - **`vision`** adds a message's images (and a quoted message's thumbnails), up to 4 and 5 MB each, fetched with `getAttachment`, and its sticker, fetched with `getSticker` and labelled with its emoji and pack title from `listStickerPacks` (quoted, since anyone can make a pack). If the model takes images they go as image parts; otherwise the model is told it can't see them, and a sticker still gets its label. So a photo or sticker alone is answered in a DM or a reply to the bot. History keeps only a note, which tells the model it sees images only in the latest message, so to look again someone replies to it and mentions the bot.
@@ -207,7 +207,7 @@ For how to add a feature and the checks to run before a change, see [CONTRIBUTIN
 Enforced by tests in `internal/arch`:
 
 - **Imports:** only the main package, at the module root, imports features and `internal/signal`; a feature imports only `internal/feature`, `internal/kit` and its own packages; `internal/signal` imports only `internal/feature`, kit and `internal/config` (for `config.Test`); `internal/feature` imports only kit; `internal/config` and kit import no other internal package, so neither imports the core.
-- **No feature names in the core:** the core's source mentions no feature name or feature-only word (chart, pie, MCP, group context, web search, vision, `/example`, `/schedule`).
+- **No feature names in the core:** the core's source mentions no feature name or feature-only word (chart, pie, MCP, group context, web search, vision, `/intro`, `/schedule`).
 - **Docs:** every setting read, the core's or a feature's (`h.Env("NAME", …)`), is in the README's configuration table.
 
 By convention:

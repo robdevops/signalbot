@@ -3,8 +3,8 @@ package main
 import (
 	"github.com/robdevops/signalbot/internal/feature"
 	"github.com/robdevops/signalbot/internal/features/charts"
-	"github.com/robdevops/signalbot/internal/features/example"
 	"github.com/robdevops/signalbot/internal/features/groupctx"
+	"github.com/robdevops/signalbot/internal/features/intro"
 	"github.com/robdevops/signalbot/internal/features/mcp"
 	"github.com/robdevops/signalbot/internal/features/schedule"
 	"github.com/robdevops/signalbot/internal/features/vision"
@@ -14,7 +14,7 @@ import (
 // features register on the host in this order, which is the order their
 // hooks run in and of the tools line and {tools}. One line per feature.
 var features = []func(feature.Host) error{
-	example.Register,
+	intro.Register,
 	websearch.Register,
 	groupctx.Register,
 	vision.Register,
