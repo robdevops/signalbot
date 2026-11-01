@@ -139,18 +139,18 @@ func (c *Client) event(env *envelope) (bot.Received, bool) {
 	chat := env.chat()
 	if g := d.GroupInfo; g != nil && g.Type == "UPDATE" {
 		c.refreshSoon() // so new members are known and departed ones forgotten
-		return bot.Received{Message: feature.Message{Chat: chat}, GroupChange: true}, true
+		return bot.Received{Chat: chat, GroupChange: true}, true
 	}
 	load := func(ctx context.Context, learn func(name, id string)) (feature.Message, bool) {
 		return c.load(ctx, env, learn)
 	}
 	self := c.self()
 	if self == "" {
-		return bot.Received{Message: feature.Message{Chat: chat}, Load: load}, true
+		return bot.Received{Chat: chat, Load: load}, true
 	}
 	switch addressed, other := c.judge(env, self); {
 	case addressed:
-		return bot.Received{Message: feature.Message{Chat: chat, Addressed: true}, Load: load}, true
+		return bot.Received{Chat: chat, Addressed: true, Load: load}, true
 	case other:
 		return bot.Received{Message: c.message(env, self)}, true
 	}

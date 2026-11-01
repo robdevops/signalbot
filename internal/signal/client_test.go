@@ -407,8 +407,7 @@ func TestNetwork(t *testing.T) {
 // goroutines behind.
 func TestReconnectsDoNotLeakGoroutines(t *testing.T) {
 	captureLogs(t)
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 	c := newClient("x", nil, nil)
 	before := runtime.NumGoroutine()
 	for range 50 {

@@ -147,8 +147,8 @@ func parts(reply, self string) []styled {
 }
 
 func lastIndex(r []rune, want rune) int {
-	for i := len(r) - 1; i >= 0; i-- {
-		if r[i] == want {
+	for i, v := range slices.Backward(r) {
+		if v == want {
 			return i
 		}
 	}

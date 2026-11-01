@@ -316,8 +316,7 @@ func call(ctx context.Context, c conn, name, arguments string) (string, []featur
 	defer cancel()
 	res, err := c.call(ctx, "tools/call", map[string]any{"name": name, "arguments": args})
 	if err != nil {
-		var re *rpcError
-		if errors.As(err, &re) {
+		if re, ok := errors.AsType[*rpcError](err); ok {
 			return "error: " + txt.Clamp(re.Message, 500), nil, fmt.Errorf("rpc error %d", re.Code)
 		}
 		return "error: the tool could not be reached", nil, err

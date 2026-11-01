@@ -127,7 +127,7 @@ func sixSeries() string {
 	var series []any
 	for k, name := range []string{"AAA", "BBB", "CCC", "DDD", "EEE", "FFF"} {
 		var pts []pt
-		for i := 0; i < 30; i++ {
+		for i := range 30 {
 			d := time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC).AddDate(0, 0, i).Format("2006-01-02")
 			pts = append(pts, pt{d, 100 + float64(i*(k-2)) + 4*math.Sin(float64(i+k)/3)})
 		}

@@ -22,7 +22,7 @@ func sampleChart() string {
 	var a, b []pt
 	day := time.Date(2026, 9, 30, 0, 0, 0, 0, time.UTC)
 	av, bv := 180.0, 40.0
-	for i := 0; i < 21; i++ {
+	for i := range 21 {
 		d := day.AddDate(0, 0, i*4/3)
 		a = append(a, pt{d.Format("2006-01-02"), av})
 		b = append(b, pt{d.Format("2006-01-02"), bv})
@@ -202,7 +202,7 @@ func TestRenderTwoAxisSample(t *testing.T) {
 		Value float64 `json:"value"`
 	}
 	var a, b, y []pt
-	for i := 0; i < 30; i++ {
+	for i := range 30 {
 		d := time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC).AddDate(0, 0, i).Format("2006-01-02")
 		a = append(a, pt{d, 180 + 10*math.Sin(float64(i)/4)})
 		b = append(b, pt{d, 120 + float64(i)*0.8})
@@ -239,7 +239,7 @@ func areaSample(n int, rising bool) string {
 	}
 	var pts []pt
 	v := 200.0
-	for i := 0; i < n; i++ {
+	for i := range n {
 		d := time.Date(2025, 10, 30, 0, 0, 0, 0, time.UTC).AddDate(0, 0, i*365/n).Format("2006-01-02")
 		if rising {
 			v += 0.15 + 6*math.Sin(float64(i)/7) - 5*math.Sin(float64(i)/3.3)

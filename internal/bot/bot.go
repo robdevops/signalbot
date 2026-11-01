@@ -78,7 +78,7 @@ type Bot struct {
 	stop     context.CancelFunc // stops the timers
 	timerCtx context.Context
 	closing  atomic.Bool    // no new work starts
-	running  sync.WaitGroup // what features run with Go
+	running  sync.WaitGroup // the timers, and what features run with Go
 
 	// What the model can do, read by New. Either turns off for the rest of
 	// the run when the API rejects a request carrying it.
@@ -120,16 +120,13 @@ func New(ctx context.Context, cfg *config.Config, net Network) *Bot {
 // features run with Go. A timer due at startup so waits for the network
 // however long it takes to come up, rather than delivering into nothing.
 func (b *Bot) Run() {
-	done := make(chan struct{})
-	go func() {
-		defer close(done)
+	b.running.Go(func() {
 		if b.net.WaitID(b.timerCtx) != "" {
 			b.timers.Run(b.timerCtx)
 		}
-	}()
+	})
 	b.net.Run(b.ctx, b.handle)
 	b.stop()
-	<-done
 	b.running.Wait()
 }
 

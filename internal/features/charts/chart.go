@@ -10,6 +10,7 @@ import (
 	"image/color"
 	"image/png"
 	"math"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -331,8 +332,7 @@ func spreadLabels(ys []float64, gap, lo, hi float64) []float64 {
 			out[i] = max(out[i], out[idx[k-1]]+gap)
 		}
 	}
-	for k := len(idx) - 1; k >= 0; k-- {
-		i := idx[k]
+	for k, i := range slices.Backward(idx) {
 		out[i] = min(out[i], hi)
 		if k < len(idx)-1 {
 			out[i] = min(out[i], out[idx[k+1]]-gap)
@@ -456,7 +456,7 @@ func (cv *canvas) fill(c color.Color, polys ...[]float64) {
 
 func circle(x, y, rad float64) []float64 {
 	var p []float64
-	for i := 0; i < 16; i++ {
+	for i := range 16 {
 		a := float64(i) * math.Pi / 8
 		p = append(p, x+rad*math.Cos(a), y+rad*math.Sin(a))
 	}

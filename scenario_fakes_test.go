@@ -15,6 +15,7 @@ import (
 	"image"
 	"image/png"
 	"io"
+	"maps"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -189,9 +190,7 @@ func newHarness(t *testing.T, w world) *harness {
 // with the state directory always w.StateDir.
 func (h *harness) env() map[string]string {
 	e := map[string]string{"MODEL": scenarioModel, "SIGNAL_DM_USER_IDS": idAlice}
-	for k, v := range h.w.Env {
-		e[k] = v
-	}
+	maps.Copy(e, h.w.Env)
 	e["STATE_DIRECTORY"] = h.w.StateDir
 	return e
 }

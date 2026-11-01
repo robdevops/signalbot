@@ -52,8 +52,7 @@ func (b *Bot) Info() feature.Info {
 }
 
 func (b *Bot) Go(fn func(context.Context)) {
-	b.running.Add(1)
-	go func() { defer b.running.Done(); fn(b.ctx) }()
+	b.running.Go(func() { fn(b.ctx) })
 }
 
 func (b *Bot) Media(ctx context.Context, msg feature.Message, i int) ([]byte, error) {

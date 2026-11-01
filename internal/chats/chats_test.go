@@ -21,12 +21,10 @@ func (p *slots) spawn(worker func()) bool {
 	default:
 		return false
 	}
-	p.wg.Add(1)
-	go func() {
-		defer p.wg.Done()
+	p.wg.Go(func() {
 		defer func() { <-p.sem }()
 		worker()
-	}()
+	})
 	return true
 }
 

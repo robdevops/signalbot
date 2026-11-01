@@ -5,6 +5,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/robdevops/signalbot/internal/kit/logx"
@@ -68,22 +69,22 @@ func TestRunInOrder(t *testing.T) {
 
 // A late timer still runs, and is told when it was due.
 func TestLateTimerGetsDueTime(t *testing.T) {
-	var log logx.Buffer
-	defer logx.SetOutput(&log, &log, false)()
-	ts, r := New(), newRecord()
-	due := time.Now().Add(-3 * time.Hour)
-	ts.At("late", due, r.fn("late"))
-	start(t, ts)
-	r.wait(t, 1)
-	if !r.dues[0].Equal(due) {
-		t.Errorf("due %v, want %v", r.dues[0], due)
-	}
-	for deadline := time.Now().Add(5 * time.Second); !strings.Contains(log.String(), "timer late ran in"); {
-		if time.Now().After(deadline) {
+	synctest.Test(t, func(t *testing.T) {
+		var log logx.Buffer
+		defer logx.SetOutput(&log, &log, false)()
+		ts, r := New(), newRecord()
+		due := time.Now().Add(-3 * time.Hour)
+		ts.At("late", due, r.fn("late"))
+		start(t, ts)
+		r.wait(t, 1)
+		if !r.dues[0].Equal(due) {
+			t.Errorf("due %v, want %v", r.dues[0], due)
+		}
+		synctest.Wait() // the log line follows the run
+		if !strings.Contains(log.String(), "timer late ran in") {
 			t.Fatalf("log %q", log.String())
 		}
-		time.Sleep(time.Millisecond) // the log line follows the run
-	}
+	})
 }
 
 func TestCancel(t *testing.T) {

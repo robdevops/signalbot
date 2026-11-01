@@ -138,8 +138,8 @@ func (h *Host) Go(fn func(context.Context)) {
 	if h.life == nil {
 		h.life, h.end = context.WithCancel(context.Background())
 	}
-	h.running.Add(1)
-	go func(ctx context.Context) { defer h.running.Done(); fn(ctx) }(h.life)
+	ctx := h.life
+	h.running.Go(func() { fn(ctx) })
 }
 
 // Stop ends the ctx of what runs with Go, as the core does when the bot

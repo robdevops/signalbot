@@ -231,8 +231,7 @@ func (c *Client) Ask(ctx context.Context, r Request) (Reply, error) {
 // timeout or the size), else as ErrTools if it carried tools; any other
 // error is left as it is.
 func (c *Client) rejected(err error, images, tools bool) error {
-	var se *statusError
-	if c.openRouter || !errors.As(err, &se) || se.code != 400 && se.code != 422 {
+	if se, ok := errors.AsType[*statusError](err); c.openRouter || !ok || se.code != 400 && se.code != 422 {
 		return err
 	}
 	switch {
