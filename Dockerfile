@@ -1,8 +1,8 @@
 # Both images are pinned by digest, so a build uses exactly these bytes even
 # if a tag is moved. To update one, look up the new digest, for example:
-#   docker buildx imagetools inspect golang:1.25.14-bookworm
+#   docker buildx imagetools inspect golang:1.27.3-bookworm
 #   docker buildx imagetools inspect gcr.io/distroless/static-debian12:nonroot
-FROM golang:1.25.14-bookworm@sha256:3b4a11519ad929d1e1d261a12cff056f0c85b735253d7d861346b9c6f8b36437 AS build
+FROM golang:1.27.3-bookworm@sha256:d9b6a1beb9474adc2a1ce842573639b44b2a0dd49b6669f51d3821baf9ec37c9 AS build
 ARG VERSION=dev
 # Never download a toolchain: build with the one in this image.
 ENV CGO_ENABLED=0 GOTOOLCHAIN=local

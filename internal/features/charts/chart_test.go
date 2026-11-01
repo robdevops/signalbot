@@ -313,8 +313,8 @@ func TestAreaStyle(t *testing.T) {
 // Argument errors say what to fix, so the model can correct its next call.
 func TestChartArgErrors(t *testing.T) {
 	for args, want := range map[string]string{
-		`{"title":"T","series":[{"name":"a","points":[{"date":"2026-10-01","value":"12.3"}]}]}`: "series.points.value must be a number, got string",
-		`{"title":"T","axes":{"left":{"invert":"true"}},"series":[]}`:                           "axes.invert must be true or false, got string",
+		`{"title":"T","series":[{"name":"a","points":[{"date":"2026-10-01","value":"12.3"}]}]}`: "series.0.points.0.value must be a number, got string",
+		`{"title":"T","axes":{"left":{"invert":"true"}},"series":[]}`:                           "axes.left.invert must be true or false, got string",
 		`{"title":"T","series":[`: "not valid JSON (at character 23)",
 		`[1,2]`:                   "must be a JSON object, got array",
 		``:                        "title is required",
@@ -324,7 +324,7 @@ func TestChartArgErrors(t *testing.T) {
 			t.Errorf("%s: got %v, want %q", args, err, want)
 		}
 	}
-	if _, err := parsePie(`{"title":"T","slices":[{"label":"a","value":"1"}]}`); err == nil || !strings.Contains(err.Error(), "slices.value must be a number") {
+	if _, err := parsePie(`{"title":"T","slices":[{"label":"a","value":"1"}]}`); err == nil || !strings.Contains(err.Error(), "slices.0.value must be a number") {
 		t.Errorf("pie: %v", err)
 	}
 }

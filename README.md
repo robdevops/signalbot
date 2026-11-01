@@ -70,11 +70,11 @@ Then install the bot with systemd or with Docker.
 
 The bot runs as a dynamic user (`DynamicUser=yes`) in the `signal-cli` Unix group, which is how it reaches the socket. Its schedules are kept in its state directory (`StateDirectory=signalbot`, which is `/var/lib/private/signalbot` with a dynamic user), which systemd creates and passes to it as `$STATE_DIRECTORY`. If the bot can't write there (for example, a copy of the unit without that line), it exits at startup asking for it.
 
-1. Install Go 1.25+:
+1. Install Go 1.27+:
    ```
-   curl -fsSLO https://go.dev/dl/go1.25.14.linux-amd64.tar.gz
+   curl -fsSLO https://go.dev/dl/go1.27.3.linux-amd64.tar.gz
    sudo rm -rf /usr/local/go
-   sudo tar -C /usr/local -xzf go1.25.14.linux-amd64.tar.gz
+   sudo tar -C /usr/local -xzf go1.27.3.linux-amd64.tar.gz
    ```
 2. Build and install:
    ```

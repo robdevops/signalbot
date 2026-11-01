@@ -1,9 +1,12 @@
 module github.com/robdevops/signalbot
 
-go 1.25.0
+go 1.27.0
 
-toolchain go1.25.14
+toolchain go1.27.3
 
-require golang.org/x/image v0.41.0
+require golang.org/x/image v0.47.0
 
-require golang.org/x/text v0.37.0 // indirect
+require (
+	golang.org/x/sys v0.49.0 // indirect
+	golang.org/x/text v0.43.0 // indirect
+)
