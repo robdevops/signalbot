@@ -1,6 +1,6 @@
 # Contributing
 
-The bot is a small core and features on top. [TECHNICAL.md](TECHNICAL.md) describes what each does; [docs/RECODE-v3.md](docs/RECODE-v3.md) is the design it was built from.
+The bot is a small core and features on top. [TECHNICAL.md](TECHNICAL.md) describes the design and what each does.
 
 ```
 cmd/signalbot/          main.go (wiring), features.go (one line per feature)
@@ -64,6 +64,6 @@ Before sending a change: `gofmt -l .`, `go vet ./...` and `go test -race ./...`,
 3. For tools, call `h.Tools` with a `ToolGroup`: `Names` for the intro's `{tools}`, `Listing` for the tools line, `System` for a prompt line while offered, and `Keywords` to offer it only when a message matches.
 4. Test it on `featuretest`, without the core.
 5. Add one line to `cmd/signalbot/features.go`. Order matters: it is the order hooks run in and of the tools line.
-6. Add its settings to the README's configuration table, and a paragraph to TECHNICAL.md.
+6. Add its settings to the README's configuration table, and a row in TECHNICAL.md's features table and a paragraph under it.
 
 `internal/features/example` is the smallest feature to copy.

@@ -1,10 +1,10 @@
 # Old tests and the scenarios that cover them
 
-Step 1 of [RECODE-v3.md](RECODE-v3.md) pins the bot's behaviour at `e40dc5f` with
+The bot's behaviour at `e40dc5f` is pinned (see [TECHNICAL.md](../TECHNICAL.md#tests-and-guardrails)) by
 behaviour scenarios that touch only the edges: messages in on a fake signal-cli
 socket, then what the bot sends back, what a fake model API receives, and the log.
 
-All of them are in `cmd/signalbot` (package main), since step 3 moved them there from the module root:
+All of them are in `cmd/signalbot` (package main), since the recode moved them there from the module root:
 
 - `scenario_test.go`: the scenarios and the two golden prompt tests. They use only the harness.
 - `scenario_fakes_test.go`: the fakes and the harness API (fake signal-cli, a fake model API that is OpenRouter's or another provider's, two fake MCP servers plus an optional third whose tools fail, the captured log). It names nothing in the bot's code.
@@ -19,7 +19,7 @@ The table maps every `Test*` function in the 19 old test files to what covers it
 |---|---|---|
 | TestDecide | bot_test.go | TestScenarioGroupMentionIsAnswered, TestScenarioReplyToBotIsAnswered, TestScenarioAllowedDMIsAnswered, TestScenarioDMFromStrangerIsDroppedAndLoggedByID, TestScenarioUnaddressedMessagesAreNeverLogged, TestScenarioGroupSenderWithoutName (no name prefix), TestScenarioAtMostFourImages |
 | TestEndToEnd | bot_test.go | TestScenarioGroupMentionIsAnswered, TestScenarioTypingBeforeReply (typing before the reply, none after it), TestScenarioDMFromStrangerIsDroppedAndLoggedByID |
-| TestMessageLogLine | bot_test.go | Unit test, moves with its code (the "mention from Alice(id)" line becomes "received group chat", approved in section 10); the escaping is TestScenarioDisplayNameIsMadeSafe |
+| TestMessageLogLine | bot_test.go | Unit test, moves with its code (the "mention from Alice(id)" line becomes "received group chat", a deliberate change); the escaping is TestScenarioDisplayNameIsMadeSafe |
 | TestReplyLogLine | bot_test.go | TestScenarioModelRequestSettings (cost logged); the line's format is a unit test, moves with its code |
 | TestLogTimestampOnlyWhenInteractive | bot_test.go | Unit test, moves with its code |
 | TestSystemPromptIntroduction | bot_test.go | TestScenarioGoldenPromptFull, TestScenarioGoldenPromptNoFeatures, TestScenarioBotWithoutProfileNameIsSignalbot |
@@ -49,7 +49,7 @@ The table maps every `Test*` function in the 19 old test files to what covers it
 | TestParseDonutErrors | donut_test.go | Unit test, moves with its code |
 | TestWrapLabel | donut_test.go | Unit test, moves with its code |
 | TestRenderDonut | donut_test.go | Unit test, moves with its code |
-| TestDonutToolInLoop | donut_test.go | TestScenarioPieChartReply (offered on "pie" and "donut", caption, attachment and history note; it finds the tool as make_donut_chart or make_pie_chart, as the rename is approved); the summary text is a unit test, moves with its code |
+| TestDonutToolInLoop | donut_test.go | TestScenarioPieChartReply (offered on "pie" and "donut", caption, attachment and history note; it finds the tool as make_donut_chart or make_pie_chart, as the rename is deliberate); the summary text is a unit test, moves with its code |
 | TestDonutTotal | donut_test.go | Unit test, moves with its code |
 | TestForgedQuoteIsEscaped | fixes_test.go | TestScenarioQuoteIsEscapedAndCapped |
 | TestDisplayNameCannotInjectTurns | fixes_test.go | TestScenarioDisplayNameIsMadeSafe |
@@ -102,10 +102,10 @@ The table maps every `Test*` function in the 19 old test files to what covers it
 | TestGroupPhotoWithMention | images_test.go | TestScenarioImagesAreFetchedFromTheirChat |
 | TestStdoutIsJournal | journal_unix_test.go | Unit test, moves with its code |
 | TestJournalLinesCarryTheirPriority | log_test.go | Unit test, moves with its code (the harness reads the priorities) |
-| TestOtherLinesNameTheirLevel | log_test.go | Unit test, moves with its code (changes: plain lines without journald, approved) |
-| TestLogLevelFilters | log_test.go | Unit test, moves with its code (`LOG_LEVEL` is dropped, approved) |
+| TestOtherLinesNameTheirLevel | log_test.go | Unit test, moves with its code (changes: plain lines without journald, deliberate) |
+| TestLogLevelFilters | log_test.go | Unit test, moves with its code (`LOG_LEVEL` is dropped, deliberate change) |
 | TestJournalPrefixCannotBeForged | log_test.go | TestScenarioLoggedValuesCannotForgeLines (a stranger's id with a newline); the prefix itself is a unit test, moves with its code |
-| TestLogLevelConfig | log_test.go | Unit test, moves with its code (`LOG_LEVEL` is dropped, approved) |
+| TestLogLevelConfig | log_test.go | Unit test, moves with its code (`LOG_LEVEL` is dropped, deliberate change) |
 | TestStreamsSplitWithoutJournal | log_test.go | Unit test, moves with its code |
 | TestJournalUsesStdoutOnly | log_test.go | Unit test, moves with its code |
 | TestBuildVersion | main_test.go | Unit test, moves with its code |
@@ -127,7 +127,7 @@ The table maps every `Test*` function in the 19 old test files to what covers it
 | TestUnnamedMentionNotAtPrefixed | names_test.go | TestScenarioUnknownMentionIsUnnamed |
 | TestConfigKeyAndModel | openrouter_test.go | TestScenarioModelRequestSettings (default reasoning); required key and default model are a unit test, moves with its code |
 | TestOpenRouterRequestAndReply | openrouter_test.go | TestScenarioModelRequestSettings |
-| TestOpenRouterOmitsOptionsWhenOff | openrouter_test.go | TestScenarioWebSearchOff; `REASONING=none` is a unit test, moves with its code (renamed `MODEL_REASONING`, approved) |
+| TestOpenRouterOmitsOptionsWhenOff | openrouter_test.go | TestScenarioWebSearchOff; `REASONING=none` is a unit test, moves with its code (renamed `MODEL_REASONING`, deliberate change) |
 | TestOpenRouterErrors | openrouter_test.go | TestScenarioModelError, TestScenarioModelRetry (one retry for a 5xx or 429, no more); body parsing is a unit test, moves with its code |
 | TestPanicWhileAnsweringIsContained | privacy_test.go | Not pinned: a panic can't be caused from the edges; unit test, moves with its code |
 | TestAPIErrorTextKeepsOnlyTheMessage | privacy_test.go | TestScenarioModelError |
@@ -158,5 +158,5 @@ TestScenarioHistoryAcrossTurns, TestScenarioHistoryIsPerChat, TestScenarioHistor
 - **The 15-second contact reload limit.** `startBot` lowers it to `contactReloadGap` (50ms), so a scenario can see a reload after a group change, or after an unknown mention once it has waited out the gap. A burst of group changes costing one reload depends on that timing, so it isn't asserted.
 - **Typing every 10 seconds.** Only the first typing indicator, before the reply, and that none follows the reply, are asserted.
 - **Day-long limits** (contacts over a day old, the 24-hour history cap, the dedupe window ending) need the clock moved; they stay unit tests.
-- **Log wording.** Scenarios check only lines with no approved change: the stranger's id with "not in SIGNAL_DM_USER_IDS", "OpenRouter error" (now "model error", approved with `MODEL_API_URL`), "at capacity", "truncated", the cost, "tools are off", "images are off", "signal-cli read failed", signal-cli's error text, and each line's priority. "mention from Alice(id)" is not pinned, as it becomes "received group chat".
+- **Log wording.** Scenarios check only lines with no deliberate change: the stranger's id with "not in SIGNAL_DM_USER_IDS", "OpenRouter error" (now "model error", changed with `MODEL_API_URL`), "at capacity", "truncated", the cost, "tools are off", "images are off", "signal-cli read failed", signal-cli's error text, and each line's priority. "mention from Alice(id)" is not pinned, as it becomes "received group chat".
 - **At `e40dc5f` with `LOG_LEVEL=debug`,** an unaddressed group message that mentions someone whose name the bot doesn't know logs "unresolved mention of <id>" at debug. The spec says an unaddressed message is never logged, so TestScenarioUnaddressedMessagesAreNeverLogged uses a known name. The new core, which always writes debug, must not log it.
