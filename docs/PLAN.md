@@ -1,6 +1,6 @@
 # Plan: what's next
 
-Items 1–4 are done (Markdown prompt, Signal text styles, bold tool labels, the A− items). Item 5 was dropped. Items 6, 7, 8 and 9 remain.
+Items 1–4 and 7 are done (Markdown prompt, Signal text styles, bold tool labels, the A− items, optimistic capabilities). Item 5 was dropped. Items 6, 8 and 9 remain.
 
 Do each remaining item, run gofmt, `go vet` and `go test -race ./...`, then commit and push.
 
@@ -17,7 +17,7 @@ Do each remaining item, run gofmt, `go vet` and `go test -race ./...`, then comm
    - `feature.Received` moves out of the feature API into `internal/bot`, next to `Network`; signal imports bot, network to core;
    - `Network.Delivered` is simplified to the message plus ok: no callback, mention detection becomes a field, and the names to remember come back with the message;
    - keep the mention names on `Send` and the caption rule as they are, and document why.
-7. **Optimistic capabilities on other providers (not OpenRouter, which keeps its model list):**
+7. **Optimistic capabilities on other providers (not OpenRouter, which keeps its model list)** (done):
    - **Images:** assume images work. If a request carrying images is rejected (a 4xx), the model client returns a distinct "images rejected" error. The bot turns images off for the rest of the run, logs one warning (no content), and redoes the same turn without them. Vision then says "[N image attached, which you can't see with this model]", so the user gets an answer instead of "Sorry…".
    - **Tools:** the same for tools. If a request carrying tools is rejected, turn tool calling off for the rest of the run, warn once, and redo the turn without them.
    - **Tests:** a rejected image request falls back and is answered, with exactly one failed request; the same for tools.

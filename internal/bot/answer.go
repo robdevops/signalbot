@@ -2,6 +2,7 @@ package bot
 
 import (
 	"cmp"
+	"errors"
 	"regexp"
 	"slices"
 	"strconv"
@@ -31,7 +32,8 @@ const (
 )
 
 // respond acts on an addressed message: as act says, else by asking the
-// model and sending its reply; with no model, only an Answer is sent. text
+// model and sending its reply (asking again if the API rejects its images
+// or tools; see fallBack); with no model, only an Answer is sent. text
 // is the message as the model sees it, prompt(msg) for one message; tools
 // are offered by msg.Text alone, what was typed, never a sender's name or a
 // quote.
@@ -48,28 +50,42 @@ func (b *Bot) respond(msg feature.Message, act feature.Action, text string) {
 	stop := b.net.Typing(msg.Chat)
 	defer stop() // also if something below panics
 	key := msg.Chat.Key()
-	kept, added := text, false
-	var images []string
-	for _, fn := range b.turns {
-		a := fn(b.ctx, msg)
-		if a.Note != "" {
-			text, kept, added = text+"\n"+a.Note, kept+"\n"+cmp.Or(a.HistoryNote, a.Note), true
-		}
-		images = append(images, a.Images...)
-	}
-	if msg.Text == "" && !added && len(images) == 0 {
-		return
-	}
-	offered, tools := b.offer(key, msg.Text, act.ToolChoice)
 	start := time.Now() // history expires from here, not from when it is stored
-	reply, err := b.ai.Ask(b.ctx, model.Request{
-		System:     b.system(offered),
-		History:    b.chats.History(key),
-		Text:       strings.TrimSpace(text),
-		Images:     images,
-		Tools:      tools,
-		ToolChoice: act.ToolChoice,
-	})
+	var reply model.Reply
+	var kept string
+	var offered []int
+	var err error
+	for {
+		asked, added := text, false
+		var images []string
+		kept = text
+		for _, fn := range b.turns {
+			a := fn(b.ctx, msg)
+			if a.Note != "" {
+				asked, kept, added = asked+"\n"+a.Note, kept+"\n"+cmp.Or(a.HistoryNote, a.Note), true
+			}
+			images = append(images, a.Images...)
+		}
+		if !b.images.Load() {
+			images = nil
+		}
+		if msg.Text == "" && !added && len(images) == 0 {
+			return
+		}
+		var tools []feature.Tool
+		offered, tools = b.offer(key, msg.Text, act.ToolChoice)
+		reply, err = b.ai.Ask(b.ctx, model.Request{
+			System:     b.system(offered),
+			History:    b.chats.History(key),
+			Text:       strings.TrimSpace(asked),
+			Images:     images,
+			Tools:      tools,
+			ToolChoice: act.ToolChoice,
+		})
+		if !b.fallBack(err) {
+			break
+		}
+	}
 	stop()
 	if err != nil {
 		logx.Errorf("model error after %.1fs: %v", time.Since(start).Seconds(), err)
@@ -99,6 +115,24 @@ func (b *Bot) respond(msg feature.Message, act feature.Action, text string) {
 	b.net.Send(msg.Chat, sent, pics, b.chats.Names(key))
 }
 
+// fallBack reports whether err is the API rejecting a request for its
+// images or tools, which it turns off for the rest of the run, with one
+// warning, so the turn is asked again without them. That ends: with
+// images off none are sent, and with tools off none are offered.
+func (b *Bot) fallBack(err error) bool {
+	on, what := &b.images, "images"
+	switch {
+	case errors.Is(err, model.ErrTools):
+		on, what = &b.callsTools, "tools"
+	case !errors.Is(err, model.ErrImages):
+		return false
+	}
+	if on.CompareAndSwap(true, false) {
+		logx.Warnf("the model's API rejected a request with %s, so %s are off: %v", what, what, err)
+	}
+	return true
+}
+
 // prompt is the message as the model sees it: its quote, escaped and capped
 // so it can't pose as a turn of its own, and in a group the sender's name.
 func prompt(msg feature.Message) string {
@@ -122,7 +156,7 @@ func prompt(msg feature.Message) string {
 // text matches, or while it has follow-ups left. A tool choice (a chat
 // command) adds its tool to whatever else is offered.
 func (b *Bot) offer(key, text, choice string) (offered []int, tools []feature.Tool) {
-	if !b.callsTools {
+	if !b.callsTools.Load() {
 		return nil, nil
 	}
 	for i, g := range b.groups {
@@ -156,7 +190,7 @@ func (b *Bot) followUp(key string, offered []int, text string, used []string) {
 // toolNames is every tool group's Names in feature order, for {tools}; none
 // if the model can't call tools.
 func (b *Bot) toolNames() []string {
-	if !b.callsTools {
+	if !b.callsTools.Load() {
 		return nil
 	}
 	var out []string

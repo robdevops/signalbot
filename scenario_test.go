@@ -807,8 +807,9 @@ func TestScenarioModelNotListed(t *testing.T) {
 
 // Another provider, at MODEL_API_URL with no key: a mention is answered with
 // a plain request (no OpenRouter extras, reasoning as reasoning_effort, no
-// key), no model list is read, so images are off and tools on, and
-// OpenRouter's web search is left out with a warning.
+// key), no model list is read, so images and tools are assumed, and
+// OpenRouter's web search is left out with a warning. A photo goes to the
+// model as an image.
 func TestScenarioOtherProvider(t *testing.T) {
 	h := startBot(t, world{OtherProvider: true, Vision: true})
 	if s := h.ask(atBot("what is up")); s.Message != "ok" || s.GroupID != idGroup {
@@ -836,14 +837,71 @@ func TestScenarioOtherProvider(t *testing.T) {
 	if _, ok := h.logged("web search on"); ok {
 		t.Fatalf("web search logged as on: %v", h.logLines())
 	}
-	if l, ok := h.logged("images are off and tools on"); !ok || l.Pri != 5 {
+	if l, ok := h.logged("images and tools are on until the API rejects them"); !ok || l.Pri != 5 {
 		t.Fatalf("no notice: %v", h.logLines())
 	}
 	m := fromAlice("")
 	m.Attachments = []attached{photo("photo1.png")}
 	h.ask(m)
-	if r := h.lastRequest(); r.last().Content != "[1 image attached, which you can't see with this model]" || len(r.last().Images) != 0 {
+	if r := h.lastRequest(); r.last().Content != "[1 image attached]" || len(r.last().Images) != 1 {
 		t.Fatalf("model got %q with %d images", r.last().Content, len(r.last().Images))
+	}
+}
+
+// On another provider, a request with images that the API rejects with a
+// 4xx is asked again at once without them, and answered: exactly one
+// failed request, one warning, and images stay off for the rest of the run.
+func TestScenarioOtherProviderRejectsImages(t *testing.T) {
+	h := startBot(t, world{OtherProvider: true})
+	h.queue(modelReply{Status: 400, Body: `{"error":{"message":"this model does not take images"}}`})
+	m := fromAlice("what is this?")
+	m.Attachments = []attached{photo("photo1.png")}
+	if s := h.ask(m); s.Message != "ok" {
+		t.Fatalf("sent %q", s.Message)
+	}
+	reqs := h.requests()
+	if len(reqs) != 2 || len(reqs[0].last().Images) != 1 {
+		t.Fatalf("%d requests, the first with %d images", len(reqs), len(reqs[0].last().Images))
+	}
+	if r := reqs[1]; r.last().Content != "what is this?\n[1 image attached, which you can't see with this model]" || len(r.last().Images) != 0 {
+		t.Fatalf("asked again with %q and %d images", r.last().Content, len(r.last().Images))
+	}
+	m = fromAlice("and this?")
+	m.Attachments = []attached{photo("photo2.png")}
+	h.ask(m)
+	if reqs = h.requests(); len(reqs) != 3 || len(reqs[2].last().Images) != 0 {
+		t.Fatalf("%d requests, the last with %d images", len(reqs), len(reqs[len(reqs)-1].last().Images))
+	}
+	if n := h.warnings("rejected a request with images", "images are off"); n != 1 {
+		t.Fatalf("%d warnings: %v", n, h.logLines())
+	}
+	if _, ok := h.logged("model error"); ok {
+		t.Fatalf("model error logged: %v", h.logLines())
+	}
+}
+
+// The same for tools: a request with tools that the API rejects is asked
+// again without them and answered, with exactly one failed request and one
+// warning, and tools stay off for the rest of the run.
+func TestScenarioOtherProviderRejectsTools(t *testing.T) {
+	h := startBot(t, world{OtherProvider: true})
+	h.queue(modelReply{Status: 400, Body: `{"error":{"message":"tools are not supported"}}`})
+	if s := h.ask(fromAlice("chart AAPL for a month")); s.Message != "ok" {
+		t.Fatalf("sent %q", s.Message)
+	}
+	reqs := h.requests()
+	if len(reqs) != 2 || len(reqs[0].Tools) == 0 {
+		t.Fatalf("%d requests, the first with tools %v", len(reqs), reqs[0].Tools)
+	}
+	if r := reqs[1]; r.Tools != nil || strings.Contains(r.System, "Your tools:") || r.last().Content != "chart AAPL for a month" {
+		t.Fatalf("asked again with tools %v, %q", r.Tools, r.last().Content)
+	}
+	h.ask(fromAlice("chart MSFT for a month"))
+	if reqs = h.requests(); len(reqs) != 3 || reqs[2].Tools != nil {
+		t.Fatalf("%d requests, the last with tools %v", len(reqs), reqs[len(reqs)-1].Tools)
+	}
+	if n := h.warnings("rejected a request with tools", "tools are off"); n != 1 {
+		t.Fatalf("%d warnings: %v", n, h.logLines())
 	}
 }
 

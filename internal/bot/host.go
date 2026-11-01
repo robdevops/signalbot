@@ -20,10 +20,10 @@ func (b *Bot) OnTurn(fn func(context.Context, feature.Message) feature.Additions
 	b.turns = append(b.turns, fn)
 }
 
-// Tools keeps g with only the tools the model's API can run, and drops a
-// group whose tools it can run none of.
 func (b *Bot) IntroLine(line string) { b.more = append(b.more, line) }
 
+// Tools keeps g with only the tools the model's API can run, and drops a
+// group whose tools it can run none of.
 func (b *Bot) Tools(g feature.ToolGroup) {
 	if b.ai != nil {
 		if g.Tools = b.ai.Usable(g.Tools); len(g.Tools) == 0 {
@@ -43,7 +43,7 @@ func (b *Bot) Env(key, def string) string { return config.Env(key, def) }
 
 func (b *Bot) Info() feature.Info {
 	info := feature.Info{Name: b.net.BotName(), Version: b.cfg.Version, Model: b.cfg.Model,
-		Images: b.images, CallsTools: b.callsTools, Tools: b.toolNames(), Intro: b.intro()}
+		Images: b.images.Load(), CallsTools: b.callsTools.Load(), Tools: b.toolNames(), Intro: b.intro()}
 	if b.ai == nil {
 		info.Model = ""
 	}

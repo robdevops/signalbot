@@ -108,7 +108,8 @@ type Tool struct {
 }
 
 // Info is what the core knows about itself. All but Name and Tools are
-// known when features register.
+// known when features register, though Images and CallsTools turn off for
+// the rest of the run if the model's API rejects them.
 type Info struct {
 	Name       string   // the bot's name
 	Version    string   // the bot's version; "" if unknown

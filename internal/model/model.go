@@ -34,6 +34,22 @@ const (
 
 var retryDelay = time.Second
 
+// ErrImages and ErrTools mean an API other than OpenRouter's rejected a
+// request for carrying images, or tools: capabilities there are assumed,
+// so the caller turns that one off and asks again.
+var (
+	ErrImages = errors.New("images rejected")
+	ErrTools  = errors.New("tools rejected")
+)
+
+// statusError is an error response, reduced to its status and message.
+type statusError struct {
+	code int
+	msg  string
+}
+
+func (e *statusError) Error() string { return fmt.Sprintf("status %d: %s", e.code, e.msg) }
+
 // Client talks to the model's API.
 type Client struct {
 	key, model, reasoning, base string
@@ -166,6 +182,9 @@ func (c *Client) Ask(ctx context.Context, r Request) (Reply, error) {
 	var total answer
 	for round := 1; ; round++ {
 		a, err := c.request(ctx, msgs, defs, choice)
+		if round == 1 {
+			err = c.rejected(err, len(r.Images) > 0, len(defs) > 0)
+		}
 		total.input, total.cached, total.output, total.cost = total.input+a.input, total.cached+a.cached, total.output+a.output, total.cost+a.cost
 		total.costed = total.costed || a.costed
 		if err != nil {
@@ -204,6 +223,25 @@ func (c *Client) Ask(ctx context.Context, r Request) (Reply, error) {
 			msgs = append(msgs, message{Role: "tool", ToolCallID: tc.ID, Content: out})
 		}
 	}
+}
+
+// rejected is err as ErrImages if the first request carried images and an
+// API other than OpenRouter's refused it with a 4xx about the request
+// itself (not the key, the credit or the rate), else as ErrTools if it
+// carried tools; any other error is left as it is.
+func (c *Client) rejected(err error, images, tools bool) error {
+	var se *statusError
+	if c.openRouter || !errors.As(err, &se) || se.code < 400 || se.code > 499 ||
+		slices.Contains([]int{401, 402, 403, 429}, se.code) {
+		return err
+	}
+	switch {
+	case images:
+		return fmt.Errorf("%w: %v", ErrImages, err)
+	case tools:
+		return fmt.Errorf("%w: %v", ErrTools, err)
+	}
+	return err
 }
 
 // run runs one function tool and logs how it went, never its arguments or
@@ -305,7 +343,7 @@ func (c *Client) post(ctx context.Context, payload []byte) ([]byte, error) {
 			if resp.StatusCode == http.StatusOK {
 				return data, nil
 			}
-			err = fmt.Errorf("status %d: %s", resp.StatusCode, errorText(data))
+			err = &statusError{resp.StatusCode, errorText(data)}
 			if resp.StatusCode != http.StatusTooManyRequests && resp.StatusCode < 500 {
 				return nil, err
 			}
@@ -342,13 +380,14 @@ func errorText(data []byte) string {
 }
 
 // Capabilities reads from OpenRouter's model list whether the model takes
-// images and can call tools. If it can't tell, as on any other API, images
-// are off (sending them would fail every such message) and tools stay on,
-// and it says so.
+// images and can call tools. If the list can't tell, images are off
+// (sending them would fail every such message) and tools stay on. Any
+// other API has no list, so both are assumed until a request carrying them
+// is rejected (ErrImages, ErrTools). Either way it says so.
 func (c *Client) Capabilities(ctx context.Context) (images, tools bool) {
 	if !c.openRouter {
-		logx.Noticef("only OpenRouter's model list says what a model supports, so images are off and tools on")
-		return false, true
+		logx.Noticef("only OpenRouter's model list says what a model supports, so images and tools are on until the API rejects them")
+		return true, true
 	}
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()

@@ -80,7 +80,9 @@ type Bot struct {
 	closing  atomic.Bool    // no new work starts
 	running  sync.WaitGroup // what features run with Go
 
-	images, callsTools bool // what the model can do, read by New
+	// What the model can do, read by New. Either turns off for the rest of
+	// the run when the API rejects a request carrying it.
+	images, callsTools atomic.Bool
 
 	// The hooks and tool groups, in feature order. Features register them
 	// before Run.
@@ -103,9 +105,11 @@ func New(ctx context.Context, cfg *config.Config, net Network) *Bot {
 		return b
 	}
 	b.ai = model.New(cfg)
-	b.images, b.callsTools = b.ai.Capabilities(ctx)
-	logx.Noticef("model %s, reasoning %s, images %v, tools %v", cfg.Model, cfg.Reasoning, b.images, b.callsTools)
-	if !b.callsTools {
+	images, tools := b.ai.Capabilities(ctx)
+	b.images.Store(images)
+	b.callsTools.Store(tools)
+	logx.Noticef("model %s, reasoning %s, images %v, tools %v", cfg.Model, cfg.Reasoning, images, tools)
+	if !tools {
 		logx.Warnf("model %s can't call tools, so tools are off", cfg.Model)
 	}
 	return b

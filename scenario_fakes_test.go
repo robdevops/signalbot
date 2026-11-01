@@ -861,6 +861,17 @@ func (h *harness) logged(parts ...string) (logLine, bool) {
 	return logLine{}, false
 }
 
+// warnings is how many warnings contain every one of parts.
+func (h *harness) warnings(parts ...string) int {
+	n := 0
+	for _, l := range h.logLines() {
+		if l.Pri == 4 && containsAll(l.Text, parts) {
+			n++
+		}
+	}
+	return n
+}
+
 // waitLog waits for a log line containing every one of parts.
 func (h *harness) waitLog(parts ...string) logLine {
 	h.t.Helper()
