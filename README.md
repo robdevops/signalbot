@@ -214,7 +214,7 @@ The model can call tools from [MCP](https://modelcontextprotocol.io) servers, re
 | `chat_commands` | slash commands for a tool: `tool` names it, `require_arg` makes a bare command get a usage reply |
 | `disabled` | leave the server out without deleting it |
 
-`chat_commands` turn a server's tools into slash commands: `/forecast sydney this weekend` asks the model, offered only that tool and made to call it. With `require_arg`, a bare `/forecast` gets a usage reply from the bot without asking the model.
+`chat_commands` turn a server's tools into slash commands: `/forecast sydney this weekend` asks the model, which gets that tool on top of whatever else is on and must call it first. With `require_arg`, a bare `/forecast` gets a usage reply from the bot without asking the model.
 
 Two optional fields shape how a server's tools are offered:
 

@@ -118,24 +118,19 @@ func prompt(msg feature.Message) string {
 
 // offer picks the tool groups offered with a message, by index, and their
 // tools. A group without Keywords is always offered; one with them when the
-// text matches, or while it has follow-ups left. A tool choice offers only
-// that tool, and its group.
+// text matches, or while it has follow-ups left. A tool choice (a chat
+// command) adds its tool to whatever else is offered.
 func (b *Bot) offer(key, text, choice string) (offered []int, tools []feature.Tool) {
 	if !b.callsTools {
 		return nil, nil
 	}
 	for i, g := range b.groups {
 		chosen := slices.IndexFunc(g.Tools, func(t feature.Tool) bool { return choice != "" && t.Name == choice })
-		wanted := choice == "" && g.Keywords != nil && (g.Keywords.MatchString(text) || b.chats.FollowUp(key, i) > 0)
-		if g.Keywords != nil && !wanted && chosen < 0 {
-			continue
-		}
-		offered = append(offered, i)
 		switch {
-		case choice == "":
-			tools = append(tools, g.Tools...)
+		case g.Keywords == nil || g.Keywords.MatchString(text) || b.chats.FollowUp(key, i) > 0:
+			offered, tools = append(offered, i), append(tools, g.Tools...)
 		case chosen >= 0:
-			tools = append(tools, g.Tools[chosen])
+			offered, tools = append(offered, i), append(tools, g.Tools[chosen])
 		}
 	}
 	return offered, tools

@@ -118,8 +118,8 @@ func TestPhotoAnsweredWhenAHookAdds(t *testing.T) {
 	}
 }
 
-// Commands answer without the model or choose a tool; a tool choice offers
-// only that tool.
+// Commands answer without the model or choose a tool; a tool choice adds
+// its tool, even from a group whose keywords didn't match, to what's offered.
 func TestCommands(t *testing.T) {
 	h := start(t, options{tools: true, features: func(b *Bot) {
 		feature.Command(b, "hi", func(_ context.Context, m feature.Message, args string) feature.Action {
@@ -136,7 +136,7 @@ func TestCommands(t *testing.T) {
 		t.Fatalf("sent %+v", s)
 	}
 	r, _ := h.ask(dm("/pick"))
-	equal(t, "tools", toolNames(r), []string{"b_tool"})
+	equal(t, "tools", toolNames(r), []string{"a_tool", "b_tool"})
 	if c, _ := json.Marshal(r["tool_choice"]); string(c) != `{"function":{"name":"b_tool"},"type":"function"}` {
 		t.Fatalf("tool_choice %s", c)
 	}

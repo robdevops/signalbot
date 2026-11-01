@@ -1150,7 +1150,8 @@ func TestScenarioBotWithoutProfileNameIsSignalbot(t *testing.T) {
 	}
 }
 
-// A chat command's turn offers only its tool, required until its result is in.
+// A chat command's turn adds its tool to whatever else is offered, and the
+// model must call it until its result is in.
 func TestScenarioChatCommandForcesTool(t *testing.T) {
 	h := startBot(t, world{MCP: true})
 	h.queue(modelReply{Tool: "stocks__get_quote", Args: `{"q":"AAPL"}`}, modelReply{Text: "AAPL is at 230.10"})
@@ -1161,8 +1162,9 @@ func TestScenarioChatCommandForcesTool(t *testing.T) {
 	if len(r) != 2 {
 		t.Fatalf("%d model requests", len(r))
 	}
-	equal(t, "first tools", r[0].Tools, []string{"stocks__get_quote"})
-	equal(t, "second tools", r[1].Tools, []string{"stocks__get_quote"})
+	all := []string{"openrouter:web_search", "stocks__get_quote", "stocks__price_chart", "weather__get_forecast"} // charts: no keyword
+	equal(t, "first tools", r[0].Tools, all)
+	equal(t, "second tools", r[1].Tools, all)
 	if r[0].ToolChoice != "stocks__get_quote" || r[1].ToolChoice != "" {
 		t.Fatalf("tool_choice %q then %q", r[0].ToolChoice, r[1].ToolChoice)
 	}
