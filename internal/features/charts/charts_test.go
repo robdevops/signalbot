@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"image/png"
 	"strings"
 	"testing"
@@ -107,8 +108,8 @@ func TestPieTool(t *testing.T) {
 	}
 }
 
-// Bad arguments go back to the model with what to fix, but the error for the
-// log holds none of them.
+// Bad arguments go back to the model with what to fix, and the log gets the
+// same reason, so an operator can see why a call keeps failing.
 func TestChartToolBadArguments(t *testing.T) {
 	h := register(t)
 	for name, args := range map[string]string{
@@ -119,7 +120,7 @@ func TestChartToolBadArguments(t *testing.T) {
 		if !strings.HasPrefix(out, "error: ") || !strings.Contains(out, "Alice's") || pics != nil {
 			t.Errorf("%s: got %q, %d pictures", name, out, len(pics))
 		}
-		if err == nil || strings.Contains(err.Error(), "Alice") {
+		if !errors.Is(err, errArgs) || err.Error() != errArgs.Error()+": "+strings.TrimPrefix(out, "error: ") {
 			t.Errorf("%s: log error %v", name, err)
 		}
 	}
