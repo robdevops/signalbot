@@ -102,10 +102,27 @@ func TestPieTotal(t *testing.T) {
 		`"slices":[{"label":"a","value":1200000},{"label":"b","value":300000}]`:                                  "1.5M",
 		`"slices":[{"label":"a","value":12},{"label":"b","value":0.55}]`:                                         "12.6",
 		`"suffix":"kg","slices":[{"label":"a","value":12},{"label":"b","value":0.5}]`:                            "12.5kg",
+		`"unit":"people","suffix":"M","slices":[{"label":"a","value":1450},{"label":"b","value":2300}]`:          "3.8B",
 	} {
 		s, err := parsePie(`{"title":"T",` + args + `}`)
 		if err != nil || s.centerText() != want {
 			t.Errorf("%s: got %q, want %q (%v)", args, s.centerText(), want, err)
 		}
+	}
+}
+
+// The legend shows each slice's amount, scaled and shortened like the total;
+// the ring itself shows the shares.
+func TestPieAmounts(t *testing.T) {
+	s, err := parsePie(alphabetPie)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := s.amount(s.Slices[0].Value); got != "$63.4B" {
+		t.Errorf("amount %q", got)
+	}
+	p, _ := parsePie(`{"title":"T","unit":"people","suffix":"M","slices":[{"label":"India","value":1450},{"label":"China","value":1410}]}`)
+	if got := p.amount(p.Slices[0].Value); got != "1.5B" {
+		t.Errorf("long unit: %q", got)
 	}
 }
