@@ -294,14 +294,18 @@ func (s *store) command(ctx context.Context, m feature.Message, args string) fea
 func answer(text string) feature.Action { return feature.Action{Answer: text} }
 
 func (s *store) help() string {
-	return "Schedule a message, or a /command, to post as if you'd sent it:\n" + usage + "\n" +
-		"- The time is ISO 8601, like " + exampleTime + " in my time zone (" + s.now().In(s.loc).Format("MST") +
-		"), or with an offset, like " + exampleTime + "+10:00.\n" +
-		"- Without a group name it's posted here. A message that @mentions me gets my answer.\n" +
-		"- A monthly schedule from the 31st runs on the last day of shorter months.\n" +
-		"/schedule list: your schedules, numbered\n" +
-		"/schedule del <number>: delete one\n" +
-		"/timer, /reminder and /job work the same as /schedule."
+	now := s.now().In(s.loc)
+	return strings.Join([]string{
+		"Schedule a message, or a /command, to post as if you'd sent it:\n" + usage,
+		"- The time is ISO 8601, like " + exampleTime + " in my time zone (" + now.Format("MST") +
+			"), or with an offset, like " + exampleTime + "+10:00.",
+		"- Without a group name it's posted here. A message that @mentions me gets my answer.",
+		"- A monthly schedule from the 31st runs on the last day of shorter months.",
+		"/schedule list: your schedules, numbered",
+		"/schedule del <number>: delete one",
+		"/timer, /reminder and /job work the same as /schedule.",
+		"The current time is " + now.Format("2006-01-02T15:04Z07:00"),
+	}, "\n\n")
 }
 
 // add makes a schedule from args.
