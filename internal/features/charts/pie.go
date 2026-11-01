@@ -25,6 +25,7 @@ var pieToolSchema = json.RawMessage(`{
   "properties": {
     "title": {"type": "string", "description": "Short title, e.g. \"Revenue by segment, Q3\""},
     "subtitle": {"type": "string", "description": "e.g. \"Share of total\""},
+    "source": {"type": "string", "description": "` + sourceDescription + `"},
     "slices": {"type": "array", "minItems": 2, "maxItems": 12, "items": {
       "type": "object", "required": ["label", "value"],
       "properties": {"label": {"type": "string"}, "value": {"type": "number", "minimum": 0}}
@@ -47,6 +48,7 @@ type pieSlice struct {
 type pieSpec struct {
 	Title    string     `json:"title"`
 	Subtitle string     `json:"subtitle"`
+	Source   string     `json:"source"`
 	Slices   []pieSlice `json:"slices"`
 	Unit     string     `json:"unit"`
 	Suffix   string     `json:"suffix"`
@@ -64,6 +66,7 @@ func parsePie(arguments string) (*pieSpec, error) {
 	}
 	s.Title = txt.Clamp(strings.TrimSpace(s.Title), 80)
 	s.Subtitle = txt.Clamp(strings.TrimSpace(s.Subtitle), 120)
+	s.Source = txt.Clamp(strings.TrimSpace(s.Source), 80)
 	s.Unit, s.Suffix, s.Center = txt.Clamp(s.Unit, 4), txt.Clamp(s.Suffix, 4), txt.Clamp(strings.TrimSpace(s.Center), 16)
 	if s.Title == "" {
 		return nil, errors.New("title is required")
@@ -164,7 +167,7 @@ func wrapLabel(f font.Face, text string, width float64) []string {
 // renderPie draws the chart, a ring with the total in its hole, in theme th
 // as a PNG.
 func renderPie(s *pieSpec, th *theme) ([]byte, error) {
-	cv := newCanvas(th, s.Title, s.Subtitle)
+	cv := newCanvas(th, s.Title, s.Subtitle, s.Source)
 	legendFace := face(chartFonts.regular, 26)
 	defer legendFace.Close()
 
@@ -224,7 +227,8 @@ func renderPie(s *pieSpec, th *theme) ([]byte, error) {
 	}
 
 	// The legend, rows centred on the donut, long labels on two lines.
-	const lineH, rowGap = 32.0, 20.0
+	// The gaps between rows shrink to keep a tall legend above the source.
+	const lineH = 32.0
 	lx := cx + outer + gap
 	rows := make([][]string, len(labels))
 	legendH := 0.0
@@ -232,6 +236,7 @@ func renderPie(s *pieSpec, th *theme) ([]byte, error) {
 		rows[i] = wrapLabel(legendFace, labels[i], textW)
 		legendH += float64(len(rows[i])) * lineH
 	}
+	rowGap := min(20, max(4, (2*(sourceTop-6-cy)-legendH)/float64(len(rows)-1)))
 	y := cy - (legendH+rowGap*float64(len(rows)-1))/2
 	for i, lines := range rows {
 		cv.rect(th.palette[i], lx, y+8, 16, 16)

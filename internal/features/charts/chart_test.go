@@ -8,6 +8,7 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -348,5 +349,77 @@ func TestChartCaption(t *testing.T) {
 		if got := chartCaption(c.title, c.sub); got != c.want {
 			t.Errorf("%q, %q: got %q", c.title, c.sub, got)
 		}
+	}
+}
+
+// twelvePie has 12 slices, some with labels long enough to wrap, so its
+// legend is as tall as a legend gets.
+func twelvePie() string {
+	var sl []string
+	for i := range 12 {
+		label := "Slice"
+		if i%3 == 0 {
+			label = "A slice with a label long enough to wrap onto a second line"
+		}
+		sl = append(sl, `{"label":"`+label+`","value":`+strconv.Itoa(13-i)+`}`)
+	}
+	return `{"title":"Twelve parts","subtitle":"Share of total","slices":[` + strings.Join(sl, ",") + `]}`
+}
+
+// A source is written small at the bottom left, inside a band nothing else
+// reaches, for both chart kinds; without one the band is empty, and the rest
+// of the chart is the same either way.
+func TestChartSource(t *testing.T) {
+	h := register(t)
+	dir := os.Getenv("CHART_THEMES")
+	band := image.Rect(0, sourceTop, width, height)
+	source := `"source":"Yahoo Finance, finance.yahoo.com/quote/NVDA/history, retrieved 28 Oct 2026",`
+	for _, tc := range []struct{ name, tool, args string }{
+		{"line", chartTool, sampleChart()},
+		{"area", chartTool, areaSample(250, true)},
+		{"pie", pieTool, alphabetPie},
+		{"pie-twelve", pieTool, twelvePie()},
+	} {
+		with := draw(t, h, tc.tool, "{"+source+tc.args[1:])
+		without := decode(t, draw(t, h, tc.tool, tc.args)).(*image.RGBA)
+		img := decode(t, with).(*image.RGBA)
+		inBand := func(m *image.RGBA, r image.Rectangle) int {
+			return r.Dx()*r.Dy() - countColour(m, r, lightTheme.bg)
+		}
+		if n := inBand(without, band); n != 0 {
+			t.Errorf("%s: %d pixels drawn in the source's band without a source", tc.name, n)
+		}
+		if inBand(img, image.Rect(38, sourceTop, 300, height)) == 0 || countColour(img, band, lightTheme.muted) == 0 {
+			t.Errorf("%s: no source drawn", tc.name)
+		}
+		if inBand(img, image.Rect(width-200, sourceTop, width, height)) != 0 {
+			t.Errorf("%s: source runs to the right edge", tc.name)
+		}
+		if off := img.PixOffset(0, sourceTop); !bytes.Equal(img.Pix[:off], without.Pix[:off]) {
+			t.Errorf("%s: the source changed the chart above it", tc.name)
+		}
+		if dir != "" {
+			os.WriteFile(filepath.Join(dir, "source-"+tc.name+".png"), with, 0o644)
+		}
+	}
+}
+
+// The source is trimmed and clamped to 80 runes.
+func TestChartSourceClamp(t *testing.T) {
+	long := strings.Repeat("é", 100)
+	c, err := parseChart(`{"source":"  ` + long + `  ",` + sampleChart()[1:])
+	if err != nil {
+		t.Fatal(err)
+	}
+	p, err := parsePie(`{"source":"  ` + long + `  ",` + alphabetPie[1:])
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := strings.Repeat("é", 80) + "…"
+	if c.Source != want || p.Source != want {
+		t.Fatalf("source %q, %q", c.Source, p.Source)
+	}
+	if c, _ := parseChart(`{"source":"  Yahoo Finance ",` + sampleChart()[1:]); c.Source != "Yahoo Finance" {
+		t.Fatalf("source %q", c.Source)
 	}
 }

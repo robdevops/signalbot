@@ -35,6 +35,7 @@ var chartToolSchema = json.RawMessage(`{
   "properties": {
     "title": {"type": "string", "description": "Short title ending with the period in words, e.g. \"NVDA vs AMD, 1 month\" or \"Sydney rainfall, 5 years\"; it is also the message caption"},
     "subtitle": {"type": "string", "description": "e.g. \"% change over the past month, 30 Sep - 28 Oct 2026\""},
+    "source": {"type": "string", "description": "` + sourceDescription + `"},
     "axes": {"type": "object", "description": "Settings for the left and right Y axes. Put series with a different unit or scale on the right axis. A chart that uses both axes must give each a title.",
       "properties": {"left": {"$ref": "#/$defs/axis"}, "right": {"$ref": "#/$defs/axis"}}},
     "series": {"type": "array", "minItems": 1, "maxItems": 6, "items": {
@@ -91,6 +92,7 @@ type chartAxis struct {
 type chartSpec struct {
 	Title    string                `json:"title"`
 	Subtitle string                `json:"subtitle"`
+	Source   string                `json:"source"`
 	Axes     map[string]*chartAxis `json:"axes"`
 	Series   []chartSeries         `json:"series"`
 
@@ -113,6 +115,7 @@ func parseChart(arguments string) (*chartSpec, error) {
 	}
 	s.Title = txt.Clamp(strings.TrimSpace(s.Title), 80)
 	s.Subtitle = txt.Clamp(strings.TrimSpace(s.Subtitle), 120)
+	s.Source = txt.Clamp(strings.TrimSpace(s.Source), 80)
 	if s.Title == "" {
 		return nil, errors.New("title is required")
 	}
@@ -501,8 +504,17 @@ func (cv *canvas) text(f font.Face, c color.RGBA, x, y float64, align float64, s
 // width and height are the size of every chart, in pixels.
 const width, height = 1280, 800
 
-// newCanvas is a blank chart in theme th with its title and subtitle drawn.
-func newCanvas(th *theme, title, subtitle string) *canvas {
+// sourceBaseline is the row a chart's source is written on, and
+// sourceTop where its letters begin: nothing else is drawn below that.
+const sourceBaseline, sourceTop = height - 12, height - 26
+
+// sourceDescription is the schema's description of both tools' "source".
+const sourceDescription = "Where the data came from, e.g. the site or tool; fill it in when the data came from a tool or search"
+
+// newCanvas is a blank chart in theme th with its title and subtitle drawn,
+// and its source, if any, small at the bottom left, below the date labels
+// and the legend.
+func newCanvas(th *theme, title, subtitle, source string) *canvas {
 	cv := &canvas{img: image.NewRGBA(image.Rect(0, 0, width, height)), th: th}
 	cv.rect(th.bg, 0, 0, width, height)
 	titleFace, subFace := face(chartFonts.bold, 34), face(chartFonts.regular, 22)
@@ -511,6 +523,11 @@ func newCanvas(th *theme, title, subtitle string) *canvas {
 	cv.text(titleFace, th.title, 38, 46, 0, title)
 	if subtitle != "" {
 		cv.text(subFace, th.muted, 38, 80, 0, subtitle)
+	}
+	if source != "" {
+		f := face(chartFonts.regular, 16)
+		defer f.Close()
+		cv.text(f, th.muted, 38, sourceBaseline, 0, "Source: "+source)
 	}
 	return cv
 }
@@ -533,7 +550,7 @@ func renderChart(s *chartSpec, th *theme) ([]byte, error) {
 	case single:
 		right = 1140 // room for the current value beside the end dot
 	}
-	cv := newCanvas(th, s.Title, s.Subtitle)
+	cv := newCanvas(th, s.Title, s.Subtitle, s.Source)
 	axisFace, axisTitleFace := face(chartFonts.regular, 24), face(chartFonts.regular, 18)
 	defer axisFace.Close()
 	defer axisTitleFace.Close()
