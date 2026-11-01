@@ -130,6 +130,7 @@ type Info struct {
 	Images     bool     // the model takes images
 	CallsTools bool     // the model can call tools
 	Tools      []string // every tool group's Names in feature order; none when it can't call tools
+	Intro      string   // INTRO with {name}, {model} and {tools} filled in
 }
 
 // Group is a group chat.

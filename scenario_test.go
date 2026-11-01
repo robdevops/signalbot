@@ -862,8 +862,7 @@ func TestScenarioNoModel(t *testing.T) {
 		t.Fatalf("web search logged as on: %v", h.logLines())
 	}
 	s := h.ask(atBot("/intro"))
-	if !strings.HasPrefix(s.Message, "Hi @Alice! I'm Botty. ") || !strings.Contains(s.Message, "\n- Run no model, so I answer only commands\n") ||
-		strings.Contains(s.Message, "@mention me") || strings.Contains(s.Message, "Remember") || strings.Contains(s.Message, "quote") {
+	if !strings.HasPrefix(s.Message, "hi, I'm Botty, your open source assistant running no model (tools: none).\n\n") {
 		t.Fatalf("sent %q", s.Message)
 	}
 	h.ignored(inGroup("the moon is made of cheese"))
@@ -1124,21 +1123,17 @@ func TestScenarioStickerWithoutVision(t *testing.T) {
 func TestScenarioExampleWithoutModel(t *testing.T) {
 	h := startBot(t, world{})
 	s := h.ask(atBot("/intro"))
-	want := "Hi @Alice! I'm Botty. Here's what I can do:\n" +
-		"- Answer when you @mention me, reply to one of my messages, or DM me (if you're on my list)\n" +
-		"- Use a message you quote as context\n" +
-		"- Remember our conversation for up to a day (less with disappearing messages)\n" +
-		"- Mention people by name in my replies\n" +
-		"- Run test-model with web search, charts (line, pie)\n" +
-		"This message did not use the model."
+	// /intro sends INTRO, the same text the model gives when asked to
+	// introduce itself.
+	want := "hi, I'm Botty, your open source assistant running test-model (tools: web search, charts (line, pie)).\n\n" +
+		"I respond to @mentions and replies to my messages. See https://github.com/robdevops/signalbot/blob/main/README.md for details.\n\nThis message did not use the model."
 	if s.Message != want || s.GroupID != idGroup {
 		t.Fatalf("sent %q", s.Message)
 	}
-	equal(t, "mentions", s.Mentions, []string{"3:6:" + idAlice})
 	// The tool labels are Markdown, so they arrive in bold.
 	equal(t, "styles", s.Styles, []string{strconv.Itoa(strings.Index(want, "web search")) + ":10:BOLD",
 		strconv.Itoa(strings.Index(want, "charts")) + ":6:BOLD"})
-	if s := h.ask(fromAlice("/INTRO")); !strings.HasPrefix(s.Message, "Hi! I'm Botty. Here's what I can do:\n") || s.Mentions != nil {
+	if s := h.ask(fromAlice("/INTRO")); s.Message != want || s.Mentions != nil {
 		t.Fatalf("DM sent %q", s.Message)
 	}
 	if n := len(h.requests()); n != 0 {
@@ -1150,8 +1145,7 @@ func TestScenarioExampleWithoutModel(t *testing.T) {
 
 func TestScenarioBotWithoutProfileNameIsSignalbot(t *testing.T) {
 	h := startBot(t, world{NoBotName: true, MCP: true})
-	if s := h.ask(fromAlice("/intro")); !strings.HasPrefix(s.Message, "Hi! I'm signalbot. ") ||
-		!strings.Contains(s.Message, "- Run test-model with web search, charts (line, pie), stocks (get_quote, price_chart, /quote), weather (get_forecast, /forecast)\n") {
+	if s := h.ask(fromAlice("/intro")); !strings.HasPrefix(s.Message, "hi, I'm signalbot, your open source assistant running test-model (tools: web search, charts (line, pie), stocks (get_quote, price_chart, /quote), weather (get_forecast, /forecast)).\n\n") {
 		t.Fatalf("sent %q", s.Message)
 	}
 }

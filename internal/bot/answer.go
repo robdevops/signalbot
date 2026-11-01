@@ -200,9 +200,17 @@ func (b *Bot) system(offered []int) string {
 	if b.cfg.SystemPrompt != "" {
 		p += "\n" + b.cfg.SystemPrompt
 	}
-	model := b.cfg.Model[strings.LastIndex(b.cfg.Model, "/")+1:] // without the provider
-	intro := strings.NewReplacer("{name}", b.net.BotName(), "{model}", model,
-		"{tools}", cmp.Or(strings.Join(names, ", "), "none")).Replace(b.cfg.Intro)
 	// Quoted, so a newline or quote in the name or INTRO can't escape it.
-	return p + "\nIf asked to introduce yourself, reply with exactly this text and nothing else: " + strconv.Quote(intro)
+	return p + "\nIf asked to introduce yourself, reply with exactly this text and nothing else: " + strconv.Quote(b.intro())
+}
+
+// intro is INTRO with {name}, {model} and {tools} filled in: what the model
+// says when asked to introduce itself, which features may also send.
+func (b *Bot) intro() string {
+	model := b.cfg.Model[strings.LastIndex(b.cfg.Model, "/")+1:] // without the provider
+	if b.ai == nil {
+		model = "no model"
+	}
+	return strings.NewReplacer("{name}", b.net.BotName(), "{model}", model,
+		"{tools}", cmp.Or(strings.Join(b.toolNames(), ", "), "none")).Replace(b.cfg.Intro)
 }

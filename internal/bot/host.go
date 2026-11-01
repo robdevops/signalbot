@@ -41,7 +41,7 @@ func (b *Bot) Env(key, def string) string { return config.Env(key, def) }
 
 func (b *Bot) Info() feature.Info {
 	info := feature.Info{Name: b.net.BotName(), Version: b.cfg.Version, Model: b.cfg.Model,
-		Images: b.images, CallsTools: b.callsTools, Tools: b.toolNames()}
+		Images: b.images, CallsTools: b.callsTools, Tools: b.toolNames(), Intro: b.intro()}
 	if b.ai == nil {
 		info.Model = ""
 	}
