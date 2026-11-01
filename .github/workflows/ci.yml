@@ -1,0 +1,32 @@
+name: ci
+on:
+  push:
+    branches: [main]
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    env:
+      GOTOOLCHAIN: local
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: gofmt
+        run: test -z "$(gofmt -l .)" || { gofmt -l .; exit 1; }
+      - run: go vet ./...
+      - run: go test -race ./...
+      - name: sizes
+        run: |
+          if [ -n "$GITHUB_BASE_REF" ]; then
+            git worktree add -q /tmp/base "origin/$GITHUB_BASE_REF"
+            go run ./internal/arch/sizes -root /tmp/base -json > /tmp/base.json
+            go run ./internal/arch/sizes -base /tmp/base.json >> "$GITHUB_STEP_SUMMARY"
+          else
+            go run ./internal/arch/sizes >> "$GITHUB_STEP_SUMMARY"
+          fi
