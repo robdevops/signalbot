@@ -138,9 +138,24 @@ func (s *pieSpec) amount(v float64) string {
 	return s.Unit + oneDecimal(v)
 }
 
-// oneDecimal formats v with at most one decimal, e.g. 127.6 or 85.
+// oneDecimal formats v with at most one decimal and commas between
+// thousands, e.g. 127.6 or 54,720,710.
 func oneDecimal(v float64) string {
-	return strconv.FormatFloat(math.Round(v*10)/10, 'f', -1, 64)
+	return commas(strconv.FormatFloat(math.Round(v*10)/10, 'f', -1, 64))
+}
+
+// commas puts a comma between each group of three digits before the decimal
+// point of a formatted number, e.g. "-1234567.5" becomes "-1,234,567.5".
+func commas(n string) string {
+	end := strings.IndexByte(n, '.')
+	if end < 0 {
+		end = len(n)
+	}
+	start := len(n) - len(strings.TrimLeft(n, "-"))
+	for i := end - 3; i > start; i -= 3 {
+		n = n[:i] + "," + n[i:]
+	}
+	return n
 }
 
 func (s *pieSpec) summary() string {

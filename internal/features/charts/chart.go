@@ -199,7 +199,7 @@ func (a *chartAxis) format(v float64, decimals int) string {
 	if v < 0 {
 		sign, v = "-", -v
 	}
-	return sign + a.Unit + fmt.Sprintf("%.*f", decimals, v)
+	return sign + a.Unit + commas(fmt.Sprintf("%.*f", decimals, v))
 }
 
 // layout fits the axis to its series' values, plus 5% padding (and zero, in
