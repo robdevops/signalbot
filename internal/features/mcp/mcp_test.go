@@ -330,11 +330,10 @@ func TestStartupErrors(t *testing.T) {
 	}
 }
 
-// Each server is its own group, listed under its name with its tools then
-// its commands, with its prompt: a server's own instructions are not used.
-// keywords gate it on whole words, ignoring capitals. The commands of every
-// server follow in a group of names alone, so {tools} keeps every tool
-// before every command. Each server is told the bot's version.
+// Each server is its own group, named and listed by its tools then its
+// commands, with its prompt: a server's own instructions are not used.
+// keywords gate it on whole words, ignoring capitals. Each server is told
+// the bot's version.
 func TestToolGroups(t *testing.T) {
 	scoutMCP := &fakeMCP{instructions: "Use scout for everything."}
 	h, log, err := register(t, `{"mcpServers":{
@@ -351,15 +350,12 @@ func TestToolGroups(t *testing.T) {
 		t.Errorf("clientInfo version %q", scoutMCP.version)
 	}
 	gs := h.ToolGroups()
-	if len(gs) != 4 {
+	if len(gs) != 3 {
 		t.Fatalf("groups %+v", gs)
 	}
-	plain, scout, yahoo, cmds := gs[0], gs[1], gs[2], gs[3] // in name order, then the commands
-	if !slices.Equal(cmds.Names, []string{"/scout"}) || cmds.Listing != "" || cmds.Tools != nil || cmds.Keywords != nil {
-		t.Fatalf("commands group %+v", cmds)
-	}
+	plain, scout, yahoo := gs[0], gs[1], gs[2] // in name order
 	if plain.Listing != "plain: echo" || plain.System != "" || plain.Keywords != nil ||
-		scout.Listing != "scout: fail, /scout" || !slices.Equal(scout.Names, []string{"fail"}) ||
+		scout.Listing != "scout: fail, /scout" || !slices.Equal(scout.Names, []string{"fail", "/scout"}) ||
 		scout.System != "Use scout for everything." || scout.Keywords != nil || // the server's own instructions
 		yahoo.Listing != "yahoo: echo, pic" || !slices.Equal(yahoo.Names, []string{"echo", "pic"}) || yahoo.System != "Use yahoo for prices." {
 		t.Fatalf("groups %+v", gs)

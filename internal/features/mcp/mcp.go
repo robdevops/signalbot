@@ -137,7 +137,7 @@ func modelName(server, tool string) string {
 
 // start connects to every server, in name order, and offers each one's
 // tools that its allowed_tools and blocked_tools let through as a tool
-// group, with its chat commands. A server that cannot be reached is logged
+// group, named by those tools and then its chat commands. A server that cannot be reached is logged
 // and left out. A tool named in either list that a reachable server does
 // not have, or two tools that end up with the same name, is an error: a
 // typo in blocked_tools would otherwise leave the tool offered. Local
@@ -184,7 +184,7 @@ func start(ctx context.Context, h feature.Host, servers map[string]server) error
 					return call(ctx, c, t.Name, args)
 				}})
 		}
-		tools = append(tools, g.Names...)
+		tools = append(tools, g.Names...) // before its commands join them
 		if !info.CallsTools {
 			cfg.ChatCommands = nil // a command would force a tool the model can't call
 		}
@@ -197,7 +197,8 @@ func start(ctx context.Context, h feature.Host, servers map[string]server) error
 		slices.Sort(own)
 		cmds = append(cmds, own...)
 		if len(g.Tools) > 0 {
-			g.Listing = name + ": " + strings.Join(append(slices.Clone(g.Names), own...), ", ")
+			g.Names = append(g.Names, own...)
+			g.Listing = name + ": " + strings.Join(g.Names, ", ")
 			h.Tools(g)
 		}
 		if s, ok := c.(*stdioConn); ok {
@@ -207,10 +208,7 @@ func start(ctx context.Context, h feature.Host, servers map[string]server) error
 	if len(tools) > 0 {
 		logx.Noticef("MCP tools: %s", strings.Join(tools, ", "))
 	}
-	// Every server's commands follow every server's tools in {tools}, as
-	// they did before tool groups: a group of names alone, with no tools.
-	if slices.Sort(cmds); len(cmds) > 0 {
-		h.Tools(feature.ToolGroup{Names: cmds})
+	if len(cmds) > 0 {
 		logx.Noticef("chat commands: %s", strings.Join(cmds, ", "))
 	}
 	return nil

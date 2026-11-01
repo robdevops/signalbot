@@ -25,7 +25,7 @@ func (b *Bot) OnReply(fn func(feature.Turn, *feature.Reply)) { b.replies = appen
 // Tools keeps g with only the tools the model's API can run, and drops a
 // group whose tools it can run none of.
 func (b *Bot) Tools(g feature.ToolGroup) {
-	if b.ai != nil && len(g.Tools) > 0 {
+	if b.ai != nil {
 		if g.Tools = b.ai.Usable(g.Tools); len(g.Tools) == 0 {
 			return
 		}
