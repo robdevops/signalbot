@@ -488,6 +488,42 @@ func TestDockerDirectory(t *testing.T) {
 	}
 }
 
+// Anywhere else, a state directory the bot can't list and write stops it
+// at startup, saying to give the systemd unit a StateDirectory, and adds
+// nothing. (Tests may run as root, which file modes don't stop, so the
+// directories here are missing rather than read-only.)
+func TestStateDirectory(t *testing.T) {
+	const fix = "add StateDirectory=signalbot to the unit's [Service] section"
+	w := newWorld(t)
+	missing := filepath.Join(w.dir, "missing")
+	w.h.Settings["STATE_DIRECTORY"] = missing + ":" + w.dir
+	err := w.register()
+	if err == nil || !strings.Contains(err.Error(), "its state directory "+missing+" (") || !strings.Contains(err.Error(), fix) {
+		t.Fatalf("got %v", err)
+	}
+	if len(w.h.IntroLines()) != 0 || w.dm(`/schedule list`) != "" {
+		t.Fatal("registered anyway")
+	}
+
+	// Run by hand, the working directory.
+	gone := filepath.Join(w.dir, "gone")
+	os.Mkdir(gone, 0o700)
+	t.Chdir(gone)
+	os.Remove(gone)
+	delete(w.h.Settings, "STATE_DIRECTORY")
+	err = w.register()
+	if err == nil || !strings.Contains(err.Error(), "the working directory, as STATE_DIRECTORY isn't set") || !strings.Contains(err.Error(), fix) {
+		t.Fatalf("got %v", err)
+	}
+
+	os.Mkdir(missing, 0o700)
+	w.h.Settings["STATE_DIRECTORY"] = missing
+	w.start()
+	if entries, _ := os.ReadDir(missing); len(entries) != 0 {
+		t.Fatalf("left %v", entries)
+	}
+}
+
 // /timer, /reminder and /job are the same command as /schedule.
 func TestAliases(t *testing.T) {
 	w := newWorld(t).start()
