@@ -213,7 +213,7 @@ The model can call tools from [MCP](https://modelcontextprotocol.io) servers, re
 | `chat_commands` | optional slash-command shortcuts to a tool (you can always just ask): `tool` names it, `require_arg` makes a bare command get a usage reply |
 | `disabled` | leave the server out without deleting it |
 
-**You don't need a command to use the tools: just ask.** For example, `@signalbot what's the weather in Sydney this weekend?` The model sees every tool that's offered and decides when to call one. Without `keywords` a server's tools are always offered; with them, the message needs one of its words, such as `weather` or `forecast` above.
+**You don't need a command to use the tools: just ask.** For example, `@signalbot what's the weather in Sydney this weekend?` The model sees every tool that's offered and decides when to call one. Without `keywords` a server's tools are always offered; with them, the message needs one of its words, such as `weather` or `forecast` above. Gating tools this way saves tokens.
 
 Two optional fields shape how a server's tools are offered:
 
