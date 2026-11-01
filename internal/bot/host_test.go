@@ -2,7 +2,6 @@ package bot
 
 import (
 	"context"
-	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"regexp"
@@ -53,8 +52,8 @@ func TestHooks(t *testing.T) {
 	// The first hook's Context doesn't count for this one, so the second
 	// answers it.
 	h.receive(dm("hello"))
-	if s := h.nextSend(); s["message"] != "second hook" {
-		t.Fatalf("sent %v", s)
+	if s := h.nextSend(); s.text != "second hook" {
+		t.Fatalf("sent %+v", s)
 	}
 	h.noSend()
 	if len(h.requests()) != 0 {
@@ -70,8 +69,8 @@ func TestHooks(t *testing.T) {
 	if parts := messages(r)[2]["content"].([]any); len(parts) != 2 {
 		t.Fatalf("content %v", parts)
 	}
-	if s["message"] != "a caption" || len(s["attachments"].([]any)) != 2 || !strings.HasPrefix(s["attachments"].([]any)[0].(string), "data:image/png;filename=image1.png;base64,") {
-		t.Fatalf("sent %v", s)
+	if s.text != "a caption" || len(s.attachments) != 2 || !strings.HasPrefix(s.attachments[0], "data:image/png;filename=image1.png;base64,") {
+		t.Fatalf("sent %+v", s)
 	}
 	if len(turns) != 1 || turns[0].Text != "look" || turns[0].Chat.GroupID != groupID {
 		t.Fatalf("turns %+v", turns)
@@ -93,11 +92,10 @@ func TestPhotoAnsweredWhenAHookAdds(t *testing.T) {
 			return feature.Additions{Note: "[1 image attached]"}
 		})
 	}})
-	h.set("getAttachment", `{"data":"`+base64.StdEncoding.EncodeToString(png)+`"}`)
-	r, _ := h.ask(msg{from: aliceID, name: "Alice", images: []string{"photo1"}})
+	r, _ := h.ask(with(dm(""), "photo1"))
 	equal(t, "model got", contents(r), []string{"user: [1 image attached]"})
-	if string(media) != string(png) || h.calledWith("getAttachment")[0]["id"] != "photo1" {
-		t.Fatalf("media %q, calls %v", media, h.calledWith("getAttachment"))
+	if string(media) != string(png) || !slices.Equal(h.net.fetched, []string{"photo1"}) {
+		t.Fatalf("media %q, fetched %v", media, h.net.fetched)
 	}
 }
 
@@ -115,8 +113,8 @@ func TestCommands(t *testing.T) {
 		b.Tools(group("beta", "b_tool", regexp.MustCompile(`\bplot\b`)))
 	}})
 	h.receive(dm("/HI there"))
-	if s := h.nextSend(); s["message"] != "hello there" || len(h.requests()) != 0 {
-		t.Fatalf("sent %v", s)
+	if s := h.nextSend(); s.text != "hello there" || len(h.requests()) != 0 {
+		t.Fatalf("sent %+v", s)
 	}
 	r, _ := h.ask(dm("/pick"))
 	equal(t, "tools", toolNames(r), []string{"b_tool"})
@@ -213,8 +211,9 @@ func toolCall(name string) func() (int, string) {
 	}
 }
 
-// A delivered message is posted as its sender's, answered if it mentions
-// the bot, and dropped if its sender left the group. A timer delivers.
+// A delivered message is posted as its sender's, with @Name linked to the
+// group's members, answered if it mentions the bot, and dropped if the
+// network drops it. A timer delivers.
 func TestDeliver(t *testing.T) {
 	h := start(t, options{})
 	group := feature.Chat{GroupID: groupID}
@@ -222,80 +221,34 @@ func TestDeliver(t *testing.T) {
 		h.b.Deliver(feature.Message{Chat: group, Sender: aliceID, Name: "Alice", Text: "see you @bob and @Alice"})
 	})
 	s := h.nextSend()
-	if s["message"] != "see you @bob and @Alice" || s["groupId"] != groupID {
-		t.Fatalf("sent %v", s)
+	if s.text != "see you @bob and @Alice" || s.chat != group || len(s.known) != 2 || s.known["bob"] != bobID || s.known["alice"] != aliceID {
+		t.Fatalf("sent %+v", s)
 	}
-	if m, _ := s["mention"].([]any); len(m) != 2 || m[0] != "8:4:"+bobID || m[1] != "17:6:"+aliceID {
-		t.Fatalf("mentions %v", s["mention"])
-	}
-	h.b.Deliver(feature.Message{Chat: group, Sender: aliceID, Text: "@BOTTY what's new?"}) // her name is looked up
+	h.b.Deliver(feature.Message{Chat: group, Sender: aliceID, Text: "@Botty what's new?"}) // her name is looked up
 	r := h.nextSend()
 	equal(t, "model got", contents(h.requests()[0]), []string{"user: Alice: see you @bob and @Alice", "user: Alice: what's new?"})
-	if r["message"] != "ok" || !strings.Contains(h.logs.String(), "<6>reply 0.") {
-		t.Fatalf("sent %v; logs:\n%s", r, h.logs)
+	if r.text != "ok" || !strings.Contains(h.logs.String(), "<6>reply 0.") {
+		t.Fatalf("sent %+v; logs:\n%s", r, h.logs)
 	}
 	h.b.Deliver(feature.Message{Chat: feature.Chat{GroupID: "other"}, Sender: aliceID, Text: "hello"})
-	h.eventually("the drop logged", func() bool {
-		return strings.Contains(h.logs.String(), "<6>delivered message dropped: its sender is not in the group\n")
-	})
+	h.settle()
 	h.noSend()
-	gs, err := h.b.Groups(context.Background(), bobID)
-	if err != nil || len(gs) != 1 || gs[0] != (feature.Group{ID: groupID, Name: "Family"}) {
-		t.Fatalf("groups %v %v", gs, err)
-	}
-	if gs, _ := h.b.Groups(context.Background(), "+1999"); len(gs) != 0 {
-		t.Fatalf("groups %v", gs)
-	}
-}
-
-// A message delivered as the bot starts waits until it is connected and
-// knows its own name, so a mention of the bot is seen.
-func TestDeliverWaitsToConnect(t *testing.T) {
-	h := start(t, options{waitID: true})
-	h.b.Deliver(feature.Message{Chat: feature.Chat{User: aliceID}, Sender: aliceID, Text: "@botty are you up?"})
-	h.eventually("the delivery to wait", func() bool { return len(h.b.slots) == 1 })
-	h.noSend()
-	close(h.id)
-	if s := h.nextSend(); s["message"] != "ok" {
-		t.Fatalf("sent %v", s)
-	}
-	equal(t, "model got", contents(h.requests()[0]), []string{"user: are you up?"})
-}
-
-// A delivered DM is dropped, as one from the sender in person would be,
-// once they are no longer in SIGNAL_DM_USER_IDS, whether it holds their ACI
-// or their number. Only their ID is logged. In a group, where anyone may
-// address the bot, it still posts.
-func TestDeliverDMNeedsTheAllowlist(t *testing.T) {
-	h := start(t, options{})
-	allowed := h.b.cfg.AllowedSenders // changed in place: the bot holds the map
-	h.b.Deliver(feature.Message{Chat: feature.Chat{User: bobID}, Sender: bobID, Text: "note to self"})
-	h.eventually("the drop logged", func() bool {
-		return strings.Contains(h.logs.String(), "<6>delivered message from "+bobID+" dropped because not in SIGNAL_DM_USER_IDS\n")
-	})
-	h.noSend()
-	h.b.Deliver(feature.Message{Chat: feature.Chat{GroupID: groupID}, Sender: bobID, Text: "hello all"})
-	if s := h.nextSend(); s["message"] != "hello all" || s["groupId"] != groupID {
-		t.Fatalf("sent %v", s)
-	}
-
-	// Allowed by number: her ACI is matched once a message shows both.
-	delete(allowed, aliceID)
-	allowed["+1555"] = true
-	h.ask(msg{from: aliceID, number: "+1555", name: "Alice", text: "hi"})
-	h.b.Deliver(feature.Message{Chat: feature.Chat{User: aliceID}, Sender: aliceID, Text: "water the plants"})
-	if s := h.nextSend(); s["message"] != "water the plants" {
-		t.Fatalf("sent %v", s)
-	}
-	delete(allowed, "+1555")
-	h.b.Deliver(feature.Message{Chat: feature.Chat{User: aliceID}, Sender: aliceID, Text: "water the plants again"})
-	h.eventually("the drop logged", func() bool {
-		return strings.Contains(h.logs.String(), "<6>delivered message from "+aliceID+" dropped because not in SIGNAL_DM_USER_IDS\n")
-	})
-	h.noSend()
-	if strings.Contains(h.logs.String(), "plants") || strings.Contains(h.logs.String(), "note to self") {
+	if strings.Contains(h.logs.String(), "see you") {
 		t.Fatalf("text logged:\n%s", h.logs)
 	}
+}
+
+// A message delivered as the bot starts waits until it is connected.
+func TestDeliverWaitsToConnect(t *testing.T) {
+	h := start(t, options{waitID: true})
+	h.b.Deliver(feature.Message{Chat: feature.Chat{User: aliceID}, Sender: aliceID, Text: "@Botty are you up?"})
+	h.eventually("the delivery to wait", func() bool { return len(h.b.slots) == 1 })
+	h.noSend()
+	close(h.net.id)
+	if s := h.nextSend(); s.text != "ok" {
+		t.Fatalf("sent %+v", s)
+	}
+	equal(t, "model got", contents(h.requests()[0]), []string{"user: are you up?"})
 }
 
 // Timers start only once the bot first connects, so one due at startup
@@ -310,7 +263,7 @@ func TestTimersWaitForTheFirstConnect(t *testing.T) {
 		t.Fatal("a timer ran before the bot connected")
 	case <-time.After(100 * time.Millisecond):
 	}
-	close(h.id)
+	close(h.net.id)
 	select {
 	case <-ran:
 	case <-time.After(5 * time.Second):
@@ -347,12 +300,12 @@ func TestNoModel(t *testing.T) {
 	h.receive(dm("hello there"))
 	h.receive(dm("/tool"))
 	h.receive(dm("/hi"))
-	if s := h.nextSend(); s["message"] != "hello" {
-		t.Fatalf("sent %v", s)
+	if s := h.nextSend(); s.text != "hello" {
+		t.Fatalf("sent %+v", s)
 	}
 	h.b.Deliver(feature.Message{Chat: feature.Chat{GroupID: groupID}, Sender: aliceID, Name: "Alice", Text: "lunch is ready"})
-	if s := h.nextSend(); s["message"] != "lunch is ready" {
-		t.Fatalf("sent %v", s)
+	if s := h.nextSend(); s.text != "lunch is ready" {
+		t.Fatalf("sent %+v", s)
 	}
 	h.b.Deliver(feature.Message{Chat: feature.Chat{GroupID: groupID}, Sender: aliceID, Name: "Alice", Text: "@Botty are you there?"})
 	h.settle()
@@ -363,8 +316,8 @@ func TestNoModel(t *testing.T) {
 	if n := len(h.requests()); n != 0 || lists != 0 {
 		t.Fatalf("%d model requests, %d model lists", n, lists)
 	}
-	if typing := h.calledWith("sendTyping"); len(typing) != 0 {
-		t.Fatalf("typing %v", typing)
+	if n := h.typing(); n != 0 {
+		t.Fatalf("typing %d times", n)
 	}
 	for _, key := range []string{feature.Chat{GroupID: groupID}.Key(), feature.Chat{User: aliceID}.Key()} {
 		if hist := h.b.chats.History(key); len(hist) != 0 {

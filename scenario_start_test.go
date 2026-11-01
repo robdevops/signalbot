@@ -69,7 +69,8 @@ func startBot(t *testing.T, w world) *harness {
 	}
 	ctx, closeConn := context.WithCancel(context.Background())
 	t.Cleanup(closeConn)
-	b := bot.New(ctx, cfg)
+	client := signal.New(cfg.Socket, cfg.AllowedSenders)
+	b := bot.New(ctx, cfg, client)
 	for _, register := range features {
 		if err := register(b); err != nil {
 			t.Fatal(err)
@@ -79,9 +80,8 @@ func startBot(t *testing.T, w world) *harness {
 	go func() { defer close(stopped); b.Run() }()
 
 	var shutDown atomic.Bool // Shutdown holds every slot once it returns
-	h.settle = func() {
-		h.waitFor("the bot to finish its work", func() bool { return shutDown.Load() || b.Idle() })
-	}
+	idle := func() bool { return shutDown.Load() || b.Idle() && !client.Loading() }
+	h.settle = func() { h.waitFor("the bot to finish its work", idle) }
 	h.shutdown = func() { b.Shutdown(8 * time.Second); shutDown.Store(true) }
 	t.Cleanup(func() {
 		closeConn()
@@ -92,7 +92,7 @@ func startBot(t *testing.T, w world) *harness {
 		}
 		// With the client stopped no contact reload starts; wait for one
 		// under way, so that none logs after the test.
-		h.waitFor("the contact list to load", func() bool { return shutDown.Load() || b.Idle() })
+		h.waitFor("the contact list to load", idle)
 		h.checkNoSecretsLogged()
 	})
 	t.Cleanup(h.settle) // runs first

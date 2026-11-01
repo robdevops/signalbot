@@ -23,8 +23,8 @@ const (
 	// maxNames caps the names kept: IDs come from the network. A dropped
 	// name is simply learned again.
 	maxNames = 5000
-	// DefaultName is what the bot calls itself without a profile name.
-	DefaultName = "signalbot"
+	// defaultName is what the bot calls itself without a profile name.
+	defaultName = "signalbot"
 )
 
 // Name ranks: a name is never replaced by one of lower rank.
@@ -150,16 +150,16 @@ func (n *names) replace(cs []contact) {
 	n.loadedAt = time.Now()
 }
 
-// Name is the best name known for a person by any of their IDs, made safe,
+// name is the best name known for a person by any of their IDs, made safe,
 // or "".
-func (c *Client) Name(ids ...string) string { return c.names.lookup(ids...).name }
+func (c *Client) name(ids ...string) string { return c.names.lookup(ids...).name }
 
 // Redact replaces each name the bot knows for anyone but itself with
 // "redacted", as a whole word and ignoring capitals, longest first, so
 // "Alice's" becomes "redacted's"; every UUID and phone number goes too. It
 // is for text the bot logs but doesn't control, scrubbed as it passes.
 func (c *Client) Redact(s string) string {
-	self := c.ID()
+	self := c.self()
 	c.names.mu.Lock()
 	var known []string
 	for id, n := range c.names.byID {
@@ -203,21 +203,21 @@ func redactWord(s, w string) string {
 
 func wordRune(r rune) bool { return unicode.IsLetter(r) || unicode.IsDigit(r) || r == '_' }
 
-// Number is the phone number of the person with ACI aci, from the contact
+// number is the phone number of the person with ACI aci, from the contact
 // list or a message they sent, or "".
-func (c *Client) Number(aci string) string {
+func (c *Client) number(aci string) string {
 	c.names.mu.Lock()
 	defer c.names.mu.Unlock()
 	return c.names.numbers[aci]
 }
 
 // BotName is the bot's own profile name, or "signalbot" without one. It
-// never blocks; LoadNames loads it.
-func (c *Client) BotName() string { return cmp.Or(c.Name(c.ID()), DefaultName) }
+// never blocks; loadNames loads it.
+func (c *Client) BotName() string { return cmp.Or(c.name(c.self()), defaultName) }
 
 // mentionName is the name signal-cli put in a mention, unless that is only
 // the ID. The sender chose it, so it is made safe.
-func mentionName(m Mention) string {
+func mentionName(m mention) string {
 	if m.Name != m.UUID && m.Name != m.Number {
 		return txt.SafeName(m.Name)
 	}
@@ -227,7 +227,7 @@ func mentionName(m Mention) string {
 // resolve is the best name for a mention, or "": a contact, profile or
 // sender name, then the name in the mention (unless it is an ID), then a
 // username.
-func (c *Client) resolve(m Mention) string {
+func (c *Client) resolve(m mention) string {
 	r := c.names.lookup(m.UUID, m.Number)
 	if mn := mentionName(m); r.rank < rankSeen && mn != "" {
 		return mn
@@ -237,7 +237,7 @@ func (c *Client) resolve(m Mention) string {
 
 // stale reports whether the contact list should be loaded for a mention:
 // it never was, it is over a day old, or it has no real name for them.
-func (c *Client) stale(m Mention) bool {
+func (c *Client) stale(m mention) bool {
 	n := &c.names
 	n.mu.Lock()
 	never := n.refreshedAt.IsZero()
@@ -246,25 +246,25 @@ func (c *Client) stale(m Mention) bool {
 	return never || old || (n.lookup(m.UUID, m.Number).rank < rankSeen && mentionName(m) == "")
 }
 
-// LoadNames learns the sender's name from env, and loads the contact list
+// loadNames learns the sender's name from env, and loads the contact list
 // if a mention of someone else needs it, or if the bot's own name is
 // unknown. It may call signal-cli, so it runs in the message's slot.
-func (c *Client) LoadNames(ctx context.Context, env *Envelope) {
-	self := c.ID()
+func (c *Client) loadNames(ctx context.Context, env *envelope) {
+	self := c.self()
 	c.names.mu.Lock()
 	if name := txt.SafeName(env.SourceName); name != "" {
 		c.names.set(rankedName{name, rankSeen}, env.SourceUUID, env.SourceNumber)
 	}
 	c.names.link(env.SourceUUID, env.SourceNumber)
 	c.names.mu.Unlock()
-	need := c.Name(self) == ""
+	need := c.name(self) == ""
 	if d := env.DataMessage; d != nil {
 		for _, m := range d.Mentions {
 			need = need || (m.UUID != self && m.Number != self && c.stale(m))
 		}
 	}
-	if need && c.refresh(ctx) && c.Name(self) == "" {
-		logx.Warnf("own profile name not found; calling itself %s (INTRO can name it)", DefaultName)
+	if need && c.refresh(ctx) && c.name(self) == "" {
+		logx.Warnf("own profile name not found; calling itself %s (INTRO can name it)", defaultName)
 	}
 }
 

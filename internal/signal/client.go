@@ -1,5 +1,6 @@
-// Package signal is the signal-cli client: its JSON-RPC socket, the names
-// it knows, mentions, and turning what it receives into messages.
+// Package signal is the bot's chat network: a signal-cli client that turns
+// what it receives into messages for the core, and sends replies, with the
+// names it knows and mentions. Only the main package uses it.
 package signal
 
 import (
@@ -45,36 +46,37 @@ type rpcMsg struct {
 		Code    int    `json:"code"`
 		Message string `json:"message"`
 	} `json:"error"`
-	Envelope *Envelope `json:"envelope"`
+	Envelope *envelope `json:"envelope"`
 }
 
 // Client is a JSON-RPC client for a signal-cli daemon socket.
 type Client struct {
 	addr        string
+	allowed     map[string]bool // who may DM the bot, by ACI or number
 	typingEvery time.Duration
 	nextID      atomic.Int64
 	mu          sync.Mutex // guards conn and pending, never held over a write
 	wmu         sync.Mutex // serialises writes
 	conn        net.Conn
 	pending     map[string]chan *rpcMsg
-	self        atomic.Value // string: the account's ACI, else its number
+	id          atomic.Value // string: the account's ACI, else its number
 	known       chan struct{}
 	knownOnce   sync.Once
 	closed      atomic.Bool // Run has returned
 	names       names
 }
 
-// New makes a client for the socket at addr: a unix socket path, or
-// host:port.
-func New(addr string) *Client {
-	return &Client{addr: addr, typingEvery: 10 * time.Second, pending: map[string]chan *rpcMsg{},
+// New makes a client for the socket at addr, a unix socket path or
+// host:port, answering DMs from the senders in allowed.
+func New(addr string, allowed map[string]bool) *Client {
+	return &Client{addr: addr, allowed: allowed, typingEvery: 10 * time.Second, pending: map[string]chan *rpcMsg{},
 		known: make(chan struct{}), names: newNames()}
 }
 
-// ID is the bot's account ID (ACI, else number), or "" until signal-cli
+// self is the bot's account ID (ACI, else number), or "" until signal-cli
 // says.
-func (c *Client) ID() string {
-	id, _ := c.self.Load().(string)
+func (c *Client) self() string {
+	id, _ := c.id.Load().(string)
 	return id
 }
 
@@ -85,7 +87,7 @@ func (c *Client) WaitID(ctx context.Context) string {
 	case <-c.known:
 	case <-ctx.Done():
 	}
-	return c.ID()
+	return c.self()
 }
 
 // network picks unix for anything that looks like a path ("/run/x",
@@ -98,9 +100,9 @@ func (c *Client) network() string {
 }
 
 // Run connects, learns the bot's own account ID, and calls handle on this
-// goroutine for every envelope received. It reconnects with backoff until
-// ctx ends. handle must not block.
-func (c *Client) Run(ctx context.Context, handle func(*Envelope)) {
+// goroutine for every message received that the core may act on. It
+// reconnects with backoff until ctx ends. handle must not block.
+func (c *Client) Run(ctx context.Context, handle func(feature.Received)) {
 	defer c.closed.Store(true)
 	backoff := time.Second
 	for ctx.Err() == nil {
@@ -125,7 +127,7 @@ func (c *Client) Run(ctx context.Context, handle func(*Envelope)) {
 	}
 }
 
-func (c *Client) serve(ctx context.Context, conn net.Conn, handle func(*Envelope)) {
+func (c *Client) serve(ctx context.Context, conn net.Conn, handle func(feature.Received)) {
 	c.mu.Lock()
 	c.conn = conn
 	c.mu.Unlock()
@@ -141,7 +143,7 @@ func (c *Client) serve(ctx context.Context, conn net.Conn, handle func(*Envelope
 			conn.Close()
 			return
 		}
-		c.self.Store(id)
+		c.id.Store(id)
 		c.knownOnce.Do(func() { close(c.known) })
 		logx.Noticef("bot account %s", id)
 		c.refreshSoon() // names, on every (re)connect
@@ -165,7 +167,7 @@ func (c *Client) serve(ctx context.Context, conn net.Conn, handle func(*Envelope
 	c.mu.Unlock()
 }
 
-func (c *Client) dispatch(line []byte, handle func(*Envelope)) {
+func (c *Client) dispatch(line []byte, handle func(feature.Received)) {
 	defer logx.Recover("reading a message")
 	var m rpcMsg
 	if err := json.Unmarshal(line, &m); err != nil {
@@ -188,12 +190,9 @@ func (c *Client) dispatch(line []byte, handle func(*Envelope)) {
 		if json.Unmarshal(m.Params, &p) != nil || p.Envelope == nil {
 			return
 		}
-		// A group changed (members, name or description): reload the
-		// contact list so new members are known and departed ones forgotten.
-		if d := p.Envelope.DataMessage; d != nil && d.GroupInfo != nil && d.GroupInfo.Type == "UPDATE" {
-			c.refreshSoon()
+		if r, ok := c.event(p.Envelope); ok {
+			handle(r)
 		}
-		handle(p.Envelope)
 		if Handled != nil {
 			Handled()
 		}
@@ -292,48 +291,6 @@ func (c *Client) listAccounts(ctx context.Context) (string, error) {
 	return cmp.Or(accts[0].ACI, accts[0].Number), nil
 }
 
-func target(chat feature.Chat) map[string]any {
-	if chat.GroupID != "" {
-		return map[string]any{"groupId": chat.GroupID}
-	}
-	return map[string]any{"recipient": []string{chat.User}}
-}
-
-// Send posts text to chat, with mentions ("start:length:uuid", see
-// Mentions) and attachments (data: URIs, see img.Attachment). Whether it was
-// delivered is logged when signal-cli says.
-func (c *Client) Send(chat feature.Chat, text string, mentions, attachments []string) error {
-	p := target(chat)
-	p["message"] = text
-	if len(mentions) > 0 {
-		p["mention"] = mentions
-	}
-	if len(attachments) > 0 {
-		p["attachments"] = attachments
-	}
-	return c.write(c.nextID.Add(1), "send", p)
-}
-
-// Typing shows the bot typing in chat until stop is called.
-func (c *Client) Typing(chat feature.Chat) (stop func()) {
-	done := make(chan struct{})
-	send := func() { _ = c.write(c.nextID.Add(1), "sendTyping", target(chat)) }
-	send()
-	go func() {
-		tick := time.NewTicker(c.typingEvery)
-		defer tick.Stop()
-		for {
-			select {
-			case <-done:
-				return
-			case <-tick.C:
-				send()
-			}
-		}
-	}()
-	return sync.OnceFunc(func() { close(done) })
-}
-
 // data decodes a result that carries a file as base64.
 func (c *Client) data(ctx context.Context, method string, params any) ([]byte, error) {
 	var r struct {
@@ -345,28 +302,34 @@ func (c *Client) data(ctx context.Context, method string, params any) ([]byte, e
 	return base64.StdEncoding.DecodeString(r.Data)
 }
 
-// Attachment fetches an attachment's bytes by its ID, naming the chat it
-// arrived in. The bot never reads signal-cli's data directory itself.
-func (c *Client) Attachment(ctx context.Context, chat feature.Chat, id string) ([]byte, error) {
-	p := map[string]any{"id": id}
-	if chat.GroupID != "" {
-		p["groupId"] = chat.GroupID
+// Media fetches the bytes of msg.Media[i], waiting at most 15s: an image by
+// its attachment ID, naming the chat it arrived in, or a sticker's image
+// (WebP, or APNG if animated), which signal-cli downloads with the packs of
+// stickers it receives. The bot never reads signal-cli's data directory
+// itself.
+func (c *Client) Media(ctx context.Context, msg feature.Message, i int) ([]byte, error) {
+	if i < 0 || i >= len(msg.Media) {
+		return nil, errors.New("no such media")
+	}
+	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
+	defer cancel()
+	m := msg.Media[i]
+	if m.Pack != "" {
+		return c.data(ctx, "getSticker", map[string]any{"packId": m.Pack, "stickerId": m.Sticker})
+	}
+	p := map[string]any{"id": m.ID}
+	if msg.Chat.GroupID != "" {
+		p["groupId"] = msg.Chat.GroupID
 	} else {
-		p["recipient"] = chat.User
+		p["recipient"] = msg.Chat.User
 	}
 	return c.data(ctx, "getAttachment", p)
 }
 
-// Sticker fetches a sticker's image (WebP, or APNG if animated), which
-// signal-cli downloads with the packs of stickers it receives.
-func (c *Client) Sticker(ctx context.Context, pack string, id int) ([]byte, error) {
-	return c.data(ctx, "getSticker", map[string]any{"packId": pack, "stickerId": id})
-}
-
-// StickerLabel describes a sticker by its emoji and its pack's title, e.g.
+// stickerLabel describes a sticker by its emoji and its pack's title, e.g.
 // `: 🙂 from "Pack"`, or "" if signal-cli doesn't know the pack. Both come
 // from whoever made the pack, so they are made safe and the title quoted.
-func (c *Client) StickerLabel(ctx context.Context, pack string, id int) string {
+func (c *Client) stickerLabel(ctx context.Context, pack string, id int) string {
 	var packs []struct {
 		PackID   string `json:"packId"`
 		Title    string `json:"title"`
@@ -396,40 +359,51 @@ func (c *Client) StickerLabel(ctx context.Context, pack string, id int) string {
 	return ""
 }
 
-// Group is a group the bot is in.
-type Group struct {
+// group is a group the bot is in, with its members as signal-cli knows
+// them: an ACI, a number, or both.
+type group struct {
 	feature.Group
-	Members []Member
+	members []member
 }
 
-// Member is a group member as signal-cli knows them: an ACI, a number, or
-// both.
-type Member struct {
+type member struct {
 	UUID   string `json:"uuid"`
 	Number string `json:"number"`
 }
 
-// Has reports whether id (an ACI or a number) is a member of g.
-func (g Group) Has(id string) bool {
-	return id != "" && slices.ContainsFunc(g.Members, func(m Member) bool { return m.UUID == id || m.Number == id })
+// has reports whether id (an ACI or a number) is a member of g.
+func (g group) has(id string) bool {
+	return id != "" && slices.ContainsFunc(g.members, func(m member) bool { return m.UUID == id || m.Number == id })
 }
 
-// Groups lists the groups the bot is a member of.
-func (c *Client) Groups(ctx context.Context) ([]Group, error) {
+// groups lists the groups the bot is a member of.
+func (c *Client) groups(ctx context.Context) ([]group, error) {
 	var gs []struct {
 		ID       string   `json:"id"`
 		Name     string   `json:"name"`
 		IsMember bool     `json:"isMember"`
-		Members  []Member `json:"members"`
+		Members  []member `json:"members"`
 	}
 	if err := c.call(ctx, "listGroups", nil, &gs); err != nil {
 		return nil, err
 	}
-	var out []Group
+	var out []group
 	for _, g := range gs {
 		if g.IsMember && g.ID != "" {
-			out = append(out, Group{feature.Group{ID: g.ID, Name: txt.SafeName(g.Name)}, g.Members})
+			out = append(out, group{feature.Group{ID: g.ID, Name: txt.SafeName(g.Name)}, g.Members})
 		}
 	}
 	return out, nil
+}
+
+// Groups lists the groups the bot shares with user (an ACI or a number).
+func (c *Client) Groups(ctx context.Context, user string) ([]feature.Group, error) {
+	gs, err := c.groups(ctx)
+	var out []feature.Group
+	for _, g := range gs {
+		if g.has(user) {
+			out = append(out, g.Group)
+		}
+	}
+	return out, err
 }

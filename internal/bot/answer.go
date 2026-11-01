@@ -7,7 +7,6 @@ import (
 	"strconv"
 	"strings"
 	"time"
-	"unicode/utf8"
 
 	"github.com/robdevops/signalbot/internal/chats"
 	"github.com/robdevops/signalbot/internal/feature"
@@ -15,7 +14,6 @@ import (
 	"github.com/robdevops/signalbot/internal/kit/logx"
 	"github.com/robdevops/signalbot/internal/kit/txt"
 	"github.com/robdevops/signalbot/internal/model"
-	"github.com/robdevops/signalbot/internal/signal"
 )
 
 const (
@@ -44,14 +42,14 @@ func (b *Bot) respond(msg feature.Message, act feature.Action, text string) {
 	case act.Ignore:
 		return
 	case act.Answer != "":
-		b.send(msg, act.Answer, nil, b.chats.Names(msg.Chat.Key()))
+		b.net.Send(msg.Chat, act.Answer, nil, b.chats.Names(msg.Chat.Key()))
 		return
 	case b.ai == nil:
 		return // no model: no typing, no reply
 	case msg.Text == "" && len(b.turns) == 0:
 		return // nothing to answer
 	}
-	stop := b.sig.Typing(msg.Chat)
+	stop := b.net.Typing(msg.Chat)
 	defer stop() // also if something below panics
 	key, turn := msg.Chat.Key(), feature.Turn{Message: msg}
 	kept, added := text, false
@@ -82,7 +80,7 @@ func (b *Bot) respond(msg feature.Message, act feature.Action, text string) {
 	stop()
 	if err != nil {
 		logx.Errorf("model error after %.1fs: %v", time.Since(start).Seconds(), err)
-		b.send(msg, sorry, nil, b.chats.Names(key))
+		b.net.Send(msg.Chat, sorry, nil, b.chats.Names(key))
 		return
 	}
 	b.followUp(key, offered, msg.Text, reply.ToolsUsed)
@@ -102,7 +100,7 @@ func (b *Bot) respond(msg feature.Message, act feature.Action, text string) {
 	}
 	b.chats.Add(key, start, msg.Expires, chats.Entry{Role: "user", Content: strings.TrimSpace(kept)},
 		chats.Entry{Role: "assistant", Content: notes + reply.Text})
-	b.send(msg, cmp.Or(reply.Text, strings.Join(captions, "\n")), attachments, b.chats.Names(key))
+	b.net.Send(msg.Chat, cmp.Or(reply.Text, strings.Join(captions, "\n")), attachments, b.chats.Names(key))
 }
 
 // prompt is the message as the model sees it: its quote, escaped and capped
@@ -207,33 +205,8 @@ func (b *Bot) system(offered []int, lines []string) string {
 		p += "\n" + b.cfg.SystemPrompt
 	}
 	model := b.cfg.Model[strings.LastIndex(b.cfg.Model, "/")+1:] // without the provider
-	intro := strings.NewReplacer("{name}", b.sig.BotName(), "{model}", model,
+	intro := strings.NewReplacer("{name}", b.net.BotName(), "{model}", model,
 		"{tools}", cmp.Or(strings.Join(names, ", "), "none")).Replace(b.cfg.Intro)
 	// Quoted, so a newline or quote in the name or INTRO can't escape it.
 	return p + "\nIf asked to introduce yourself, reply with exactly this text and nothing else: " + strconv.Quote(intro)
-}
-
-// send posts text to msg's chat, linking each @Name in known (lowercased
-// name to ID), split into messages, with the attachments on the first.
-func (b *Bot) send(msg feature.Message, text string, attachments []string, known map[string]string) {
-	if n := utf8.RuneCountInString(text); n > signal.MaxReply {
-		logx.Warnf("reply truncated from %d chars", n)
-	}
-	parts := signal.Parts(text, b.sig.BotName())
-	if len(parts) == 0 {
-		if len(attachments) == 0 {
-			logx.Warnf("empty reply, nothing sent")
-			return
-		}
-		parts = []string{""}
-	}
-	for i, part := range parts {
-		if i > 0 {
-			attachments = nil
-		}
-		if err := b.sig.Send(msg.Chat, part, signal.Mentions(part, known), attachments); err != nil {
-			logx.Errorf("send failed: %v", err)
-			return
-		}
-	}
 }

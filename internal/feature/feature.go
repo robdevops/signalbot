@@ -1,6 +1,6 @@
 // Package feature is the only part of the core that features use: the types
-// shared by the core and features, the Host a feature registers its hooks
-// on, and the command helper.
+// shared by the core, features and the chat network, the Host a feature
+// registers its hooks on, and the command helper.
 package feature
 
 import (
@@ -54,6 +54,19 @@ type Media struct {
 	Pack    string // a sticker's pack ID; "" for an image
 	Sticker int    // a sticker's index in its pack
 	Label   string // a sticker's emoji and pack title, e.g. `: 🙂 from "Pack"`; filled in by the core
+}
+
+// Received is a message as the chat network hands it to the core, on the
+// network's reader goroutine. Features never see one.
+type Received struct {
+	Message          // what is known without calling the network
+	GroupChange bool // only that a group's members, name or description changed
+	Wait        bool // the bot's own ID isn't known yet, so nor is whether the message is for it
+	// Load completes an addressed or waiting message in its slot, where it
+	// may call the network, calling learn with each name it shows the model
+	// and that person's ID. It reports false for a message the core has
+	// nothing to do with.
+	Load func(ctx context.Context, learn func(name, id string)) (Message, bool)
 }
 
 // Turn is the message being answered, in its chat.
@@ -133,7 +146,7 @@ type Info struct {
 	Tools      []string // every tool group's Names in feature order; none when it can't call tools
 }
 
-// Group is a Signal group.
+// Group is a group chat.
 type Group struct {
 	ID, Name string
 }

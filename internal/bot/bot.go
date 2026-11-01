@@ -4,7 +4,6 @@
 package bot
 
 import (
-	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -18,20 +17,46 @@ import (
 	"github.com/robdevops/signalbot/internal/feature"
 	"github.com/robdevops/signalbot/internal/kit/logx"
 	"github.com/robdevops/signalbot/internal/model"
-	"github.com/robdevops/signalbot/internal/signal"
 	"github.com/robdevops/signalbot/internal/timers"
 )
+
+// Network is the chat network the bot answers on: Signal, or the bot's
+// tests' fake. Media, Groups and Redact are the host's services of those
+// names.
+type Network interface {
+	// Run calls handle on one goroutine for each message received, until
+	// ctx ends. handle must not block.
+	Run(ctx context.Context, handle func(feature.Received))
+	// WaitID returns the bot's own ID once it is connected, or "" if ctx
+	// ends first.
+	WaitID(ctx context.Context) string
+	// Send posts text to chat, linking each @Name in known (lowercased name
+	// to ID), with the attachments (data: URIs). Failures are logged.
+	Send(chat feature.Chat, text string, attachments []string, known map[string]string)
+	// Typing shows the bot typing in chat until stop is called.
+	Typing(chat feature.Chat) (stop func())
+	// Delivered readies a message a feature delivers, as if its sender had
+	// just posted it, passing claim the name and ID of each person in a
+	// group's chat to link @Name to. It returns msg without the bot's
+	// @name, and whether that was there; false, logged, if msg is dropped.
+	Delivered(ctx context.Context, msg feature.Message, claim func(name, id string)) (out feature.Message, mentioned, ok bool)
+	// BotName is the bot's own name. It never blocks.
+	BotName() string
+	Media(ctx context.Context, msg feature.Message, i int) ([]byte, error)
+	Groups(ctx context.Context, user string) ([]feature.Group, error)
+	Redact(text string) string
+}
 
 // Bot is the core, and the Host features register on.
 type Bot struct {
 	cfg      *config.Config
-	sig      *signal.Client
+	net      Network
 	ai       *model.Client // nil with no model
 	chats    *chats.Store
 	timers   *timers.Timers
 	slots    chan struct{} // one per message being handled
 	waitMu   sync.Mutex
-	waiting  map[string][]*signal.Envelope // addressed messages queued per chat, answered together
+	waiting  map[string][]feature.Received // addressed messages queued per chat, answered together
 	ctx      context.Context
 	stop     context.CancelFunc // stops the timers
 	timerCtx context.Context
@@ -50,12 +75,12 @@ type Bot struct {
 
 var _ feature.Host = (*Bot)(nil)
 
-// New makes the bot and reads what the model can do, so features know it
-// when they register. With no model, only what a hook answers is answered.
-// Work in progress ends with ctx, which should outlive the shutdown signal
-// so that Shutdown can let replies finish.
-func New(ctx context.Context, cfg *config.Config) *Bot {
-	b := &Bot{cfg: cfg, sig: signal.New(cfg.Socket), chats: chats.New(cfg.HistoryTurns),
+// New makes the bot on net and reads what the model can do, so features
+// know it when they register. With no model, only what a hook answers is
+// answered. Work in progress ends with ctx, which should outlive the
+// shutdown signal so that Shutdown can let replies finish.
+func New(ctx context.Context, cfg *config.Config, net Network) *Bot {
+	b := &Bot{cfg: cfg, net: net, chats: chats.New(cfg.HistoryTurns),
 		timers: timers.New(), slots: make(chan struct{}, cfg.MaxConcurrency), ctx: ctx}
 	b.timerCtx, b.stop = context.WithCancel(ctx)
 	if cfg.NoModel {
@@ -71,19 +96,19 @@ func New(ctx context.Context, cfg *config.Config) *Bot {
 	return b
 }
 
-// Run handles every message signal-cli receives, and runs the timers once
+// Run handles every message the network receives, and runs the timers once
 // it is first connected, until the bot's context ends, then waits for what
-// features run with Go. A timer due at startup so waits for signal-cli
+// features run with Go. A timer due at startup so waits for the network
 // however long it takes to come up, rather than delivering into nothing.
 func (b *Bot) Run() {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		if b.sig.WaitID(b.timerCtx) != "" {
+		if b.net.WaitID(b.timerCtx) != "" {
 			b.timers.Run(b.timerCtx)
 		}
 	}()
-	b.sig.Run(b.ctx, b.Handle)
+	b.net.Run(b.ctx, b.handle)
 	b.stop()
 	<-done
 	b.running.Wait()
@@ -106,59 +131,47 @@ func (b *Bot) Shutdown(d time.Duration) {
 	}
 }
 
-// Idle reports whether no work holds a slot and the contact list isn't
-// loading. It is for the scenario tests at the module root.
-func (b *Bot) Idle() bool { return len(b.slots) == 0 && !b.sig.Loading() }
+// Idle reports whether no work holds a slot. It is for the scenario tests
+// at the module root.
+func (b *Bot) Idle() bool { return len(b.slots) == 0 }
 
-// Handle runs on the reader goroutine for every message received, so it
-// never blocks or calls the network.
-func (b *Bot) Handle(env *signal.Envelope) {
-	d := env.DataMessage
-	if d == nil || b.closing.Load() {
+// handle runs on the network's reader goroutine for every message received,
+// so it never blocks or calls the network. An unaddressed group message
+// goes to the OnMessage hooks here, and is never logged; an addressed one
+// is handled in its chat's slot.
+func (b *Bot) handle(r feature.Received) {
+	if b.closing.Load() {
 		return
 	}
-	if g := d.GroupInfo; g != nil && g.Type == "UPDATE" {
-		b.chats.ForgetNames(feature.Chat{GroupID: g.GroupID}.Key()) // the signal client reloads the contacts
+	key := r.Chat.Key()
+	switch {
+	case r.GroupChange:
+		b.chats.ForgetNames(key)
+	case r.Wait:
+		// Until the bot's own ID is known, nothing can be judged: wait in a
+		// slot. This job already holds the chat's worker, so an addressed
+		// message is handled here, in order, rather than queued again.
+		b.post(key, func() {
+			switch msg, ok := b.load(r); {
+			case ok && msg.Addressed:
+				b.respond(msg, b.onMessage(b.ctx, msg), prompt(msg))
+			case ok:
+				b.keep(msg)
+			}
+		})
+	case r.Addressed:
+		b.queue(key, r)
+	case len(b.messages) > 0:
+		b.keep(r.Message)
 	}
-	key := env.Chat().Key()
-	if self := b.sig.ID(); self != "" {
-		if b.route(env, self) {
-			b.queue(key, env, self)
-		}
-		return
-	}
-	// Until the bot's own ID is known, nothing can be judged: wait in a slot.
-	// This job already holds the chat's worker, so an addressed message is
-	// handled here, in order, rather than queued again.
-	b.post(key, func() {
-		ctx, cancel := context.WithTimeout(b.ctx, 10*time.Second)
-		defer cancel()
-		if self := b.sig.WaitID(ctx); self != "" && b.route(env, self) {
-			b.received(env, self)
-		}
-	})
 }
 
-// route reports whether env is addressed, to be handled in its chat's slot.
-// An unaddressed group message goes to the OnMessage hooks here. Neither is
-// logged; a DM from someone not allowed is logged by ID only.
-func (b *Bot) route(env *signal.Envelope, self string) bool {
-	allowed := b.cfg.AllowedSenders
-	switch {
-	case signal.Addressed(env, self, allowed):
-		return true
-	case signal.FromSelf(env, self):
-	case env.Chat().GroupID == "":
-		if !signal.Allowed(env, allowed) {
-			logx.Infof("%s ignored because not in SIGNAL_DM_USER_IDS", cmp.Or(env.Sender(), "unknown sender"))
-		}
-	case len(b.messages) > 0:
-		msg := b.sig.Message(env, self, allowed)
-		if a := b.onMessage(b.ctx, msg); a.Context != "" && !a.Ignore && b.ai != nil { // with no model, nothing would read it
-			b.chats.Add(msg.Chat.Key(), time.Now(), msg.Expires, chats.Entry{Role: "user", Content: a.Context})
-		}
+// keep runs the OnMessage hooks for an unaddressed group message, and keeps
+// the Context one returns in history.
+func (b *Bot) keep(msg feature.Message) {
+	if a := b.onMessage(b.ctx, msg); a.Context != "" && !a.Ignore && b.ai != nil { // with no model, nothing would read it
+		b.chats.Add(msg.Chat.Key(), time.Now(), msg.Expires, chats.Entry{Role: "user", Content: a.Context})
 	}
-	return false
 }
 
 // post queues job in the chat's mailbox, taking a slot for the chat's
@@ -191,7 +204,7 @@ func (b *Bot) post(key string, job func()) error {
 // message that arrives while the bot is answering an earlier one is
 // answered with the others that arrived meanwhile: "actually" and "forget
 // it" get one reply that sees both. At most chats.MaxQueue wait.
-func (b *Bot) queue(key string, env *signal.Envelope, self string) {
+func (b *Bot) queue(key string, r feature.Received) {
 	b.waitMu.Lock() // held across post, so a failed post never races the job
 	defer b.waitMu.Unlock()
 	w := b.waiting[key]
@@ -200,10 +213,10 @@ func (b *Bot) queue(key string, env *signal.Envelope, self string) {
 		return
 	}
 	if b.waiting == nil {
-		b.waiting = map[string][]*signal.Envelope{}
+		b.waiting = map[string][]feature.Received{}
 	}
-	b.waiting[key] = append(w, env)
-	if len(w) == 0 && b.post(key, func() { b.answerWaiting(key, self) }) != nil {
+	b.waiting[key] = append(w, r)
+	if len(w) == 0 && b.post(key, func() { b.answerWaiting(key) }) != nil {
 		delete(b.waiting, key)
 	}
 }
@@ -213,9 +226,9 @@ func (b *Bot) queue(key string, env *signal.Envelope, self string) {
 // the rest together, as one turn, each run within one message's picture
 // limits. A panic loses only the message or turn that caused it, and
 // nothing new starts once shutdown begins.
-func (b *Bot) answerWaiting(key, self string) {
+func (b *Bot) answerWaiting(key string) {
 	b.waitMu.Lock()
-	envs := b.waiting[key]
+	rs := b.waiting[key]
 	delete(b.waiting, key)
 	b.waitMu.Unlock()
 	var batch []feature.Message
@@ -226,13 +239,13 @@ func (b *Bot) answerWaiting(key, self string) {
 			safely(func() { m, text := merge(run); b.respond(m, feature.Action{}, text) })
 		}
 	}
-	for _, env := range envs {
+	for _, r := range rs {
 		if b.closing.Load() {
 			return
 		}
 		safely(func() {
-			msg, ok := b.load(env, self)
-			if !ok {
+			msg, ok := b.load(r)
+			if !ok || !msg.Addressed {
 				return
 			}
 			if act := b.onMessage(b.ctx, msg); act != (feature.Action{}) {
@@ -324,27 +337,18 @@ func merge(msgs []feature.Message) (feature.Message, string) {
 	return m, strings.Join(lines, "\n")
 }
 
-// received handles an addressed message in its chat's slot.
-func (b *Bot) received(env *signal.Envelope, self string) {
-	if msg, ok := b.load(env, self); ok {
-		b.respond(msg, b.onMessage(b.ctx, msg), prompt(msg))
+// load completes a message in its chat's slot. An addressed one is logged
+// as it arrives, and reported false if it is a repeat.
+func (b *Bot) load(r feature.Received) (feature.Message, bool) {
+	key := r.Chat.Key()
+	msg, ok := r.Load(b.ctx, func(name, id string) { b.chats.Learn(key, name, id) })
+	if !ok || !msg.Addressed {
+		return msg, ok // only one that arrived before the bot's ID was known can be unaddressed
 	}
-}
-
-// load turns an addressed message into what features see, in its chat's
-// slot: names loaded, sticker labels filled in. It logs that it arrived,
-// and reports false for a repeat.
-func (b *Bot) load(env *signal.Envelope, self string) (feature.Message, bool) {
-	b.sig.LoadNames(b.ctx, env)
-	msg := b.sig.Message(env, self, b.cfg.AllowedSenders)
-	key := msg.Chat.Key()
 	if msg.Chat.GroupID != "" {
 		logx.Infof("received group chat")
 	} else {
 		logx.Infof("received dm")
-	}
-	for _, p := range b.sig.People(env, self) {
-		b.chats.Learn(key, p.Name, p.ID)
 	}
 	// Neither a renamed sender nor two different photos are a repeat.
 	id := msg.Sender + "\x00" + msg.Name + "\x00" + msg.Text
@@ -354,13 +358,6 @@ func (b *Bot) load(env *signal.Envelope, self string) (feature.Message, bool) {
 	if b.chats.Repeat(key, id) {
 		logx.Debugf("ignored duplicate")
 		return msg, false
-	}
-	for i := range msg.Media {
-		if m := &msg.Media[i]; m.Pack != "" {
-			ctx, cancel := context.WithTimeout(b.ctx, 10*time.Second)
-			m.Label = b.sig.StickerLabel(ctx, m.Pack, m.Sticker)
-			cancel()
-		}
 	}
 	return msg, true
 }

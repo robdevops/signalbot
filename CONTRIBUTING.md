@@ -4,12 +4,12 @@ The bot is a small core and features on top. [TECHNICAL.md](TECHNICAL.md) descri
 
 ```
 main.go, features.go    the main package at the module root: wiring, and one line per feature
-internal/signal/        the signal-cli client, names and mentions
+internal/signal/        the chat network: the signal-cli client, decoding, sending, names; only main imports it
 internal/model/         the model client (OpenRouter or another chat completions API) and the tool loop
 internal/chats/         per-chat state: history, dedupe, mention names, the mailbox
 internal/timers/        one-shot timers
 internal/config/        settings from the environment
-internal/bot/           the decision, the prompt, the hooks; wires the packages above
+internal/bot/           the decision, the prompt, the hooks; wires the core, and reaches Signal through Network
 internal/feature/       the ports and shared types, the command helper, featuretest
 internal/features/*     one package per feature
 internal/kit/*          code with two or more users and no bot knowledge
@@ -32,7 +32,7 @@ If a feature can't be built on these, that's a design finding. Either a port bec
 
 ## Plain Go, no ceremony
 
-- Use concrete types and structs freely. Add an interface only where there are two real implementations, or a test needs a fake.
+- Use concrete types and structs freely. Add an interface only where there are two real implementations, or a test needs a fake. The one there is, `bot.Network`, is there for the bot's in-memory fake network.
 - Define each type once and use it everywhere, rather than copying it per package. `Message`, `Media`, `Picture`, `Turn` and the port types live in `internal/feature`, and the core uses them directly.
 - When a function needs many inputs, pass a typed struct, never a map or a long list of positional arguments.
 - No wrappers or adapters that only pass calls through.
@@ -42,13 +42,13 @@ If a feature can't be built on these, that's a design finding. Either a port bec
 
 Tests in `internal/arch` enforce these:
 
-- **Imports:** only the main package, at the module root, imports features; a feature imports only `internal/feature`, `internal/kit` and its own packages; kit imports no other internal package.
+- **Imports:** only the main package, at the module root, imports features and `internal/signal`; a feature imports only `internal/feature`, `internal/kit` and its own packages; kit imports no other internal package.
 - **No feature names in the core:** the core's source mentions no feature name or feature-only word (chart, MCP, group context, `/example`, `/schedule`, …).
 - **Docs:** every setting read, the core's or a feature's (`h.Env("NAME", …)`), is in the README's configuration table.
 
 And by convention:
 
-- **Zero features:** the core's own tests run with no features registered.
+- **Zero features:** the core's own tests run with no features registered, on an in-memory fake network.
 - **Each feature alone:** each feature's tests run on `featuretest`, a fake host.
 - **Scenarios:** `scenario_test.go` drives the whole bot through a fake signal-cli socket and a fake model API (OpenRouter's, or another provider's), and checks no message text reaches the log. The golden prompts in `testdata` pin the system prompt byte for byte (`go test . -run Golden -update` rewrites them).
 - **Sizes:** `go run ./internal/arch/sizes` reports lines per package; CI reports them on each PR, not enforced.

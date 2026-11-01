@@ -36,9 +36,10 @@ func goFiles(t *testing.T) []string {
 // under reports whether p is dir or inside it.
 func under(p, dir string) bool { return p == dir || strings.HasPrefix(p, dir+"/") }
 
-// Only the main package, at the module root, imports features; a feature imports only
-// internal/feature, kit and its own packages; internal/feature imports only
-// kit; kit imports no other internal package.
+// Only the main package, at the module root, imports features and the chat
+// network (internal/signal); a feature imports only internal/feature, kit
+// and its own packages; internal/feature imports only kit; kit imports no
+// other internal package.
 func TestImports(t *testing.T) {
 	for _, p := range goFiles(t) {
 		f, err := parser.ParseFile(token.NewFileSet(), root+"/"+p, nil, parser.ImportsOnly)
@@ -65,7 +66,7 @@ func TestImports(t *testing.T) {
 			case under(dir, "internal/kit"):
 				ok = under(imp, "internal/kit")
 			default:
-				ok = !under(imp, "internal/features") || dir == "."
+				ok = dir == "." || !under(imp, "internal/features") && !under(imp, "internal/signal")
 			}
 			if !ok {
 				t.Errorf("%s imports %s", p, imp)

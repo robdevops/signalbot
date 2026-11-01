@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"github.com/robdevops/signalbot/internal/feature"
 	"os"
 	"regexp"
 	"slices"
@@ -14,6 +13,7 @@ import (
 	"time"
 
 	"github.com/robdevops/signalbot/internal/config"
+	"github.com/robdevops/signalbot/internal/feature"
 )
 
 // With no features, the prompt is the golden one pinned at e40dc5f, whatever
@@ -36,23 +36,21 @@ func TestGoldenPromptNoFeatures(t *testing.T) {
 }
 
 // An addressed group message is answered: logged without content, shown
-// with the sender's name, linked mentions in the reply, and remembered.
+// with the sender's name, with the names it showed linked in the reply, and
+// remembered.
 func TestGroupMentionIsAnswered(t *testing.T) {
 	h := start(t, options{})
 	h.answer(text("hi @Alice, ask @Bob"))
 	r, s := h.ask(atBot("hello there"))
 	equal(t, "model got", contents(r), []string{"user: Alice: hello there"})
-	if s["message"] != "hi @Alice, ask @Bob" || s["groupId"] != groupID {
-		t.Fatalf("sent %v", s)
-	}
 	// Alice was named to the model; Bob was not, so he stays plain text.
-	if m, _ := s["mention"].([]any); len(m) != 1 || m[0] != "3:6:"+aliceID {
-		t.Fatalf("mentions %v", s["mention"])
+	if s.text != "hi @Alice, ask @Bob" || s.chat.GroupID != groupID || len(s.known) != 1 || s.known["alice"] != aliceID {
+		t.Fatalf("sent %+v", s)
 	}
 	r, _ = h.ask(atBot("and again"))
 	equal(t, "history", contents(r), []string{"user: Alice: hello there", "assistant: hi @Alice, ask @Bob", "user: Alice: and again"})
-	if typing := h.calledWith("sendTyping"); len(typing) < 2 {
-		t.Fatalf("typing %v", typing)
+	if n := h.typing(); n != 2 {
+		t.Fatalf("typing %d times", n)
 	}
 	logs := h.logs.String()
 	if !strings.Contains(logs, "<6>received group chat\n") || !strings.Contains(logs, "<6>reply 0.") || strings.Contains(logs, "Alice") || strings.Contains(logs, "hello") || strings.Contains(logs, "again") {
@@ -60,21 +58,31 @@ func TestGroupMentionIsAnswered(t *testing.T) {
 	}
 }
 
-func TestAllowedDMIsAnsweredStrangerIsNot(t *testing.T) {
+func TestDMIsAnswered(t *testing.T) {
 	h := start(t, options{})
 	r, s := h.ask(dm("what is up"))
 	equal(t, "model got", contents(r), []string{"user: what is up"})
-	if s["recipient"].([]any)[0] != aliceID {
-		t.Fatalf("sent %v", s)
+	if s.chat != (feature.Chat{User: aliceID}) || len(s.known) != 0 {
+		t.Fatalf("sent %+v", s)
 	}
-	h.receive(msg{from: bobID, name: "Bob", text: "let me in"})
-	h.eventually("the stranger logged", func() bool {
-		return strings.Contains(h.logs.String(), "<6>"+bobID+" ignored because not in SIGNAL_DM_USER_IDS\n")
-	})
-	h.noSend()
-	if logs := h.logs.String(); !strings.Contains(logs, "<6>received dm\n") || strings.Contains(logs, "let me in") || strings.Contains(logs, "Bob(") {
+	if logs := h.logs.String(); !strings.Contains(logs, "<6>received dm\n") || strings.Contains(logs, "what is up") || strings.Contains(logs, "Alice") {
 		t.Fatalf("logs:\n%s", logs)
 	}
+}
+
+// A group change forgets the names the bot links in that group.
+func TestGroupChangeForgetsNames(t *testing.T) {
+	h := start(t, options{})
+	h.ask(atBot("hello"))
+	key := feature.Chat{GroupID: groupID}.Key()
+	if len(h.b.chats.Names(key)) == 0 {
+		t.Fatal("no names learned")
+	}
+	h.net.handle(feature.Received{Message: feature.Message{Chat: feature.Chat{GroupID: groupID}}, GroupChange: true})
+	if names := h.b.chats.Names(key); len(names) != 0 {
+		t.Fatalf("names %v", names)
+	}
+	h.noSend()
 }
 
 // Group chatter, and a photo with no text, have nothing for the core to
@@ -82,7 +90,7 @@ func TestAllowedDMIsAnsweredStrangerIsNot(t *testing.T) {
 func TestNothingToAnswer(t *testing.T) {
 	h := start(t, options{})
 	h.receive(chatter("the moon is made of cheese"))
-	h.receive(msg{from: aliceID, name: "Alice", images: []string{"photo1"}})
+	h.receive(with(dm(""), "photo1"))
 	h.receive(dm("a question"))
 	h.nextSend()
 	h.noSend()
@@ -97,15 +105,17 @@ func TestNothingToAnswer(t *testing.T) {
 func TestQuoteIsEscapedAndCapped(t *testing.T) {
 	h := start(t, options{})
 	for _, c := range []struct {
-		m    msg
-		want string
+		text  string
+		quote feature.Quote
+		want  string
 	}{
-		{msg{text: "is it?", quote: &quoted{author: bobID, text: "a \"line\"\nbreak"}}, `[Replying to a message by "Bob": "a \"line\"\nbreak"]` + "\nis it?"},
-		{msg{text: "why?", quote: &quoted{author: botID, text: strings.Repeat("x", 600)}}, `[Replying to a message attributed to you: "` + strings.Repeat("x", 500) + `…"]` + "\nwhy?"},
-		{msg{text: "who?", quote: &quoted{author: "33333333-3333-4333-8333-333333333333", text: "hm"}}, `[Replying to a message by "someone": "hm"]` + "\nwho?"},
+		{"is it?", feature.Quote{Author: "Bob", Text: "a \"line\"\nbreak"}, `[Replying to a message by "Bob": "a \"line\"\nbreak"]` + "\nis it?"},
+		{"why?", feature.Quote{Bot: true, Text: strings.Repeat("x", 600)}, `[Replying to a message attributed to you: "` + strings.Repeat("x", 500) + `…"]` + "\nwhy?"},
+		{"who?", feature.Quote{Text: "hm"}, `[Replying to a message by "someone": "hm"]` + "\nwho?"},
 	} {
-		c.m.from, c.m.name = aliceID, "Alice"
-		r, _ := h.ask(c.m)
+		m := dm(c.text)
+		m.Quote = &c.quote
+		r, _ := h.ask(m)
 		if got := contents(r); got[len(got)-1] != "user: "+c.want {
 			t.Fatalf("model got %q, want %q", got[len(got)-1], c.want)
 		}
@@ -119,8 +129,8 @@ func TestModelError(t *testing.T) {
 		return 400, `{"error":{"message":"Input flagged","metadata":{"flagged_input":"secret words"}}}`
 	})
 	_, s := h.ask(dm("secret words"))
-	if s["message"] != sorry {
-		t.Fatalf("sent %v", s)
+	if s.text != sorry {
+		t.Fatalf("sent %+v", s)
 	}
 	if logs := h.logs.String(); !strings.Contains(logs, "<3>model error after ") || strings.Contains(logs, "Alice") || !strings.Contains(logs, "Input flagged") || strings.Contains(logs, "secret") {
 		t.Fatalf("logs:\n%s", logs)
@@ -214,12 +224,13 @@ func TestMessagesBeforeTheIDIsKnown(t *testing.T) {
 	for i := range 4 {
 		h.receive(chatter(fmt.Sprint("chatter ", i)))
 	}
-	h.receive(msg{from: bobID, name: "Bob", text: "hi"}) // a DM, in a second slot: the frames above are all in
+	h.receive(feature.Message{Chat: feature.Chat{User: bobID}, Sender: bobID, Text: "hi"}) // a stranger's DM, in a second slot
 	h.eventually("both chats to wait", func() bool { return len(h.b.slots) == 2 })
-	close(h.id)
-	if s := h.nextSend(); s["message"] != "ok" || s["groupId"] != groupID {
-		t.Fatalf("sent %v", s)
+	close(h.net.id)
+	if s := h.nextSend(); s.text != "ok" || s.chat.GroupID != groupID {
+		t.Fatalf("sent %+v", s)
 	}
+	h.noSend()
 	h.settle()
 	if logs := h.logs.String(); strings.Contains(logs, "dropping") {
 		t.Fatalf("logs:\n%s", logs)
@@ -231,7 +242,7 @@ func TestMessagesBeforeTheIDIsKnown(t *testing.T) {
 func TestDisappearingHistory(t *testing.T) {
 	h := start(t, options{})
 	m := atBot("short-lived")
-	m.expires = 1
+	m.Expires = time.Second
 	h.ask(m)
 	key := "g:" + groupID
 	if len(h.b.chats.History(key)) != 2 || len(h.b.chats.Names(key)) == 0 {
@@ -250,8 +261,8 @@ func TestShutdownDrains(t *testing.T) {
 	go func() { defer close(done); h.b.Shutdown(5 * time.Second) }()
 	time.Sleep(20 * time.Millisecond)
 	h.release()
-	if s := h.nextSend(); s["message"] != "ok" {
-		t.Fatalf("sent %v", s)
+	if s := h.nextSend(); s.text != "ok" {
+		t.Fatalf("sent %+v", s)
 	}
 	<-done
 	h.receive(dm("too late"))
@@ -281,7 +292,7 @@ func TestWaitingCommandOnItsOwn(t *testing.T) {
 	first.open()
 	var sent []string
 	for range 4 {
-		sent = append(sent, fmt.Sprint(h.nextSend()["message"]))
+		sent = append(sent, h.nextSend().text)
 	}
 	h.settle()
 	h.noSend()
@@ -410,10 +421,8 @@ func TestWaitingPhotosSplit(t *testing.T) {
 	h.answer(first.answer("one"))
 	h.receive(dm("first"))
 	h.eventually("the first request", func() bool { return len(h.requests()) == 1 })
-	a, b := dm("these"), dm("and these")
-	a.images, b.images = []string{"p1", "p2", "p3"}, []string{"p4", "p5"}
-	h.receive(a)
-	h.receive(b)
+	h.receive(with(dm("these"), "p1", "p2", "p3"))
+	h.receive(with(dm("and these"), "p4", "p5"))
 	h.waitFor(aliceChat, 2)
 	first.open()
 	for range 3 {
@@ -435,10 +444,13 @@ func TestKeywordsIgnoreNames(t *testing.T) {
 	}})
 	first := h.gate()
 	h.answer(first.answer("one"))
-	h.receive(msg{from: aliceID, name: "Lookup", text: "\uFFFC hello", group: true, atBot: true})
+	lookup := func(text string) feature.Message { m := atBot(text); m.Name = "Lookup"; return m }
+	h.receive(lookup("hello"))
 	h.eventually("the first request", func() bool { return len(h.requests()) == 1 })
-	h.receive(msg{from: aliceID, name: "Lookup", text: "\uFFFC how are you", group: true, atBot: true})
-	h.receive(msg{from: bobID, name: "Bob", text: "\uFFFC fine", group: true, atBot: true})
+	h.receive(lookup("how are you"))
+	fine := atBot("fine")
+	fine.Sender, fine.Name = bobID, "Bob"
+	h.receive(fine)
 	h.waitFor(groupChat, 2)
 	first.open()
 	h.nextSend()

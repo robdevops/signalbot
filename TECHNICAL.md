@@ -10,7 +10,7 @@ Go, the standard library plus `golang.org/x/image` (for chart text, with the bun
 - **Features bolted on.** Each feature is a package that registers on the core's ports (`internal/feature`). `features.go` lists them, one line each.
 - **The core never mirrors a feature.** Delete any feature and the core doesn't change. If a feature can't be built on the ports, either a port becomes more generic (and stays tied to its stage), or the feature takes on more of the work. A feature-shaped field in the core is never the answer.
 - **Plain Go, no ceremony.** Concrete types and structs. An interface only where there are two real implementations, or a test needs a fake. Each type defined once and used everywhere. Many inputs go in a typed struct, never a map or a long list of positional arguments. No wrappers or adapters that only pass calls through.
-- **Scope.** Signal only; the ports don't preclude other chat networks. The model is any chat completions API in OpenAI's format, OpenRouter's by default, or none at all.
+- **Scope.** Signal only, kept out of the core behind a small interface ([Layout](#layout)), so the core doesn't preclude other chat networks. The model is any chat completions API in OpenAI's format, OpenRouter's by default, or none at all.
 
 ## The core
 
@@ -18,7 +18,7 @@ What the bot does with no features registered.
 
 - **Receive.** JSON-RPC to `signal-cli daemon` over a unix socket or TCP (`listAccounts` once per connection to learn its own ID). If the connection drops it reconnects, waiting 1s, doubling up to 32s, reset once a connection has held for a minute; requests in flight fail rather than hang. Frames are capped at 1 MiB. The bot's own messages are ignored.
 - **Addressed or not.** A message is answered if it mentions the bot, replies to one of its messages, or is a DM from a sender in `SIGNAL_DM_USER_IDS`, and it carries text, a supported image (PNG, JPEG, GIF or WebP, up to 5 MB, or such a thumbnail) or a sticker; anything else (a voice note, a file) is never answered. A DM from anyone else is dropped and only the sender's ID is logged. An unaddressed group message goes to the features and is never logged.
-- **Names** come from signal-cli's contact list (`listContacts` with `allRecipients`, at most 5,000), loaded on connect, on every group `UPDATE` event, and when a mention is unknown or the list is over 24 hours old, at most every 15s, with requests meanwhile folded into one. A group `UPDATE` also clears the names that chat remembers for turning `@Name` into mentions. An unresolved mention reaches the model as `[unnamed user]`; a group sender with no known name gets no prefix; an unknown quote author is "someone". The bot calls itself by its profile name, or `signalbot`. A name two people claim is never linked.
+- **Names** come from signal-cli's contact list (`listContacts` with `allRecipients`, at most 5,000), loaded on connect, on every group `UPDATE` event, and when a mention is unknown or the list is over 24 hours old, at most every 15s, with requests meanwhile folded into one. A group `UPDATE` also clears the names that chat remembers for turning `@Name` into mentions; it is a change, not a message, so no hook sees it. An unresolved mention reaches the model as `[unnamed user]`; a group sender with no known name gets no prefix; an unknown quote author is "someone". The bot calls itself by its profile name, or `signalbot`. A name two people claim is never linked.
 - **Answer.** Typing is shown until the reply is ready. The prompt is built ([below](#the-prompt)) and sent to the model. On failure the "model error" line is logged, the chat gets "Sorry, I couldn't get an answer right now.", and history is unchanged. The reply has the bot's own @name stripped, @Name linked to real mentions, is split at 2,000 characters (preferring a line break, then a space) and capped at 8,000 in all, the rest cut with " […truncated]" and a warning.
 - **Nothing to answer.** A message with no text (only a photo or sticker) is answered only if an `OnTurn` hook adds something to it.
 - **The model.** A chat completions API in OpenAI's format at `MODEL_API_URL` (OpenRouter's by default, `internal/model`), with `MODEL_API_KEY` as a bearer token if set, over a keep-alive client that requires TLS 1.3 for `https://`. Requests to OpenRouter (host `openrouter.ai`) set `provider.data_collection: deny` and `usage.include` for the real cost, plus the `MODEL_REASONING` effort as `reasoning.effort`; requests elsewhere carry only `reasoning_effort`. Either effort is left out when `MODEL_REASONING` is `none`. The tokens are logged with each reply, and the cost when the API reports it. A network error, 429 or 5xx gets one retry; an error body is reduced to its message ("status N: message"). The tool loop takes at most 5 requests and 3 minutes per reply, and 4 pictures.
@@ -31,7 +31,7 @@ What the bot does with no features registered.
 
 ## Concurrency and scale
 
-- **Reader goroutine.** Parses each frame and decides "addressed?" without blocking or calling the network; it may briefly take the chat store's lock (to queue a message or keep context). Unaddressed group messages go to the `OnMessage` hooks here.
+- **Reader goroutine.** The Signal client's reader parses each frame and decides "addressed?" without blocking or calling the network, then hands the bot a `feature.Received`: an addressed message (with a `Load` to complete it in its slot), an unaddressed group message, a group change, or, before the bot's own ID is known, a message to wait. The bot may briefly take the chat store's lock (to queue a message or keep context). Unaddressed group messages go to the `OnMessage` hooks here.
 - **Worker slots.** A fixed pool of `MAX_CONCURRENCY`. Message handling that may call the network (waiting for the account ID, contacts a message needs, sticker labels, media, the model) runs only in a slot. The contact reloads on connect and on group changes run on their own timer, one at a time, and `listAccounts` on each connection's own goroutine. Until the bot's own ID is known, a message waits for it in a slot, up to 10s. A full pool drops the message with a warning.
 - **Per-chat mailbox.** An addressed message, or one a feature delivers, joins its chat's queue; at most 4 wait, and more are dropped with a warning. A chat with work has one worker, holding one slot, which answers the queue in order and then exits, so each answer sees the ones before it. Different chats run in parallel.
 - **Answered together.** Messages that arrive while the worker is busy are answered as one turn, a line each (in a group with the sender's name), so "actually" and "forget it" get one reply that sees both. A message a hook acts on, such as a command, is still answered on its own, in order, and a run is split where it would carry more than 4 images or a second sticker.
@@ -43,12 +43,12 @@ What the bot does with no features registered.
 
 ```
 main.go, features.go    the main package at the module root: wiring, and one line per feature
-internal/signal/        the signal-cli client, names and mentions
+internal/signal/        the chat network, outside the core: the socket, decoding, sending, names; only main imports it
 internal/model/         the model client (OpenRouter or another chat completions API) and the tool loop
 internal/chats/         per-chat state: history, dedupe, mention names, the mailbox
 internal/timers/        one-shot timers
 internal/config/        settings from the environment, each name recorded for the docs test
-internal/bot/           the decision, the prompt, the hooks; wires the packages above
+internal/bot/           the decision, the prompt, the hooks; wires the core packages, and reaches the network through Network
 internal/feature/       the ports and shared types (the only part of the core features import), the command helper, featuretest
 internal/features/*     one package per feature
 internal/kit/*          code with two or more users and no bot knowledge
@@ -56,7 +56,8 @@ internal/arch/          the guardrail tests and the sizes report
 ```
 
 - Core packages are concrete and call each other directly, with no interfaces between them. Files by role, no line limit.
-- `Message`, `Media`, `Picture`, `Turn` and the port types are defined once, in `internal/feature`, and the core uses them directly: nothing is copied or converted.
+- **The network seam.** The bot reaches Signal only through `bot.Network`, defined where it is used: `Run`, `WaitID`, `Send`, `Typing`, `Delivered`, `BotName`, `Media`, `Groups` and `Redact`, all on feature types. `*signal.Client` implements it, `main.go` passes it to `bot.New`, and only the main package imports `internal/signal`. Everything Signal-shaped is in the client: decoding frames, the addressed, own-message and allowlist rules, group changes, and sending (stripping the bot's own @name, splitting, capping, linking mentions, logging truncation). The interface is justified by a test fake: the bot's tests run on an in-memory network.
+- `Message`, `Media`, `Picture`, `Turn`, the port types and `Received` (a message as the network hands it to the core) are defined once, in `internal/feature`, and the core uses them directly: nothing is copied or converted.
 - Kit holds what both the core and features use: `logx`, `txt`, `img` and `httpx`. It gains a package only when a second user appears, and never imports the core.
 
 ## Lifecycle and ports
@@ -206,13 +207,13 @@ For how to add a feature and the checks to run before a change, see [CONTRIBUTIN
 
 Enforced by tests in `internal/arch`:
 
-- **Imports:** only the main package, at the module root, imports features; a feature imports only `internal/feature`, `internal/kit` and its own packages; `internal/feature` imports only kit; kit imports no other internal package, so it never imports the core.
+- **Imports:** only the main package, at the module root, imports features and `internal/signal`; a feature imports only `internal/feature`, `internal/kit` and its own packages; `internal/feature` imports only kit; kit imports no other internal package, so it never imports the core.
 - **No feature names in the core:** the core's source mentions no feature name or feature-only word (chart, pie, MCP, group context, web search, vision, `/example`, `/schedule`).
 - **Docs:** every setting read, the core's or a feature's (`h.Env("NAME", …)`), is in the README's configuration table.
 
 By convention:
 
-- **Zero features:** the core's own tests (`internal/bot`) run with no features registered.
+- **Zero features:** the core's own tests (`internal/bot`) run with no features registered, on an in-memory fake `Network`. The Signal client has its own tests against a fake signal-cli socket, and the scenarios run the real client end to end.
 - **Each feature alone:** each feature's tests run on `featuretest`, a fake host.
 - **Golden prompts** in `testdata` pin the system prompt byte for byte: `prompt_full.txt` with every feature registered, against real fake MCP servers rather than a hand-set list, and `prompt_nofeatures.txt`, checked by the core's own tests with no features (with tool calling on and off) and by a scenario with every feature registered and a model that can't call tools. `go test . -run Golden -update` rewrites both files from the scenarios.
 - **Edge-only scenarios:** `scenario_test.go` drives the whole bot, features included, through a fake signal-cli socket and a fake model API (OpenRouter's or another provider's), and checks what is sent back, what the model receives (which shows the history), and the log, including that no message text, reply, tool argument or result reaches it. [docs/SCENARIOS.md](docs/SCENARIOS.md) describes the harness and maps the tests from before the core was written to the scenarios that cover them.

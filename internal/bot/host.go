@@ -3,15 +3,11 @@ package bot
 import (
 	"cmp"
 	"context"
-	"errors"
-	"slices"
 	"time"
 
 	"github.com/robdevops/signalbot/internal/chats"
 	"github.com/robdevops/signalbot/internal/config"
 	"github.com/robdevops/signalbot/internal/feature"
-	"github.com/robdevops/signalbot/internal/kit/logx"
-	"github.com/robdevops/signalbot/internal/signal"
 )
 
 // The ports. Features call them while they register, before Run.
@@ -46,7 +42,7 @@ func (b *Bot) At(name string, t time.Time, fn func(context.Context, time.Time)) 
 func (b *Bot) Env(key, def string) string { return config.Env(key, def) }
 
 func (b *Bot) Info(feature.Chat) feature.Info {
-	info := feature.Info{Name: b.sig.BotName(), Version: b.cfg.Version, Model: b.cfg.Model,
+	info := feature.Info{Name: b.net.BotName(), Version: b.cfg.Version, Model: b.cfg.Model,
 		Images: b.images, CallsTools: b.callsTools, Tools: b.toolNames()}
 	if b.ai == nil {
 		info.Model = ""
@@ -60,28 +56,13 @@ func (b *Bot) Go(fn func(context.Context)) {
 }
 
 func (b *Bot) Media(ctx context.Context, msg feature.Message, i int) ([]byte, error) {
-	if i < 0 || i >= len(msg.Media) {
-		return nil, errors.New("no such media")
-	}
-	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
-	defer cancel()
-	if m := msg.Media[i]; m.Pack != "" {
-		return b.sig.Sticker(ctx, m.Pack, m.Sticker)
-	}
-	return b.sig.Attachment(ctx, msg.Chat, msg.Media[i].ID)
+	return b.net.Media(ctx, msg, i)
 }
 
-func (b *Bot) Redact(text string) string { return b.sig.Redact(text) }
+func (b *Bot) Redact(text string) string { return b.net.Redact(text) }
 
 func (b *Bot) Groups(ctx context.Context, user string) ([]feature.Group, error) {
-	gs, err := b.sig.Groups(ctx)
-	var out []feature.Group
-	for _, g := range gs {
-		if g.Has(user) {
-			out = append(out, g.Group)
-		}
-	}
-	return out, err
+	return b.net.Groups(ctx, user)
 }
 
 // Deliver acts on msg, in its chat's mailbox, as if its sender had just
@@ -94,53 +75,24 @@ func (b *Bot) Deliver(msg feature.Message) {
 
 // delivered handles a delivered message in its chat's slot. One that
 // mentions the bot, or that a hook acts on, is answered like any addressed
-// message; anything else the bot posts as written.
+// message; anything else the bot posts as written, with @Name linked to
+// the group's members.
 func (b *Bot) delivered(msg feature.Message) {
-	// A feature may deliver before the bot first connects (timers don't):
-	// wait to be connected, and for the bot's own name, to see a mention of
-	// it.
-	ctx, cancel := context.WithTimeout(b.ctx, 10*time.Second)
-	defer cancel()
-	if b.sig.WaitID(ctx) == "" {
-		logx.Warnf("delivered message dropped: not connected to signal-cli after 10s")
+	known := map[string]string{}
+	msg, mentioned, ok := b.net.Delivered(b.ctx, msg, func(name, id string) { chats.Claim(known, name, id) })
+	if !ok {
 		return
 	}
-	b.sig.LoadNames(ctx, &signal.Envelope{})
-	// As from the sender in person, a DM from someone no longer allowed is
-	// dropped. The allowlist may hold their number or their ACI.
-	if allowed := b.cfg.AllowedSenders; msg.Chat.GroupID == "" &&
-		!allowed[msg.Sender] && !allowed[b.sig.Number(msg.Sender)] {
-		logx.Infof("delivered message from %s dropped because not in SIGNAL_DM_USER_IDS", cmp.Or(msg.Sender, "unknown sender"))
-		return
-	}
-	msg.Name = cmp.Or(msg.Name, b.sig.Name(msg.Sender))
 	key := msg.Chat.Key()
-	known := map[string]string{} // the group's members by name, to link @Name
 	if msg.Chat.GroupID != "" {
-		ctx, cancel := context.WithTimeout(b.ctx, 10*time.Second)
-		gs, err := b.sig.Groups(ctx)
-		cancel()
-		if err != nil {
-			logx.Warnf("delivered message dropped: listGroups failed: %v", err)
-			return
-		}
-		i := slices.IndexFunc(gs, func(g signal.Group) bool { return g.ID == msg.Chat.GroupID && g.Has(msg.Sender) })
-		if i < 0 {
-			logx.Infof("delivered message dropped: its sender is not in the group")
-			return
-		}
-		for _, m := range gs[i].Members {
-			chats.Claim(known, b.sig.Name(m.UUID, m.Number), m.UUID) // a member without an ACI is never linked
-		}
 		b.chats.Learn(key, msg.Name, msg.Sender)
 	}
-	text, mentioned := signal.StripAt(msg.Text, b.sig.BotName(), signal.DefaultName)
-	msg.Text, msg.Addressed = text, true
+	msg.Addressed = true
 	if act := b.onMessage(b.ctx, msg); act != (feature.Action{}) || mentioned {
 		b.respond(msg, act, prompt(msg))
 		return
 	}
-	b.send(msg, msg.Text, nil, known)
+	b.net.Send(msg.Chat, msg.Text, nil, known)
 	if b.ai != nil { // with no model, nothing would read it
 		b.chats.Add(key, time.Now(), msg.Expires, chats.Entry{Role: "user", Content: cmp.Or(msg.Name, "someone") + ": " + msg.Text})
 	}

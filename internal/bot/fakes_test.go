@@ -1,22 +1,21 @@
 package bot
 
 import (
-	"bufio"
+	"cmp"
 	"context"
 	"encoding/json"
 	"fmt"
 	"io"
-	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
-	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/robdevops/signalbot/internal/config"
+	"github.com/robdevops/signalbot/internal/feature"
 	"github.com/robdevops/signalbot/internal/kit/logx"
 	"github.com/robdevops/signalbot/internal/model"
 )
@@ -28,77 +27,119 @@ const (
 	groupID = "Z3JvdXA="
 )
 
-// harness is a bot wired to a fake signal-cli socket and a fake model API.
+// harness is a bot on a fake network and a fake model API.
 type harness struct {
 	t    *testing.T
 	b    *Bot
+	net  *fakeNet
 	logs *logx.Buffer
 
 	mu      sync.Mutex
-	conn    net.Conn               // the bot's connection, server side
-	res     map[string]string      // signal-cli method: result JSON
-	calls   []call                 // every signal-cli request
 	asks    []map[string]any       // every model request body
 	answers []func() (int, string) // queued model answers; then "ok"
 	hold    chan struct{}          // while set, the model waits on it
 	tools   bool                   // the model can call tools
 	lists   int                    // model list requests
-	sent    chan map[string]any    // "send" params, in order
-	id      chan struct{}          // if set, listAccounts waits until it is closed
 }
 
-type call struct {
-	Method string
-	Params map[string]any
+// fakeNet is the chat network, in memory. Its rules stand in for Signal's,
+// which the signal package tests: a group's members are Alice and Bob,
+// "@Botty " starts a mention of the bot in a delivered message, and an
+// unaddressed DM is nothing to the core.
+type fakeNet struct {
+	id      chan struct{} // closed once the bot is connected
+	running chan struct{} // closed once Run is receiving
+	handle  func(feature.Received)
+	sent    chan sent // what the bot sends, in order
+	mu      sync.Mutex
+	typing  int      // Typing calls
+	fetched []string // the media IDs fetched
 }
+
+type sent struct {
+	chat        feature.Chat
+	text        string
+	attachments []string
+	known       map[string]string
+}
+
+func (n *fakeNet) Run(ctx context.Context, handle func(feature.Received)) {
+	n.handle = handle
+	close(n.running)
+	<-ctx.Done()
+}
+
+func (n *fakeNet) WaitID(ctx context.Context) string {
+	select {
+	case <-n.id:
+		return botID
+	case <-ctx.Done():
+		return ""
+	}
+}
+
+func (n *fakeNet) Send(chat feature.Chat, text string, attachments []string, known map[string]string) {
+	n.sent <- sent{chat, text, attachments, known}
+}
+
+func (n *fakeNet) Typing(feature.Chat) func() {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	n.typing++
+	return func() {}
+}
+
+func (n *fakeNet) Delivered(ctx context.Context, msg feature.Message, claim func(name, id string)) (feature.Message, bool, bool) {
+	if n.WaitID(ctx) == "" || msg.Chat.GroupID != "" && msg.Chat.GroupID != groupID {
+		return msg, false, false
+	}
+	if msg.Chat.GroupID != "" {
+		claim("Alice", aliceID)
+		claim("Bob", bobID)
+	}
+	msg.Name = cmp.Or(msg.Name, map[string]string{aliceID: "Alice", bobID: "Bob"}[msg.Sender])
+	text, mentioned := strings.CutPrefix(msg.Text, "@Botty ")
+	msg.Text = text
+	return msg, mentioned, true
+}
+
+func (n *fakeNet) BotName() string { return "Botty" }
+
+func (n *fakeNet) Media(_ context.Context, msg feature.Message, i int) ([]byte, error) {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	n.fetched = append(n.fetched, msg.Media[i].ID)
+	return png, nil
+}
+
+func (n *fakeNet) Groups(context.Context, string) ([]feature.Group, error) { return nil, nil }
+
+func (n *fakeNet) Redact(text string) string { return text }
 
 // options for start.
 type options struct {
 	tools    bool
 	otherAPI bool // the fake model API is not taken for OpenRouter's
-	waitID   bool // the bot's ID stays unknown until the test closes h.id
+	waitID   bool // the bot isn't connected until the test closes h.net.id
 	features func(*Bot)
 	cfg      func(*config.Config)
 }
 
-// start runs a bot on the fakes, connected and with its contacts loaded.
-// Everything it started has stopped by the time the test ends.
+// start runs a bot on the fakes. Everything it started has stopped by the
+// time the test ends.
 func start(t *testing.T, o options) *harness {
 	t.Helper()
-	h := &harness{t: t, logs: &logx.Buffer{}, tools: o.tools, sent: make(chan map[string]any, 64), res: map[string]string{
-		"listAccounts":     `[{"number":"+15550000","aci":"` + botID + `"}]`,
-		"listContacts":     `[{"uuid":"` + botID + `","profile":{"givenName":"Botty"}},{"uuid":"` + aliceID + `","givenName":"Alice"},{"uuid":"` + bobID + `","givenName":"Bob"}]`,
-		"listStickerPacks": `[]`,
-		"listGroups":       `[{"id":"` + groupID + `","name":"Family","isMember":true,"members":[{"uuid":"` + botID + `"},{"uuid":"` + aliceID + `","number":"+1555"},{"uuid":"` + bobID + `"}]}]`,
-	}}
+	h := &harness{t: t, logs: &logx.Buffer{}, tools: o.tools,
+		net: &fakeNet{id: make(chan struct{}), running: make(chan struct{}), sent: make(chan sent, 64)}}
 	t.Cleanup(logx.SetOutput(h.logs, h.logs, true))
-	if o.waitID {
-		h.id = make(chan struct{})
+	if !o.waitID {
+		close(h.net.id)
 	}
-
-	sock := filepath.Join(t.TempDir(), "s.sock")
-	ln, err := net.Listen("unix", sock)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { ln.Close() })
-	go func() {
-		for {
-			c, err := ln.Accept()
-			if err != nil {
-				return
-			}
-			h.mu.Lock()
-			h.conn = c
-			h.mu.Unlock()
-			go h.serve(c)
-		}
-	}()
 	srv := httptest.NewServer(http.HandlerFunc(h.model))
 	t.Cleanup(srv.Close)
 
-	cfg := &config.Config{Socket: sock, APIURL: srv.URL, APIKey: "k", Model: "test/test-model", Reasoning: "low", Intro: config.DefaultIntro,
-		AllowedSenders: map[string]bool{aliceID: true}, MaxConcurrency: 4, HistoryTurns: 10}
+	cfg := &config.Config{APIURL: srv.URL, APIKey: "k", Model: "test/test-model", Reasoning: "low", Intro: config.DefaultIntro,
+		MaxConcurrency: 4, HistoryTurns: 10}
 	if o.cfg != nil {
 		o.cfg(cfg)
 	}
@@ -108,7 +149,7 @@ func start(t *testing.T, o options) *harness {
 	if !o.otherAPI {
 		model.OpenRouterHost = u.Hostname() // the fake is OpenRouter
 	}
-	h.b = New(ctx, cfg)
+	h.b = New(ctx, cfg, h.net)
 	model.OpenRouterHost = host
 	if o.features != nil {
 		o.features(h.b)
@@ -123,42 +164,8 @@ func start(t *testing.T, o options) *harness {
 		cancel()
 		<-done
 	})
-	if o.waitID {
-		h.eventually("the bot to connect", func() bool { h.mu.Lock(); defer h.mu.Unlock(); return h.conn != nil })
-	} else {
-		h.eventually("the contacts to load", func() bool { return h.b.sig.BotName() == "Botty" })
-	}
+	<-h.net.running
 	return h
-}
-
-func (h *harness) serve(c net.Conn) {
-	defer c.Close()
-	r := bufio.NewReader(c)
-	for {
-		line, err := r.ReadBytes('\n')
-		if err != nil {
-			return
-		}
-		var req struct {
-			ID     json.RawMessage `json:"id"`
-			Method string          `json:"method"`
-			Params map[string]any  `json:"params"`
-		}
-		json.Unmarshal(line, &req)
-		h.mu.Lock()
-		h.calls = append(h.calls, call{req.Method, req.Params})
-		res, ok := h.res[req.Method]
-		h.mu.Unlock()
-		if req.Method == "send" {
-			h.sent <- req.Params
-		}
-		if req.Method == "listAccounts" && h.id != nil {
-			<-h.id
-		}
-		if ok {
-			fmt.Fprintf(c, `{"jsonrpc":"2.0","result":%s,"id":%s}`+"\n", res, req.ID)
-		}
-	}
 }
 
 // model is the fake model API, OpenRouter's unless otherAPI.
@@ -199,13 +206,6 @@ func reply(text string) string {
 	return `{"choices":[{"message":{"content":` + string(b) + `}}],"usage":{"prompt_tokens":10,"completion_tokens":2,"cost":0.001}}`
 }
 
-// set makes signal-cli answer method with result.
-func (h *harness) set(method, result string) {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	h.res[method] = result
-}
-
 // answer queues the model's next answers.
 func (h *harness) answer(as ...func() (int, string)) {
 	h.mu.Lock()
@@ -231,63 +231,61 @@ func (h *harness) release() {
 	}
 }
 
-// msg is a message to receive.
-type msg struct {
-	from, name, text string
-	number           string // the sender's number, if signal-cli knows it
-	group, atBot     bool
-	images           []string
-	quote            *quoted
-	expires          int
+// receive hands m to the bot as the network would: an addressed message
+// to be loaded in its slot, where the names it shows are learned; any other
+// as it is; and before the bot is connected, any message to wait in its
+// slot.
+func (h *harness) receive(m feature.Message) {
+	load := func(ctx context.Context, learn func(name, id string)) (feature.Message, bool) {
+		if h.net.WaitID(ctx) == "" {
+			return feature.Message{}, false
+		}
+		if m.Addressed && m.Chat.GroupID != "" && m.Name != "" {
+			learn(m.Name, m.Sender)
+		}
+		return m, m.Addressed || m.Chat.GroupID != ""
+	}
+	r := feature.Received{Message: m}
+	select {
+	case <-h.net.id:
+		if m.Addressed {
+			r = feature.Received{Message: feature.Message{Chat: m.Chat, Addressed: true}, Load: load}
+		}
+	default:
+		r = feature.Received{Message: feature.Message{Chat: m.Chat}, Wait: true, Load: load}
+	}
+	h.net.handle(r)
 }
 
-type quoted struct{ author, text string }
-
-func dm(text string) msg { return msg{from: aliceID, name: "Alice", text: text} }
-
-func atBot(text string) msg {
-	return msg{from: aliceID, name: "Alice", text: "\uFFFC " + text, group: true, atBot: true}
+func dm(text string) feature.Message {
+	return feature.Message{Chat: feature.Chat{User: aliceID}, Sender: aliceID, Name: "Alice", Text: text, Addressed: true}
 }
 
-func chatter(text string) msg { return msg{from: bobID, name: "Bob", text: text, group: true} }
+func atBot(text string) feature.Message {
+	return feature.Message{Chat: feature.Chat{GroupID: groupID}, Sender: aliceID, Name: "Alice", Text: text, Addressed: true}
+}
 
-// receive sends m to the bot as signal-cli would.
-func (h *harness) receive(m msg) {
-	d := map[string]any{"message": m.text, "expiresInSeconds": m.expires}
-	if m.group {
-		d["groupInfo"] = map[string]any{"groupId": groupID, "type": "DELIVER"}
+func chatter(text string) feature.Message {
+	return feature.Message{Chat: feature.Chat{GroupID: groupID}, Sender: bobID, Name: "Bob", Text: text}
+}
+
+// with adds images to m.
+func with(m feature.Message, ids ...string) feature.Message {
+	for _, id := range ids {
+		m.Media = append(m.Media, feature.Media{ID: id, Type: "image/png"})
 	}
-	if m.atBot {
-		d["mentions"] = []any{map[string]any{"uuid": botID, "name": "Botty", "start": 0, "length": 1}}
-	}
-	if q := m.quote; q != nil {
-		d["quote"] = map[string]any{"author": q.author, "authorUuid": q.author, "text": q.text}
-	}
-	var atts []any
-	for _, id := range m.images {
-		atts = append(atts, map[string]any{"id": id, "contentType": "image/png", "size": 100})
-	}
-	d["attachments"] = atts
-	env := map[string]any{"source": m.from, "sourceUuid": m.from, "sourceName": m.name, "dataMessage": d}
-	if m.number != "" {
-		env["sourceNumber"] = m.number
-	}
-	frame, _ := json.Marshal(map[string]any{"jsonrpc": "2.0", "method": "receive", "params": map[string]any{"envelope": env}})
-	h.mu.Lock()
-	c := h.conn
-	h.mu.Unlock()
-	c.Write(append(frame, '\n'))
+	return m
 }
 
 // nextSend is the next message the bot sends.
-func (h *harness) nextSend() map[string]any {
+func (h *harness) nextSend() sent {
 	h.t.Helper()
 	select {
-	case s := <-h.sent:
+	case s := <-h.net.sent:
 		return s
 	case <-time.After(5 * time.Second):
 		h.t.Fatalf("nothing sent; logs:\n%s", h.logs)
-		return nil
+		return sent{}
 	}
 }
 
@@ -295,14 +293,20 @@ func (h *harness) nextSend() map[string]any {
 func (h *harness) noSend() {
 	h.t.Helper()
 	select {
-	case s := <-h.sent:
-		h.t.Fatalf("sent %v", s)
+	case s := <-h.net.sent:
+		h.t.Fatalf("sent %+v", s)
 	case <-time.After(100 * time.Millisecond):
 	}
 }
 
+func (h *harness) typing() int {
+	h.net.mu.Lock()
+	defer h.net.mu.Unlock()
+	return h.net.typing
+}
+
 // ask receives m and returns the model request and the reply sent.
-func (h *harness) ask(m msg) (map[string]any, map[string]any) {
+func (h *harness) ask(m feature.Message) (map[string]any, sent) {
 	h.t.Helper()
 	n := len(h.requests())
 	h.receive(m)
@@ -318,18 +322,6 @@ func (h *harness) requests() []map[string]any {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	return append([]map[string]any(nil), h.asks...)
-}
-
-func (h *harness) calledWith(method string) []map[string]any {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	var out []map[string]any
-	for _, c := range h.calls {
-		if c.Method == method {
-			out = append(out, c.Params)
-		}
-	}
-	return out
 }
 
 func (h *harness) eventually(what string, ok func() bool) {
