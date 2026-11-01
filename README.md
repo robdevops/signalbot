@@ -210,15 +210,17 @@ The model can call tools from [MCP](https://modelcontextprotocol.io) servers, re
 | `allowed_tools` / `blocked_tools` | offer only these tools, or every tool but these |
 | `instructions` | a line added to the system prompt while the server's tools are offered (see below) |
 | `keywords` | offer the server's tools only when a message has one of these words (see below) |
-| `chat_commands` | slash commands for a tool: `tool` names it, `require_arg` makes a bare command get a usage reply |
+| `chat_commands` | optional slash-command shortcuts to a tool (you can always just ask): `tool` names it, `require_arg` makes a bare command get a usage reply |
 | `disabled` | leave the server out without deleting it |
 
-`chat_commands` turn a server's tools into slash commands: `/forecast sydney this weekend` asks the model, which gets that tool on top of whatever else is on and must call it first. With `require_arg`, a bare `/forecast` gets a usage reply from the bot without asking the model.
+**You don't need a command to use the tools: just ask.** For example, `@signalbot what's the weather in Sydney this weekend?` The model sees every tool that's offered and decides when to call one. Without `keywords` a server's tools are always offered; with them, the message needs one of its words, such as `weather` or `forecast` above.
 
 Two optional fields shape how a server's tools are offered:
 
 - `instructions` is a line added to the system prompt while the server's tools are offered. MCP servers can send their own `instructions` when the bot connects (the MCP spec's hint for the system prompt); without this key those are used, capped at 1,000 characters. Set it to replace them, or to `""` to use none.
 - `keywords` offers the server's tools only when a message contains one of the words, ignoring capitals and matching whole words only, and for the 2 replies after one that matched or used its tools. Without it, the tools are always offered. A chat command always gets its tool.
+
+`chat_commands` are optional shortcuts on top of asking. `/forecast sydney this weekend` asks the model, which gets that tool on top of whatever else is on and must call it first. With `require_arg`, a bare `/forecast` gets a usage reply from the bot without asking the model.
 
 A server that can't be reached at startup is logged and left out. A tool named in either list that the server doesn't have is a config error, so a typo can't leave a blocked tool offered. Local servers get only `PATH`, `HOME` and their `env`, never the bot's own environment.
 
