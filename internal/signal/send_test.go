@@ -97,6 +97,9 @@ func TestParts(t *testing.T) {
 	if got := texts(parts("@Bot hi @Alice", "Bot")); !reflect.DeepEqual(got, []string{"hi @Alice"}) {
 		t.Errorf("got %q", got)
 	}
+	if got := texts(parts("I respond to @Bot and @Alice", "Bot")); !reflect.DeepEqual(got, []string{"I respond to @Bot and @Alice"}) {
+		t.Errorf("a self-mention not at the start stays: %q", got)
+	}
 	if got := parts("  ", "Bot"); got != nil {
 		t.Errorf("blank: %q", texts(got))
 	}

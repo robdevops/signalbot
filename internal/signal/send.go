@@ -33,7 +33,8 @@ func (c *Client) Prompt() string {
 }
 
 // Send posts text to chat as parts makes it, with each @Name in known
-// (lowercased name to ID) made a real mention and the images on the first
+// (lowercased name to ID), and in a group the bot's own @name, made a real mention, and
+// the images on the first
 // message, each named after its Name or else image_<local time>. A failure
 // is logged, as is a message signal-cli says it could not deliver.
 func (c *Client) Send(chat feature.Chat, text string, pics []feature.Picture, known map[string]string) {
@@ -55,6 +56,14 @@ func (c *Client) Send(chat feature.Chat, text string, pics []feature.Picture, kn
 			mime, name, strings.TrimPrefix(mime, "image/"), base64.StdEncoding.EncodeToString(p.Data)))
 	}
 	ps := parts(text, c.BotName())
+	if id := c.self(); id != "" && chat.GroupID != "" { // in a group, "@" and its own name mentions the bot
+		k := maps.Clone(known)
+		if k == nil {
+			k = map[string]string{}
+		}
+		k[txt.SafeName(c.BotName())] = id
+		known = k
+	}
 	if len(ps) == 0 {
 		if len(attachments) == 0 {
 			logx.Warnf("empty reply, nothing sent")
@@ -132,11 +141,15 @@ func (c *Client) Typing(chat feature.Chat) (stop func()) {
 }
 
 // parts turns a reply into the messages to send: its Markdown converted,
-// without the bot's own @name, capped as a whole at maxReply, and split at
-// Signal's limit, preferring a line break and then a space. A style
+// without a leading @ and the bot's own name (an echo of how it was
+// addressed; elsewhere it is a mention), capped as a whole at maxReply, and
+// split at Signal's limit, preferring a line break and then a space. A style
 // carries on across a split.
 func parts(reply, self string) []styled {
-	s, _ := strip(markdown(reply), self)
+	s := markdown(reply)
+	if sp := findAt(s.text, map[string]string{txt.SafeName(self): ""}); len(sp) > 0 && strings.TrimSpace(string(s.text[:sp[0].start])) == "" {
+		s.text, s.style = s.text[sp[0].end:], s.style[sp[0].end:]
+	}
 	if len(s.text) > maxReply {
 		n := maxReply - utf8.RuneCountInString(truncated)
 		s.text, s.style = s.text[:n], s.style[:n]
