@@ -174,9 +174,13 @@ func wrapLabel(f font.Face, text string, width float64) []string {
 	return []string{first, fitText(f, rest, width)}
 }
 
-// renderPie draws the chart, a ring with the total in its hole, in theme th
-// as a PNG.
+// renderPie draws the chart in theme th as a PNG.
 func renderPie(s *pieSpec, th *theme) ([]byte, error) {
+	return drawPie(s, th).encode()
+}
+
+// drawPie draws the chart, a ring with the total in its hole, in theme th.
+func drawPie(s *pieSpec, th *theme) *canvas {
 	cv := newCanvas(th, s.Title, s.Subtitle, s.Source)
 	legendFace := face(chartFonts.regular, 26)
 	defer legendFace.Close()
@@ -264,5 +268,5 @@ func renderPie(s *pieSpec, th *theme) ([]byte, error) {
 		}
 		y += float64(len(lines))*lineH + rowGap
 	}
-	return cv.encode()
+	return cv
 }

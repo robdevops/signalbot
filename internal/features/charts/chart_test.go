@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"image"
+	"image/color"
 	"image/png"
 	"math"
 	"os"
@@ -370,7 +371,6 @@ func twelvePie(wrapEvery int) string {
 // reaches, for both chart kinds; without one the band is empty, and the rest
 // of the chart is the same either way.
 func TestChartSource(t *testing.T) {
-	h := register(t)
 	dir := os.Getenv("CHART_THEMES")
 	band := image.Rect(0, sourceTop, width, height)
 	source := `"source":"Yahoo Finance, finance.yahoo.com/quote/NVDA/history, retrieved 28 Oct 2026",`
@@ -384,10 +384,17 @@ func TestChartSource(t *testing.T) {
 		{"line-wide", chartTool, wide, sampleChart()},
 		{"pie-wide", pieTool, wide, alphabetPie},
 	} {
-		with := draw(t, h, tc.tool, "{"+tc.source+tc.args[1:])
-		without := decode(t, draw(t, h, tc.tool, tc.args)).(*image.RGBA)
-		img := decode(t, with).(*image.RGBA)
-		inBand := func(m *image.RGBA, r image.Rectangle) int {
+		drawnWith, drawnWithout := canvasOf(t, tc.tool, "{"+tc.source+tc.args[1:]), canvasOf(t, tc.tool, tc.args)
+		with, err := drawnWith.encode()
+		if err != nil {
+			t.Fatal(err)
+		}
+		data, err := drawnWithout.encode()
+		if err != nil {
+			t.Fatal(err)
+		}
+		img, without := decode(t, with), decode(t, data)
+		inBand := func(m image.Image, r image.Rectangle) int {
 			return r.Dx()*r.Dy() - countColour(m, r, lightTheme.bg)
 		}
 		if n := inBand(without, band); n != 0 {
@@ -403,7 +410,9 @@ func TestChartSource(t *testing.T) {
 		if strings.HasPrefix(tc.name, "pie-twelve") && inBand(without, image.Rect(width/2, 0, width, 100)) != 0 {
 			t.Errorf("%s: the legend reaches the title", tc.name)
 		}
-		if off := img.PixOffset(0, sourceTop); !bytes.Equal(img.Pix[:off], without.Pix[:off]) {
+		// Compared as drawn, since the PNG's palette depends on the whole image.
+		a, b := drawnWith.img, drawnWithout.img
+		if off := a.PixOffset(0, sourceTop); !bytes.Equal(a.Pix[:off], b.Pix[:off]) {
 			t.Errorf("%s: the source changed the chart above it", tc.name)
 		}
 		if dir != "" {
@@ -411,6 +420,81 @@ func TestChartSource(t *testing.T) {
 		}
 	}
 }
+
+// canvasOf is a chart tool's chart as drawn in the light theme, before
+// it is encoded.
+func canvasOf(t *testing.T, tool, args string) *canvas {
+	t.Helper()
+	if tool == pieTool {
+		s, err := parsePie(args)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return drawPie(s, lightTheme)
+	}
+	s, err := parseChart(args)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return drawChart(s, lightTheme)
+}
+
+// A chart is encoded in at most 256 colours: a PNG of the same size, under
+// half as big as full colour, with the background and the theme's colours
+// exact and every pixel close to how it was drawn.
+func TestEncode(t *testing.T) {
+	line, err := parseChart(sixSeries())
+	if err != nil {
+		t.Fatal(err)
+	}
+	pie, err := parsePie(alphabetPie)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		name string
+		cv   *canvas
+		th   *theme
+	}{
+		{"light line", drawChart(line, lightTheme), lightTheme},
+		{"dark line", drawChart(line, darkTheme), darkTheme},
+		{"light pie", drawPie(pie, lightTheme), lightTheme},
+		{"dark pie", drawPie(pie, darkTheme), darkTheme},
+	} {
+		var full bytes.Buffer
+		if err := png.Encode(&full, tc.cv.img); err != nil {
+			t.Fatal(err)
+		}
+		data, err := tc.cv.encode()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(data) > full.Len()/2 {
+			t.Errorf("%s: %d bytes, against %d in full colour", tc.name, len(data), full.Len())
+		}
+		img := decode(t, data)
+		if img.Bounds() != image.Rect(0, 0, width, height) {
+			t.Fatalf("%s: %v", tc.name, img.Bounds())
+		}
+		if countColour(img, image.Rect(5, 5, 6, 6), tc.th.bg) != 1 || countColour(img, img.Bounds(), tc.th.palette[0]) == 0 {
+			t.Errorf("%s: the background or the first series colour changed", tc.name)
+		}
+		m, ok := img.(*image.Paletted)
+		if !ok {
+			t.Fatalf("%s: decoded as %T", tc.name, img)
+		}
+		worst := 0
+		for i, pi := range m.Pix { // the canvas and the PNG are both rows of width pixels
+			a, b := tc.cv.img.Pix[4*i:4*i+3], color.RGBAModel.Convert(m.Palette[pi]).(color.RGBA)
+			worst = max(worst, absDiff(a[0], b.R), absDiff(a[1], b.G), absDiff(a[2], b.B))
+		}
+		if worst > 48 {
+			t.Errorf("%s: a pixel is %d off", tc.name, worst)
+		}
+	}
+}
+
+func absDiff(a, b uint8) int { return max(int(a)-int(b), int(b)-int(a)) }
 
 // The source is trimmed and clamped to 80 runes.
 func TestChartSourceClamp(t *testing.T) {

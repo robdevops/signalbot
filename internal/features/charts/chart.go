@@ -541,15 +541,71 @@ func fitText(f font.Face, s string, w float64) string {
 	return s
 }
 
-// encode is the chart as a PNG.
+// encode is the chart as a PNG of at most 256 colours, about a third the
+// size of full colour with no visible change. Colours that differ only in
+// their low bits, the in-between shades of anti-aliased edges, are grouped,
+// by as few bits as fit 256 groups (at most 4 of 8), and each group is drawn
+// in its most common colour, so the theme's colours stay exact. Groups past
+// 256, if any, take the nearest colour kept.
 func (cv *canvas) encode() ([]byte, error) {
+	pix := cv.img.Pix
+	rgb := func(i int) uint32 { return uint32(pix[i])<<16 | uint32(pix[i+1])<<8 | uint32(pix[i+2]) }
+	counts := map[uint32]int{} // pixels of each colour
+	for i := 0; i < len(pix); i += 4 {
+		counts[rgb(i)]++
+	}
+	var mask uint32
+	best, size := map[uint32]uint32{}, map[uint32]int{} // each group's most common colour, and its pixels
+	for bits := 0; bits <= 4; bits++ {
+		mask = uint32(0xff<<bits&0xff) * 0x010101
+		clear(best)
+		clear(size)
+		for c, n := range counts {
+			g := c & mask
+			if b, ok := best[g]; !ok || n > counts[b] || n == counts[b] && c < b {
+				best[g] = c
+			}
+			size[g] += n
+		}
+		if len(best) <= 256 {
+			break
+		}
+	}
+	groups := make([]uint32, 0, len(best))
+	for g := range best {
+		groups = append(groups, g)
+	}
+	slices.SortFunc(groups, func(a, b uint32) int { return cmp.Or(size[b]-size[a], cmp.Compare(a, b)) })
+	groups = groups[:min(256, len(groups))]
+	pal := make(color.Palette, len(groups))
+	index := map[uint32]uint8{} // of each group kept
+	for i, g := range groups {
+		c := best[g]
+		pal[i], index[g] = color.RGBA{uint8(c >> 16), uint8(c >> 8), uint8(c), 0xff}, uint8(i)
+	}
+	for c := range counts { // counts now holds each colour's index
+		i, ok := index[c&mask]
+		if !ok {
+			i = uint8(pal.Index(color.RGBA{uint8(c >> 16), uint8(c >> 8), uint8(c), 0xff}))
+		}
+		counts[c] = int(i)
+	}
+	out := image.NewPaletted(cv.img.Rect, pal)
+	for i := range out.Pix {
+		out.Pix[i] = uint8(counts[rgb(4*i)])
+	}
 	var buf bytes.Buffer
-	err := png.Encode(&buf, cv.img)
+	err := png.Encode(&buf, out)
 	return buf.Bytes(), err
 }
 
 // renderChart draws the chart in theme th as a PNG.
 func renderChart(s *chartSpec, th *theme) ([]byte, error) {
+	return drawChart(s, th).encode()
+}
+
+// drawChart draws the chart in theme th.
+func drawChart(s *chartSpec, th *theme) *canvas {
 	const left, top, bottom = 100.0, 125.0, 700.0
 	two, single := s.right.used, len(s.Series) == 1
 	right, labelX := 1000.0, 1030.0 // plot edge, end labels
@@ -619,7 +675,7 @@ func renderChart(s *chartSpec, th *theme) ([]byte, error) {
 	} else {
 		drawLines(cv, s, px, top, bottom, right, labelX, two)
 	}
-	return cv.encode()
+	return cv
 }
 
 // drawLines draws two or more series, each with an end label.
