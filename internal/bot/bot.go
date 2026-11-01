@@ -26,13 +26,14 @@ import (
 type Network interface {
 	// Run calls handle for each message received until ctx ends. handle
 	// must not block.
-	Run(ctx context.Context, handle func(feature.Received))
+	Run(ctx context.Context, handle func(Received))
 	WaitID(ctx context.Context) string
-	Send(chat feature.Chat, text string, images [][]byte, known map[string]string)
+	Send(chat feature.Chat, text string, pics []feature.Picture, known map[string]string)
 	Typing(chat feature.Chat) (stop func())
-	// Delivered returns msg without the bot's @name, and whether that was
-	// there; ok is false, logged, if msg is dropped.
-	Delivered(ctx context.Context, msg feature.Message, claim func(name, id string)) (out feature.Message, mentioned, ok bool)
+	// Delivered readies a delivered message in its slot: its sender's name
+	// filled in, the bot's @name stripped (Mentioned if it was there), and
+	// in a group the Members. ok is false, logged, if msg is dropped.
+	Delivered(ctx context.Context, msg feature.Message) (r Received, ok bool)
 	// BotName never blocks.
 	BotName() string
 	// Prompt is the network's own line in the system prompt, such as its
@@ -43,21 +44,45 @@ type Network interface {
 	Redact(text string) string
 }
 
+// Received is a message as the chat network hands it to the core: on the
+// network's reader goroutine, as a feature delivers it, or as Delivered
+// readies that. It is what a chat's mailbox holds. Features never see one.
+type Received struct {
+	feature.Message      // what is known without calling the network
+	GroupChange     bool // only that a group's members, name or description changed
+	// Load completes, in its slot, an addressed message, or one that arrived
+	// before the bot's own ID was known. It may call the network, and calls
+	// learn with each name it shows the model and that person's ID. It
+	// reports false for a message the core has nothing to do with. It is nil
+	// for an unaddressed group message and for a delivered one.
+	Load func(ctx context.Context, learn func(name, id string)) (feature.Message, bool)
+
+	// Set only by Delivered.
+	Mentioned bool     // the text had the bot's @name, now stripped
+	Members   []Member // a group's members, whose @Name a post links
+}
+
+// Member is a group member: a display name and the network's ID for them,
+// "" if they can never be linked.
+type Member struct{ Name, ID string }
+
 // Bot is the core, and the Host features register on.
 type Bot struct {
 	cfg      *config.Config
 	net      Network
 	ai       *model.Client // nil with no model
-	chats    *chats.Store
+	chats    *chats.Store[Received]
 	timers   *timers.Timers
 	slots    chan struct{} // one per chat being worked on
 	ctx      context.Context
 	stop     context.CancelFunc // stops the timers
 	timerCtx context.Context
 	closing  atomic.Bool    // no new work starts
-	running  sync.WaitGroup // what features run with Go
+	running  sync.WaitGroup // the timers, and what features run with Go
 
-	images, callsTools bool // what the model can do, read by New
+	// What the model can do, read by New. Either turns off for the rest of
+	// the run when the API rejects a request carrying it.
+	images, callsTools atomic.Bool
 
 	// The hooks and tool groups, in feature order. Features register them
 	// before Run.
@@ -80,9 +105,11 @@ func New(ctx context.Context, cfg *config.Config, net Network) *Bot {
 		return b
 	}
 	b.ai = model.New(cfg)
-	b.images, b.callsTools = b.ai.Capabilities(ctx)
-	logx.Noticef("model %s, reasoning %s, images %v, tools %v", cfg.Model, cfg.Reasoning, b.images, b.callsTools)
-	if !b.callsTools {
+	images, tools := b.ai.Capabilities(ctx)
+	b.images.Store(images)
+	b.callsTools.Store(tools)
+	logx.Noticef("model %s, reasoning %s, images %v, tools %v", cfg.Model, cfg.Reasoning, images, tools)
+	if !tools {
 		logx.Warnf("model %s can't call tools, so tools are off", cfg.Model)
 	}
 	return b
@@ -93,16 +120,13 @@ func New(ctx context.Context, cfg *config.Config, net Network) *Bot {
 // features run with Go. A timer due at startup so waits for the network
 // however long it takes to come up, rather than delivering into nothing.
 func (b *Bot) Run() {
-	done := make(chan struct{})
-	go func() {
-		defer close(done)
+	b.running.Go(func() {
 		if b.net.WaitID(b.timerCtx) != "" {
 			b.timers.Run(b.timerCtx)
 		}
-	}()
+	})
 	b.net.Run(b.ctx, b.handle)
 	b.stop()
-	<-done
 	b.running.Wait()
 }
 
@@ -127,7 +151,7 @@ func (b *Bot) Shutdown(d time.Duration) {
 // so it never blocks or calls the network. A message to load goes to its
 // chat's mailbox; an unaddressed group message goes to the OnMessage hooks
 // here, and is never logged.
-func (b *Bot) handle(r feature.Received) {
+func (b *Bot) handle(r Received) {
 	switch {
 	case b.closing.Load():
 	case r.GroupChange:
@@ -160,8 +184,8 @@ func (b *Bot) spawn(worker func()) bool {
 }
 
 // post adds r to its chat's mailbox.
-func (b *Bot) post(r feature.Received) {
-	switch err := b.chats.Post(r); {
+func (b *Bot) post(r Received) {
+	switch err := b.chats.Post(r.Chat.Key(), r); {
 	case errors.Is(err, chats.ErrNoSlot):
 		logx.Warnf("at capacity (%d), dropping message", b.cfg.MaxConcurrency)
 	case err != nil:
@@ -176,7 +200,7 @@ func (b *Bot) post(r feature.Received) {
 // an answer), a delivered one, and one that waited for the bot's
 // ID and was not addressed after all. A panic loses only the message or
 // turn that caused it, and nothing new starts once shutdown begins.
-func (b *Bot) work(rs []feature.Received) {
+func (b *Bot) work(rs []Received) {
 	var batch []feature.Message
 	flush := func() {
 		run := batch
@@ -295,7 +319,7 @@ func merge(msgs []feature.Message) (feature.Message, string) {
 
 // load completes a message in its chat's slot. An addressed one is logged
 // as it arrives, and reported false if it is a repeat.
-func (b *Bot) load(r feature.Received) (feature.Message, bool) {
+func (b *Bot) load(r Received) (feature.Message, bool) {
 	key := r.Chat.Key()
 	msg, ok := r.Load(b.ctx, func(name, id string) { b.chats.Learn(key, name, id) })
 	if !ok || !msg.Addressed {

@@ -19,7 +19,7 @@ A small, [privacy-conscious](PRIVACY.md) chat bot that connects to a running [si
 ## Features
 
 - Responds to @mentions, replies to its messages, and DMs from senders in `SIGNAL_DM_USER_IDS`
-- Tools: web search, built-in line and pie charts, and your own [MCP](#mcp-tools) tools
+- Tools: web search, built-in line and pie charts (with the data's source, such as the site or tool, written small under the chart), and your own [MCP](#mcp-tools) tools
 - [`/schedule`](#scheduling) a message or command, once or repeating, in a DM or a group
 - Understands images and stickers (if the configured model supports vision)
 - Typing indicators
@@ -68,13 +68,13 @@ Then install the bot with systemd or with Docker.
 
 ### With systemd
 
-The bot runs as a dynamic user (`DynamicUser=yes`) in the `signal-cli` Unix group, which is how it reaches the socket. Its schedules are kept in its state directory (`StateDirectory=signalbot`, which is `/var/lib/private/signalbot` with a dynamic user), which systemd creates and passes to it as `$STATE_DIRECTORY`.
+The bot runs as a dynamic user (`DynamicUser=yes`) in the `signal-cli` Unix group, which is how it reaches the socket. Its schedules are kept in its state directory (`StateDirectory=signalbot`, which is `/var/lib/private/signalbot` with a dynamic user), which systemd creates and passes to it as `$STATE_DIRECTORY`. If the bot can't write there (for example, a copy of the unit without that line), it exits at startup asking for it.
 
-1. Install Go 1.24+:
+1. Install Go 1.27+:
    ```
-   curl -fsSLO https://go.dev/dl/go1.24.7.linux-amd64.tar.gz
+   curl -fsSLO https://go.dev/dl/go1.27.3.linux-amd64.tar.gz
    sudo rm -rf /usr/local/go
-   sudo tar -C /usr/local -xzf go1.24.7.linux-amd64.tar.gz
+   sudo tar -C /usr/local -xzf go1.27.3.linux-amd64.tar.gz
    ```
 2. Build and install:
    ```
@@ -135,21 +135,21 @@ Add the bot's account to a group and @mention it, reply to one of its messages, 
 | `MODEL_API_URL` | `https://openrouter.ai/api/v1` | Base URL of an OpenAI-compatible chat completions API; see [Other providers](#other-providers) |
 | `MODEL` | `deepseek/deepseek-v4.1-flash-1017` | The model's name at the API: on OpenRouter as `provider/model` |
 | `MODEL_REASONING` | `low` | Reasoning effort, e.g. `low`, `medium`, `high` (`none` to omit). Sent as OpenRouter's `reasoning.effort`, or elsewhere as `reasoning_effort` |
-| `MODEL_SEARCH` | `true` | Lets the model search the web (OpenRouter's web search tool) when it decides to; searches are billed. Only on OpenRouter: on another API it is left out, with a warning. Accepts `true`/`false`, `yes`/`no`, `on`/`off`, `1`/`0` |
+| `MODEL_SEARCH` | `true` | Lets the model search the web (OpenRouter's web search tool) when it decides to, citing the sites it uses by url; searches are billed. Only on OpenRouter: on another API it is left out, with a warning. Accepts `true`/`false`, `yes`/`no`, `on`/`off`, `1`/`0` |
 | `SIGNAL_DM_USER_IDS` | empty | UUIDs/numbers allowed to DM the bot, separated by commas or whitespace |
-| `MODEL_SYSTEM_PROMPT` | empty | Extra instructions, appended to the built-in prompt (which keeps answers short and Signal-sized) |
+| `MODEL_SYSTEM_PROMPT` | empty | Extra instructions, appended to the built-in prompt (which keeps answers short and Signal-sized and, when the model has tools, asks it to name its source) |
 | `INTRO` | built-in sentence | Overrides the self-introduction; `{name}`, `{model}` (without any OpenRouter `provider/` prefix) and `{tools}` (the names of the tools, or `none`) are substituted |
 | `MAX_CONCURRENCY` | `32` | Conversations in flight at once; messages beyond this are dropped |
 | `HISTORY_TURNS` | `10` | Exchanges remembered per chat (`HISTORY_TURNS` × 2 messages) |
 | `GROUP_CONTEXT` | `true` | Remember group messages not addressed to the bot as context, so "what do you think @bot" works without replying to the message; they are never logged |
 | `MCP_CONFIG` | empty | Path of an MCP servers file; see [MCP tools](#mcp-tools) |
-| `STATE_DIRECTORY` | working directory | Where `/schedule` saves `schedules.json`. Set by systemd's `StateDirectory=signalbot` (`/var/lib/private/signalbot`) and by the Docker image (`/data`, which must be writable by user 65532) |
+| `STATE_DIRECTORY` | working directory | Where `/schedule` saves `schedules.json`; the bot won't start if it can't list and write it. Set by systemd's `StateDirectory=signalbot` (`/var/lib/private/signalbot`) and by the Docker image (`/data`, which must be writable by user 65532) |
 | `DARKMODE` | `off` | Chart colours: `off` for light charts, `on` for dark, `auto` for dark from 21:00 to 07:00 in `TZ` and light otherwise |
 | `TZ` | `UTC` in Docker, the host's under systemd | Time zone for `/schedule` times without an offset and for `DARKMODE=auto`, e.g. `Australia/Sydney` |
 
 `OPENROUTER_API_KEY` is now `MODEL_API_KEY`, and `REASONING` and `SYSTEM_PROMPT` are now `MODEL_REASONING` and `MODEL_SYSTEM_PROMPT`; the old names are ignored. `LOG_LEVEL` is gone: every level is always written (see [Logs](TECHNICAL.md#logs)).
 
-The default `INTRO` is four short paragraphs: `hi, I'm {name}, your open source assistant running {model}.`, `Tools:` then `{tools}`, one tool category per paragraph, then `{more}`, lines features add (such as `Type "/schedule" for schedules and reminders.`), then `I respond to @mentions and replies to my messages.` and `See https://github.com/robdevops/signalbot/blob/main/README.md for details.`
+The default `INTRO` is four short paragraphs: `hi, I'm *{name}*, your open source assistant running {model}.`, `Tools:` then `{tools}`, one tool category per paragraph, then `{more}`, lines features add (such as `Type "/schedule" for schedules and reminders.`), then `I respond to @{name} and replies to my messages.` and `See https://github.com/robdevops/signalbot/blob/main/README.md for details.`
 
 The cost logged with each reply is the amount OpenRouter reports billing for it. An API that reports no cost gets none logged.
 
@@ -167,7 +167,7 @@ What differs from OpenRouter:
 
 - OpenRouter's extras are sent only to OpenRouter: the request not to use providers that collect data, and the request for the cost. Read your provider's own data policy.
 - `MODEL_REASONING` goes as the standard `reasoning_effort`. Some APIs reject it for a model that doesn't reason; set `none` to leave it out.
-- Only OpenRouter's model list says what a model supports, so elsewhere images are off and tools stay on, as the startup log says. A model that can't call tools may then fail when offered them: set `MODEL_SEARCH=false` and leave out `MCP_CONFIG` if so (the chart tools are offered only when a message asks for a chart).
+- Only OpenRouter's model list says what a model supports, so elsewhere the bot assumes the model takes images and can call tools, as the startup log says. If the API rejects a request with images (a 400 or 422), the bot logs a warning, answers that message without them (the model is told it can't see them) and sends no more images until it restarts; the same goes for tools, and chat commands then answer that they need tools. Usually only that first rejected request is wasted; when a message carried both and the tools were the problem, two are, and images stay on.
 - OpenRouter's web search runs only on OpenRouter; elsewhere it is left out, with a warning at startup.
 - An `https://` API must offer TLS 1.3. A local one can be plain `http://`.
 - Under Docker, `localhost` is the container itself: reach a server on the host with `--add-host=host.docker.internal:host-gateway` and `MODEL_API_URL=http://host.docker.internal:11434/v1`, with the server listening on the Docker bridge address as well as 127.0.0.1 (for Ollama, `OLLAMA_HOST=172.17.0.1:11434`, which the host and its containers can both reach), or with its port firewalled. Ollama has no authentication, so `OLLAMA_HOST=0.0.0.0` lets anyone who can reach the port use it (PRIVACY RISK).
@@ -244,6 +244,7 @@ For example `/schedule "@signalbot what's the weather today?" 2030-01-31T07:30 e
 - The time is like `2030-01-31T09:00`, in the bot's time zone (`TZ`), or with an offset, like `2030-01-31T09:00+10:00`. A one-off in the past is refused; a repeating schedule that starts in the past first runs at its next time. A monthly schedule from the 31st runs on the last day of shorter months.
 - The group name is the rest of the line, with no quotes needed. It is matched among the groups you share with the bot, ignoring capitals, emoji and extra spaces, so `family` finds "🏡 Family 🎉". No match, or more than one, is refused with your groups listed. A schedule keeps the group's ID, so it survives a rename; if you leave the group its runs are dropped until you delete it.
 - `/timer`, `/reminder` and `/job` work the same as `/schedule`.
+- When the model can call tools, it is told these four commands, so asking it for a reminder, or mistyping one as `/time`, gets you pointed to them.
 - Straight and curly quotes both work. A schedule can't run `/schedule`, `/timer`, `/reminder` or `/job`, so it can't make more schedules. The bot never answers its own posts, so a scheduled message that @mentions it gets exactly one answer.
 - If the bot was down when a run was due, a repeating schedule skips it and a one-off up to an hour late still runs; an older one-off is dropped.
 - Schedules are saved in `schedules.json` in `STATE_DIRECTORY` until deleted. See [PRIVACY.md](PRIVACY.md).

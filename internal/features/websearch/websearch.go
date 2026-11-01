@@ -14,6 +14,9 @@ import (
 // lists it in Info.Tools only if it kept the tool.
 const label = "**web search**"
 
+// system is the group's system-prompt line while it is offered.
+const system = "When you use web search, cite the sites you used by url."
+
 // Register offers web search on h unless MODEL_SEARCH turns it off or there
 // is no model. "web search on" is logged only when the host kept the tool:
 // one whose API can't run it drops it and says so.
@@ -26,6 +29,7 @@ func Register(h feature.Host) error {
 	h.Tools(feature.ToolGroup{
 		Names:   []string{label},
 		Listing: "web search",
+		System:  system,
 		Tools:   []feature.Tool{{Server: "openrouter:web_search"}},
 	})
 	if info := h.Info(); info.CallsTools && !slices.Contains(info.Tools, label) {

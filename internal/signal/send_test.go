@@ -17,7 +17,7 @@ func TestSendSplitsAndCaps(t *testing.T) {
 	c := newClient(f.sock, nil, nil)
 	run(t, c, f)
 	dm := feature.Chat{User: aliceID}
-	c.Send(dm, strings.Repeat("z ", 3*maxChars), [][]byte{[]byte("PNG")}, nil)
+	c.Send(dm, strings.Repeat("z ", 3*maxChars), []feature.Picture{{Data: []byte("PNG")}}, nil)
 	eventually(t, "four sends", func() bool { return len(f.calls("send")) == 4 })
 	for i, s := range f.calls("send") {
 		if (s["attachments"] != nil) != (i == 0) {
@@ -28,7 +28,7 @@ func TestSendSplitsAndCaps(t *testing.T) {
 		t.Errorf("logs %q", logs)
 	}
 	c.Send(dm, " ", nil, nil)
-	c.Send(dm, "", [][]byte{[]byte("PNG")}, nil)
+	c.Send(dm, "", []feature.Picture{{Data: []byte("PNG")}}, nil)
 	eventually(t, "the pictures alone", func() bool { return len(f.calls("send")) == 5 })
 	if s := f.calls("send")[4]; s["message"] != "" || s["attachments"] == nil {
 		t.Errorf("pictures sent as %v", s)
@@ -64,7 +64,7 @@ func TestMentions(t *testing.T) {
 	}
 }
 
-func TestStripAt(t *testing.T) {
+func TestStrip(t *testing.T) {
 	for _, tc := range []struct {
 		text, want string
 		found      bool
@@ -76,9 +76,10 @@ func TestStripAt(t *testing.T) {
 		{"hi @Botty", "hi @Botty", false},
 		{"mail me@Bot", "mail me@Bot", false},
 	} {
-		got, found := stripAt(tc.text, "Bot", "signalbot")
-		if got != tc.want || found != tc.found {
-			t.Errorf("%q: %q %v", tc.text, got, found)
+		rs := []rune(tc.text)
+		got, found := strip(styled{rs, make([]uint8, len(rs))}, "Bot", "signalbot")
+		if string(got.text) != tc.want || found != tc.found {
+			t.Errorf("%q: %q %v", tc.text, string(got.text), found)
 		}
 	}
 }
@@ -95,6 +96,9 @@ func texts(ps []styled) []string {
 func TestParts(t *testing.T) {
 	if got := texts(parts("@Bot hi @Alice", "Bot")); !reflect.DeepEqual(got, []string{"hi @Alice"}) {
 		t.Errorf("got %q", got)
+	}
+	if got := texts(parts("I respond to @Bot and @Alice", "Bot")); !reflect.DeepEqual(got, []string{"I respond to @Bot and @Alice"}) {
+		t.Errorf("a self-mention not at the start stays: %q", got)
 	}
 	if got := parts("  ", "Bot"); got != nil {
 		t.Errorf("blank: %q", texts(got))
@@ -115,5 +119,19 @@ func TestParts(t *testing.T) {
 	}
 	if len(got) != 4 || total > maxReply || !strings.HasSuffix(got[3], "[…truncated]") {
 		t.Errorf("capped: %d parts, %d chars, ends %q", len(got), total, fmt.Sprint(got[len(got)-1][max(0, len(got[len(got)-1])-20):]))
+	}
+}
+
+// A picture's name is made safe for a file name, or left to the fallback.
+func TestFileName(t *testing.T) {
+	for in, want := range map[string]string{
+		"NVDA vs AMD, 1 month":           "NVDA vs AMD 1 month",
+		"  a/b\\c:d*e?f\"g<h>i|j;k\n l ": "abcdefghijk l",
+		"/;:":                            "",
+		strings.Repeat("x", 90):          strings.Repeat("x", 80),
+	} {
+		if got := fileName(in); got != want {
+			t.Errorf("fileName(%q) = %q, want %q", in, got, want)
+		}
 	}
 }

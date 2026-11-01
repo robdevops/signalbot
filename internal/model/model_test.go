@@ -446,17 +446,57 @@ func TestUsable(t *testing.T) {
 	}
 }
 
-// Only OpenRouter has a model list: elsewhere images are off and tools on,
+// Only OpenRouter has a model list: elsewhere images and tools are assumed,
 // with one startup line and no request.
 func TestOtherAPICapabilities(t *testing.T) {
 	c, m, logs := startAt(t, false, served{status: 500})
-	if images, tools := c.Capabilities(context.Background()); images || !tools {
+	if images, tools := c.Capabilities(context.Background()); !images || !tools {
 		t.Errorf("images %v, tools %v", images, tools)
 	}
 	if n := len(m.requests()); n != 0 {
 		t.Errorf("%d requests", n)
 	}
-	if l := logs.String(); strings.Count(l, "\n") != 1 || !strings.Contains(l, "images are off and tools on") {
+	if l := logs.String(); strings.Count(l, "\n") != 1 || !strings.Contains(l, "images and tools are on until the API rejects them") {
 		t.Errorf("logged %q", l)
+	}
+}
+
+// Elsewhere, a first request refused with a 4xx about the request is
+// ErrImages if it carried images, else ErrTools if it carried tools, with
+// no retry. A refused key, credit or rate, a later request, a request with
+// neither, and anything on OpenRouter keep their plain error.
+func TestRejected(t *testing.T) {
+	echo := feature.Tool{Name: "echo", Run: func(context.Context, string) (string, []feature.Picture, error) { return "done", nil, nil }}
+	bad := served{status: 400, body: `{"error":{"message":"no images here"}}`}
+	for _, tc := range []struct {
+		name       string
+		openRouter bool
+		answers    []served
+		r          Request
+		want       error
+		requests   int
+	}{
+		{"images", false, []served{bad}, Request{Text: "hi", Images: []string{"data:image/png;base64,AA=="}, Tools: []feature.Tool{echo}}, ErrImages, 1},
+		{"tools", false, []served{bad}, Request{Text: "hi", Tools: []feature.Tool{echo}}, ErrTools, 1},
+		{"neither", false, []served{bad}, Request{Text: "hi"}, nil, 1},
+		{"key", false, []served{{status: 401, body: `{}`}}, Request{Text: "hi", Tools: []feature.Tool{echo}}, nil, 1},
+		{"rate", false, []served{{status: 429, body: `{}`}}, Request{Text: "hi", Tools: []feature.Tool{echo}}, nil, 2},
+		{"unprocessable", false, []served{{status: 422, body: `{}`}}, Request{Text: "hi", Tools: []feature.Tool{echo}}, ErrTools, 1},
+		{"model id", false, []served{{status: 404, body: `{}`}}, Request{Text: "hi", Images: []string{"data:image/png;base64,AA=="}, Tools: []feature.Tool{echo}}, nil, 1},
+		{"timeout", false, []served{{status: 408, body: `{}`}}, Request{Text: "hi", Images: []string{"data:image/png;base64,AA=="}, Tools: []feature.Tool{echo}}, nil, 1},
+		{"too large", false, []served{{status: 413, body: `{}`}}, Request{Text: "hi", Images: []string{"data:image/png;base64,AA=="}}, nil, 1},
+		{"later request", false, []served{calls("echo"), bad}, Request{Text: "hi", Tools: []feature.Tool{echo}}, nil, 2},
+		{"openrouter", true, []served{bad}, Request{Text: "hi", Images: []string{"data:image/png;base64,AA=="}, Tools: []feature.Tool{echo}}, nil, 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c, m, _ := startAt(t, tc.openRouter, tc.answers...)
+			_, err := c.Ask(context.Background(), tc.r)
+			if err == nil || errors.Is(err, ErrImages) != (tc.want == ErrImages) || errors.Is(err, ErrTools) != (tc.want == ErrTools) {
+				t.Errorf("error %v, want %v", err, tc.want)
+			}
+			if n := len(m.requests()); n != tc.requests {
+				t.Errorf("%d requests", n)
+			}
+		})
 	}
 }

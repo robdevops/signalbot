@@ -4,7 +4,7 @@ The bot is a small core and features on top. [TECHNICAL.md](TECHNICAL.md) descri
 
 ```
 main.go, features.go    the main package at the module root: wiring, and one line per feature
-internal/signal/        the chat network: the signal-cli client, decoding, sending, names; only main imports it
+internal/signal/        the chat network: the signal-cli client, decoding, sending, names; only main imports it, and it imports bot
 internal/model/         the model client (OpenRouter or another chat completions API) and the tool loop
 internal/chats/         per-chat state: history, dedupe, mention names, the mailbox
 internal/timers/        one-shot timers
@@ -41,7 +41,7 @@ If a feature can't be built on these, that's a design finding. Either a port bec
 
 Tests in `internal/arch` enforce these:
 
-- **Imports:** only the main package, at the module root, imports features and `internal/signal`; a feature imports only `internal/feature`, `internal/kit` and its own packages; `internal/signal` imports only `internal/feature`, kit and `internal/config`; `internal/config` and kit import no other internal package.
+- **Imports:** only the main package, at the module root, imports features and `internal/signal`; a feature imports only `internal/feature`, `internal/kit` and its own packages; `internal/signal` imports only `internal/feature`, kit, `internal/config` and `internal/bot` (network to core, never the reverse); `internal/config` and kit import no other internal package.
 - **No feature names in the core:** the core's source mentions no feature name or feature-only word (chart, MCP, group context, `/intro`, `/schedule`, …).
 - **Docs:** every setting read, the core's or a feature's (`h.Env("NAME", …)`), is in the README's configuration table.
 
@@ -60,7 +60,7 @@ Before sending a change: `gofmt -l .`, `go vet ./...` and `go test -race ./...`,
 ## Adding a feature
 
 1. Make `internal/features/<name>` with a `Register(h feature.Host) error`. Read settings with `h.Env`, register hooks and tool groups, and return an error only for a config error, which stops the bot.
-2. For a command, use `feature.Command(h, "name", fn)`. A name another feature has taken is refused. If the model should know the command, name it in your tool group's `Names` and `Listing`.
+2. For a command, use `feature.Command(h, "name", fn)`. A name another feature has taken is refused. If the model should know the command, name it in your tool group's `Names` and `Listing`; a command that uses no model tool can go in a group with only `Names`, which the prompt's tools list names but `{tools}` doesn't.
 3. For tools, call `h.Tools` with a `ToolGroup`: `Names` for the intro's `{tools}`, `Listing` for the tools line, `System` for a prompt line while offered, and `Keywords` to offer it only when a message matches.
 4. Test it on `featuretest`, without the core.
 5. Add one line to `features.go`. Order matters: it is the order hooks run in and of the tools line.

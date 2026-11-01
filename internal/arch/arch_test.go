@@ -38,9 +38,11 @@ func under(p, dir string) bool { return p == dir || strings.HasPrefix(p, dir+"/"
 
 // Only the main package, at the module root, imports features and the chat
 // network (internal/signal); a feature imports only internal/feature, kit
-// and its own packages; internal/feature imports only its own packages and
-// kit, and internal/signal only those and internal/config; internal/config
-// and kit import no other internal package.
+// and its own packages, so never internal/bot; internal/feature imports only
+// its own packages and kit; internal/signal imports only those,
+// internal/config and internal/bot (for Received: the network depends on
+// the core, never the reverse); internal/config and kit import no other
+// internal package.
 func TestImports(t *testing.T) {
 	for _, p := range goFiles(t) {
 		f, err := parser.ParseFile(token.NewFileSet(), root+"/"+p, nil, parser.ImportsOnly)
@@ -62,8 +64,10 @@ func TestImports(t *testing.T) {
 			switch {
 			case under(dir, "internal/features"):
 				ok = under(imp, "internal/feature") || under(imp, "internal/kit") || under(imp, own)
-			case under(dir, "internal/feature"), under(dir, "internal/signal"):
-				ok = under(imp, "internal/feature") || under(imp, "internal/kit") || dir == "internal/signal" && imp == "internal/config"
+			case under(dir, "internal/feature"):
+				ok = under(imp, "internal/feature") || under(imp, "internal/kit")
+			case under(dir, "internal/signal"):
+				ok = under(imp, "internal/feature") || under(imp, "internal/kit") || imp == "internal/config" || imp == "internal/bot"
 			case under(dir, "internal/kit"), dir == "internal/config":
 				ok = under(imp, "internal/kit")
 			default:

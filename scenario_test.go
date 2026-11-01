@@ -12,6 +12,7 @@ import (
 	"flag"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -807,8 +808,9 @@ func TestScenarioModelNotListed(t *testing.T) {
 
 // Another provider, at MODEL_API_URL with no key: a mention is answered with
 // a plain request (no OpenRouter extras, reasoning as reasoning_effort, no
-// key), no model list is read, so images are off and tools on, and
-// OpenRouter's web search is left out with a warning.
+// key), no model list is read, so images and tools are assumed, and
+// OpenRouter's web search is left out with a warning. A photo goes to the
+// model as an image.
 func TestScenarioOtherProvider(t *testing.T) {
 	h := startBot(t, world{OtherProvider: true, Vision: true})
 	if s := h.ask(atBot("what is up")); s.Message != "ok" || s.GroupID != idGroup {
@@ -836,14 +838,116 @@ func TestScenarioOtherProvider(t *testing.T) {
 	if _, ok := h.logged("web search on"); ok {
 		t.Fatalf("web search logged as on: %v", h.logLines())
 	}
-	if l, ok := h.logged("images are off and tools on"); !ok || l.Pri != 5 {
+	if l, ok := h.logged("images and tools are on until the API rejects them"); !ok || l.Pri != 5 {
 		t.Fatalf("no notice: %v", h.logLines())
 	}
 	m := fromAlice("")
 	m.Attachments = []attached{photo("photo1.png")}
 	h.ask(m)
-	if r := h.lastRequest(); r.last().Content != "[1 image attached, which you can't see with this model]" || len(r.last().Images) != 0 {
+	if r := h.lastRequest(); r.last().Content != "[1 image attached]" || len(r.last().Images) != 1 {
 		t.Fatalf("model got %q with %d images", r.last().Content, len(r.last().Images))
+	}
+}
+
+// On another provider, a request with images that the API rejects with a
+// 4xx is asked again at once without them, and answered: exactly one
+// failed request, one warning, and images stay off for the rest of the run.
+func TestScenarioOtherProviderRejectsImages(t *testing.T) {
+	h := startBot(t, world{OtherProvider: true})
+	h.queue(modelReply{Status: 400, Body: `{"error":{"message":"this model does not take images"}}`})
+	m := fromAlice("what is this?")
+	m.Attachments = []attached{photo("photo1.png")}
+	if s := h.ask(m); s.Message != "ok" {
+		t.Fatalf("sent %q", s.Message)
+	}
+	reqs := h.requests()
+	if len(reqs) != 2 || len(reqs[0].last().Images) != 1 {
+		t.Fatalf("%d requests, the first with %d images", len(reqs), len(reqs[0].last().Images))
+	}
+	if r := reqs[1]; r.last().Content != "what is this?\n[1 image attached, which you can't see with this model]" || len(r.last().Images) != 0 {
+		t.Fatalf("asked again with %q and %d images", r.last().Content, len(r.last().Images))
+	}
+	m = fromAlice("and this?")
+	m.Attachments = []attached{photo("photo2.png")}
+	h.ask(m)
+	if reqs = h.requests(); len(reqs) != 3 || len(reqs[2].last().Images) != 0 {
+		t.Fatalf("%d requests, the last with %d images", len(reqs), len(reqs[len(reqs)-1].last().Images))
+	}
+	if n := h.warnings("rejected a request with images", "images are off"); n != 1 {
+		t.Fatalf("%d warnings: %v", n, h.logLines())
+	}
+	if _, ok := h.logged("model error"); ok {
+		t.Fatalf("model error logged: %v", h.logLines())
+	}
+}
+
+// A request with images and tools is blamed on its images first; if the
+// request without them is rejected too, the tools were the problem: images
+// come back on for the third request, which is answered, and stay on.
+func TestScenarioOtherProviderRejectsToolsWithImages(t *testing.T) {
+	h := startBot(t, world{OtherProvider: true})
+	bad := modelReply{Status: 400, Body: `{"error":{"message":"tools are not supported"}}`}
+	h.queue(bad, bad)
+	m := fromAlice("chart this")
+	m.Attachments = []attached{photo("photo1.png")}
+	if s := h.ask(m); s.Message != "ok" {
+		t.Fatalf("sent %q", s.Message)
+	}
+	reqs := h.requests()
+	if len(reqs) != 3 {
+		t.Fatalf("%d requests", len(reqs))
+	}
+	for i, want := range []struct{ images, tools bool }{{true, true}, {false, true}, {true, false}} {
+		if r := reqs[i]; (len(r.last().Images) == 1) != want.images || (len(r.Tools) > 0) != want.tools {
+			t.Fatalf("request %d: %d images, tools %v", i+1, len(r.last().Images), r.Tools)
+		}
+	}
+	if c := reqs[2].last().Content; c != "chart this\n[1 image attached]" {
+		t.Fatalf("asked a third time with %q", c)
+	}
+	m = fromAlice("chart this one")
+	m.Attachments = []attached{photo("photo2.png")}
+	h.ask(m)
+	if reqs = h.requests(); len(reqs) != 4 || len(reqs[3].last().Images) != 1 || reqs[3].Tools != nil {
+		t.Fatalf("%d requests, the last with %d images and tools %v", len(reqs), len(reqs[len(reqs)-1].last().Images), reqs[len(reqs)-1].Tools)
+	}
+	if n := h.warnings("rejected a request with tools", "tools are off"); n != 1 {
+		t.Fatalf("%d tools warnings: %v", n, h.logLines())
+	}
+	if _, ok := h.logged("images are on again"); !ok {
+		t.Fatalf("no notice: %v", h.logLines())
+	}
+}
+
+// The same for tools: a request with tools that the API rejects is asked
+// again without them and answered, with exactly one failed request and one
+// warning, and tools stay off for the rest of the run. A chat command, which
+// forces a tool, then says it needs tools rather than asking the model.
+func TestScenarioOtherProviderRejectsTools(t *testing.T) {
+	h := startBot(t, world{OtherProvider: true, MCP: true})
+	h.queue(modelReply{Status: 400, Body: `{"error":{"message":"tools are not supported"}}`})
+	if s := h.ask(fromAlice("chart AAPL for a month")); s.Message != "ok" {
+		t.Fatalf("sent %q", s.Message)
+	}
+	reqs := h.requests()
+	if len(reqs) != 2 || len(reqs[0].Tools) == 0 {
+		t.Fatalf("%d requests, the first with tools %v", len(reqs), reqs[0].Tools)
+	}
+	if r := reqs[1]; r.Tools != nil || strings.Contains(r.System, "Your tools:") || r.last().Content != "chart AAPL for a month" {
+		t.Fatalf("asked again with tools %v, %q", r.Tools, r.last().Content)
+	}
+	h.ask(fromAlice("chart MSFT for a month"))
+	if reqs = h.requests(); len(reqs) != 3 || reqs[2].Tools != nil {
+		t.Fatalf("%d requests, the last with tools %v", len(reqs), reqs[len(reqs)-1].Tools)
+	}
+	if n := h.warnings("rejected a request with tools", "tools are off"); n != 1 {
+		t.Fatalf("%d warnings: %v", n, h.logLines())
+	}
+	if s := h.ask(fromAlice("/quote AAPL")); s.Message != "That command needs tools, which this model can't use." {
+		t.Fatalf("sent %q", s.Message)
+	}
+	if n := len(h.requests()); n != 3 {
+		t.Fatalf("%d requests", n)
 	}
 }
 
@@ -1126,13 +1230,16 @@ func TestScenarioExampleWithoutModel(t *testing.T) {
 	// /intro sends INTRO, the same text the model gives when asked to
 	// introduce itself.
 	want := "hi, I'm Botty, your open source assistant running test-model.\n\nTools:\nweb search\n\ncharts: line, pie\n\n" +
-		"Type \"/schedule\" for schedules and reminders.\n\nI respond to @mentions and replies to my messages.\n\nSee https://github.com/robdevops/signalbot/blob/main/README.md for details.\n\nThis message did not use the model."
+		"Type \"/schedule\" for schedules and reminders.\n\nI respond to @Botty and replies to my messages.\n\nSee https://github.com/robdevops/signalbot/blob/main/README.md for details.\n\nThis message did not use the model."
 	if s.Message != want || s.GroupID != idGroup {
 		t.Fatalf("sent %q", s.Message)
 	}
-	// The tool labels are Markdown, so they arrive in bold.
+	// In a group, its own @name is a real mention of the bot.
+	at := strings.Index(want, "@Botty")
+	equal(t, "mentions", s.Mentions, []string{strconv.Itoa(at) + ":6:" + idBot})
+	// The tool labels and the name are Markdown, so they arrive in bold and italic.
 	equal(t, "styles", s.Styles, []string{strconv.Itoa(strings.Index(want, "web search")) + ":10:BOLD",
-		strconv.Itoa(strings.Index(want, "charts")) + ":6:BOLD"})
+		strconv.Itoa(strings.Index(want, "charts")) + ":6:BOLD", strconv.Itoa(strings.Index(want, "Botty")) + ":5:ITALIC"})
 	if s := h.ask(fromAlice("/INTRO")); s.Message != want || s.Mentions != nil {
 		t.Fatalf("DM sent %q", s.Message)
 	}
@@ -1226,7 +1333,7 @@ func TestScenarioToolImageIsSentWithReply(t *testing.T) {
 	h := startBot(t, world{MCP: true})
 	h.queue(modelReply{Tool: "stocks__price_chart", Args: `{"q":"AAPL"}`}, modelReply{Text: "Here is the AAPL chart."})
 	s := h.ask(fromAlice("show me the AAPL price"))
-	if s.Message != "Here is the AAPL chart." || len(s.Attachments) != 1 || !strings.HasPrefix(s.Attachments[0], "data:image/png;filename=image1.png;base64,") {
+	if s.Message != "Here is the AAPL chart." || len(s.Attachments) != 1 || !regexp.MustCompile(`^data:image/png;filename=image_\d{8}-\d{6}\.png;base64,`).MatchString(s.Attachments[0]) {
 		t.Fatalf("sent %q with %d attachments", s.Message, len(s.Attachments))
 	}
 	if res := h.lastRequest().last(); res.Role != "tool" || res.Content != "[image sent to the chat]\nchart of AAPL" {
@@ -1326,7 +1433,7 @@ func TestScenarioChartReply(t *testing.T) {
 	h := startBot(t, world{})
 	h.queue(modelReply{Tool: "make_chart", Args: chartArgs}, modelReply{Text: "Done"})
 	s := h.ask(fromAlice("chart NVDA vs AMD for a month"))
-	if s.Message != "NVDA vs AMD, 1 month" || len(s.Attachments) != 1 || !strings.HasPrefix(s.Attachments[0], "data:image/png;filename=image1.png;base64,") {
+	if s.Message != "NVDA vs AMD, 1 month" || len(s.Attachments) != 1 || !strings.HasPrefix(s.Attachments[0], "data:image/png;filename=NVDA vs AMD 1 month.png;base64,") {
 		t.Fatalf("sent %q with %d attachments", s.Message, len(s.Attachments))
 	}
 	h.noMoreSends()
@@ -1377,7 +1484,7 @@ func TestScenarioPieChartReply(t *testing.T) {
 	}
 	h.queue(modelReply{Tool: tool, Args: pieArgs}, modelReply{Text: "Done"})
 	s := h.ask(fromAlice("a donut of revenue by segment"))
-	if s.Message != "Revenue by segment, Q3" || len(s.Attachments) != 1 || !strings.HasPrefix(s.Attachments[0], "data:image/png;filename=image1.png;base64,") {
+	if s.Message != "Revenue by segment, Q3" || len(s.Attachments) != 1 || !strings.HasPrefix(s.Attachments[0], "data:image/png;filename=Revenue by segment Q3.png;base64,") {
 		t.Fatalf("sent %q with %d attachments", s.Message, len(s.Attachments))
 	}
 	h.noMoreSends()

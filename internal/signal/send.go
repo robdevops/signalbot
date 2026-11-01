@@ -3,8 +3,9 @@ package signal
 import (
 	"encoding/base64"
 	"fmt"
+	"maps"
 	"net/http"
-	"sort"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -31,23 +32,38 @@ func (c *Client) Prompt() string {
 	return fmt.Sprintf("This is a Signal chat. Never exceed %d characters, which is Signal's limit for one message.", maxChars)
 }
 
-// Send posts text to chat: its Markdown made plain text and text styles,
-// without the bot's own @name, with each @Name in
-// known (lowercased name to ID) made a real mention, cut short past maxReply
-// with a warning, and split at Signal's limit, with the images on the first
-// message. A failure is logged, and whether a message was delivered is
-// logged when signal-cli says.
-func (c *Client) Send(chat feature.Chat, text string, images [][]byte, known map[string]string) {
+// Send posts text to chat as parts makes it, with each @Name in known
+// (lowercased name to ID), and in a group the bot's own @name, made a real mention, and
+// the images on the first
+// message, each named after its Name or else image_<local time>. A failure
+// is logged, as is a message signal-cli says it could not deliver.
+func (c *Client) Send(chat feature.Chat, text string, pics []feature.Picture, known map[string]string) {
 	if n := utf8.RuneCountInString(text); n > maxReply {
 		logx.Warnf("reply truncated from %d chars", n)
 	}
 	var attachments []string
-	for i, data := range images { // named with the extension their type gives
-		mime := http.DetectContentType(data)
-		attachments = append(attachments, fmt.Sprintf("data:%s;filename=image%d.%s;base64,%s",
-			mime, i+1, strings.TrimPrefix(mime, "image/"), base64.StdEncoding.EncodeToString(data)))
+	stamp := time.Now().Format("20060102-150405")
+	for i, p := range pics { // with the extension their type gives
+		name := fileName(p.Name)
+		if name == "" {
+			name = "image_" + stamp
+		}
+		if i > 0 {
+			name += fmt.Sprintf("_%d", i+1)
+		}
+		mime := http.DetectContentType(p.Data)
+		attachments = append(attachments, fmt.Sprintf("data:%s;filename=%s.%s;base64,%s",
+			mime, name, strings.TrimPrefix(mime, "image/"), base64.StdEncoding.EncodeToString(p.Data)))
 	}
 	ps := parts(text, c.BotName())
+	if id := c.self(); id != "" && chat.GroupID != "" { // in a group, "@" and its own name mentions the bot
+		k := maps.Clone(known)
+		if k == nil {
+			k = map[string]string{}
+		}
+		k[txt.SafeName(c.BotName())] = id
+		known = k
+	}
 	if len(ps) == 0 {
 		if len(attachments) == 0 {
 			logx.Warnf("empty reply, nothing sent")
@@ -67,8 +83,21 @@ func (c *Client) Send(chat feature.Chat, text string, images [][]byte, known map
 	}
 }
 
-// send posts one message, with mentions ("start:length:uuid"), text styles
-// ("start:length:STYLE") and attachments.
+// fileName is name made safe as a file name in a data URI: characters that
+// file systems or the URI reserve are dropped, spaces are collapsed, and it is
+// cut to 80 characters.
+func fileName(name string) string {
+	name = strings.Map(func(r rune) rune {
+		if r < ' ' || r == 0x7f || strings.ContainsRune(`/\:*?"<>|;,`, r) {
+			return -1
+		}
+		return r
+	}, name)
+	r := []rune(strings.Join(strings.Fields(name), " "))
+	return strings.TrimSpace(string(r[:min(len(r), 80)]))
+}
+
+// send posts one message.
 func (c *Client) send(chat feature.Chat, text string, mentions, styles, attachments []string) error {
 	p := target(chat)
 	p["message"] = text
@@ -112,11 +141,15 @@ func (c *Client) Typing(chat feature.Chat) (stop func()) {
 }
 
 // parts turns a reply into the messages to send: its Markdown converted,
-// without the bot's own @name, capped as a whole at maxReply, and split at
-// Signal's limit, preferring a line break and then a space. A style
+// without a leading @ and the bot's own name (an echo of how it was
+// addressed; elsewhere it is a mention), capped as a whole at maxReply, and
+// split at Signal's limit, preferring a line break and then a space. A style
 // carries on across a split.
 func parts(reply, self string) []styled {
-	s, _ := strip(markdown(reply), self)
+	s := markdown(reply)
+	if sp := findAt(s.text, map[string]string{txt.SafeName(self): ""}); len(sp) > 0 && strings.TrimSpace(string(s.text[:sp[0].start])) == "" {
+		s.text, s.style = s.text[sp[0].end:], s.style[sp[0].end:]
+	}
 	if len(s.text) > maxReply {
 		n := maxReply - utf8.RuneCountInString(truncated)
 		s.text, s.style = s.text[:n], s.style[:n]
@@ -149,8 +182,8 @@ func parts(reply, self string) []styled {
 }
 
 func lastIndex(r []rune, want rune) int {
-	for i := len(r) - 1; i >= 0; i-- {
-		if r[i] == want {
+	for i, v := range slices.Backward(r) {
+		if v == want {
 			return i
 		}
 	}
@@ -166,32 +199,19 @@ type span struct {
 // findAt finds "@name" for each name in known (name to ID). Matching
 // ignores case, tries the longest name first, and sits on word boundaries.
 func findAt(rs []rune, known map[string]string) []span {
-	type cand struct {
-		lower string
-		n     int // runes
-		id    string
-	}
-	var cands []cand
-	for name, id := range known {
-		if name != "" {
-			cands = append(cands, cand{strings.ToLower(name), utf8.RuneCountInString(name), id})
-		}
-	}
-	if len(cands) == 0 {
-		return nil
-	}
-	sort.Slice(cands, func(i, j int) bool { return cands[i].n > cands[j].n })
+	names := slices.DeleteFunc(slices.Collect(maps.Keys(known)), func(name string) bool { return name == "" })
+	slices.SortFunc(names, func(a, b string) int { return utf8.RuneCountInString(b) - utf8.RuneCountInString(a) })
 	var out []span
 	for i := 0; i < len(rs); i++ {
 		if rs[i] != '@' || (i > 0 && wordRune(rs[i-1])) {
 			continue
 		}
-		for _, k := range cands {
-			end := i + 1 + k.n
-			if end > len(rs) || (end < len(rs) && wordRune(rs[end])) || strings.ToLower(string(rs[i+1:end])) != k.lower {
+		for _, name := range names {
+			end := i + 1 + utf8.RuneCountInString(name)
+			if end > len(rs) || (end < len(rs) && wordRune(rs[end])) || strings.ToLower(string(rs[i+1:end])) != strings.ToLower(name) {
 				continue
 			}
-			out = append(out, span{i, end, k.id})
+			out = append(out, span{i, end, known[name]})
 			i = end - 1
 			break
 		}
@@ -199,11 +219,13 @@ func findAt(rs []rune, known map[string]string) []span {
 	return out
 }
 
-func utf16Len(rs []rune) (n int) {
-	for _, r := range rs {
-		n += utf16.RuneLen(r)
+// utf16At is the UTF-16 offset of each rune of rs, and then of its end.
+func utf16At(rs []rune) []int {
+	u := make([]int, len(rs)+1)
+	for i, r := range rs {
+		u[i+1] = u[i] + utf16.RuneLen(r)
 	}
-	return n
+	return u
 }
 
 // mentions is the signal-cli mentions ("start:length:uuid", in UTF-16
@@ -211,29 +233,18 @@ func utf16Len(rs []rune) (n int) {
 // ID). An ambiguous name, with no ID, stays plain text.
 func mentions(text string, known map[string]string) []string {
 	rs := []rune(text)
+	u := utf16At(rs)
 	var out []string
-	u, pos := 0, 0 // the UTF-16 offset of rs[pos]
 	for _, s := range findAt(rs, known) {
-		u += utf16Len(rs[pos:s.start])
-		n := utf16Len(rs[s.start:s.end])
 		if s.id != "" {
-			out = append(out, fmt.Sprintf("%d:%d:%s", u, n, s.id))
+			out = append(out, fmt.Sprintf("%d:%d:%s", u[s.start], u[s.end]-u[s.start], s.id))
 		}
-		u += n
-		pos = s.end
 	}
 	return out
 }
 
-// stripAt removes "@name" for each of names from text, without leaving a
-// double space, and reports whether it found one.
-func stripAt(text string, names ...string) (string, bool) {
-	rs := []rune(text)
-	s, found := strip(styled{rs, make([]uint8, len(rs))}, names...)
-	return string(s.text), found
-}
-
-// strip is stripAt for styled text, dropping the styles of what it removes.
+// strip removes "@name" for each of names, without leaving a double space,
+// and reports whether it found one.
 func strip(s styled, names ...string) (styled, bool) {
 	known := map[string]string{} // findAt needs only the names
 	for _, n := range names {

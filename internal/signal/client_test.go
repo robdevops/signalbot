@@ -9,12 +9,14 @@ import (
 	"maps"
 	"net"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/robdevops/signalbot/internal/bot"
 	"github.com/robdevops/signalbot/internal/feature"
 	"github.com/robdevops/signalbot/internal/kit/logx"
 )
@@ -129,12 +131,12 @@ func receive(c net.Conn, envelope string) {
 
 // run starts c on f and returns what it hands the core and the server side
 // of the first connection. Run has returned by the time the test ends.
-func run(t *testing.T, c *Client, f *fake) (<-chan feature.Received, net.Conn) {
+func run(t *testing.T, c *Client, f *fake) (<-chan bot.Received, net.Conn) {
 	t.Helper()
-	got := make(chan feature.Received, 16)
+	got := make(chan bot.Received, 16)
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
-	go func() { defer close(done); c.Run(ctx, func(r feature.Received) { got <- r }) }()
+	go func() { defer close(done); c.Run(ctx, func(r bot.Received) { got <- r }) }()
 	t.Cleanup(func() { cancel(); <-done })
 	wctx, wcancel := context.WithTimeout(ctx, 5*time.Second)
 	defer wcancel()
@@ -160,14 +162,14 @@ func eventually(t *testing.T, what string, ok func() bool) {
 	}
 }
 
-func next(t *testing.T, got <-chan feature.Received) feature.Received {
+func next(t *testing.T, got <-chan bot.Received) bot.Received {
 	t.Helper()
 	select {
 	case r := <-got:
 		return r
 	case <-time.After(5 * time.Second):
 		t.Fatal("nothing received")
-		return feature.Received{}
+		return bot.Received{}
 	}
 }
 
@@ -216,10 +218,10 @@ func TestStalledWriteReconnects(t *testing.T) {
 		}
 	}()
 	c := newClient(sock, allowAll(), nil)
-	got := make(chan feature.Received, 4)
+	got := make(chan bot.Received, 4)
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
-	go func() { defer close(done); c.Run(ctx, func(r feature.Received) { got <- r }) }()
+	go func() { defer close(done); c.Run(ctx, func(r bot.Received) { got <- r }) }()
 	defer func() { cancel(); <-done }()
 
 	srv := <-conns
@@ -258,12 +260,12 @@ func TestSendAndTyping(t *testing.T) {
 	run(t, c, f)
 	group, dm := feature.Chat{GroupID: groupID}, feature.Chat{User: aliceID}
 	png := []byte("\x89PNG\r\n\x1a\n")
-	c.Send(group, "@signalbot hi @Alice", [][]byte{png, png}, map[string]string{"alice": aliceID})
+	c.Send(group, "@signalbot hi @Alice", []feature.Picture{{Data: png, Name: "NVDA vs AMD, 1 month"}, {Data: png}}, map[string]string{"alice": aliceID})
 	c.Send(dm, "plain @Alice", nil, nil)
 	eventually(t, "two sends", func() bool { return len(f.calls("send")) == 2 })
 	s := f.calls("send")
 	if s[0]["groupId"] != groupID || s[0]["message"] != "hi @Alice" || fmt.Sprint(s[0]["mention"]) != "[3:6:"+aliceID+"]" ||
-		fmt.Sprint(s[0]["attachments"]) != "[data:image/png;filename=image1.png;base64,iVBORw0KGgo= data:image/png;filename=image2.png;base64,iVBORw0KGgo=]" {
+		!regexp.MustCompile(`^\[data:image/png;filename=NVDA vs AMD 1 month\.png;base64,iVBORw0KGgo= data:image/png;filename=image_\d{8}-\d{6}_2\.png;base64,iVBORw0KGgo=\]$`).MatchString(fmt.Sprint(s[0]["attachments"])) {
 		t.Errorf("group send %v", s[0])
 	}
 	if fmt.Sprint(s[1]["recipient"]) != "["+aliceID+"]" || s[1]["mention"] != nil || s[1]["attachments"] != nil {
@@ -292,7 +294,7 @@ func TestUnmatchedAndBadFramesAreLogged(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			logs := captureLogs(t)
-			newClient("x", nil, nil).dispatch([]byte(tc.line), func(feature.Received) { t.Fatal("unexpected message") })
+			newClient("x", nil, nil).dispatch([]byte(tc.line), func(bot.Received) { t.Fatal("unexpected message") })
 			out := logs.String()
 			if tc.want == "" && out != "" || !strings.Contains(out, tc.want) || strings.Contains(out, "secret") {
 				t.Fatalf("logged %q, want %q", out, tc.want)
@@ -305,7 +307,7 @@ func TestUnmatchedAndBadFramesAreLogged(t *testing.T) {
 // reader carries on.
 func TestDispatchRecovers(t *testing.T) {
 	logs := captureLogs(t)
-	newClient("x", nil, nil).dispatch([]byte(`{"method":"receive","params":{"envelope":{"dataMessage":{"message":"hi"}}}}`), func(feature.Received) { panic("secret text") })
+	newClient("x", nil, nil).dispatch([]byte(`{"method":"receive","params":{"envelope":{"dataMessage":{"message":"hi"}}}}`), func(bot.Received) { panic("secret text") })
 	if out := logs.String(); !strings.Contains(out, "internal error") || strings.Contains(out, "secret") {
 		t.Fatalf("logged %q", out)
 	}
@@ -365,22 +367,21 @@ func TestFilesStickersAndGroups(t *testing.T) {
 
 	f.set("listGroups", `[{"id":"`+groupID+`","name":"Family","isMember":true,"members":[{"number":"+1555","uuid":"`+aliceID+`"},{"number":null,"uuid":"`+bobID+`"}]},`+
 		`{"id":"left","name":"Old","isMember":false,"members":[]}]`)
-	gs, err := c.groups(ctx)
-	if err != nil || len(gs) != 1 || gs[0].ID != groupID || gs[0].Name != "Family" ||
-		!gs[0].has(aliceID) || !gs[0].has("+1555") || !gs[0].has(bobID) || gs[0].has("") || gs[0].has("+1999") {
-		t.Fatalf("groups %+v %v", gs, err)
+	for _, user := range []string{aliceID, "+1555", bobID} {
+		if shared, err := c.Groups(ctx, user); err != nil || len(shared) != 1 || shared[0] != (feature.Group{ID: groupID, Name: "Family"}) {
+			t.Fatalf("groups shared with %s: %+v %v", user, shared, err)
+		}
 	}
-	if shared, err := c.Groups(ctx, "+1555"); err != nil || len(shared) != 1 || shared[0] != (feature.Group{ID: groupID, Name: "Family"}) {
-		t.Fatalf("shared groups %+v %v", shared, err)
-	}
-	if shared, _ := c.Groups(ctx, "+1999"); len(shared) != 0 {
-		t.Fatalf("shared groups %+v", shared)
+	for _, user := range []string{"", "+1999"} {
+		if shared, _ := c.Groups(ctx, user); len(shared) != 0 {
+			t.Fatalf("groups shared with %q: %+v", user, shared)
+		}
 	}
 
 	f.set("listGroups", `{"error":"x"`) // not even JSON: the call times out
 	tctx, cancel := context.WithTimeout(ctx, 100*time.Millisecond)
 	defer cancel()
-	if _, err := c.groups(tctx); err == nil {
+	if _, err := c.groups(tctx, aliceID); err == nil {
 		t.Error("no error")
 	}
 }
@@ -390,7 +391,7 @@ func TestCallsFailWhenNotConnected(t *testing.T) {
 	if err := c.send(feature.Chat{User: aliceID}, "hi", nil, nil, nil); err == nil {
 		t.Error("send while not connected")
 	}
-	if _, err := c.groups(context.Background()); err == nil {
+	if _, err := c.groups(context.Background(), aliceID); err == nil {
 		t.Error("call while not connected")
 	}
 }
@@ -407,14 +408,13 @@ func TestNetwork(t *testing.T) {
 // goroutines behind.
 func TestReconnectsDoNotLeakGoroutines(t *testing.T) {
 	captureLogs(t)
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 	c := newClient("x", nil, nil)
 	before := runtime.NumGoroutine()
 	for range 50 {
 		c1, c2 := net.Pipe()
 		c2.Close()
-		c.serve(ctx, c1, func(feature.Received) {})
+		c.serve(ctx, c1, func(bot.Received) {})
 	}
 	time.Sleep(100 * time.Millisecond)
 	if delta := runtime.NumGoroutine() - before; delta > 5 {

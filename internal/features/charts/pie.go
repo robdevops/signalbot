@@ -25,18 +25,19 @@ var pieToolSchema = json.RawMessage(`{
   "properties": {
     "title": {"type": "string", "description": "Short title, e.g. \"Revenue by segment, Q3\""},
     "subtitle": {"type": "string", "description": "e.g. \"Share of total\""},
+    "source": {"type": "string", "description": "` + sourceDescription + `"},
     "slices": {"type": "array", "minItems": 2, "maxItems": 12, "items": {
       "type": "object", "required": ["label", "value"],
       "properties": {"label": {"type": "string"}, "value": {"type": "number", "minimum": 0}}
     }},
-    "unit": {"type": "string", "description": "Prefix for the total in the centre, e.g. \"$\""},
+    "unit": {"type": "string", "description": "Currency symbol put before the amounts, e.g. \"$\"; leave it empty for counts"},
     "suffix": {"type": "string", "description": "The values' scale, K, M, B or T (e.g. \"B\" if 54.3 means 54.3 billion), or a unit such as \"kg\". Large totals are shortened for you"},
     "center": {"type": "string", "description": "Text for the centre instead of the total"}
   }
 }`)
 
 const pieToolDescription = "Draw a donut chart of how a total splits into parts and attach it to your reply as an image. " +
-	"Use it for proportions. Pass the raw values: the percentages and total are computed for you. " +
+	"Use it for proportions. Pass the raw values: the legend shows each amount, and the total is computed for you. " +
 	"The chart is sent alone with its title as the caption, so write no other text: it would be discarded."
 
 type pieSlice struct {
@@ -47,6 +48,7 @@ type pieSlice struct {
 type pieSpec struct {
 	Title    string     `json:"title"`
 	Subtitle string     `json:"subtitle"`
+	Source   string     `json:"source"`
 	Slices   []pieSlice `json:"slices"`
 	Unit     string     `json:"unit"`
 	Suffix   string     `json:"suffix"`
@@ -64,7 +66,8 @@ func parsePie(arguments string) (*pieSpec, error) {
 	}
 	s.Title = txt.Clamp(strings.TrimSpace(s.Title), 80)
 	s.Subtitle = txt.Clamp(strings.TrimSpace(s.Subtitle), 120)
-	s.Unit, s.Suffix, s.Center = txt.Clamp(s.Unit, 4), txt.Clamp(s.Suffix, 4), txt.Clamp(strings.TrimSpace(s.Center), 16)
+	s.Source = txt.Clamp(strings.TrimSpace(s.Source), 80)
+	s.Unit, s.Suffix, s.Center = short(s.Unit), short(s.Suffix), txt.Clamp(strings.TrimSpace(s.Center), 16)
 	if s.Title == "" {
 		return nil, errors.New("title is required")
 	}
@@ -93,16 +96,30 @@ func (s *pieSpec) share(sl pieSlice) string {
 	return fmt.Sprintf("%.1f%%", sl.Value/s.total*100)
 }
 
-// centerText is the total, e.g. "$127.6B", unless the model gave its own. A
-// K, M, B or T suffix scales the values, unless that would make the total
-// absurd (1e15 or more), which means the values were already raw.
+// short is a unit or suffix of up to 4 characters; a longer one, such as a
+// word, is dropped rather than cut, as the number reads fine without it.
+func short(u string) string {
+	if u = strings.TrimSpace(u); len([]rune(u)) > 4 {
+		return ""
+	}
+	return u
+}
+
+// centerText is the total, e.g. "$127.6B", unless the model gave its own.
 func (s *pieSpec) centerText() string {
 	if s.Center != "" {
 		return s.Center
 	}
-	v, suffix := s.total, s.Suffix
-	if m, ok := map[string]float64{"K": 1e3, "M": 1e6, "B": 1e9, "T": 1e12}[strings.ToUpper(strings.TrimSpace(suffix))]; ok {
-		if v*m < 1e15 {
+	return s.amount(s.total)
+}
+
+// amount formats v, e.g. "$127.6B". A K, M, B or T suffix scales the values,
+// unless that would make the total absurd (1e15 or more), which means the
+// values were already raw.
+func (s *pieSpec) amount(v float64) string {
+	suffix := s.Suffix
+	if m, ok := map[string]float64{"K": 1e3, "M": 1e6, "B": 1e9, "T": 1e12}[strings.ToUpper(suffix)]; ok {
+		if s.total*m < 1e15 {
 			v *= m
 		}
 		suffix = ""
@@ -121,9 +138,24 @@ func (s *pieSpec) centerText() string {
 	return s.Unit + oneDecimal(v)
 }
 
-// oneDecimal formats v with at most one decimal, e.g. 127.6 or 85.
+// oneDecimal formats v with at most one decimal and commas between
+// thousands, e.g. 127.6 or 54,720,710.
 func oneDecimal(v float64) string {
-	return strconv.FormatFloat(math.Round(v*10)/10, 'f', -1, 64)
+	return commas(strconv.FormatFloat(math.Round(v*10)/10, 'f', -1, 64))
+}
+
+// commas puts a comma between each group of three digits before the decimal
+// point of a formatted number, e.g. "-1234567.5" becomes "-1,234,567.5".
+func commas(n string) string {
+	end := strings.IndexByte(n, '.')
+	if end < 0 {
+		end = len(n)
+	}
+	start := len(n) - len(strings.TrimLeft(n, "-"))
+	for i := end - 3; i > start; i -= 3 {
+		n = n[:i] + "," + n[i:]
+	}
+	return n
 }
 
 func (s *pieSpec) summary() string {
@@ -154,17 +186,17 @@ func wrapLabel(f font.Face, text string, width float64) []string {
 	if rest == "" {
 		return []string{first}
 	}
-	for textWidth(f, rest) > width && len([]rune(rest)) > 1 {
-		r := []rune(strings.TrimSuffix(rest, "…"))
-		rest = string(r[:len(r)-1]) + "…"
-	}
-	return []string{first, rest}
+	return []string{first, fitText(f, rest, width)}
 }
 
-// renderPie draws the chart, a ring with the total in its hole, in theme th
-// as a PNG.
+// renderPie draws the chart in theme th as a PNG.
 func renderPie(s *pieSpec, th *theme) ([]byte, error) {
-	cv := newCanvas(th, s.Title, s.Subtitle)
+	return drawPie(s, th).encode()
+}
+
+// drawPie draws the chart, a ring with the total in its hole, in theme th.
+func drawPie(s *pieSpec, th *theme) *canvas {
+	cv := newCanvas(th, s.Title, s.Subtitle, s.Source)
 	legendFace := face(chartFonts.regular, 26)
 	defer legendFace.Close()
 
@@ -174,7 +206,7 @@ func renderPie(s *pieSpec, th *theme) ([]byte, error) {
 	labels := make([]string, len(s.Slices))
 	textW := 0.0
 	for i, sl := range s.Slices {
-		labels[i] = sl.Label + "  " + s.share(sl)
+		labels[i] = sl.Label + "  " + s.amount(sl.Value)
 		textW = max(textW, textWidth(legendFace, labels[i]))
 	}
 	outer := min(maxOuter, max(minOuter, (width-2*margin-gap-swatch-textW)/2))
@@ -224,7 +256,10 @@ func renderPie(s *pieSpec, th *theme) ([]byte, error) {
 	}
 
 	// The legend, rows centred on the donut, long labels on two lines.
-	const lineH, rowGap = 32.0, 20.0
+	// The gaps between rows shrink to keep a tall legend above the source,
+	// and if that is not enough the smallest slices' labels go back to one
+	// line, cut with "…" before their amount.
+	const lineH, minGap, room = 32.0, 4.0, 2 * (sourceTop - 6 - cy)
 	lx := cx + outer + gap
 	rows := make([][]string, len(labels))
 	legendH := 0.0
@@ -232,6 +267,14 @@ func renderPie(s *pieSpec, th *theme) ([]byte, error) {
 		rows[i] = wrapLabel(legendFace, labels[i], textW)
 		legendH += float64(len(rows[i])) * lineH
 	}
+	for i := len(rows) - 1; i >= 0 && legendH+minGap*float64(len(rows)-1) > room; i-- {
+		if len(rows[i]) > 1 {
+			amount := "  " + s.amount(s.Slices[i].Value)
+			rows[i] = []string{fitText(legendFace, s.Slices[i].Label, textW-textWidth(legendFace, amount)) + amount}
+			legendH -= lineH
+		}
+	}
+	rowGap := min(20, max(minGap, (room-legendH)/float64(len(rows)-1)))
 	y := cy - (legendH+rowGap*float64(len(rows)-1))/2
 	for i, lines := range rows {
 		cv.rect(th.palette[i], lx, y+8, 16, 16)
@@ -240,5 +283,5 @@ func renderPie(s *pieSpec, th *theme) ([]byte, error) {
 		}
 		y += float64(len(lines))*lineH + rowGap
 	}
-	return cv.encode()
+	return cv
 }

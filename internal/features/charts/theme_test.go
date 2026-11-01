@@ -70,7 +70,23 @@ func decode(t *testing.T, data []byte) image.Image {
 func countColour(img image.Image, r image.Rectangle, c color.RGBA) int {
 	r = r.Intersect(img.Bounds())
 	n := 0
-	if m, ok := img.(*image.RGBA); ok { // what an opaque chart decodes to; At is slow under -race
+	if m, ok := img.(*image.Paletted); ok { // what a chart decodes to; At is slow under -race
+		var is [256]bool // palette indexes that are c
+		for i, p := range m.Palette {
+			if p := color.RGBAModel.Convert(p).(color.RGBA); p.R == c.R && p.G == c.G && p.B == c.B {
+				is[i] = true
+			}
+		}
+		for y := r.Min.Y; y < r.Max.Y; y++ {
+			for _, i := range m.Pix[m.PixOffset(r.Min.X, y):m.PixOffset(r.Max.X, y)] {
+				if is[i] {
+					n++
+				}
+			}
+		}
+		return n
+	}
+	if m, ok := img.(*image.RGBA); ok {
 		for y := r.Min.Y; y < r.Max.Y; y++ {
 			row := m.Pix[m.PixOffset(r.Min.X, y):m.PixOffset(r.Max.X, y)]
 			for i := 0; i < len(row); i += 4 {
@@ -127,7 +143,7 @@ func sixSeries() string {
 	var series []any
 	for k, name := range []string{"AAA", "BBB", "CCC", "DDD", "EEE", "FFF"} {
 		var pts []pt
-		for i := 0; i < 30; i++ {
+		for i := range 30 {
 			d := time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC).AddDate(0, 0, i).Format("2006-01-02")
 			pts = append(pts, pt{d, 100 + float64(i*(k-2)) + 4*math.Sin(float64(i+k)/3)})
 		}

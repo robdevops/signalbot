@@ -42,7 +42,7 @@ const (
 )
 
 // dockerDir is the Docker image's STATE_DIRECTORY, a bind mount whose owner
-// the bot can't fix itself.
+// the bot can't fix itself, so its message says how to fix the host's.
 var dockerDir = "/data"
 
 const usage = `/schedule "<message or /command>" <time> [every hour|day|week|month|quarter|year] [group name]`
@@ -79,7 +79,9 @@ type store struct {
 	last map[string]int // the last ID each user was given, so none is reused
 }
 
-// Register adds /schedule to h, and sets the saved schedules again.
+// Register adds /schedule to h, and sets the saved schedules again. It
+// fails, stopping the bot, if the state directory can't be listed and
+// written, rather than failing at the first save.
 func Register(h feature.Host) error { return register(h, time.Local, time.Now) }
 
 func register(h feature.Host, loc *time.Location, now func() time.Time) error {
@@ -89,11 +91,18 @@ func register(h feature.Host, loc *time.Location, now func() time.Time) error {
 	if dir == "" {
 		dir = "."
 	}
-	if filepath.Clean(dir) == dockerDir {
-		if err := usable(dir); err != nil {
+	if err := usable(dir); err != nil {
+		if filepath.Clean(dir) == dockerDir {
 			return fmt.Errorf("%s must be readable and writable by the bot's user (65532); "+
 				"on the host, run: chown 65532 /var/lib/private/signalbot (%v)", dir, err)
 		}
+		where := "its state directory " + dir
+		if dir == "." {
+			where = "the working directory, as STATE_DIRECTORY isn't set"
+		}
+		return fmt.Errorf("/schedule can't list and write %s (%v); "+
+			"under systemd, add StateDirectory=signalbot to the unit's [Service] section, "+
+			"or set STATE_DIRECTORY to a directory the bot can write", where, err)
 	}
 	s := &store{h: h, path: filepath.Join(dir, fileName), loc: loc, now: now, last: map[string]int{}}
 	if err := s.load(); err != nil {
@@ -105,6 +114,9 @@ func register(h feature.Host, loc *time.Location, now func() time.Time) error {
 		}
 	}
 	h.IntroLine(`Type "/schedule" for schedules and reminders.`)
+	// No model tools, so this names the commands only in the prompt's list
+	// of what the bot has, for a near-miss such as "/time" to be pointed here.
+	h.Tools(feature.ToolGroup{Names: []string{"**schedules and reminders**: /" + strings.Join(commands, ", /")}})
 	return nil
 }
 

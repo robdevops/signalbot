@@ -551,15 +551,14 @@ func TestReadSSEMultiLine(t *testing.T) {
 // A server's config instructions win over its own, even when empty; its
 // own are capped.
 func TestInstructions(t *testing.T) {
-	empty, mine := "", " Mine. "
 	long := strings.Repeat("x", maxInstructions+50)
 	for _, c := range []struct {
 		cfg       *string
 		own, want string
 	}{
 		{nil, "Theirs.", "Theirs."},
-		{&mine, "Theirs.", "Mine."},
-		{&empty, "Theirs.", ""},
+		{new(" Mine. "), "Theirs.", "Mine."},
+		{new(""), "Theirs.", ""},
 		{nil, "", ""},
 	} {
 		if got := instructions(c.cfg, c.own); got != c.want {

@@ -86,7 +86,7 @@ func TestReplyPictures(t *testing.T) {
 	}})
 	h.answer(toolCall("draw"), text("Done"))
 	h.receive(dm("draw"))
-	if s := h.nextSend(); s.text != "a caption" || len(s.images) != 2 || string(s.images[0]) != string(png) {
+	if s := h.nextSend(); s.text != "a caption" || len(s.images) != 2 || string(s.images[0].Data) != string(png) {
 		t.Fatalf("sent %+v", s)
 	}
 	h.answer(toolCall("snap"), text("Done"))
@@ -148,11 +148,13 @@ func TestCommands(t *testing.T) {
 }
 
 // A group with Keywords is offered when a message matches, and for the 2
-// replies after one that matched or used its tools.
+// replies after one that matched or used its tools. A group with only
+// Names is kept for the prompt's list, but isn't in {tools}.
 func TestOffering(t *testing.T) {
 	h := start(t, options{tools: true, features: func(b *Bot) {
 		b.Tools(group("alpha", "a_tool", nil))
 		b.Tools(group("beta", "b_tool", regexp.MustCompile(`\bplot\b`)))
+		b.Tools(feature.ToolGroup{Names: []string{"gamma"}})
 	}})
 	for _, c := range []struct {
 		text    string
@@ -167,8 +169,8 @@ func TestOffering(t *testing.T) {
 	} {
 		r, _ := h.ask(dm(fmt.Sprint(c.text, " ", len(h.requests())))) // not a repeat
 		equal(t, c.text, toolNames(r), c.tools)
-		want := "\n" + c.listing + "If asked what tools you have: alpha; beta.\n"
-		if s := system(r); !strings.Contains(s, want) || !strings.Contains(s, "Tools:\\nalpha\\n\\nbeta\\n") || strings.Contains(s, "beta system") != slices.Contains(c.tools, "b_tool") {
+		want := "\n" + c.listing + "If asked what tools you have: alpha; beta; gamma.\n"
+		if s := system(r); !strings.Contains(s, want) || !strings.Contains(s, "Tools:\\nalpha\\n\\nbeta\\n") || strings.Contains(s, `\ngamma`) || strings.Contains(s, "beta system") != slices.Contains(c.tools, "b_tool") {
 			t.Fatalf("%s: system %q", c.text, s)
 		}
 	}
@@ -350,11 +352,11 @@ func TestNoModel(t *testing.T) {
 }
 
 // On an API other than OpenRouter's there is no model list to read, so
-// images are off and tools on; a server tool for another provider is left
+// images and tools are assumed; a server tool for another provider is left
 // out with a warning, and a group left with no tools is dropped.
 func TestOtherAPI(t *testing.T) {
 	h := start(t, options{otherAPI: true, features: func(b *Bot) {
-		if info := b.Info(); info.Model != "test/test-model" || info.Images || !info.CallsTools {
+		if info := b.Info(); info.Model != "test/test-model" || !info.Images || !info.CallsTools {
 			t.Errorf("info at registration %+v", info)
 		}
 		b.Tools(feature.ToolGroup{Names: []string{"served"}, Listing: "served", Tools: []feature.Tool{{Server: "openrouter:served"}}})
@@ -375,7 +377,7 @@ func TestOtherAPI(t *testing.T) {
 	h.mu.Unlock()
 	logs := h.logs.String()
 	if lists != 0 || !strings.Contains(logs, "<4>tool openrouter:served left out") || !strings.Contains(logs, "<4>tool openrouter:other left out") ||
-		!strings.Contains(logs, "images are off and tools on") {
+		!strings.Contains(logs, "images and tools are on until the API rejects them") {
 		t.Fatalf("%d model lists; logs:\n%s", lists, logs)
 	}
 }

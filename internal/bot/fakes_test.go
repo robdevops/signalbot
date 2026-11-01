@@ -48,7 +48,7 @@ type harness struct {
 type fakeNet struct {
 	id      chan struct{} // closed once the bot is connected
 	running chan struct{} // closed once Run is receiving
-	handle  func(feature.Received)
+	handle  func(Received)
 	sent    chan sent // what the bot sends, in order
 	mu      sync.Mutex
 	typing  int      // Typing calls
@@ -58,11 +58,11 @@ type fakeNet struct {
 type sent struct {
 	chat   feature.Chat
 	text   string
-	images [][]byte
+	images []feature.Picture
 	known  map[string]string
 }
 
-func (n *fakeNet) Run(ctx context.Context, handle func(feature.Received)) {
+func (n *fakeNet) Run(ctx context.Context, handle func(Received)) {
 	n.handle = handle
 	close(n.running)
 	<-ctx.Done()
@@ -77,7 +77,7 @@ func (n *fakeNet) WaitID(ctx context.Context) string {
 	}
 }
 
-func (n *fakeNet) Send(chat feature.Chat, text string, images [][]byte, known map[string]string) {
+func (n *fakeNet) Send(chat feature.Chat, text string, images []feature.Picture, known map[string]string) {
 	n.sent <- sent{chat, text, images, known}
 }
 
@@ -88,18 +88,18 @@ func (n *fakeNet) Typing(feature.Chat) func() {
 	return func() {}
 }
 
-func (n *fakeNet) Delivered(ctx context.Context, msg feature.Message, claim func(name, id string)) (feature.Message, bool, bool) {
+func (n *fakeNet) Delivered(ctx context.Context, msg feature.Message) (Received, bool) {
 	if n.WaitID(ctx) == "" || msg.Chat.GroupID != "" && msg.Chat.GroupID != groupID {
-		return msg, false, false
+		return Received{}, false
 	}
+	var r Received
 	if msg.Chat.GroupID != "" {
-		claim("Alice", aliceID)
-		claim("Bob", bobID)
+		r.Members = []Member{{Name: "Alice", ID: aliceID}, {Name: "Bob", ID: bobID}}
 	}
 	msg.Name = cmp.Or(msg.Name, map[string]string{aliceID: "Alice", bobID: "Bob"}[msg.Sender])
-	text, mentioned := strings.CutPrefix(msg.Text, "@Botty ")
-	msg.Text = text
-	return msg, mentioned, true
+	msg.Text, r.Mentioned = strings.CutPrefix(msg.Text, "@Botty ")
+	r.Message = msg
+	return r, true
 }
 
 func (n *fakeNet) BotName() string { return "Botty" }
@@ -246,17 +246,17 @@ func (h *harness) receive(m feature.Message) {
 		}
 		return m, m.Addressed || m.Chat.GroupID != ""
 	}
-	r := feature.Received{Message: m}
+	r := Received{Message: m}
 	select {
 	case <-h.net.id:
 		switch {
 		case m.Addressed:
-			r = feature.Received{Message: feature.Message{Chat: m.Chat, Addressed: true}, Load: load}
+			r = Received{Chat: m.Chat, Addressed: true, Load: load}
 		case m.Chat.GroupID == "":
 			return
 		}
 	default:
-		r = feature.Received{Message: feature.Message{Chat: m.Chat}, Load: load}
+		r = Received{Chat: m.Chat, Load: load}
 	}
 	h.net.handle(r)
 }

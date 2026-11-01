@@ -55,20 +55,6 @@ type Media struct {
 	Label   string // a sticker's emoji and pack title, e.g. `: 🙂 from "Pack"`; filled in by the network
 }
 
-// Received is a message as the chat network hands it to the core, on the
-// network's reader goroutine, or as a feature delivers it. Features never
-// see one.
-type Received struct {
-	Message          // what is known without calling the network
-	GroupChange bool // only that a group's members, name or description changed
-	// Load completes, in its slot, an addressed message, or one that arrived
-	// before the bot's own ID was known. It may call the network, and calls
-	// learn with each name it shows the model and that person's ID. It
-	// reports false for a message the core has nothing to do with. It is nil
-	// for an unaddressed group message and for a delivered one.
-	Load func(ctx context.Context, learn func(name, id string)) (Message, bool)
-}
-
 // Action is what an OnMessage hook decides. The zero value carries on.
 type Action struct {
 	Answer     string // reply with this text, without the model (addressed messages only)
@@ -97,13 +83,16 @@ type Additions struct {
 // Picture is an image sent with a reply.
 type Picture struct {
 	Data        []byte
+	Name        string // its file name without the extension, e.g. a title; "" lets the network choose
 	Caption     string // sent in place of the reply's text
 	HistoryNote string // what history keeps of it; "" keeps "[sent an image]"
 }
 
-// ToolGroup is a set of tools offered to the model together.
+// ToolGroup is a set of tools offered to the model together. One with no
+// Tools, only Names, such as a feature's chat commands, is named only in
+// the prompt's list of what the bot has, not in the intro's {tools}.
 type ToolGroup struct {
-	Names    []string // what it adds to the intro's {tools}
+	Names    []string // what it adds to the intro's {tools} and the prompt's list
 	Listing  string   // its item in the system prompt's tools line
 	System   string   // a system-prompt line while it is offered
 	Tools    []Tool
@@ -122,14 +111,15 @@ type Tool struct {
 }
 
 // Info is what the core knows about itself. All but Name and Tools are
-// known when features register.
+// known when features register, though Images and CallsTools turn off for
+// the rest of the run if the model's API rejects them.
 type Info struct {
 	Name       string   // the bot's name
 	Version    string   // the bot's version; "" if unknown
 	Model      string   // the model's ID, such as "provider/model" on OpenRouter; "" with no model
 	Images     bool     // the model takes images
 	CallsTools bool     // the model can call tools
-	Tools      []string // every tool group's Names in feature order; none when it can't call tools
+	Tools      []string // the Names of every tool group with tools, in feature order; none when it can't call tools
 	Intro      string   // INTRO with {name}, {model} and {tools} filled in
 }
 

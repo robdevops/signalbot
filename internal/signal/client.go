@@ -20,14 +20,15 @@ import (
 	"time"
 	"unicode"
 
+	"github.com/robdevops/signalbot/internal/bot"
 	"github.com/robdevops/signalbot/internal/config"
 	"github.com/robdevops/signalbot/internal/feature"
 	"github.com/robdevops/signalbot/internal/kit/logx"
 	"github.com/robdevops/signalbot/internal/kit/txt"
 )
 
-// maxLine caps one JSON-RPC frame from signal-cli. Message bodies, mention
-// lists and quoted text are all sender-controlled parts of a frame.
+// maxLine caps one JSON-RPC frame from signal-cli, whose bodies, mentions
+// and quotes the sender controls.
 const maxLine = 1 << 20
 
 // writeTimeout bounds one request's write, so a stalled socket can't hold
@@ -43,7 +44,7 @@ type rpcMsg struct {
 		Code    int    `json:"code"`
 		Message string `json:"message"`
 	} `json:"error"`
-	Envelope *envelope `json:"envelope"`
+	Envelope *envelope `json:"envelope"` // in a receive's params
 }
 
 // Client is a JSON-RPC client for a signal-cli daemon socket.
@@ -56,8 +57,8 @@ type Client struct {
 	wmu         sync.Mutex // serialises writes
 	conn        net.Conn
 	pending     map[string]chan *rpcMsg
-	id          atomic.Value // string: the account's ACI, else its number
-	known       chan struct{}
+	id          atomic.Value  // string: the account's ACI, else its number
+	known       chan struct{} // closed once id is set
 	knownOnce   sync.Once
 	closed      atomic.Bool // Run has returned
 	names       names
@@ -72,8 +73,8 @@ func New(test *config.Test) (*Client, error) {
 		return nil, errors.New("SIGNALCLI_SOCKET is required")
 	}
 	allowed := map[string]bool{}
-	// Split on commas, semicolons and any white space, so a CRLF env file or
-	// a tab-separated list cannot leave an unmatchable ID in the list.
+	// Commas, semicolons or any white space, so a CRLF env file or a tab
+	// can't leave an unmatchable ID.
 	for _, id := range strings.FieldsFunc(config.Env("SIGNAL_DM_USER_IDS", ""), func(r rune) bool {
 		return r == ',' || r == ';' || unicode.IsSpace(r)
 	}) {
@@ -82,8 +83,7 @@ func New(test *config.Test) (*Client, error) {
 	return newClient(addr, allowed, test), nil
 }
 
-// newClient makes a client for the socket at addr, answering DMs from the
-// senders in allowed.
+// newClient is New with its settings given.
 func newClient(addr string, allowed map[string]bool, test *config.Test) *Client {
 	c := &Client{addr: addr, allowed: allowed, typingEvery: 10 * time.Second, pending: map[string]chan *rpcMsg{},
 		known: make(chan struct{}), test: test}
@@ -94,8 +94,7 @@ func newClient(addr string, allowed map[string]bool, test *config.Test) *Client 
 	return c
 }
 
-// self is the bot's account ID (ACI, else number), or "" until signal-cli
-// says.
+// self is the bot's account ID, or "" until signal-cli says.
 func (c *Client) self() string {
 	id, _ := c.id.Load().(string)
 	return id
@@ -123,7 +122,7 @@ func (c *Client) network() string {
 // Run connects, learns the bot's own account ID, and calls handle on this
 // goroutine for every message received that the core may act on. It
 // reconnects with backoff until ctx ends. handle must not block.
-func (c *Client) Run(ctx context.Context, handle func(feature.Received)) {
+func (c *Client) Run(ctx context.Context, handle func(bot.Received)) {
 	defer c.closed.Store(true)
 	backoff := time.Second
 	for ctx.Err() == nil {
@@ -133,8 +132,7 @@ func (c *Client) Run(ctx context.Context, handle func(feature.Received)) {
 		} else {
 			began := time.Now()
 			c.serve(ctx, conn, handle)
-			// Only a connection that stayed up resets the backoff; one that
-			// dies at once (say listAccounts keeps failing) must not spin.
+			// Only a connection that held resets it, so one that dies at once can't spin.
 			if time.Since(began) > time.Minute {
 				backoff = time.Second
 			}
@@ -148,7 +146,7 @@ func (c *Client) Run(ctx context.Context, handle func(feature.Received)) {
 	}
 }
 
-func (c *Client) serve(ctx context.Context, conn net.Conn, handle func(feature.Received)) {
+func (c *Client) serve(ctx context.Context, conn net.Conn, handle func(bot.Received)) {
 	c.mu.Lock()
 	c.conn = conn
 	c.mu.Unlock()
@@ -180,15 +178,14 @@ func (c *Client) serve(ctx context.Context, conn net.Conn, handle func(feature.R
 	}
 	conn.Close()
 	c.mu.Lock()
-	c.conn = nil
-	for id, ch := range c.pending {
+	for _, ch := range c.pending {
 		close(ch)
-		delete(c.pending, id)
 	}
+	c.conn, c.pending = nil, map[string]chan *rpcMsg{}
 	c.mu.Unlock()
 }
 
-func (c *Client) dispatch(line []byte, handle func(feature.Received)) {
+func (c *Client) dispatch(line []byte, handle func(bot.Received)) {
 	defer logx.Recover("reading a message")
 	var m rpcMsg
 	if err := json.Unmarshal(line, &m); err != nil {
@@ -220,8 +217,7 @@ func (c *Client) dispatch(line []byte, handle func(feature.Received)) {
 	}
 }
 
-// unmatched reports the outcome of fire-and-forget requests (send,
-// sendTyping).
+// unmatched logs the outcome of a fire-and-forget request, send or sendTyping.
 func unmatched(m *rpcMsg) {
 	if m.Error != nil {
 		logx.Errorf("signal-cli request %s failed: %s", m.ID, txt.Clamp(m.Error.Message, 200))
@@ -249,10 +245,7 @@ func (c *Client) write(id int64, method string, params any) error {
 	if params != nil {
 		req["params"] = params
 	}
-	b, err := json.Marshal(req)
-	if err != nil {
-		return err
-	}
+	b, _ := json.Marshal(req) // plain values, which always encode
 	c.mu.Lock()
 	conn := c.conn
 	c.mu.Unlock()
@@ -262,7 +255,8 @@ func (c *Client) write(id int64, method string, params any) error {
 	c.wmu.Lock()
 	defer c.wmu.Unlock()
 	conn.SetWriteDeadline(time.Now().Add(writeTimeout))
-	if _, err = conn.Write(append(b, '\n')); err != nil {
+	_, err := conn.Write(append(b, '\n'))
+	if err != nil {
 		conn.Close()
 	}
 	return err
@@ -312,22 +306,10 @@ func (c *Client) listAccounts(ctx context.Context) (string, error) {
 	return cmp.Or(accts[0].ACI, accts[0].Number), nil
 }
 
-// data decodes a result that carries a file as base64.
-func (c *Client) data(ctx context.Context, method string, params any) ([]byte, error) {
-	var r struct {
-		Data string `json:"data"`
-	}
-	if err := c.call(ctx, method, params, &r); err != nil {
-		return nil, err
-	}
-	return base64.StdEncoding.DecodeString(r.Data)
-}
-
-// Media fetches the bytes of msg.Media[i], waiting at most 15s: an image by
-// its attachment ID, naming the chat it arrived in, or a sticker's image
-// (WebP, or APNG if animated), which signal-cli downloads with the packs of
-// stickers it receives. The bot never reads signal-cli's data directory
-// itself.
+// Media fetches msg.Media[i] from signal-cli, waiting at most 15s: an image
+// by its attachment ID and chat, or a sticker's image (WebP, or APNG if
+// animated), which signal-cli downloads with the packs it receives. The
+// bot never reads signal-cli's data directory itself.
 func (c *Client) Media(ctx context.Context, msg feature.Message, i int) ([]byte, error) {
 	if i < 0 || i >= len(msg.Media) {
 		return nil, errors.New("no such media")
@@ -335,22 +317,30 @@ func (c *Client) Media(ctx context.Context, msg feature.Message, i int) ([]byte,
 	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
 	m := msg.Media[i]
-	if m.Sticker {
-		return c.data(ctx, "getSticker", stickerOf(m.ID)) // {"packId", "stickerId"}
+	var r struct {
+		Data string `json:"data"`
 	}
-	p := map[string]any{"id": m.ID}
-	if msg.Chat.GroupID != "" {
-		p["groupId"] = msg.Chat.GroupID
-	} else {
-		p["recipient"] = msg.Chat.User
+	var err error
+	switch {
+	case m.Sticker:
+		err = c.call(ctx, "getSticker", stickerOf(m.ID), &r) // {"packId", "stickerId"}
+	case msg.Chat.GroupID != "":
+		err = c.call(ctx, "getAttachment", map[string]any{"id": m.ID, "groupId": msg.Chat.GroupID}, &r)
+	default:
+		err = c.call(ctx, "getAttachment", map[string]any{"id": m.ID, "recipient": msg.Chat.User}, &r)
 	}
-	return c.data(ctx, "getAttachment", p)
+	if err != nil {
+		return nil, err
+	}
+	return base64.StdEncoding.DecodeString(r.Data)
 }
 
 // stickerLabel describes a sticker by its emoji and its pack's title, e.g.
-// `: 🙂 from "Pack"`, or "" if signal-cli doesn't know the pack. Both come
-// from whoever made the pack, so they are made safe and the title quoted.
+// `: 🙂 from "Pack"`, or "" if signal-cli doesn't know the pack, waiting at
+// most 10s. The pack's maker chose both, so they are made safe.
 func (c *Client) stickerLabel(ctx context.Context, s sticker) string {
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
 	var packs []struct {
 		PackID   string `json:"packId"`
 		Title    string `json:"title"`
@@ -380,11 +370,12 @@ func (c *Client) stickerLabel(ctx context.Context, s sticker) string {
 	return ""
 }
 
-// group is a group the bot is in, with its members as signal-cli knows
-// them: an ACI, a number, or both.
+// group is a group the bot is in, with its members by ACI, number or both.
 type group struct {
-	feature.Group
-	members []member
+	ID       string   `json:"id"`
+	Name     string   `json:"name"`
+	IsMember bool     `json:"isMember"`
+	Members  []member `json:"members"`
 }
 
 type member struct {
@@ -392,39 +383,23 @@ type member struct {
 	Number string `json:"number"`
 }
 
-// has reports whether id (an ACI or a number) is a member of g.
-func (g group) has(id string) bool {
-	return id != "" && slices.ContainsFunc(g.members, func(m member) bool { return m.UUID == id || m.Number == id })
-}
-
-// groups lists the groups the bot is a member of.
-func (c *Client) groups(ctx context.Context) ([]group, error) {
-	var gs []struct {
-		ID       string   `json:"id"`
-		Name     string   `json:"name"`
-		IsMember bool     `json:"isMember"`
-		Members  []member `json:"members"`
-	}
+// groups lists the groups the bot shares with user (an ACI or a number).
+func (c *Client) groups(ctx context.Context, user string) ([]group, error) {
+	var gs []group
 	if err := c.call(ctx, "listGroups", nil, &gs); err != nil {
 		return nil, err
 	}
-	var out []group
-	for _, g := range gs {
-		if g.IsMember && g.ID != "" {
-			out = append(out, group{feature.Group{ID: g.ID, Name: txt.SafeName(g.Name)}, g.Members})
-		}
-	}
-	return out, nil
+	return slices.DeleteFunc(gs, func(g group) bool {
+		return !g.IsMember || g.ID == "" || !slices.ContainsFunc(g.Members, func(m member) bool { return is(user, m.UUID, m.Number) })
+	}), nil
 }
 
 // Groups lists the groups the bot shares with user (an ACI or a number).
 func (c *Client) Groups(ctx context.Context, user string) ([]feature.Group, error) {
-	gs, err := c.groups(ctx)
+	gs, err := c.groups(ctx, user)
 	var out []feature.Group
 	for _, g := range gs {
-		if g.has(user) {
-			out = append(out, g.Group)
-		}
+		out = append(out, feature.Group{ID: g.ID, Name: txt.SafeName(g.Name)})
 	}
 	return out, err
 }

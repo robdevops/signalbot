@@ -4,10 +4,12 @@ import (
 	"bytes"
 	"encoding/json"
 	"image"
+	"image/color"
 	"image/png"
 	"math"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -22,7 +24,7 @@ func sampleChart() string {
 	var a, b []pt
 	day := time.Date(2026, 9, 30, 0, 0, 0, 0, time.UTC)
 	av, bv := 180.0, 40.0
-	for i := 0; i < 21; i++ {
+	for i := range 21 {
 		d := day.AddDate(0, 0, i*4/3)
 		a = append(a, pt{d.Format("2006-01-02"), av})
 		b = append(b, pt{d.Format("2006-01-02"), bv})
@@ -202,7 +204,7 @@ func TestRenderTwoAxisSample(t *testing.T) {
 		Value float64 `json:"value"`
 	}
 	var a, b, y []pt
-	for i := 0; i < 30; i++ {
+	for i := range 30 {
 		d := time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC).AddDate(0, 0, i).Format("2006-01-02")
 		a = append(a, pt{d, 180 + 10*math.Sin(float64(i)/4)})
 		b = append(b, pt{d, 120 + float64(i)*0.8})
@@ -239,7 +241,7 @@ func areaSample(n int, rising bool) string {
 	}
 	var pts []pt
 	v := 200.0
-	for i := 0; i < n; i++ {
+	for i := range n {
 		d := time.Date(2025, 10, 30, 0, 0, 0, 0, time.UTC).AddDate(0, 0, i*365/n).Format("2006-01-02")
 		if rising {
 			v += 0.15 + 6*math.Sin(float64(i)/7) - 5*math.Sin(float64(i)/3.3)
@@ -313,8 +315,8 @@ func TestAreaStyle(t *testing.T) {
 // Argument errors say what to fix, so the model can correct its next call.
 func TestChartArgErrors(t *testing.T) {
 	for args, want := range map[string]string{
-		`{"title":"T","series":[{"name":"a","points":[{"date":"2026-10-01","value":"12.3"}]}]}`: "series.points.value must be a number, got string",
-		`{"title":"T","axes":{"left":{"invert":"true"}},"series":[]}`:                           "axes.invert must be true or false, got string",
+		`{"title":"T","series":[{"name":"a","points":[{"date":"2026-10-01","value":"12.3"}]}]}`: "series.0.points.0.value must be a number, got string",
+		`{"title":"T","axes":{"left":{"invert":"true"}},"series":[]}`:                           "axes.left.invert must be true or false, got string",
 		`{"title":"T","series":[`: "not valid JSON (at character 23)",
 		`[1,2]`:                   "must be a JSON object, got array",
 		``:                        "title is required",
@@ -324,7 +326,7 @@ func TestChartArgErrors(t *testing.T) {
 			t.Errorf("%s: got %v, want %q", args, err, want)
 		}
 	}
-	if _, err := parsePie(`{"title":"T","slices":[{"label":"a","value":"1"}]}`); err == nil || !strings.Contains(err.Error(), "slices.value must be a number") {
+	if _, err := parsePie(`{"title":"T","slices":[{"label":"a","value":"1"}]}`); err == nil || !strings.Contains(err.Error(), "slices.0.value must be a number") {
 		t.Errorf("pie: %v", err)
 	}
 }
@@ -348,5 +350,168 @@ func TestChartCaption(t *testing.T) {
 		if got := chartCaption(c.title, c.sub); got != c.want {
 			t.Errorf("%q, %q: got %q", c.title, c.sub, got)
 		}
+	}
+}
+
+// twelvePie has 12 slices, every wrapEvery-th with a label long enough to
+// wrap, so its legend is as tall as a legend gets.
+func twelvePie(wrapEvery int) string {
+	var sl []string
+	for i := range 12 {
+		label := "Slice"
+		if i%wrapEvery == 0 {
+			label = "A slice with a label long enough to wrap onto a second line"
+		}
+		sl = append(sl, `{"label":"`+label+`","value":`+strconv.Itoa(13-i)+`}`)
+	}
+	return `{"title":"Twelve parts","subtitle":"Share of total","slices":[` + strings.Join(sl, ",") + `]}`
+}
+
+// A source is written small at the bottom left, inside a band nothing else
+// reaches, for both chart kinds; without one the band is empty, and the rest
+// of the chart is the same either way.
+func TestChartSource(t *testing.T) {
+	dir := os.Getenv("CHART_THEMES")
+	band := image.Rect(0, sourceTop, width, height)
+	source := `"source":"Yahoo Finance, finance.yahoo.com/quote/NVDA/history, retrieved 28 Oct 2026",`
+	wide := `"source":"` + strings.Repeat("W", 80) + `",`
+	for _, tc := range []struct{ name, tool, source, args string }{
+		{"line", chartTool, source, sampleChart()},
+		{"area", chartTool, source, areaSample(250, true)},
+		{"pie", pieTool, source, alphabetPie},
+		{"pie-twelve", pieTool, source, twelvePie(3)},
+		{"pie-twelve-wrapped", pieTool, source, twelvePie(1)},
+		{"line-wide", chartTool, wide, sampleChart()},
+		{"pie-wide", pieTool, wide, alphabetPie},
+	} {
+		drawnWith, drawnWithout := canvasOf(t, tc.tool, "{"+tc.source+tc.args[1:]), canvasOf(t, tc.tool, tc.args)
+		with, err := drawnWith.encode()
+		if err != nil {
+			t.Fatal(err)
+		}
+		data, err := drawnWithout.encode()
+		if err != nil {
+			t.Fatal(err)
+		}
+		img, without := decode(t, with), decode(t, data)
+		inBand := func(m image.Image, r image.Rectangle) int {
+			return r.Dx()*r.Dy() - countColour(m, r, lightTheme.bg)
+		}
+		if n := inBand(without, band); n != 0 {
+			t.Errorf("%s: %d pixels drawn in the source's band without a source", tc.name, n)
+		}
+		if inBand(img, image.Rect(38, sourceTop, 300, height)) == 0 || countColour(img, band, lightTheme.muted) == 0 {
+			t.Errorf("%s: no source drawn", tc.name)
+		}
+		if inBand(img, image.Rect(width-37, sourceTop, width, height)) != 0 ||
+			(tc.source == source && inBand(img, image.Rect(width-200, sourceTop, width, height)) != 0) {
+			t.Errorf("%s: source runs to the right edge", tc.name)
+		}
+		if strings.HasPrefix(tc.name, "pie-twelve") && inBand(without, image.Rect(width/2, 0, width, 100)) != 0 {
+			t.Errorf("%s: the legend reaches the title", tc.name)
+		}
+		// Compared as drawn, since the PNG's palette depends on the whole image.
+		a, b := drawnWith.img, drawnWithout.img
+		if off := a.PixOffset(0, sourceTop); !bytes.Equal(a.Pix[:off], b.Pix[:off]) {
+			t.Errorf("%s: the source changed the chart above it", tc.name)
+		}
+		if dir != "" {
+			os.WriteFile(filepath.Join(dir, "source-"+tc.name+".png"), with, 0o644)
+		}
+	}
+}
+
+// canvasOf is a chart tool's chart as drawn in the light theme, before
+// it is encoded.
+func canvasOf(t *testing.T, tool, args string) *canvas {
+	t.Helper()
+	if tool == pieTool {
+		s, err := parsePie(args)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return drawPie(s, lightTheme)
+	}
+	s, err := parseChart(args)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return drawChart(s, lightTheme)
+}
+
+// A chart is encoded in at most 256 colours: a PNG of the same size, under
+// half as big as full colour, with the background and the theme's colours
+// exact and every pixel close to how it was drawn.
+func TestEncode(t *testing.T) {
+	line, err := parseChart(sixSeries())
+	if err != nil {
+		t.Fatal(err)
+	}
+	pie, err := parsePie(alphabetPie)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		name string
+		cv   *canvas
+		th   *theme
+	}{
+		{"light line", drawChart(line, lightTheme), lightTheme},
+		{"dark line", drawChart(line, darkTheme), darkTheme},
+		{"light pie", drawPie(pie, lightTheme), lightTheme},
+		{"dark pie", drawPie(pie, darkTheme), darkTheme},
+	} {
+		var full bytes.Buffer
+		if err := png.Encode(&full, tc.cv.img); err != nil {
+			t.Fatal(err)
+		}
+		data, err := tc.cv.encode()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(data) > full.Len()/2 {
+			t.Errorf("%s: %d bytes, against %d in full colour", tc.name, len(data), full.Len())
+		}
+		img := decode(t, data)
+		if img.Bounds() != image.Rect(0, 0, width, height) {
+			t.Fatalf("%s: %v", tc.name, img.Bounds())
+		}
+		if countColour(img, image.Rect(5, 5, 6, 6), tc.th.bg) != 1 || countColour(img, img.Bounds(), tc.th.palette[0]) == 0 {
+			t.Errorf("%s: the background or the first series colour changed", tc.name)
+		}
+		m, ok := img.(*image.Paletted)
+		if !ok {
+			t.Fatalf("%s: decoded as %T", tc.name, img)
+		}
+		worst := 0
+		for i, pi := range m.Pix { // the canvas and the PNG are both rows of width pixels
+			a, b := tc.cv.img.Pix[4*i:4*i+3], color.RGBAModel.Convert(m.Palette[pi]).(color.RGBA)
+			worst = max(worst, absDiff(a[0], b.R), absDiff(a[1], b.G), absDiff(a[2], b.B))
+		}
+		if worst > 48 {
+			t.Errorf("%s: a pixel is %d off", tc.name, worst)
+		}
+	}
+}
+
+func absDiff(a, b uint8) int { return max(int(a)-int(b), int(b)-int(a)) }
+
+// The source is trimmed and clamped to 80 runes.
+func TestChartSourceClamp(t *testing.T) {
+	long := strings.Repeat("é", 100)
+	c, err := parseChart(`{"source":"  ` + long + `  ",` + sampleChart()[1:])
+	if err != nil {
+		t.Fatal(err)
+	}
+	p, err := parsePie(`{"source":"  ` + long + `  ",` + alphabetPie[1:])
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := strings.Repeat("é", 80) + "…"
+	if c.Source != want || p.Source != want {
+		t.Fatalf("source %q, %q", c.Source, p.Source)
+	}
+	if c, _ := parseChart(`{"source":"  Yahoo Finance ",` + sampleChart()[1:]); c.Source != "Yahoo Finance" {
+		t.Fatalf("source %q", c.Source)
 	}
 }

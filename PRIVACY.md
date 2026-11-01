@@ -10,7 +10,7 @@ When the bot answers a message, it sends this to the model's API: [OpenRouter](h
 - the chat's recent messages, with the bot's replies: at most `HISTORY_TURNS` × 2 messages, none older than a day. In a group this is the whole conversation, including messages not addressed to the bot, so it can answer "what do you think?" about something just said; set `GROUP_CONTEXT=false` to keep only the messages addressed to it;
 - the new message, with the display name of whoever sent it (in groups) and of anyone it @mentions;
 - the quoted text, when someone replies to one of the bot's messages, or mentions the bot in reply to someone else.
-- photos or a sticker in the message (a sticker also by its emoji and pack title), and the thumbnail of a quoted photo, when the model accepts images (the bot checks this at startup).
+- photos or a sticker in the message (a sticker also by its emoji and pack title), and the thumbnail of a quoted photo, when the model accepts images (on OpenRouter the bot checks its model list at startup; with another provider it sends them until the API rejects one).
 
 With web search on (`MODEL_SEARCH`), the model decides whether to search and writes the query itself. The query can contain anything the model was sent (see above), such as a name or a phrase from a message, and goes to the search service OpenRouter uses. Web search runs only on OpenRouter.
 

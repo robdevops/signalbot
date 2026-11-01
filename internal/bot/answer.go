@@ -2,6 +2,7 @@ package bot
 
 import (
 	"cmp"
+	"errors"
 	"regexp"
 	"slices"
 	"strconv"
@@ -22,16 +23,24 @@ const (
 		"Aim for a single line. Two or three sentences at the very most, and only when asked for detail."
 	mentionPrompt = "A mention shown as [unnamed user] is someone whose name you don't know; don't invent one. " +
 		"To mention someone, write @ followed by their exact name. Never write your own name with an @."
+	// sourcePrompt joins them when the model can call tools and has some.
+	sourcePrompt = "If your answer uses a tool or search, name the source briefly, e.g. \"(Yahoo Finance)\", " +
+		"or give its url when that helps."
 	// maxQuote caps quoted text in a prompt.
 	maxQuote = 500
 	// followUps is how many replies after one that matched a tool group's
 	// keywords, or used its tools, still offer it.
 	followUps = 2
 	sorry     = "Sorry, I couldn't get an answer right now."
+	// noTools answers a chat command, which forces a tool, once tools are off.
+	noTools = "That command needs tools, which this model can't use."
 )
 
 // respond acts on an addressed message: as act says, else by asking the
-// model and sending its reply; with no model, only an Answer is sent. text
+// model and sending its reply (asking again if the API rejects its images
+// or tools; see fallBack); with no model, only an Answer is sent, and with
+// tools off a chat command gets noTools rather than an answer made up
+// without its tool's data. text
 // is the message as the model sees it, prompt(msg) for one message; tools
 // are offered by msg.Text alone, what was typed, never a sender's name or a
 // quote.
@@ -48,28 +57,48 @@ func (b *Bot) respond(msg feature.Message, act feature.Action, text string) {
 	stop := b.net.Typing(msg.Chat)
 	defer stop() // also if something below panics
 	key := msg.Chat.Key()
-	kept, added := text, false
-	var images []string
-	for _, fn := range b.turns {
-		a := fn(b.ctx, msg)
-		if a.Note != "" {
-			text, kept, added = text+"\n"+a.Note, kept+"\n"+cmp.Or(a.HistoryNote, a.Note), true
-		}
-		images = append(images, a.Images...)
-	}
-	if msg.Text == "" && !added && len(images) == 0 {
-		return
-	}
-	offered, tools := b.offer(key, msg.Text, act.ToolChoice)
 	start := time.Now() // history expires from here, not from when it is stored
-	reply, err := b.ai.Ask(b.ctx, model.Request{
-		System:     b.system(offered),
-		History:    b.chats.History(key),
-		Text:       strings.TrimSpace(text),
-		Images:     images,
-		Tools:      tools,
-		ToolChoice: act.ToolChoice,
-	})
+	var reply model.Reply
+	var kept string
+	var offered []int
+	var err error
+	imagesOff := false // by this turn
+	for {
+		if act.ToolChoice != "" && !b.callsTools.Load() {
+			stop()
+			b.net.Send(msg.Chat, noTools, nil, b.chats.Names(key))
+			return
+		}
+		asked, added := text, false
+		var images []string
+		kept = text
+		for _, fn := range b.turns {
+			a := fn(b.ctx, msg)
+			if a.Note != "" {
+				asked, kept, added = asked+"\n"+a.Note, kept+"\n"+cmp.Or(a.HistoryNote, a.Note), true
+			}
+			images = append(images, a.Images...)
+		}
+		if !b.images.Load() {
+			images = nil
+		}
+		if msg.Text == "" && !added && len(images) == 0 {
+			return
+		}
+		var tools []feature.Tool
+		offered, tools = b.offer(key, msg.Text, act.ToolChoice)
+		reply, err = b.ai.Ask(b.ctx, model.Request{
+			System:     b.system(offered),
+			History:    b.chats.History(key),
+			Text:       strings.TrimSpace(asked),
+			Images:     images,
+			Tools:      tools,
+			ToolChoice: act.ToolChoice,
+		})
+		if !b.fallBack(err, &imagesOff) {
+			break
+		}
+	}
 	stop()
 	if err != nil {
 		logx.Errorf("model error after %.1fs: %v", time.Since(start).Seconds(), err)
@@ -82,13 +111,11 @@ func (b *Bot) respond(msg feature.Message, act feature.Action, text string) {
 	// the text, which neither goes out nor is kept.
 	var notes string
 	var captions []string
-	var pics [][]byte
 	for _, p := range reply.Pictures {
 		notes += cmp.Or(p.HistoryNote, "[sent an image]") + "\n"
 		if p.Caption != "" {
 			captions = append(captions, p.Caption)
 		}
-		pics = append(pics, p.Data)
 	}
 	sent := reply.Text
 	if len(captions) > 0 {
@@ -96,7 +123,34 @@ func (b *Bot) respond(msg feature.Message, act feature.Action, text string) {
 	}
 	b.chats.Add(key, start, msg.Expires, chats.Entry{Role: "user", Content: strings.TrimSpace(kept)},
 		chats.Entry{Role: "assistant", Content: notes + reply.Text})
-	b.net.Send(msg.Chat, sent, pics, b.chats.Names(key))
+	b.net.Send(msg.Chat, sent, reply.Pictures, b.chats.Names(key))
+}
+
+// fallBack reports whether err is the API rejecting a request for its
+// images or tools, which it turns off for the rest of the run, with one
+// warning, so the turn is asked again without them. A request with both
+// is blamed on its images first; if the turn turned them off (*imagesOff)
+// and the request without them is rejected for its tools, they are turned
+// back on, since they weren't the problem. That ends: with images off none
+// are sent, with tools off none are offered, and images come back once.
+func (b *Bot) fallBack(err error, imagesOff *bool) bool {
+	on, what := &b.images, "images"
+	switch {
+	case errors.Is(err, model.ErrTools):
+		on, what = &b.callsTools, "tools"
+		if *imagesOff {
+			*imagesOff = false
+			b.images.Store(true)
+			logx.Infof("images are on again: the request without them was rejected too")
+		}
+	case !errors.Is(err, model.ErrImages):
+		return false
+	}
+	if on.CompareAndSwap(true, false) {
+		*imagesOff = on == &b.images
+		logx.Warnf("the model's API rejected a request with %s, so %s are off: %v", what, what, err)
+	}
+	return true
 }
 
 // prompt is the message as the model sees it: its quote, escaped and capped
@@ -122,7 +176,7 @@ func prompt(msg feature.Message) string {
 // text matches, or while it has follow-ups left. A tool choice (a chat
 // command) adds its tool to whatever else is offered.
 func (b *Bot) offer(key, text, choice string) (offered []int, tools []feature.Tool) {
-	if !b.callsTools {
+	if !b.callsTools.Load() {
 		return nil, nil
 	}
 	for i, g := range b.groups {
@@ -153,29 +207,33 @@ func (b *Bot) followUp(key string, offered []int, text string, used []string) {
 	}
 }
 
-// toolNames is every tool group's Names in feature order, for {tools}; none
+// toolNames is the Names of every tool group with tools, in feature order,
+// for {tools}, or of every group if all is set, for the prompt's list; none
 // if the model can't call tools.
-func (b *Bot) toolNames() []string {
-	if !b.callsTools {
+func (b *Bot) toolNames(all bool) []string {
+	if !b.callsTools.Load() {
 		return nil
 	}
 	var out []string
 	for _, g := range b.groups {
-		out = append(out, g.Names...)
+		if all || len(g.Tools) > 0 {
+			out = append(out, g.Names...)
+		}
 	}
 	return out
 }
 
-// system is the system prompt: the base rules with the network's line, the
-// tools line, the offered groups' lines, MODEL_SYSTEM_PROMPT and the intro.
+// system is the system prompt: the base rules with the network's line (and
+// the source rule when there are tools), the tools line, the offered groups' lines, MODEL_SYSTEM_PROMPT and the intro.
 func (b *Bot) system(offered []int) string {
 	p := basePrompt
 	if n := b.net.Prompt(); n != "" {
 		p += " " + n
 	}
 	p += " " + mentionPrompt
-	names := b.toolNames()
+	names := b.toolNames(true)
 	if len(names) > 0 {
+		p += " " + sourcePrompt
 		var items []string
 		for _, i := range offered {
 			if l := b.groups[i].Listing; l != "" {
@@ -209,7 +267,7 @@ func (b *Bot) intro() string {
 	}
 	more := "\n\n" + strings.Join(b.more, "\n\n") + "\n\n" // each feature line padded with blank lines
 	s := strings.NewReplacer("{name}", b.net.BotName(), "{model}", model, "{more}", more,
-		"{tools}", cmp.Or(strings.Join(b.toolNames(), "\n\n"), "none")).Replace(b.cfg.Intro)
+		"{tools}", cmp.Or(strings.Join(b.toolNames(false), "\n\n"), "none")).Replace(b.cfg.Intro)
 	s = lineEnds.ReplaceAllString(s, "\n")
 	return strings.TrimSpace(blankLines.ReplaceAllString(s, "\n\n")) // never two blank lines in a row
 }

@@ -10,6 +10,7 @@ import (
 	"image/color"
 	"image/png"
 	"math"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -34,6 +35,7 @@ var chartToolSchema = json.RawMessage(`{
   "properties": {
     "title": {"type": "string", "description": "Short title ending with the period in words, e.g. \"NVDA vs AMD, 1 month\" or \"Sydney rainfall, 5 years\"; it is also the message caption"},
     "subtitle": {"type": "string", "description": "e.g. \"% change over the past month, 30 Sep - 28 Oct 2026\""},
+    "source": {"type": "string", "description": "` + sourceDescription + `"},
     "axes": {"type": "object", "description": "Settings for the left and right Y axes. Put series with a different unit or scale on the right axis. A chart that uses both axes must give each a title.",
       "properties": {"left": {"$ref": "#/$defs/axis"}, "right": {"$ref": "#/$defs/axis"}}},
     "series": {"type": "array", "minItems": 1, "maxItems": 6, "items": {
@@ -90,6 +92,7 @@ type chartAxis struct {
 type chartSpec struct {
 	Title    string                `json:"title"`
 	Subtitle string                `json:"subtitle"`
+	Source   string                `json:"source"`
 	Axes     map[string]*chartAxis `json:"axes"`
 	Series   []chartSeries         `json:"series"`
 
@@ -112,6 +115,7 @@ func parseChart(arguments string) (*chartSpec, error) {
 	}
 	s.Title = txt.Clamp(strings.TrimSpace(s.Title), 80)
 	s.Subtitle = txt.Clamp(strings.TrimSpace(s.Subtitle), 120)
+	s.Source = txt.Clamp(strings.TrimSpace(s.Source), 80)
 	if s.Title == "" {
 		return nil, errors.New("title is required")
 	}
@@ -195,7 +199,7 @@ func (a *chartAxis) format(v float64, decimals int) string {
 	if v < 0 {
 		sign, v = "-", -v
 	}
-	return sign + a.Unit + fmt.Sprintf("%.*f", decimals, v)
+	return sign + a.Unit + commas(fmt.Sprintf("%.*f", decimals, v))
 }
 
 // layout fits the axis to its series' values, plus 5% padding (and zero, in
@@ -331,8 +335,7 @@ func spreadLabels(ys []float64, gap, lo, hi float64) []float64 {
 			out[i] = max(out[i], out[idx[k-1]]+gap)
 		}
 	}
-	for k := len(idx) - 1; k >= 0; k-- {
-		i := idx[k]
+	for k, i := range slices.Backward(idx) {
 		out[i] = min(out[i], hi)
 		if k < len(idx)-1 {
 			out[i] = min(out[i], out[idx[k+1]]-gap)
@@ -456,7 +459,7 @@ func (cv *canvas) fill(c color.Color, polys ...[]float64) {
 
 func circle(x, y, rad float64) []float64 {
 	var p []float64
-	for i := 0; i < 16; i++ {
+	for i := range 16 {
 		a := float64(i) * math.Pi / 8
 		p = append(p, x+rad*math.Cos(a), y+rad*math.Sin(a))
 	}
@@ -501,8 +504,17 @@ func (cv *canvas) text(f font.Face, c color.RGBA, x, y float64, align float64, s
 // width and height are the size of every chart, in pixels.
 const width, height = 1280, 800
 
-// newCanvas is a blank chart in theme th with its title and subtitle drawn.
-func newCanvas(th *theme, title, subtitle string) *canvas {
+// sourceBaseline is the row a chart's source is written on, and
+// sourceTop where its letters begin: nothing else is drawn below that.
+const sourceBaseline, sourceTop = height - 12, height - 26
+
+// sourceDescription is the schema's description of both tools' "source".
+const sourceDescription = "Where the data came from, e.g. the site or tool; fill it in when the data came from a tool or search"
+
+// newCanvas is a blank chart in theme th with its title and subtitle drawn,
+// and its source, if any, small at the bottom left, below the date labels
+// and the legend.
+func newCanvas(th *theme, title, subtitle, source string) *canvas {
 	cv := &canvas{img: image.NewRGBA(image.Rect(0, 0, width, height)), th: th}
 	cv.rect(th.bg, 0, 0, width, height)
 	titleFace, subFace := face(chartFonts.bold, 34), face(chartFonts.regular, 22)
@@ -512,18 +524,88 @@ func newCanvas(th *theme, title, subtitle string) *canvas {
 	if subtitle != "" {
 		cv.text(subFace, th.muted, 38, 80, 0, subtitle)
 	}
+	if source != "" {
+		f := face(chartFonts.regular, 16)
+		defer f.Close()
+		cv.text(f, th.muted, 38, sourceBaseline, 0, fitText(f, "Source: "+source, width-2*38))
+	}
 	return cv
 }
 
-// encode is the chart as a PNG.
+// fitText is s, cut with "…" until it is no wider than w in face f.
+func fitText(f font.Face, s string, w float64) string {
+	for textWidth(f, s) > w && len([]rune(s)) > 1 {
+		r := []rune(strings.TrimSuffix(s, "…"))
+		s = string(r[:len(r)-1]) + "…"
+	}
+	return s
+}
+
+// encode is the chart as a PNG of at most 256 colours, about a third the
+// size of full colour with no visible change. Colours that differ only in
+// their low bits, the in-between shades of anti-aliased edges, are grouped,
+// by as few bits as fit 256 groups (at most 4 of 8), and each group is drawn
+// in its most common colour, so the theme's colours stay exact. Groups past
+// 256, if any, take the nearest colour kept.
 func (cv *canvas) encode() ([]byte, error) {
+	pix := cv.img.Pix
+	rgb := func(i int) uint32 { return uint32(pix[i])<<16 | uint32(pix[i+1])<<8 | uint32(pix[i+2]) }
+	counts := map[uint32]int{} // pixels of each colour
+	for i := 0; i < len(pix); i += 4 {
+		counts[rgb(i)]++
+	}
+	var mask uint32
+	best, size := map[uint32]uint32{}, map[uint32]int{} // each group's most common colour, and its pixels
+	for bits := 0; bits <= 4; bits++ {
+		mask = uint32(0xff<<bits&0xff) * 0x010101
+		clear(best)
+		clear(size)
+		for c, n := range counts {
+			g := c & mask
+			if b, ok := best[g]; !ok || n > counts[b] || n == counts[b] && c < b {
+				best[g] = c
+			}
+			size[g] += n
+		}
+		if len(best) <= 256 {
+			break
+		}
+	}
+	groups := make([]uint32, 0, len(best))
+	for g := range best {
+		groups = append(groups, g)
+	}
+	slices.SortFunc(groups, func(a, b uint32) int { return cmp.Or(size[b]-size[a], cmp.Compare(a, b)) })
+	groups = groups[:min(256, len(groups))]
+	pal := make(color.Palette, len(groups))
+	index := map[uint32]uint8{} // of each group kept
+	for i, g := range groups {
+		c := best[g]
+		pal[i], index[g] = color.RGBA{uint8(c >> 16), uint8(c >> 8), uint8(c), 0xff}, uint8(i)
+	}
+	for c := range counts { // counts now holds each colour's index
+		i, ok := index[c&mask]
+		if !ok {
+			i = uint8(pal.Index(color.RGBA{uint8(c >> 16), uint8(c >> 8), uint8(c), 0xff}))
+		}
+		counts[c] = int(i)
+	}
+	out := image.NewPaletted(cv.img.Rect, pal)
+	for i := range out.Pix {
+		out.Pix[i] = uint8(counts[rgb(4*i)])
+	}
 	var buf bytes.Buffer
-	err := png.Encode(&buf, cv.img)
+	err := png.Encode(&buf, out)
 	return buf.Bytes(), err
 }
 
 // renderChart draws the chart in theme th as a PNG.
 func renderChart(s *chartSpec, th *theme) ([]byte, error) {
+	return drawChart(s, th).encode()
+}
+
+// drawChart draws the chart in theme th.
+func drawChart(s *chartSpec, th *theme) *canvas {
 	const left, top, bottom = 100.0, 125.0, 700.0
 	two, single := s.right.used, len(s.Series) == 1
 	right, labelX := 1000.0, 1030.0 // plot edge, end labels
@@ -533,7 +615,7 @@ func renderChart(s *chartSpec, th *theme) ([]byte, error) {
 	case single:
 		right = 1140 // room for the current value beside the end dot
 	}
-	cv := newCanvas(th, s.Title, s.Subtitle)
+	cv := newCanvas(th, s.Title, s.Subtitle, s.Source)
 	axisFace, axisTitleFace := face(chartFonts.regular, 24), face(chartFonts.regular, 18)
 	defer axisFace.Close()
 	defer axisTitleFace.Close()
@@ -593,7 +675,7 @@ func renderChart(s *chartSpec, th *theme) ([]byte, error) {
 	} else {
 		drawLines(cv, s, px, top, bottom, right, labelX, two)
 	}
-	return cv.encode()
+	return cv
 }
 
 // drawLines draws two or more series, each with an end label.
