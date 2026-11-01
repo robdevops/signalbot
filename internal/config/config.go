@@ -11,9 +11,9 @@ import (
 )
 
 // DefaultIntro is the self-introduction when INTRO is unset. {name},
-// {model} and {tools} are filled in.
+// {model}, {tools} and {more} (features' lines) are filled in.
 const DefaultIntro = "hi, I'm {name}, your open source assistant running {model}.\n\n" +
-	"Tools:\n{tools}\n\n" +
+	"Tools:\n{tools}\n\n{more}" +
 	"I respond to @mentions and replies to my messages.\n\n" +
 	"See https://github.com/robdevops/signalbot/blob/main/README.md for details."
 

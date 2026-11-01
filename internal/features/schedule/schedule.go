@@ -104,6 +104,7 @@ func register(h feature.Host, loc *time.Location, now func() time.Time) error {
 			return err
 		}
 	}
+	h.IntroLine(`Type "/schedule" for schedules and reminders.`)
 	return nil
 }
 

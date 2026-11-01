@@ -64,6 +64,7 @@ type Bot struct {
 	messages []func(context.Context, feature.Message) feature.Action
 	turns    []func(context.Context, feature.Message) feature.Additions
 	groups   []feature.ToolGroup
+	more     []string // features' lines for the introduction
 }
 
 // New makes the bot on net and reads what the model can do, so features

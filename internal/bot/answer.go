@@ -2,6 +2,7 @@ package bot
 
 import (
 	"cmp"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -206,6 +207,14 @@ func (b *Bot) intro() string {
 	if b.ai == nil {
 		model = "no model"
 	}
-	return strings.NewReplacer("{name}", b.net.BotName(), "{model}", model,
-		"{tools}", cmp.Or(strings.Join(b.toolNames(), "\n\n"), "none")).Replace(b.cfg.Intro) // a paragraph per tool category
+	more := "\n\n" + strings.Join(b.more, "\n\n") + "\n\n" // each feature line padded with blank lines
+	s := strings.NewReplacer("{name}", b.net.BotName(), "{model}", model, "{more}", more,
+		"{tools}", cmp.Or(strings.Join(b.toolNames(), "\n\n"), "none")).Replace(b.cfg.Intro)
+	s = lineEnds.ReplaceAllString(s, "\n")
+	return strings.TrimSpace(blankLines.ReplaceAllString(s, "\n\n")) // never two blank lines in a row
 }
+
+var (
+	lineEnds   = regexp.MustCompile(`[ \t]*\n[ \t]*`) // spaces either side of a line break
+	blankLines = regexp.MustCompile(`\n{3,}`)         // two or more blank lines in a row
+)

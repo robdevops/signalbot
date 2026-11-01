@@ -1126,7 +1126,7 @@ func TestScenarioExampleWithoutModel(t *testing.T) {
 	// /intro sends INTRO, the same text the model gives when asked to
 	// introduce itself.
 	want := "hi, I'm Botty, your open source assistant running test-model.\n\nTools:\nweb search\n\ncharts: line, pie\n\n" +
-		"I respond to @mentions and replies to my messages.\n\nSee https://github.com/robdevops/signalbot/blob/main/README.md for details.\n\nThis message did not use the model."
+		"Type \"/schedule\" for schedules and reminders.\n\nI respond to @mentions and replies to my messages.\n\nSee https://github.com/robdevops/signalbot/blob/main/README.md for details.\n\nThis message did not use the model."
 	if s.Message != want || s.GroupID != idGroup {
 		t.Fatalf("sent %q", s.Message)
 	}
@@ -1424,7 +1424,7 @@ func TestScenarioGoldenPromptFull(t *testing.T) {
 func TestScenarioGoldenPromptNoFeatures(t *testing.T) {
 	h := startBot(t, world{NoTools: true})
 	h.ask(atBot("chart AAPL against the S&P 500 for a year"))
-	golden(t, "prompt_nofeatures.txt", h.lastRequest().System)
+	golden(t, "prompt_notools.txt", h.lastRequest().System)
 }
 
 // --- /schedule ---------------------------------------------------------------------

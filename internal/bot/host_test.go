@@ -379,3 +379,21 @@ func TestOtherAPI(t *testing.T) {
 		t.Fatalf("%d model lists; logs:\n%s", lists, logs)
 	}
 }
+
+// Features' introduction lines go where INTRO has {more}, each padded with
+// a blank line, and the introduction never has two blank lines in a row.
+func TestIntroLines(t *testing.T) {
+	for intro, want := range map[string]string{
+		"hi\n\n{more}\n\nbye": "hi\n\nType one.\n\nType two.\n\nbye",
+		"hi {more} bye":       "hi\n\nType one.\n\nType two.\n\nbye",
+		"hi\n\n\n\nbye{more}": "hi\n\nbye\n\nType one.\n\nType two.",
+	} {
+		h := start(t, options{cfg: func(c *config.Config) { c.Intro = intro }, features: func(b *Bot) {
+			b.IntroLine("Type one.")
+			b.IntroLine("Type two.")
+		}})
+		if got := h.b.Info().Intro; got != want {
+			t.Errorf("INTRO %q gave %q, want %q", intro, got, want)
+		}
+	}
+}
