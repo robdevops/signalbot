@@ -80,7 +80,7 @@ func TestNumber(t *testing.T) {
 		t.Fatalf("numbers %v", c.names.numbers)
 	}
 	for i := range maxNames + 10 {
-		c.names.link(fmt.Sprint(i), "+1")
+		c.names.learn(rankedName{}, fmt.Sprint(i), "+1")
 	}
 	if len(c.names.numbers) != maxNames {
 		t.Fatalf("%d numbers kept", len(c.names.numbers))
@@ -115,7 +115,7 @@ func TestTestHooks(t *testing.T) {
 func TestNamesCapped(t *testing.T) {
 	n := &newClient("x", nil, nil).names
 	for i := range maxNames + 10 {
-		n.set(rankedName{"Bob", rankSeen}, fmt.Sprint(i))
+		n.learn(rankedName{"Bob", rankSeen}, fmt.Sprint(i), "")
 	}
 	if len(n.byID) != maxNames {
 		t.Fatalf("%d names kept", len(n.byID))
@@ -228,11 +228,11 @@ func TestBotName(t *testing.T) {
 func TestRedact(t *testing.T) {
 	c := newClient("x", nil, nil)
 	c.id.Store(botID)
-	c.names.set(rankedName{"Alice", rankContact}, aliceID)
-	c.names.set(rankedName{"Alice Smith", rankContact}, "u-as")
-	c.names.set(rankedName{"Bob", rankSeen}, bobID)
-	c.names.set(rankedName{"José", rankGiven}, "u-j")
-	c.names.set(rankedName{"Botty", rankGiven}, botID)
+	c.names.learn(rankedName{"Alice", rankContact}, aliceID, "")
+	c.names.learn(rankedName{"Alice Smith", rankContact}, "u-as", "")
+	c.names.learn(rankedName{"Bob", rankSeen}, bobID, "")
+	c.names.learn(rankedName{"José", rankGiven}, "u-j", "")
+	c.names.learn(rankedName{"Botty", rankGiven}, botID, "")
 	for in, want := range map[string]string{
 		"Alice's file":                      "redacted's file",
 		"alice smith asked; ALICE agreed":   "redacted asked; redacted agreed",

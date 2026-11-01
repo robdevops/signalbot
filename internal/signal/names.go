@@ -17,14 +17,9 @@ import (
 )
 
 const (
-	// maxNamesAge is how old the contact list may get before the next
-	// mention reloads it: it catches renames no group event reports.
-	maxNamesAge = 24 * time.Hour
-	// maxNames caps the names kept: IDs come from the network. A dropped
-	// name is simply learned again.
-	maxNames = 5000
-	// defaultName is what the bot calls itself without a profile name.
-	defaultName = "signalbot"
+	maxNamesAge = 24 * time.Hour // a mention reloads an older list, for renames no group event reports
+	maxNames    = 5000           // names kept, as IDs come from the network; a dropped one is learned again
+	defaultName = "signalbot"    // the bot's name without a profile name
 )
 
 // Name ranks: a name is never replaced by one of lower rank.
@@ -75,24 +70,20 @@ func (k contact) best() rankedName {
 	return rankedName{}
 }
 
-// set records a name for ids. The caller holds n.mu.
-func (n *names) set(r rankedName, ids ...string) {
-	for _, id := range ids {
-		if id != "" && r.rank >= n.byID[id].rank {
+// learn records r, unless it is blank, as the name of the person with this
+// ACI and number, either of which may be "", and that both are theirs. The
+// caller holds n.mu.
+func (n *names) learn(r rankedName, aci, number string) {
+	for _, id := range []string{aci, number} {
+		if id != "" && r.name != "" && r.rank >= n.byID[id].rank {
 			makeRoom(n.byID, id)
 			n.byID[id] = r
 		}
 	}
-}
-
-// link records that aci and number are the same person. The caller holds
-// n.mu.
-func (n *names) link(aci, number string) {
-	if aci == "" || number == "" {
-		return
+	if aci != "" && number != "" {
+		makeRoom(n.numbers, aci)
+		n.numbers[aci] = number
 	}
-	makeRoom(n.numbers, aci)
-	n.numbers[aci] = number
 }
 
 // makeRoom drops any one entry of m if it is full and lacks key.
@@ -124,16 +115,12 @@ func (n *names) replace(cs []contact) {
 	defer n.mu.Unlock()
 	n.byID, n.numbers = map[string]rankedName{}, map[string]string{}
 	for _, k := range cs {
-		if r := k.best(); r.rank > 0 {
-			n.set(r, k.UUID, k.Number)
-		}
-		n.link(k.UUID, k.Number)
+		n.learn(k.best(), k.UUID, k.Number)
 	}
 	n.loadedAt = time.Now()
 }
 
-// name is the best name known for a person by any of their IDs, made safe,
-// or "".
+// name is the best name known for a person by any of their IDs, or "".
 func (c *Client) name(ids ...string) string { return c.names.lookup(ids...).name }
 
 // Redact replaces each name the bot knows for anyone but itself with
@@ -171,7 +158,7 @@ func redactWord(s, w string) string {
 		_, size := utf8.DecodeRuneInString(s[i:])
 		before, _ := utf8.DecodeLastRuneInString(s[:i])
 		after, _ := utf8.DecodeRuneInString(s[i+len(w):])
-		if strings.EqualFold(s[i:i+len(w)], w) && (i == 0 || !wordRune(before)) && (i+len(w) == len(s) || !wordRune(after)) {
+		if strings.EqualFold(s[i:i+len(w)], w) && !wordRune(before) && !wordRune(after) { // at an end, RuneError
 			b.WriteString(s[last:i])
 			b.WriteString("redacted")
 			i += len(w)
@@ -193,12 +180,10 @@ func (c *Client) number(aci string) string {
 	return c.names.numbers[aci]
 }
 
-// BotName is the bot's own profile name, or "signalbot" without one. It
-// never blocks; loadNames loads it.
+// BotName is the bot's own profile name, or "signalbot", which loadNames loads.
 func (c *Client) BotName() string { return cmp.Or(c.name(c.self()), defaultName) }
 
-// mentionName is the name signal-cli put in a mention, unless that is only
-// the ID. The sender chose it, so it is made safe.
+// mentionName is the name in a mention, made safe, unless it is the ID.
 func mentionName(m mention) string {
 	if m.Name != m.UUID && m.Name != m.Number {
 		return txt.SafeName(m.Name)
@@ -207,8 +192,7 @@ func mentionName(m mention) string {
 }
 
 // resolve is the best name for a mention, or "": a contact, profile or
-// sender name, then the name in the mention (unless it is an ID), then a
-// username.
+// sender name, then the name in the mention, then a username.
 func (c *Client) resolve(m mention) string {
 	r := c.names.lookup(m.UUID, m.Number)
 	if mn := mentionName(m); r.rank < rankSeen && mn != "" {
@@ -217,32 +201,21 @@ func (c *Client) resolve(m mention) string {
 	return r.name
 }
 
-// stale reports whether the contact list should be loaded for a mention:
-// it never was, it is over a day old, or it has no real name for them.
-func (c *Client) stale(m mention) bool {
-	n := &c.names
-	n.mu.Lock()
-	never := n.refreshedAt.IsZero()
-	old := !n.loadedAt.IsZero() && time.Since(n.loadedAt) > maxNamesAge
-	n.mu.Unlock()
-	return never || old || (n.lookup(m.UUID, m.Number).rank < rankSeen && mentionName(m) == "")
-}
-
 // loadNames learns the sender's name from env, and loads the contact list
-// if a mention of someone else needs it, or if the bot's own name is
-// unknown. It may call signal-cli, so it runs in the message's slot.
+// if the bot's own name is unknown, or for a mention of someone else when
+// the list was never loaded, is over a day old, or has no real name for
+// them. It may call signal-cli, so it runs in the message's slot.
 func (c *Client) loadNames(ctx context.Context, env *envelope) {
-	self := c.self()
-	c.names.mu.Lock()
-	if name := txt.SafeName(env.SourceName); name != "" {
-		c.names.set(rankedName{name, rankSeen}, env.SourceUUID, env.SourceNumber)
-	}
-	c.names.link(env.SourceUUID, env.SourceNumber)
-	c.names.mu.Unlock()
+	self, n := c.self(), &c.names
+	n.mu.Lock()
+	n.learn(rankedName{txt.SafeName(env.SourceName), rankSeen}, env.SourceUUID, env.SourceNumber)
+	stale := n.refreshedAt.IsZero() || !n.loadedAt.IsZero() && time.Since(n.loadedAt) > maxNamesAge
+	n.mu.Unlock()
 	need := c.name(self) == ""
 	if d := env.DataMessage; d != nil {
 		for _, m := range d.Mentions {
-			need = need || (m.UUID != self && m.Number != self && c.stale(m))
+			need = need || m.UUID != self && m.Number != self &&
+				(stale || n.lookup(m.UUID, m.Number).rank < rankSeen && mentionName(m) == "")
 		}
 	}
 	if need && c.refresh(ctx) && c.name(self) == "" {
@@ -250,9 +223,8 @@ func (c *Client) loadNames(ctx context.Context, env *envelope) {
 	}
 }
 
-// refreshSoon loads the contact list as soon as the rate limit allows.
-// Calls made while a load is scheduled fold into it, so a burst of group
-// changes costs one load and one timer.
+// refreshSoon loads the contact list as soon as the rate limit allows. A
+// burst of calls folds into one load and one timer.
 func (c *Client) refreshSoon() {
 	n := &c.names
 	if c.closed.Load() || !n.pending.CompareAndSwap(false, true) {

@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"strings"
 	"unicode"
-	"unicode/utf16"
 )
 
 // The text styles signal-cli knows, as bits of a rune's style.
@@ -53,12 +52,7 @@ func markdown(md string) styled {
 		line := lines[i]
 		if strings.HasPrefix(strings.TrimSpace(line), "```") {
 			if end := fenceEnd(lines, i+1); end > 0 {
-				for j, l := range lines[i+1 : end] {
-					if j > 0 {
-						s.add([]rune{'\n'}, mono)
-					}
-					s.add([]rune(l), mono)
-				}
+				s.add([]rune(strings.Join(lines[i+1:end], "\n")), mono)
 				i = end
 				continue
 			}
@@ -87,17 +81,12 @@ func fenceEnd(lines []string, from int) int {
 // spans, with st as well.
 func (s *styled) inline(rs []rune, st uint8) {
 	for i := 0; i < len(rs); {
-		if n := s.span(rs, i, st); n > 0 {
-			i += n
-			continue
-		}
-		s.add(rs[i:i+1], st)
-		i++
+		i += s.span(rs, i, st)
 	}
 }
 
-// span adds the code span, link or styled span at rs[i] and returns the
-// runes it took, or 0 if none starts there.
+// span adds the code span, link or styled span at rs[i], else the rune
+// itself, and returns the runes it took.
 func (s *styled) span(rs []rune, i int, st uint8) int {
 	switch rs[i] {
 	case '`':
@@ -129,7 +118,8 @@ func (s *styled) span(rs []rune, i int, st uint8) int {
 			return j + n - i
 		}
 	}
-	return 0
+	s.add(rs[i:i+1], st)
+	return 1
 }
 
 // repeats is how many times rs[i] repeats from i.
@@ -159,14 +149,11 @@ func link(rs []rune) (text, url []rune, n int) {
 	for k < len(rs) && rs[k] != ']' {
 		k++
 	}
-	if k < 2 || k+1 >= len(rs) || rs[k+1] != '(' {
+	if k < 2 || k+2 >= len(rs) || rs[k+1] != '(' || rs[k+2] == ')' {
 		return nil, nil, 0
 	}
 	for m := k + 2; m < len(rs) && !unicode.IsSpace(rs[m]); m++ {
 		if rs[m] == ')' {
-			if m == k+2 {
-				return nil, nil, 0
-			}
 			return rs[1:k], rs[k+2 : m], m + 1
 		}
 	}
@@ -176,15 +163,7 @@ func link(rs []rune) (text, url []rune, n int) {
 // opens reports whether n of c at rs[i] open a styled span: at the start
 // of a word, followed by text.
 func opens(rs []rune, i int, c rune, n int) bool {
-	if i+n >= len(rs) || i > 0 && wordRune(rs[i-1]) || unicode.IsSpace(rs[i+n]) {
-		return false
-	}
-	for _, r := range rs[i : i+n] {
-		if r != c {
-			return false
-		}
-	}
-	return true
+	return rs[i] == c && repeats(rs, i) >= n && i+n < len(rs) && !unicode.IsSpace(rs[i+n]) && (i == 0 || !wordRune(rs[i-1]))
 }
 
 // closes is where n of c close a span whose text starts at rs[from], at the
@@ -210,21 +189,18 @@ func closes(rs []rune, from int, c rune, n int) int {
 // textStyles is the signal-cli text styles ("start:length:STYLE", in UTF-16
 // units) of a message's runes, one for each run of a style.
 func textStyles(s styled) []string {
+	u := utf16At(s.text)
 	var out []string
 	for bit, name := range styleNames {
-		start, u := -1, 0
-		for i, r := range s.text {
-			on := s.style[i]&(1<<bit) != 0
+		start := -1
+		for i := range len(s.text) + 1 {
+			on := i < len(s.text) && s.style[i]&(1<<bit) != 0
 			if on && start < 0 {
-				start = u
+				start = i
 			} else if !on && start >= 0 {
-				out = append(out, fmt.Sprintf("%d:%d:%s", start, u-start, name))
+				out = append(out, fmt.Sprintf("%d:%d:%s", u[start], u[i]-u[start], name))
 				start = -1
 			}
-			u += utf16.RuneLen(r)
-		}
-		if start >= 0 {
-			out = append(out, fmt.Sprintf("%d:%d:%s", start, u-start, name))
 		}
 	}
 	return out

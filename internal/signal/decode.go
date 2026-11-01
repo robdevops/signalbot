@@ -4,7 +4,6 @@ import (
 	"cmp"
 	"context"
 	"slices"
-	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -17,9 +16,6 @@ import (
 	"github.com/robdevops/signalbot/internal/kit/txt"
 )
 
-// unnamed stands in for a mention whose name isn't known.
-const unnamed = "[unnamed user]"
-
 // envelope is a message signal-cli received.
 type envelope struct {
 	Source       string       `json:"source"`
@@ -29,7 +25,6 @@ type envelope struct {
 	DataMessage  *dataMessage `json:"dataMessage"`
 }
 
-// dataMessage is what a received message carries.
 type dataMessage struct {
 	Message          string       `json:"message"`
 	Mentions         []mention    `json:"mentions"`
@@ -70,8 +65,7 @@ type sticker struct {
 	StickerID int    `json:"stickerId"`
 }
 
-// stickerOf is the sticker a feature.Media's ID names, "<packId>:<stickerId>"
-// as message writes it.
+// stickerOf parses a sticker's feature.Media ID, "<packId>:<stickerId>".
 func stickerOf(id string) sticker {
 	pack, n, _ := strings.Cut(id, ":")
 	i, _ := strconv.Atoi(n)
@@ -94,6 +88,9 @@ func (a *attachment) image() *attachment {
 	return nil
 }
 
+// is reports whether id is one of ids, and not "".
+func is(id string, ids ...string) bool { return id != "" && slices.Contains(ids, id) }
+
 // sender is the sender's ID: an ACI, else a number.
 func (e *envelope) sender() string { return cmp.Or(e.SourceUUID, e.Source, e.SourceNumber) }
 
@@ -106,7 +103,7 @@ func (e *envelope) chat() feature.Chat {
 }
 
 func fromSelf(env *envelope, self string) bool {
-	return env.SourceUUID == self || env.Source == self || env.SourceNumber == self
+	return is(self, env.SourceUUID, env.Source, env.SourceNumber)
 }
 
 func isAllowed(env *envelope, allowed map[string]bool) bool {
@@ -115,8 +112,7 @@ func isAllowed(env *envelope, allowed map[string]bool) bool {
 
 // isAddressed reports whether env is for the bot: it mentions the bot,
 // replies to one of its messages, or is a DM from an allowed sender, and
-// has text, an image or a sticker. It never blocks or allocates, so the
-// reader goroutine can decide with it.
+// has text, an image or a sticker. It never blocks, so the reader can use it.
 func isAddressed(env *envelope, self string, allowed map[string]bool) bool {
 	d := env.DataMessage
 	if d == nil || self == "" || fromSelf(env, self) {
@@ -126,16 +122,11 @@ func isAddressed(env *envelope, self string, allowed map[string]bool) bool {
 		!slices.ContainsFunc(d.Attachments, func(a attachment) bool { return a.image() != nil }) {
 		return false
 	}
-	if d.GroupInfo == nil || d.GroupInfo.GroupID == "" {
+	if env.chat().GroupID == "" {
 		return isAllowed(env, allowed)
 	}
-	for _, m := range d.Mentions {
-		if m.UUID == self || m.Number == self {
-			return true
-		}
-	}
-	q := d.Quote
-	return q != nil && (q.AuthorUUID == self || q.Author == self)
+	return slices.ContainsFunc(d.Mentions, func(m mention) bool { return is(self, m.UUID, m.Number) }) ||
+		d.Quote != nil && is(self, d.Quote.AuthorUUID, d.Quote.Author)
 }
 
 // event is env as the core gets it, decided on the reader goroutine without
@@ -147,9 +138,7 @@ func (c *Client) event(env *envelope) (bot.Received, bool) {
 	}
 	chat := env.chat()
 	if g := d.GroupInfo; g != nil && g.Type == "UPDATE" {
-		// Reload the contact list, so new members are known and departed
-		// ones forgotten.
-		c.refreshSoon()
+		c.refreshSoon() // so new members are known and departed ones forgotten
 		return bot.Received{Message: feature.Message{Chat: chat}, GroupChange: true}, true
 	}
 	load := func(ctx context.Context, learn func(name, id string)) (feature.Message, bool) {
@@ -186,9 +175,9 @@ func (c *Client) judge(env *envelope, self string) (addressed, other bool) {
 	return false, false
 }
 
-// load completes env in its slot: it waits up to 10s for the bot's ID if
-// need be, and for an addressed message loads the names it needs and its
-// sticker labels, and passes learn each name it shows the model.
+// load completes env in its slot, waiting up to 10s for the bot's ID; for
+// an addressed message it loads the names and sticker labels it needs, and
+// passes learn each name it shows the model.
 func (c *Client) load(ctx context.Context, env *envelope, learn func(name, id string)) (feature.Message, bool) {
 	wait, cancel := context.WithTimeout(ctx, 10*time.Second)
 	self := c.WaitID(wait)
@@ -204,15 +193,13 @@ func (c *Client) load(ctx context.Context, env *envelope, learn func(name, id st
 	c.people(env, self, learn)
 	for i := range msg.Media {
 		if m := &msg.Media[i]; m.Sticker {
-			ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 			m.Label = c.stickerLabel(ctx, stickerOf(m.ID))
-			cancel()
 		}
 	}
 	return msg, true
 }
 
-// message is env as the core and features see it. self is the bot's ID.
+// message is env as the core and features see it.
 func (c *Client) message(env *envelope, self string) feature.Message {
 	d := cmp.Or(env.DataMessage, &dataMessage{})
 	m := feature.Message{
@@ -233,7 +220,7 @@ func (c *Client) message(env *envelope, self string) feature.Message {
 	images(d.Attachments, false)
 	if q := d.Quote; q != nil {
 		images(q.Attachments, true)
-		m.Quote = &feature.Quote{Text: q.Text, Author: c.name(q.AuthorUUID, q.Author), Bot: q.AuthorUUID == self || q.Author == self}
+		m.Quote = &feature.Quote{Text: q.Text, Author: c.name(q.AuthorUUID, q.Author), Bot: is(self, q.AuthorUUID, q.Author)}
 	}
 	if s := d.Sticker; s != nil {
 		m.Media = append(m.Media, feature.Media{ID: s.PackID + ":" + strconv.Itoa(s.StickerID), Sticker: true})
@@ -241,9 +228,9 @@ func (c *Client) message(env *envelope, self string) feature.Message {
 	return m
 }
 
-// people passes learn the names a group message showed the model, so
-// "@Name" in a reply can become a real mention: its sender's and those of
-// the people it mentions. A DM shows none.
+// people passes learn the names a group message showed the model, its
+// sender's and those it mentions, so "@Name" in a reply can become a real
+// mention. A DM shows none.
 func (c *Client) people(env *envelope, self string, learn func(name, id string)) {
 	if env.chat().GroupID == "" {
 		return
@@ -262,13 +249,13 @@ func (c *Client) people(env *envelope, self string, learn func(name, id string))
 }
 
 // text removes the bot's own mention from msg and shows other mentions as
-// @Name, or [unnamed user]. Mentions are applied from the end, so earlier
-// offsets stay valid; signal-cli's order isn't guaranteed, so they are
-// sorted, and one that overlaps another or falls outside msg is skipped.
+// @Name, or [unnamed user]. They are applied from the end, sorted as
+// signal-cli doesn't promise an order, so earlier offsets stay valid; one
+// that overlaps another or falls outside msg is skipped.
 func (c *Client) text(msg string, ms []mention, self string) string {
 	u := utf16.Encode([]rune(msg))
 	sorted := slices.Clone(ms)
-	sort.SliceStable(sorted, func(i, j int) bool { return sorted[i].Start > sorted[j].Start })
+	slices.SortStableFunc(sorted, func(a, b mention) int { return cmp.Compare(b.Start, a.Start) })
 	applied := len(u) // the lowest offset already rewritten
 	for _, m := range sorted {
 		// Written so that no pair of in-range ints can overflow.
@@ -276,26 +263,23 @@ func (c *Client) text(msg string, ms []mention, self string) string {
 			continue
 		}
 		var repl []uint16
-		if m.UUID != self && m.Number != self {
-			name := "@" + c.resolve(m)
-			if name == "@" {
-				name = unnamed
+		if !is(self, m.UUID, m.Number) {
+			name := "[unnamed user]"
+			if n := c.resolve(m); n != "" {
+				name = "@" + n
 			}
 			repl = utf16.Encode([]rune(name))
 		}
-		u = append(u[:m.Start], append(repl, u[m.Start+m.Length:]...)...)
+		u = slices.Replace(u, m.Start, m.Start+m.Length, repl...)
 		applied = m.Start
 	}
 	return strings.TrimSpace(string(utf16.Decode(u)))
 }
 
 // Delivered readies a message a feature delivers, in its slot, as if its
-// sender had just posted it. It waits up to 10s for the bot to be connected
-// and loads its own name. A DM's sender must still be allowed, by ACI or
-// number, and a group's still a member. It returns msg with its sender's
-// name filled in and without the bot's @name, Mentioned if that was there,
-// and in a group its members; false, logged without content, if msg is
-// dropped.
+// sender had just posted it, waiting up to 10s for signal-cli and the bot's
+// own name: a DM's sender must still be allowed, by ACI or number, and a
+// group's still a member. A drop is logged without content.
 func (c *Client) Delivered(ctx context.Context, msg feature.Message) (bot.Received, bool) {
 	wait, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
@@ -312,22 +296,24 @@ func (c *Client) Delivered(ctx context.Context, msg feature.Message) (bot.Receiv
 	var r bot.Received
 	if msg.Chat.GroupID != "" {
 		ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
-		gs, err := c.groups(ctx)
+		gs, err := c.groups(ctx, msg.Sender)
 		cancel()
 		if err != nil {
 			logx.Warnf("delivered message dropped: listGroups failed: %v", err)
 			return bot.Received{}, false
 		}
-		i := slices.IndexFunc(gs, func(g group) bool { return g.ID == msg.Chat.GroupID && g.has(msg.Sender) })
+		i := slices.IndexFunc(gs, func(g group) bool { return g.ID == msg.Chat.GroupID })
 		if i < 0 {
 			logx.Infof("delivered message dropped: its sender is not in the group")
 			return bot.Received{}, false
 		}
-		for _, m := range gs[i].members {
+		for _, m := range gs[i].Members {
 			r.Members = append(r.Members, bot.Member{Name: c.name(m.UUID, m.Number), ID: m.UUID}) // a member without an ACI is never linked
 		}
 	}
-	msg.Text, r.Mentioned = stripAt(msg.Text, c.BotName(), defaultName)
+	rs := []rune(msg.Text)
+	s, mentioned := strip(styled{rs, make([]uint8, len(rs))}, c.BotName(), defaultName)
+	msg.Text, r.Mentioned = string(s.text), mentioned
 	r.Message = msg
 	return r, true
 }

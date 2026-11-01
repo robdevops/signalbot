@@ -366,22 +366,21 @@ func TestFilesStickersAndGroups(t *testing.T) {
 
 	f.set("listGroups", `[{"id":"`+groupID+`","name":"Family","isMember":true,"members":[{"number":"+1555","uuid":"`+aliceID+`"},{"number":null,"uuid":"`+bobID+`"}]},`+
 		`{"id":"left","name":"Old","isMember":false,"members":[]}]`)
-	gs, err := c.groups(ctx)
-	if err != nil || len(gs) != 1 || gs[0].ID != groupID || gs[0].Name != "Family" ||
-		!gs[0].has(aliceID) || !gs[0].has("+1555") || !gs[0].has(bobID) || gs[0].has("") || gs[0].has("+1999") {
-		t.Fatalf("groups %+v %v", gs, err)
+	for _, user := range []string{aliceID, "+1555", bobID} {
+		if shared, err := c.Groups(ctx, user); err != nil || len(shared) != 1 || shared[0] != (feature.Group{ID: groupID, Name: "Family"}) {
+			t.Fatalf("groups shared with %s: %+v %v", user, shared, err)
+		}
 	}
-	if shared, err := c.Groups(ctx, "+1555"); err != nil || len(shared) != 1 || shared[0] != (feature.Group{ID: groupID, Name: "Family"}) {
-		t.Fatalf("shared groups %+v %v", shared, err)
-	}
-	if shared, _ := c.Groups(ctx, "+1999"); len(shared) != 0 {
-		t.Fatalf("shared groups %+v", shared)
+	for _, user := range []string{"", "+1999"} {
+		if shared, _ := c.Groups(ctx, user); len(shared) != 0 {
+			t.Fatalf("groups shared with %q: %+v", user, shared)
+		}
 	}
 
 	f.set("listGroups", `{"error":"x"`) // not even JSON: the call times out
 	tctx, cancel := context.WithTimeout(ctx, 100*time.Millisecond)
 	defer cancel()
-	if _, err := c.groups(tctx); err == nil {
+	if _, err := c.groups(tctx, aliceID); err == nil {
 		t.Error("no error")
 	}
 }
@@ -391,7 +390,7 @@ func TestCallsFailWhenNotConnected(t *testing.T) {
 	if err := c.send(feature.Chat{User: aliceID}, "hi", nil, nil, nil); err == nil {
 		t.Error("send while not connected")
 	}
-	if _, err := c.groups(context.Background()); err == nil {
+	if _, err := c.groups(context.Background(), aliceID); err == nil {
 		t.Error("call while not connected")
 	}
 }

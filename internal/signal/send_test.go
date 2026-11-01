@@ -64,7 +64,7 @@ func TestMentions(t *testing.T) {
 	}
 }
 
-func TestStripAt(t *testing.T) {
+func TestStrip(t *testing.T) {
 	for _, tc := range []struct {
 		text, want string
 		found      bool
@@ -76,9 +76,10 @@ func TestStripAt(t *testing.T) {
 		{"hi @Botty", "hi @Botty", false},
 		{"mail me@Bot", "mail me@Bot", false},
 	} {
-		got, found := stripAt(tc.text, "Bot", "signalbot")
-		if got != tc.want || found != tc.found {
-			t.Errorf("%q: %q %v", tc.text, got, found)
+		rs := []rune(tc.text)
+		got, found := strip(styled{rs, make([]uint8, len(rs))}, "Bot", "signalbot")
+		if string(got.text) != tc.want || found != tc.found {
+			t.Errorf("%q: %q %v", tc.text, string(got.text), found)
 		}
 	}
 }

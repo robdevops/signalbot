@@ -3,8 +3,9 @@ package signal
 import (
 	"encoding/base64"
 	"fmt"
+	"maps"
 	"net/http"
-	"sort"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -31,12 +32,10 @@ func (c *Client) Prompt() string {
 	return fmt.Sprintf("This is a Signal chat. Never exceed %d characters, which is Signal's limit for one message.", maxChars)
 }
 
-// Send posts text to chat: its Markdown made plain text and text styles,
-// without the bot's own @name, with each @Name in
-// known (lowercased name to ID) made a real mention, cut short past maxReply
-// with a warning, and split at Signal's limit, with the images on the first
-// message. A failure is logged, and whether a message was delivered is
-// logged when signal-cli says.
+// Send posts text to chat as parts makes it, with each @Name in known
+// (lowercased name to ID) made a real mention and the images on the first
+// message. A failure is logged, as is a message signal-cli says it could
+// not deliver.
 func (c *Client) Send(chat feature.Chat, text string, images [][]byte, known map[string]string) {
 	if n := utf8.RuneCountInString(text); n > maxReply {
 		logx.Warnf("reply truncated from %d chars", n)
@@ -67,8 +66,7 @@ func (c *Client) Send(chat feature.Chat, text string, images [][]byte, known map
 	}
 }
 
-// send posts one message, with mentions ("start:length:uuid"), text styles
-// ("start:length:STYLE") and attachments.
+// send posts one message.
 func (c *Client) send(chat feature.Chat, text string, mentions, styles, attachments []string) error {
 	p := target(chat)
 	p["message"] = text
@@ -166,32 +164,19 @@ type span struct {
 // findAt finds "@name" for each name in known (name to ID). Matching
 // ignores case, tries the longest name first, and sits on word boundaries.
 func findAt(rs []rune, known map[string]string) []span {
-	type cand struct {
-		lower string
-		n     int // runes
-		id    string
-	}
-	var cands []cand
-	for name, id := range known {
-		if name != "" {
-			cands = append(cands, cand{strings.ToLower(name), utf8.RuneCountInString(name), id})
-		}
-	}
-	if len(cands) == 0 {
-		return nil
-	}
-	sort.Slice(cands, func(i, j int) bool { return cands[i].n > cands[j].n })
+	names := slices.DeleteFunc(slices.Collect(maps.Keys(known)), func(name string) bool { return name == "" })
+	slices.SortFunc(names, func(a, b string) int { return utf8.RuneCountInString(b) - utf8.RuneCountInString(a) })
 	var out []span
 	for i := 0; i < len(rs); i++ {
 		if rs[i] != '@' || (i > 0 && wordRune(rs[i-1])) {
 			continue
 		}
-		for _, k := range cands {
-			end := i + 1 + k.n
-			if end > len(rs) || (end < len(rs) && wordRune(rs[end])) || strings.ToLower(string(rs[i+1:end])) != k.lower {
+		for _, name := range names {
+			end := i + 1 + utf8.RuneCountInString(name)
+			if end > len(rs) || (end < len(rs) && wordRune(rs[end])) || strings.ToLower(string(rs[i+1:end])) != strings.ToLower(name) {
 				continue
 			}
-			out = append(out, span{i, end, k.id})
+			out = append(out, span{i, end, known[name]})
 			i = end - 1
 			break
 		}
@@ -199,11 +184,13 @@ func findAt(rs []rune, known map[string]string) []span {
 	return out
 }
 
-func utf16Len(rs []rune) (n int) {
-	for _, r := range rs {
-		n += utf16.RuneLen(r)
+// utf16At is the UTF-16 offset of each rune of rs, and then of its end.
+func utf16At(rs []rune) []int {
+	u := make([]int, len(rs)+1)
+	for i, r := range rs {
+		u[i+1] = u[i] + utf16.RuneLen(r)
 	}
-	return n
+	return u
 }
 
 // mentions is the signal-cli mentions ("start:length:uuid", in UTF-16
@@ -211,29 +198,18 @@ func utf16Len(rs []rune) (n int) {
 // ID). An ambiguous name, with no ID, stays plain text.
 func mentions(text string, known map[string]string) []string {
 	rs := []rune(text)
+	u := utf16At(rs)
 	var out []string
-	u, pos := 0, 0 // the UTF-16 offset of rs[pos]
 	for _, s := range findAt(rs, known) {
-		u += utf16Len(rs[pos:s.start])
-		n := utf16Len(rs[s.start:s.end])
 		if s.id != "" {
-			out = append(out, fmt.Sprintf("%d:%d:%s", u, n, s.id))
+			out = append(out, fmt.Sprintf("%d:%d:%s", u[s.start], u[s.end]-u[s.start], s.id))
 		}
-		u += n
-		pos = s.end
 	}
 	return out
 }
 
-// stripAt removes "@name" for each of names from text, without leaving a
-// double space, and reports whether it found one.
-func stripAt(text string, names ...string) (string, bool) {
-	rs := []rune(text)
-	s, found := strip(styled{rs, make([]uint8, len(rs))}, names...)
-	return string(s.text), found
-}
-
-// strip is stripAt for styled text, dropping the styles of what it removes.
+// strip removes "@name" for each of names, without leaving a double space,
+// and reports whether it found one.
 func strip(s styled, names ...string) (styled, bool) {
 	known := map[string]string{} // findAt needs only the names
 	for _, n := range names {
