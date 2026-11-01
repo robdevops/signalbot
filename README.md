@@ -23,8 +23,8 @@ A small, [privacy-conscious](PRIVACY.md) chat bot that connects to a running [si
 - Tools: web search, built-in line and pie charts, and your own [MCP](#mcp-tools) tools
 - [`/schedule`](#scheduling) a message or command, once or repeating, in a DM or a group
 - Understands images and stickers (if the configured model supports vision)
-- Short per-conversation memory, for context. Frees from memory after 20 messages (HISTORY_TURNS), 24 hours, or when Signal's _disappearing messages_ timer expires, whichever comes first. Names and message bodies are never logged to disk.
 - Typing indicators
+- Short per-conversation memory, for context. Frees from memory after 20 messages (HISTORY_TURNS), 24 hours, or when Signal's _disappearing messages_ timer expires, whichever comes first. Names and message bodies are never logged to disk.
 
 ## Use cases
 
@@ -32,7 +32,7 @@ A small, [privacy-conscious](PRIVACY.md) chat bot that connects to a running [si
 - Explain or translate any message or photo by replying to it and tagging the bot
 - Connect MCP tools, data, and charting to your group chat
 - Modify the bot to add your own /commands (see `/intro`)
-- A private assistant in your DMs, or just the fun or convenience of a sassy LLM in your Signal groups
+- A private assistant in your DMs, or just the fun of a sassy LLM in your Signal groups
 
 The messages the bot answers, and the names in them, are sent to the model's API (OpenRouter, unless you [choose another](#other-providers)) and on to the model's provider. See [TECHNICAL.md](TECHNICAL.md) and [PRIVACY.md](PRIVACY.md) for details on how it works.
 
