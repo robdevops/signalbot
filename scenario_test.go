@@ -880,11 +880,50 @@ func TestScenarioOtherProviderRejectsImages(t *testing.T) {
 	}
 }
 
+// A request with images and tools is blamed on its images first; if the
+// request without them is rejected too, the tools were the problem: images
+// come back on for the third request, which is answered, and stay on.
+func TestScenarioOtherProviderRejectsToolsWithImages(t *testing.T) {
+	h := startBot(t, world{OtherProvider: true})
+	bad := modelReply{Status: 400, Body: `{"error":{"message":"tools are not supported"}}`}
+	h.queue(bad, bad)
+	m := fromAlice("chart this")
+	m.Attachments = []attached{photo("photo1.png")}
+	if s := h.ask(m); s.Message != "ok" {
+		t.Fatalf("sent %q", s.Message)
+	}
+	reqs := h.requests()
+	if len(reqs) != 3 {
+		t.Fatalf("%d requests", len(reqs))
+	}
+	for i, want := range []struct{ images, tools bool }{{true, true}, {false, true}, {true, false}} {
+		if r := reqs[i]; (len(r.last().Images) == 1) != want.images || (len(r.Tools) > 0) != want.tools {
+			t.Fatalf("request %d: %d images, tools %v", i+1, len(r.last().Images), r.Tools)
+		}
+	}
+	if c := reqs[2].last().Content; c != "chart this\n[1 image attached]" {
+		t.Fatalf("asked a third time with %q", c)
+	}
+	m = fromAlice("chart this one")
+	m.Attachments = []attached{photo("photo2.png")}
+	h.ask(m)
+	if reqs = h.requests(); len(reqs) != 4 || len(reqs[3].last().Images) != 1 || reqs[3].Tools != nil {
+		t.Fatalf("%d requests, the last with %d images and tools %v", len(reqs), len(reqs[len(reqs)-1].last().Images), reqs[len(reqs)-1].Tools)
+	}
+	if n := h.warnings("rejected a request with tools", "tools are off"); n != 1 {
+		t.Fatalf("%d tools warnings: %v", n, h.logLines())
+	}
+	if _, ok := h.logged("images are on again"); !ok {
+		t.Fatalf("no notice: %v", h.logLines())
+	}
+}
+
 // The same for tools: a request with tools that the API rejects is asked
 // again without them and answered, with exactly one failed request and one
-// warning, and tools stay off for the rest of the run.
+// warning, and tools stay off for the rest of the run. A chat command, which
+// forces a tool, then says it needs tools rather than asking the model.
 func TestScenarioOtherProviderRejectsTools(t *testing.T) {
-	h := startBot(t, world{OtherProvider: true})
+	h := startBot(t, world{OtherProvider: true, MCP: true})
 	h.queue(modelReply{Status: 400, Body: `{"error":{"message":"tools are not supported"}}`})
 	if s := h.ask(fromAlice("chart AAPL for a month")); s.Message != "ok" {
 		t.Fatalf("sent %q", s.Message)
@@ -902,6 +941,12 @@ func TestScenarioOtherProviderRejectsTools(t *testing.T) {
 	}
 	if n := h.warnings("rejected a request with tools", "tools are off"); n != 1 {
 		t.Fatalf("%d warnings: %v", n, h.logLines())
+	}
+	if s := h.ask(fromAlice("/quote AAPL")); s.Message != "That command needs tools, which this model can't use." {
+		t.Fatalf("sent %q", s.Message)
+	}
+	if n := len(h.requests()); n != 3 {
+		t.Fatalf("%d requests", n)
 	}
 }
 

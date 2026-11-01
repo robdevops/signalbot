@@ -22,6 +22,7 @@ Do each remaining item, run gofmt, `go vet` and `go test -race ./...`, then comm
    - **Tools:** the same for tools. If a request carrying tools is rejected, turn tool calling off for the rest of the run, warn once, and redo the turn without them.
    - **Tests:** a rejected image request falls back and is answered, with exactly one failed request; the same for tools.
    - About 35 lines. Documented in README "Other providers" and TECHNICAL.md.
+   - After review: only a 400 or 422 counts as a rejection (not 404, 408, 413 and the like); images rejected alongside tools come back on when the request without them is rejected for its tools; once tools are off, a chat command answers that it needs tools.
 
 6. **Signal reduction pass,** using the lean criteria, with a target of under 1,150 lines. Finish with a size report per package against `fbba3aa`.
 

@@ -481,6 +481,10 @@ func TestRejected(t *testing.T) {
 		{"neither", false, []served{bad}, Request{Text: "hi"}, nil, 1},
 		{"key", false, []served{{status: 401, body: `{}`}}, Request{Text: "hi", Tools: []feature.Tool{echo}}, nil, 1},
 		{"rate", false, []served{{status: 429, body: `{}`}}, Request{Text: "hi", Tools: []feature.Tool{echo}}, nil, 2},
+		{"unprocessable", false, []served{{status: 422, body: `{}`}}, Request{Text: "hi", Tools: []feature.Tool{echo}}, ErrTools, 1},
+		{"model id", false, []served{{status: 404, body: `{}`}}, Request{Text: "hi", Images: []string{"data:image/png;base64,AA=="}, Tools: []feature.Tool{echo}}, nil, 1},
+		{"timeout", false, []served{{status: 408, body: `{}`}}, Request{Text: "hi", Images: []string{"data:image/png;base64,AA=="}, Tools: []feature.Tool{echo}}, nil, 1},
+		{"too large", false, []served{{status: 413, body: `{}`}}, Request{Text: "hi", Images: []string{"data:image/png;base64,AA=="}}, nil, 1},
 		{"later request", false, []served{calls("echo"), bad}, Request{Text: "hi", Tools: []feature.Tool{echo}}, nil, 2},
 		{"openrouter", true, []served{bad}, Request{Text: "hi", Images: []string{"data:image/png;base64,AA=="}, Tools: []feature.Tool{echo}}, nil, 1},
 	} {

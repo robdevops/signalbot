@@ -226,13 +226,13 @@ func (c *Client) Ask(ctx context.Context, r Request) (Reply, error) {
 }
 
 // rejected is err as ErrImages if the first request carried images and an
-// API other than OpenRouter's refused it with a 4xx about the request
-// itself (not the key, the credit or the rate), else as ErrTools if it
-// carried tools; any other error is left as it is.
+// API other than OpenRouter's refused it as malformed (400 or 422; other
+// 4xx codes are about the key, the credit, the rate, the model id, a
+// timeout or the size), else as ErrTools if it carried tools; any other
+// error is left as it is.
 func (c *Client) rejected(err error, images, tools bool) error {
 	var se *statusError
-	if c.openRouter || !errors.As(err, &se) || se.code < 400 || se.code > 499 ||
-		slices.Contains([]int{401, 402, 403, 429}, se.code) {
+	if c.openRouter || !errors.As(err, &se) || se.code != 400 && se.code != 422 {
 		return err
 	}
 	switch {

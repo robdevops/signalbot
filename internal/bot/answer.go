@@ -29,11 +29,15 @@ const (
 	// keywords, or used its tools, still offer it.
 	followUps = 2
 	sorry     = "Sorry, I couldn't get an answer right now."
+	// noTools answers a chat command, which forces a tool, once tools are off.
+	noTools = "That command needs tools, which this model can't use."
 )
 
 // respond acts on an addressed message: as act says, else by asking the
 // model and sending its reply (asking again if the API rejects its images
-// or tools; see fallBack); with no model, only an Answer is sent. text
+// or tools; see fallBack); with no model, only an Answer is sent, and with
+// tools off a chat command gets noTools rather than an answer made up
+// without its tool's data. text
 // is the message as the model sees it, prompt(msg) for one message; tools
 // are offered by msg.Text alone, what was typed, never a sender's name or a
 // quote.
@@ -55,7 +59,13 @@ func (b *Bot) respond(msg feature.Message, act feature.Action, text string) {
 	var kept string
 	var offered []int
 	var err error
+	imagesOff := false // by this turn
 	for {
+		if act.ToolChoice != "" && !b.callsTools.Load() {
+			stop()
+			b.net.Send(msg.Chat, noTools, nil, b.chats.Names(key))
+			return
+		}
 		asked, added := text, false
 		var images []string
 		kept = text
@@ -82,7 +92,7 @@ func (b *Bot) respond(msg feature.Message, act feature.Action, text string) {
 			Tools:      tools,
 			ToolChoice: act.ToolChoice,
 		})
-		if !b.fallBack(err) {
+		if !b.fallBack(err, &imagesOff) {
 			break
 		}
 	}
@@ -117,17 +127,26 @@ func (b *Bot) respond(msg feature.Message, act feature.Action, text string) {
 
 // fallBack reports whether err is the API rejecting a request for its
 // images or tools, which it turns off for the rest of the run, with one
-// warning, so the turn is asked again without them. That ends: with
-// images off none are sent, and with tools off none are offered.
-func (b *Bot) fallBack(err error) bool {
+// warning, so the turn is asked again without them. A request with both
+// is blamed on its images first; if the turn turned them off (*imagesOff)
+// and the request without them is rejected for its tools, they are turned
+// back on, since they weren't the problem. That ends: with images off none
+// are sent, with tools off none are offered, and images come back once.
+func (b *Bot) fallBack(err error, imagesOff *bool) bool {
 	on, what := &b.images, "images"
 	switch {
 	case errors.Is(err, model.ErrTools):
 		on, what = &b.callsTools, "tools"
+		if *imagesOff {
+			*imagesOff = false
+			b.images.Store(true)
+			logx.Infof("images are on again: the request without them was rejected too")
+		}
 	case !errors.Is(err, model.ErrImages):
 		return false
 	}
 	if on.CompareAndSwap(true, false) {
+		*imagesOff = on == &b.images
 		logx.Warnf("the model's API rejected a request with %s, so %s are off: %v", what, what, err)
 	}
 	return true
