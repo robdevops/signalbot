@@ -27,8 +27,24 @@ What the bot does with no features registered.
 - **No model.** With neither `MODEL_API_URL` nor `MODEL_API_KEY` set, startup logs "no model: only commands are answered" and checks no capabilities: `Info.Model` is "", and images and tool calling are off. A message a hook answers (a command) is answered as usual, and a delivered plain text is posted; anything else addressed gets no reply, no typing and no model request, so `OnTurn` and tool groups are never used. No history is kept at all: no turns, no `Context` from unaddressed messages, no delivered text.
 - **History.** Per chat, `HISTORY_TURNS` exchanges, in memory only, for at most 500 chats. Each entry expires after 24 hours, or sooner when the chat's disappearing-messages timer (`expiresInSeconds`) runs out, on one `time.AfterFunc` per chat set for its earliest entry. When a chat's history is gone, everything kept about it goes too: its remembered names and tool follow-up counts.
 - **Safe under load.** Concurrency, mailboxes, history, chats, names, timers and frames are capped. The same message from the same sender in the same chat within 10 seconds is dropped. Display names and quotes are sanitised before they reach the model or the log.
-- **Logging.** journald priorities 2–7, all always written: `<2>` errors that stop the bot, `<3>` errors, `<4>` warnings, `<5>` startup, connect and reconnect, `<6>` info, `<7>` debug. Under journald (`JOURNAL_STREAM` matches stdout) each line carries its `<N>` prefix; elsewhere, as in Docker, lines are plain, with a timestamp only in a terminal. Priorities 5–7 go to stdout and 2–4 to stderr, so a log driver that sees only the stream still tells them apart. Each addressed message logs "received group chat" or "received dm" at info, with no name or content. No line holds anyone's name or ID, except the ID of a sender not in `SIGNAL_DM_USER_IDS` whose DM was dropped; the bot's own account ID is logged at startup. Names and message bodies are never logged: a panic while handling a message is recovered and reported without its value or stack; API error bodies are reduced to their message; malformed frames are reported by size. Every logged value has `\n` and `\r` escaped, so no value can start a forged line.
+- **Logging.** By journald priority, never names, IDs or message bodies; see [Logs](#logs).
 - **Configuration** is environment variables only; `-version` prints the version. Runs under systemd or Docker (hardened unit and image included; the image is pinned by digest and has no shell). `MemorySwapMax=0` in the unit and `--memory-swap` equal to `--memory` in Docker keep history out of swap.
+
+## Logs
+
+Each line has a journald priority, and every priority is always written:
+
+| Priority | Used for |
+|---|---|
+| `<2>` crit | errors that stop the bot, such as a bad config |
+| `<3>` err | errors, such as a failed model request |
+| `<4>` warning | warnings, such as a dropped message under load |
+| `<5>` notice | startup, connecting and reconnecting |
+| `<6>` info | each message answered ("received group chat" or "received dm", then the reply's time, tokens and cost), tool calls |
+| `<7>` debug | detail, such as contact list loads |
+
+- **Streams.** Priorities 5–7 go to stdout and 2–4 to stderr, so a log driver that sees only the stream still tells them apart. Under journald (`JOURNAL_STREAM` matches stdout) each line carries its `<N>` prefix, so `journalctl -p warning` filters by level; elsewhere, as in Docker, lines are plain, with a timestamp only in a terminal. Docker's journald driver records stderr at priority 3 and stdout at 6.
+- **What's never logged.** No line holds anyone's name or ID, except the ID of a sender not in `SIGNAL_DM_USER_IDS` whose DM was dropped; the bot's own account ID is logged at startup. Names and message bodies are never logged: a panic while handling a message is recovered and reported without its value or stack; API error bodies are reduced to their message; malformed frames are reported by size. Every logged value has `\n` and `\r` escaped, so no value can start a forged line.
 
 ## Concurrency and scale
 

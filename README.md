@@ -14,7 +14,6 @@ A small, [privacy-conscious](PRIVACY.md) chat bot that connects to a running [si
   - [No model](#no-model)
   - [MCP tools](#mcp-tools)
   - [Scheduling](#scheduling)
-  - [Logs](#logs)
 - [Troubleshooting](#troubleshooting)
 
 ## Features
@@ -85,7 +84,7 @@ The bot runs as a dynamic user (`DynamicUser=yes`) in the `signal-cli` Unix grou
    sudo systemctl daemon-reload
    sudo systemctl enable --now signalbot
    ```
-3. Read the logs (see [Logs](#logs)):
+3. Read the logs (see [Logs](TECHNICAL.md#logs)):
    ```
    journalctl -fu signalbot
    journalctl -u signalbot -p warning   # warnings and errors only
@@ -121,7 +120,7 @@ docker logs -f signalbot
 journalctl CONTAINER_NAME=signalbot -p err   # warnings and errors only, where Docker logs to journald
 ```
 
-Docker's journald driver records stderr at priority 3 (err) and stdout at 6 (info), so warnings and errors, which the bot writes to stderr, both show as errors there (see [Logs](#logs)).
+Docker's journald driver records stderr at priority 3 (err) and stdout at 6 (info), so warnings and errors, which the bot writes to stderr, both show as errors there (see [Logs](TECHNICAL.md#logs)).
 
 ### Then
 
@@ -148,7 +147,7 @@ Add the bot's account to a group and @mention it, reply to one of its messages, 
 | `DARKMODE` | `off` | Chart colours: `off` for light charts, `on` for dark, `auto` for dark from 21:00 to 07:00 in `TZ` and light otherwise |
 | `TZ` | `UTC` in Docker, the host's under systemd | Time zone for `/schedule` times without an offset and for `DARKMODE=auto`, e.g. `Australia/Sydney` |
 
-`OPENROUTER_API_KEY` is now `MODEL_API_KEY`, and `REASONING` and `SYSTEM_PROMPT` are now `MODEL_REASONING` and `MODEL_SYSTEM_PROMPT`; the old names are ignored. `LOG_LEVEL` is gone: every level is always written (see [Logs](#logs)).
+`OPENROUTER_API_KEY` is now `MODEL_API_KEY`, and `REASONING` and `SYSTEM_PROMPT` are now `MODEL_REASONING` and `MODEL_SYSTEM_PROMPT`; the old names are ignored. `LOG_LEVEL` is gone: every level is always written (see [Logs](TECHNICAL.md#logs)).
 
 The default `INTRO` is: `hi, I'm {name}, your open source assistant running {model} (tools: {tools}).` then a blank line, then `I respond to @mentions and replies to my messages. See https://github.com/robdevops/signalbot/blob/main/README.md for details.`
 
@@ -246,21 +245,6 @@ For example `/schedule "@signalbot what's the weather today?" 2030-01-31T07:30 e
 - Straight and curly quotes both work. A schedule can't run `/schedule`, `/timer`, `/reminder` or `/job`, so it can't make more schedules. The bot never answers its own posts, so a scheduled message that @mentions it gets exactly one answer.
 - If the bot was down when a run was due, a repeating schedule skips it and a one-off up to an hour late still runs; an older one-off is dropped.
 - Schedules are saved in `schedules.json` in `STATE_DIRECTORY` until deleted. See [PRIVACY.md](PRIVACY.md).
-
-### Logs
-
-Each line has a journald priority, and every priority is always written:
-
-| Priority | Used for |
-|---|---|
-| `<2>` crit | errors that stop the bot, such as a bad config |
-| `<3>` err | errors, such as a failed model request |
-| `<4>` warning | warnings, such as a dropped message under load |
-| `<5>` notice | startup, connecting and reconnecting |
-| `<6>` info | each message answered ("received group chat" or "received dm", then the reply's time, tokens and cost), tool calls |
-| `<7>` debug | detail, such as contact list loads |
-
-Priorities 5–7 go to stdout and 2–4 to stderr. Under systemd the lines carry their `<N>` prefix, so `journalctl -p warning` filters by level. Under Docker the lines are plain, and only the stream tells levels apart. Message text is never logged, and neither is anyone's name or ID, except the ID of someone not in `SIGNAL_DM_USER_IDS` who DMs the bot.
 
 ## Troubleshooting
 
