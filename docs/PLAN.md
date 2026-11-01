@@ -1,6 +1,6 @@
 # Plan: what's next
 
-Items 1–3 are done (Markdown prompt, Signal text styles, bold tool labels). Item 5 was dropped. Items 4, 6 and 7 remain.
+Items 1–3 are done (Markdown prompt, Signal text styles, bold tool labels). Item 5 was dropped. Items 4, 6, 7, 8 and 9 remain.
 
 Do each remaining item, run gofmt, `go vet` and `go test -race ./...`, then commit and push.
 
@@ -26,3 +26,6 @@ Do each remaining item, run gofmt, `go vet` and `go test -race ./...`, then comm
 6. **Signal reduction pass,** using the lean criteria, with a target of under 1,150 lines. Finish with a size report per package against `fbba3aa`.
 
 Behaviour changes, approved: the prompt asks for Markdown, and replies can show bold, italic, code and spoilers.
+
+8. **Refuse to start when the state directory can't be written.** At startup, `/schedule` checks that its directory (`$STATE_DIRECTORY`, or the working directory) can be listed and written. If not, the bot exits with a clear message saying to add `StateDirectory=signalbot` to the systemd unit, the way the Docker `/data` check already does. Approved.
+9. **Tell the model about the scheduling commands.** The prompt's "If asked what tools you have" list names `/schedule`, `/timer`, `/reminder` and `/job`, so a near-miss like `/time …` gets pointed to the right command instead of "I can't set reminders". This needs a command-only entry the core keeps although it has no model tools. No `/time` alias. Approved.
