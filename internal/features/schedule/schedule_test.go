@@ -462,7 +462,7 @@ func TestWorkingDirectory(t *testing.T) {
 	}
 	os.Remove(filepath.Join(w.dir, fileName))
 	os.Mkdir(filepath.Join(w.dir, fileName), 0o700) // so the rename fails
-	if got := w.dm(`/schedule "hi" 2030-02-01T09:00`); got != "Sorry, I couldn't save that schedule." || len(w.h.Timers()) != 1 {
+	if got := w.dm(`/schedule "hi" 2030-02-01T09:00`); got != "Sorry, I couldn't save that schedule: I can't write to my storage. Please let my owner know." || len(w.h.Timers()) != 1 {
 		t.Fatalf("got %q, %d timers", got, len(w.h.Timers()))
 	}
 }

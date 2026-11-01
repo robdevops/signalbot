@@ -346,7 +346,7 @@ func (s *store) add(ctx context.Context, m feature.Message, args string) string 
 		e.cancel()
 		s.all = s.all[:len(s.all)-1]
 		s.last[e.User]--
-		return "Sorry, I couldn't save that schedule."
+		return "Sorry, I couldn't save that schedule: I can't write to my storage. Please let my owner know."
 	}
 	repeat := ""
 	if e.Every != "" {
@@ -505,7 +505,7 @@ func (s *store) del(user, arg string) string {
 	if err := s.save(); err != nil {
 		s.all = old
 		logx.Errorf("schedules not saved, so none was deleted: %v", err)
-		return "Sorry, I couldn't delete that schedule."
+		return "Sorry, I couldn't delete that schedule: I can't write to my storage. Please let my owner know."
 	}
 	if e.cancel != nil {
 		e.cancel()
