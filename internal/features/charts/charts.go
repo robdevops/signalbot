@@ -22,8 +22,9 @@ import (
 // offered only then, and for the replies that follow.
 var wantsChart = regexp.MustCompile(`(?i)\b(chart(s|ed|ing)?|graph(s|ed|ing)?|plot(s|ted|ting)?|visuali[sz](e|es|ed|ing|ation|ations)|pies?|donuts?|doughnuts?)\b`)
 
-// errArgs is what the log is told of arguments the model must fix; the model
-// is told what to fix, which can quote its arguments.
+// errArgs marks arguments the model must fix. The log gets the same reason
+// the model does, which can quote a series name or a date from its
+// arguments, but never the user's message.
 var errArgs = errors.New("invalid arguments")
 
 // now is the clock DARKMODE=auto reads; tests replace it.
@@ -62,7 +63,7 @@ func Register(h feature.Host) error {
 			{Name: chartTool, Description: chartToolDescription, Schema: chartToolSchema, Run: func(_ context.Context, args string) (string, []feature.Picture, error) {
 				s, err := parseChart(args)
 				if err != nil {
-					return "error: " + err.Error(), nil, errArgs
+					return "error: " + err.Error(), nil, fmt.Errorf("%w: %v", errArgs, err)
 				}
 				data, err := renderChart(s, themeFor(mode))
 				return drawn(s.summary(), chartCaption(s.Title, s.Subtitle), data, err)
@@ -70,7 +71,7 @@ func Register(h feature.Host) error {
 			{Name: pieTool, Description: pieToolDescription, Schema: pieToolSchema, Run: func(_ context.Context, args string) (string, []feature.Picture, error) {
 				s, err := parsePie(args)
 				if err != nil {
-					return "error: " + err.Error(), nil, errArgs
+					return "error: " + err.Error(), nil, fmt.Errorf("%w: %v", errArgs, err)
 				}
 				data, err := renderPie(s, themeFor(mode))
 				return drawn(s.summary(), chartCaption(s.Title, s.Subtitle), data, err)

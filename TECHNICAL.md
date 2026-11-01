@@ -44,7 +44,7 @@ Each line has a journald priority, and every priority is always written:
 | `<7>` debug | detail, such as contact list loads |
 
 - **Streams.** Priorities 5–7 go to stdout and 2–4 to stderr, so a log driver that sees only the stream still tells them apart. Under journald (`JOURNAL_STREAM` matches stdout) each line carries its `<N>` prefix, so `journalctl -p warning` filters by level; elsewhere, as in Docker, lines are plain, with a timestamp only in a terminal. Docker's journald driver records stderr at priority 3 and stdout at 6.
-- **What's never logged.** No line holds anyone's name or ID, except the ID of a sender not in `SIGNAL_DM_USER_IDS` whose DM was dropped; the bot's own account ID is logged at startup. Names and message bodies are never logged: a panic while handling a message is recovered and reported without its value or stack; API error bodies are reduced to their message; malformed frames are reported by size. Every logged value has `\n` and `\r` escaped, so no value can start a forged line.
+- **What's never logged.** No line holds anyone's name or ID, except the ID of a sender not in `SIGNAL_DM_USER_IDS` whose DM was dropped; the bot's own account ID is logged at startup. Names and message bodies are never logged: a panic while handling a message is recovered and reported without its value or stack; API error bodies are reduced to their message; malformed frames are reported by size. The one exception is a chart tool's argument error, logged with the reason the model is given (e.g. `source must be a string, got object`), which can quote a series name or a date from the model's arguments. Every logged value has `\n` and `\r` escaped, so no value can start a forged line.
 
 ## Concurrency and scale
 
