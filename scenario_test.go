@@ -824,7 +824,7 @@ func TestScenarioOtherProvider(t *testing.T) {
 	if r.Body["reasoning_effort"] != "low" || r.Model != scenarioModel {
 		t.Fatalf("reasoning_effort %v, model %q", r.Body["reasoning_effort"], r.Model)
 	}
-	if !strings.Contains(r.System, "(tools: charts (line, pie))") {
+	if !strings.Contains(r.System, "(tools: **charts** (line, pie))") {
 		t.Fatalf("system %q", r.System)
 	}
 	if n := h.modelLists(); n != 0 {
@@ -907,7 +907,7 @@ func TestScenarioSystemPromptLayering(t *testing.T) {
 func TestScenarioIntroPlaceholders(t *testing.T) {
 	h := startBot(t, world{Env: map[string]string{"INTRO": `yo, {name} here on {model} with {tools}; "quoted"` + "\nnext line"}})
 	h.ask(fromAlice("introduce yourself"))
-	want := `If asked to introduce yourself, reply with exactly this text and nothing else: "yo, Botty here on test-model with web search, charts (line, pie); \"quoted\"\nnext line"`
+	want := `If asked to introduce yourself, reply with exactly this text and nothing else: "yo, Botty here on test-model with **web search**, **charts** (line, pie); \"quoted\"\nnext line"`
 	if p := h.lastRequest().System; !strings.HasSuffix(p, "\n"+want) {
 		t.Fatalf("system prompt %q", p)
 	}
@@ -1135,6 +1135,9 @@ func TestScenarioExampleWithoutModel(t *testing.T) {
 		t.Fatalf("sent %q", s.Message)
 	}
 	equal(t, "mentions", s.Mentions, []string{"3:6:" + idAlice})
+	// The tool labels are Markdown, so they arrive in bold.
+	equal(t, "styles", s.Styles, []string{strconv.Itoa(strings.Index(want, "web search")) + ":10:BOLD",
+		strconv.Itoa(strings.Index(want, "charts")) + ":6:BOLD"})
 	if s := h.ask(fromAlice("/INTRO")); !strings.HasPrefix(s.Message, "Hi! I'm Botty. Here's what I can do:\n") || s.Mentions != nil {
 		t.Fatalf("DM sent %q", s.Message)
 	}

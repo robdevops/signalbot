@@ -10,6 +10,10 @@ import (
 	"github.com/robdevops/signalbot/internal/kit/txt"
 )
 
+// label is the group's name in the intro's {tools}, in Markdown; the host
+// lists it in Info.Tools only if it kept the tool.
+const label = "**web search**"
+
 // Register offers web search on h unless MODEL_SEARCH turns it off or there
 // is no model. "web search on" is logged only when the host kept the tool:
 // one whose API can't run it drops it and says so.
@@ -20,11 +24,11 @@ func Register(h feature.Host) error {
 	// A server tool the model calls only when it decides to search, unlike
 	// the deprecated "web" plugin, which searched on every request.
 	h.Tools(feature.ToolGroup{
-		Names:   []string{"web search"},
+		Names:   []string{label},
 		Listing: "web search",
 		Tools:   []feature.Tool{{Server: "openrouter:web_search"}},
 	})
-	if info := h.Info(); info.CallsTools && !slices.Contains(info.Tools, "web search") {
+	if info := h.Info(); info.CallsTools && !slices.Contains(info.Tools, label) {
 		return nil
 	}
 	logx.Noticef("web search on")

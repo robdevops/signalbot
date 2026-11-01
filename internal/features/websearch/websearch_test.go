@@ -16,12 +16,12 @@ func TestWebSearchOnByDefault(t *testing.T) {
 	var out, errw logx.Buffer
 	defer logx.SetOutput(&out, &errw, true)()
 	h := featuretest.New()
-	h.Bot = feature.Info{Model: "x/test-model", CallsTools: true, Tools: []string{"web search"}}
+	h.Bot = feature.Info{Model: "x/test-model", CallsTools: true, Tools: []string{label}}
 	if err := Register(h); err != nil {
 		t.Fatal(err)
 	}
 	want := []feature.ToolGroup{{
-		Names:   []string{"web search"},
+		Names:   []string{label},
 		Listing: "web search",
 		Tools:   []feature.Tool{{Server: "openrouter:web_search"}},
 	}}

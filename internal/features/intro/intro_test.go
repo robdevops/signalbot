@@ -22,14 +22,14 @@ func host(t *testing.T, tools ...string) *featuretest.Host {
 // "/intro" is answered without the model, greeting the sender by @name in
 // a group so the core can link a real mention.
 func TestExample(t *testing.T) {
-	h := host(t, "web search", "charts", "get_forecast")
+	h := host(t, "**web search**", "**charts** (line, pie)", "**weather** (get_forecast)")
 	group := feature.Message{Chat: feature.Chat{GroupID: "g1"}, Sender: "u-alice", Name: "Alice", Text: "/intro", Addressed: true}
 	want := "Hi @Alice! I'm Botty. Here's what I can do:\n" +
 		"- Answer when you @mention me, reply to one of my messages, or DM me (if you're on my list)\n" +
 		"- Use a message you quote as context\n" +
 		"- Remember our conversation for up to a day (less with disappearing messages)\n" +
 		"- Mention people by name in my replies\n" +
-		"- Run test-model with web search, charts, get_forecast\n" +
+		"- Run test-model with **web search**, **charts** (line, pie), **weather** (get_forecast)\n" +
 		"This message did not use the model."
 	if a := h.Message(context.Background(), group); a != (feature.Action{Answer: want}) {
 		t.Fatalf("got %+v", a)
