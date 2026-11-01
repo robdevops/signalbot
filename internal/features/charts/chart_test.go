@@ -352,13 +352,13 @@ func TestChartCaption(t *testing.T) {
 	}
 }
 
-// twelvePie has 12 slices, some with labels long enough to wrap, so its
-// legend is as tall as a legend gets.
-func twelvePie() string {
+// twelvePie has 12 slices, every wrapEvery-th with a label long enough to
+// wrap, so its legend is as tall as a legend gets.
+func twelvePie(wrapEvery int) string {
 	var sl []string
 	for i := range 12 {
 		label := "Slice"
-		if i%3 == 0 {
+		if i%wrapEvery == 0 {
 			label = "A slice with a label long enough to wrap onto a second line"
 		}
 		sl = append(sl, `{"label":"`+label+`","value":`+strconv.Itoa(13-i)+`}`)
@@ -374,13 +374,17 @@ func TestChartSource(t *testing.T) {
 	dir := os.Getenv("CHART_THEMES")
 	band := image.Rect(0, sourceTop, width, height)
 	source := `"source":"Yahoo Finance, finance.yahoo.com/quote/NVDA/history, retrieved 28 Oct 2026",`
-	for _, tc := range []struct{ name, tool, args string }{
-		{"line", chartTool, sampleChart()},
-		{"area", chartTool, areaSample(250, true)},
-		{"pie", pieTool, alphabetPie},
-		{"pie-twelve", pieTool, twelvePie()},
+	wide := `"source":"` + strings.Repeat("W", 80) + `",`
+	for _, tc := range []struct{ name, tool, source, args string }{
+		{"line", chartTool, source, sampleChart()},
+		{"area", chartTool, source, areaSample(250, true)},
+		{"pie", pieTool, source, alphabetPie},
+		{"pie-twelve", pieTool, source, twelvePie(3)},
+		{"pie-twelve-wrapped", pieTool, source, twelvePie(1)},
+		{"line-wide", chartTool, wide, sampleChart()},
+		{"pie-wide", pieTool, wide, alphabetPie},
 	} {
-		with := draw(t, h, tc.tool, "{"+source+tc.args[1:])
+		with := draw(t, h, tc.tool, "{"+tc.source+tc.args[1:])
 		without := decode(t, draw(t, h, tc.tool, tc.args)).(*image.RGBA)
 		img := decode(t, with).(*image.RGBA)
 		inBand := func(m *image.RGBA, r image.Rectangle) int {
@@ -392,8 +396,12 @@ func TestChartSource(t *testing.T) {
 		if inBand(img, image.Rect(38, sourceTop, 300, height)) == 0 || countColour(img, band, lightTheme.muted) == 0 {
 			t.Errorf("%s: no source drawn", tc.name)
 		}
-		if inBand(img, image.Rect(width-200, sourceTop, width, height)) != 0 {
+		if inBand(img, image.Rect(width-37, sourceTop, width, height)) != 0 ||
+			(tc.source == source && inBand(img, image.Rect(width-200, sourceTop, width, height)) != 0) {
 			t.Errorf("%s: source runs to the right edge", tc.name)
+		}
+		if strings.HasPrefix(tc.name, "pie-twelve") && inBand(without, image.Rect(width/2, 0, width, 100)) != 0 {
+			t.Errorf("%s: the legend reaches the title", tc.name)
 		}
 		if off := img.PixOffset(0, sourceTop); !bytes.Equal(img.Pix[:off], without.Pix[:off]) {
 			t.Errorf("%s: the source changed the chart above it", tc.name)

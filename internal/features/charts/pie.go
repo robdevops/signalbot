@@ -157,11 +157,7 @@ func wrapLabel(f font.Face, text string, width float64) []string {
 	if rest == "" {
 		return []string{first}
 	}
-	for textWidth(f, rest) > width && len([]rune(rest)) > 1 {
-		r := []rune(strings.TrimSuffix(rest, "…"))
-		rest = string(r[:len(r)-1]) + "…"
-	}
-	return []string{first, rest}
+	return []string{first, fitText(f, rest, width)}
 }
 
 // renderPie draws the chart, a ring with the total in its hole, in theme th
@@ -227,8 +223,10 @@ func renderPie(s *pieSpec, th *theme) ([]byte, error) {
 	}
 
 	// The legend, rows centred on the donut, long labels on two lines.
-	// The gaps between rows shrink to keep a tall legend above the source.
-	const lineH = 32.0
+	// The gaps between rows shrink to keep a tall legend above the source,
+	// and if that is not enough the smallest slices' labels go back to one
+	// line, cut with "…" before their share.
+	const lineH, minGap, room = 32.0, 4.0, 2 * (sourceTop - 6 - cy)
 	lx := cx + outer + gap
 	rows := make([][]string, len(labels))
 	legendH := 0.0
@@ -236,7 +234,14 @@ func renderPie(s *pieSpec, th *theme) ([]byte, error) {
 		rows[i] = wrapLabel(legendFace, labels[i], textW)
 		legendH += float64(len(rows[i])) * lineH
 	}
-	rowGap := min(20, max(4, (2*(sourceTop-6-cy)-legendH)/float64(len(rows)-1)))
+	for i := len(rows) - 1; i >= 0 && legendH+minGap*float64(len(rows)-1) > room; i-- {
+		if len(rows[i]) > 1 {
+			share := "  " + s.share(s.Slices[i])
+			rows[i] = []string{fitText(legendFace, s.Slices[i].Label, textW-textWidth(legendFace, share)) + share}
+			legendH -= lineH
+		}
+	}
+	rowGap := min(20, max(minGap, (room-legendH)/float64(len(rows)-1)))
 	y := cy - (legendH+rowGap*float64(len(rows)-1))/2
 	for i, lines := range rows {
 		cv.rect(th.palette[i], lx, y+8, 16, 16)

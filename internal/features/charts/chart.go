@@ -527,9 +527,18 @@ func newCanvas(th *theme, title, subtitle, source string) *canvas {
 	if source != "" {
 		f := face(chartFonts.regular, 16)
 		defer f.Close()
-		cv.text(f, th.muted, 38, sourceBaseline, 0, "Source: "+source)
+		cv.text(f, th.muted, 38, sourceBaseline, 0, fitText(f, "Source: "+source, width-2*38))
 	}
 	return cv
+}
+
+// fitText is s, cut with "…" until it is no wider than w in face f.
+func fitText(f font.Face, s string, w float64) string {
+	for textWidth(f, s) > w && len([]rune(s)) > 1 {
+		r := []rune(strings.TrimSuffix(s, "…"))
+		s = string(r[:len(r)-1]) + "…"
+	}
+	return s
 }
 
 // encode is the chart as a PNG.
