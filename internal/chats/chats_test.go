@@ -125,7 +125,7 @@ func TestHistoryCapped(t *testing.T) {
 	if len(h) != 4 || h[0].Content != "3" {
 		t.Errorf("history %v", h)
 	}
-	if exp := time.Until(h[0].Expires); exp < MaxAge-time.Minute || exp > MaxAge {
+	if exp := time.Until(h[0].Expires); exp < maxAge-time.Minute || exp > maxAge {
 		t.Errorf("expires in %v", exp)
 	}
 }
@@ -192,7 +192,7 @@ func TestNoHistoryKeepsNothing(t *testing.T) {
 	if c == nil || c.timer == nil {
 		t.Fatal("the chat's message key was not kept until it lapses")
 	}
-	c.recent["k"] = time.Now().Add(-Window)
+	c.recent["k"] = time.Now().Add(-window)
 	s.tidy("g:1", c)
 	if len(s.chats) != 0 {
 		t.Error("the chat was kept after its message key lapsed")

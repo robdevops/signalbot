@@ -11,8 +11,8 @@ import (
 	"github.com/robdevops/signalbot/internal/kit/logx"
 )
 
-// Max caps the timers set at once.
-const Max = 10000
+// maxTimers caps the timers set at once.
+const maxTimers = 10000
 
 // maxSleep is the longest the goroutine sleeps, so that a suspend or a clock
 // jump is noticed within it.
@@ -45,7 +45,7 @@ func (t *Timers) At(name string, due time.Time, fn func(ctx context.Context, due
 	switch {
 	case t.stopped:
 		return nil, errors.New("timers are stopped")
-	case len(t.queue) >= Max:
+	case len(t.queue) >= maxTimers:
 		return nil, errors.New("too many timers")
 	}
 	tm := &timer{name: name, due: due.Round(0), fn: fn}

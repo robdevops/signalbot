@@ -135,7 +135,7 @@ func TestChartReplyDropsText(t *testing.T) {
 	}
 	other := feature.Picture{Data: []byte{1}}
 	captioned := feature.Picture{Data: []byte{2}, Caption: "Bob's photo", HistoryNote: "[sent Bob's photo]"}
-	turn := feature.Turn{Message: feature.Message{Chat: feature.Chat{User: "alice"}, Sender: "alice", Name: "Alice", Text: "a pie chart", Addressed: true}}
+	turn := feature.Message{Chat: feature.Chat{User: "alice"}, Sender: "alice", Name: "Alice", Text: "a pie chart", Addressed: true}
 	for _, tc := range []struct {
 		name string
 		pics []feature.Picture

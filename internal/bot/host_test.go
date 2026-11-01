@@ -20,7 +20,7 @@ var png = []byte("\x89PNG\r\n\x1a\n0000")
 // Each hook runs at its stage, in feature order, and what it returns counts
 // only where the rules say.
 func TestHooks(t *testing.T) {
-	var turns []feature.Turn
+	var turns []feature.Message
 	h := start(t, options{features: func(b *Bot) {
 		b.OnMessage(func(_ context.Context, m feature.Message) feature.Action {
 			switch {
@@ -37,12 +37,14 @@ func TestHooks(t *testing.T) {
 			}
 			return feature.Action{}
 		})
-		b.OnTurn(func(_ context.Context, t feature.Turn) feature.Additions {
-			turns = append(turns, t)
+		b.OnTurn(func(_ context.Context, m feature.Message) feature.Additions {
+			turns = append(turns, m)
 			return feature.Additions{System: "Be brief.", Note: "[a note]", HistoryNote: "[kept note]", Images: []string{"data:image/png;base64,AA=="}}
 		})
-		b.OnTurn(func(context.Context, feature.Turn) feature.Additions { return feature.Additions{Note: "[second note]"} })
-		b.OnReply(func(_ feature.Turn, r *feature.Reply) {
+		b.OnTurn(func(context.Context, feature.Message) feature.Additions {
+			return feature.Additions{Note: "[second note]"}
+		})
+		b.OnReply(func(_ feature.Message, r *feature.Reply) {
 			r.Text = ""
 			r.Pictures = append(r.Pictures, feature.Picture{Data: png, Caption: "a caption", HistoryNote: "[sent a picture]"}, feature.Picture{Data: png})
 		})
@@ -84,11 +86,11 @@ func TestPhotoAnsweredWhenAHookAdds(t *testing.T) {
 	var media []byte
 	var h *harness
 	h = start(t, options{features: func(b *Bot) {
-		b.OnTurn(func(ctx context.Context, t feature.Turn) feature.Additions {
-			if len(t.Media) == 0 {
+		b.OnTurn(func(ctx context.Context, m feature.Message) feature.Additions {
+			if len(m.Media) == 0 {
 				return feature.Additions{}
 			}
-			media, _ = b.Media(ctx, t.Message, 0)
+			media, _ = b.Media(ctx, m, 0)
 			return feature.Additions{Note: "[1 image attached]"}
 		})
 	}})
@@ -163,7 +165,7 @@ func TestOffering(t *testing.T) {
 		r, _ := h.ask(dm(fmt.Sprint("next ", i)))
 		equal(t, "follow-up", toolNames(r), want)
 	}
-	if info := h.b.Info(feature.Chat{}); info.Name != "Botty" || info.Model != "test/test-model" || !info.CallsTools || !info.Images || strings.Join(info.Tools, ",") != "alpha,beta" {
+	if info := h.b.Info(); info.Name != "Botty" || info.Model != "test/test-model" || !info.CallsTools || !info.Images || strings.Join(info.Tools, ",") != "alpha,beta" {
 		t.Fatalf("info %+v", info)
 	}
 }
@@ -179,7 +181,7 @@ func TestRegistrationAndGo(t *testing.T) {
 		}
 	})
 	start(t, options{tools: true, cfg: func(c *config.Config) { c.Version = "v1.2.3" }, features: func(b *Bot) {
-		if info := b.Info(feature.Chat{}); !info.CallsTools || !info.Images || info.Version != "v1.2.3" {
+		if info := b.Info(); !info.CallsTools || !info.Images || info.Version != "v1.2.3" {
 			t.Errorf("info at registration %+v", info)
 		}
 		b.Go(func(ctx context.Context) { <-ctx.Done(); time.Sleep(10 * time.Millisecond); stopped.Store(true) })
@@ -276,7 +278,7 @@ func TestTimersWaitForTheFirstConnect(t *testing.T) {
 // no reply, no typing and no model request, and nothing is kept in history.
 func TestNoModel(t *testing.T) {
 	h := start(t, options{tools: true, cfg: func(c *config.Config) { c.NoModel = true }, features: func(b *Bot) {
-		if info := b.Info(feature.Chat{}); info.Model != "" || info.Images || info.CallsTools {
+		if info := b.Info(); info.Model != "" || info.Images || info.CallsTools {
 			t.Errorf("info at registration %+v", info)
 		}
 		b.Tools(feature.ToolGroup{Names: []string{"served"}, Tools: []feature.Tool{{Server: "elsewhere:served"}}})
@@ -291,7 +293,7 @@ func TestNoModel(t *testing.T) {
 			}
 			return feature.Action{}
 		})
-		b.OnTurn(func(context.Context, feature.Turn) feature.Additions {
+		b.OnTurn(func(context.Context, feature.Message) feature.Additions {
 			t.Error("OnTurn ran")
 			return feature.Additions{}
 		})
@@ -335,7 +337,7 @@ func TestNoModel(t *testing.T) {
 // out with a warning, and a group left with no tools is dropped.
 func TestOtherAPI(t *testing.T) {
 	h := start(t, options{otherAPI: true, features: func(b *Bot) {
-		if info := b.Info(feature.Chat{}); info.Model != "test/test-model" || info.Images || !info.CallsTools {
+		if info := b.Info(); info.Model != "test/test-model" || info.Images || !info.CallsTools {
 			t.Errorf("info at registration %+v", info)
 		}
 		b.Tools(feature.ToolGroup{Names: []string{"served"}, Listing: "served", Tools: []feature.Tool{{Server: "openrouter:served"}}})

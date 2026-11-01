@@ -22,7 +22,7 @@ const notKept = "; you see images only in the latest message, so to look again t
 
 // Register adds a message's images and sticker to the model's request on h.
 func Register(h feature.Host) error {
-	h.OnTurn(func(ctx context.Context, t feature.Turn) feature.Additions { return additions(ctx, h, t.Message) })
+	h.OnTurn(func(ctx context.Context, m feature.Message) feature.Additions { return additions(ctx, h, m) })
 	return nil
 }
 
@@ -30,7 +30,7 @@ func Register(h feature.Host) error {
 // and fetches them as data: URLs if the model can see images. One that
 // can't be fetched is skipped.
 func additions(ctx context.Context, h feature.Host, m feature.Message) feature.Additions {
-	see := h.Info(m.Chat).Images
+	see := h.Info().Images
 	var notes, kept, seen []string
 	images, sticker := 0, -1
 	for i, md := range m.Media {

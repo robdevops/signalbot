@@ -16,8 +16,8 @@ import (
 )
 
 var (
-	photo   = feature.Media{ID: "photo1.png", Type: "image/png"}
-	quoted  = feature.Media{ID: "thumb1.jpg", Type: "image/jpeg", Quoted: true}
+	photo   = feature.Media{ID: "photo1.png"}
+	quoted  = feature.Media{ID: "thumb1.jpg", Quoted: true}
 	sticker = feature.Media{Pack: "00aabbccddeeff00", Sticker: 2, Label: `: 🕵️ from "My Daily Life"`}
 	webp    = []byte("RIFF\x00\x00\x00\x00WEBPVP8 \x00\x00\x00\x00")
 )
@@ -51,11 +51,11 @@ func host(t *testing.T, see bool, fetched *[]int) *featuretest.Host {
 	return h
 }
 
-func turn(text string, media ...feature.Media) feature.Turn {
-	return feature.Turn{Message: feature.Message{Chat: feature.Chat{User: "u-alice"}, Sender: "u-alice", Name: "Alice", Text: text, Media: media, Addressed: true}}
+func turn(text string, media ...feature.Media) feature.Message {
+	return feature.Message{Chat: feature.Chat{User: "u-alice"}, Sender: "u-alice", Name: "Alice", Text: text, Media: media, Addressed: true}
 }
 
-func additionsOf(t *testing.T, h *featuretest.Host, tn feature.Turn) feature.Additions {
+func additionsOf(t *testing.T, h *featuretest.Host, tn feature.Message) feature.Additions {
 	t.Helper()
 	as := h.Turn(context.Background(), tn)
 	if len(as) != 1 {

@@ -49,11 +49,11 @@ func (b *Bot) respond(msg feature.Message, act feature.Action, text string) {
 	}
 	stop := b.net.Typing(msg.Chat)
 	defer stop() // also if something below panics
-	key, turn := msg.Chat.Key(), feature.Turn{Message: msg}
+	key := msg.Chat.Key()
 	kept, added := text, false
 	var systems, images []string
 	for _, fn := range b.turns {
-		a := fn(b.ctx, turn)
+		a := fn(b.ctx, msg)
 		if a.System != "" {
 			systems = append(systems, a.System)
 		}
@@ -83,7 +83,7 @@ func (b *Bot) respond(msg feature.Message, act feature.Action, text string) {
 	}
 	b.followUp(key, offered, msg.Text, reply.ToolsUsed)
 	for _, fn := range b.replies {
-		fn(turn, &reply)
+		fn(msg, &reply)
 	}
 	// History notes the pictures sent, which the model would otherwise not
 	// know it did. A reply with no text is sent with their captions.

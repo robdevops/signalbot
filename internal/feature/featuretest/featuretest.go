@@ -17,7 +17,7 @@ import (
 // exported fields before the feature registers.
 type Host struct {
 	Settings map[string]string                              // what Env reads
-	Bot      feature.Info                                   // what Info returns for any chat
+	Bot      feature.Info                                   // what Info returns
 	Fetch    func(m feature.Message, i int) ([]byte, error) // what Media returns; nil fails
 	Shared   []feature.Group                                // what Groups returns
 	TimerErr error                                          // if set, At fails with it, as the core does at its cap
@@ -26,8 +26,8 @@ type Host struct {
 	mu        sync.Mutex
 	read      []string
 	messages  []func(context.Context, feature.Message) feature.Action
-	turns     []func(context.Context, feature.Turn) feature.Additions
-	replies   []func(feature.Turn, *feature.Reply)
+	turns     []func(context.Context, feature.Message) feature.Additions
+	replies   []func(feature.Message, *feature.Reply)
 	groups    []feature.ToolGroup
 	timers    []*Timer
 	delivered []feature.Message
@@ -54,13 +54,13 @@ func (h *Host) OnMessage(fn func(context.Context, feature.Message) feature.Actio
 	h.messages = append(h.messages, fn)
 }
 
-func (h *Host) OnTurn(fn func(context.Context, feature.Turn) feature.Additions) {
+func (h *Host) OnTurn(fn func(context.Context, feature.Message) feature.Additions) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	h.turns = append(h.turns, fn)
 }
 
-func (h *Host) OnReply(fn func(feature.Turn, *feature.Reply)) {
+func (h *Host) OnReply(fn func(feature.Message, *feature.Reply)) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	h.replies = append(h.replies, fn)
@@ -99,7 +99,7 @@ func (h *Host) Env(key, def string) string {
 	return def
 }
 
-func (h *Host) Info(feature.Chat) feature.Info { return h.Bot }
+func (h *Host) Info() feature.Info { return h.Bot }
 
 func (h *Host) Media(_ context.Context, m feature.Message, i int) ([]byte, error) {
 	if h.Fetch == nil {
@@ -161,25 +161,25 @@ func (h *Host) Message(ctx context.Context, m feature.Message) feature.Action {
 	return feature.Action{}
 }
 
-// Turn runs the OnTurn hooks on t and returns what each added.
-func (h *Host) Turn(ctx context.Context, t feature.Turn) []feature.Additions {
+// Turn runs the OnTurn hooks on m and returns what each added.
+func (h *Host) Turn(ctx context.Context, m feature.Message) []feature.Additions {
 	h.mu.Lock()
 	hooks := slices.Clone(h.turns)
 	h.mu.Unlock()
 	var out []feature.Additions
 	for _, fn := range hooks {
-		out = append(out, fn(ctx, t))
+		out = append(out, fn(ctx, m))
 	}
 	return out
 }
 
 // Reply runs the OnReply hooks on r.
-func (h *Host) Reply(t feature.Turn, r *feature.Reply) {
+func (h *Host) Reply(m feature.Message, r *feature.Reply) {
 	h.mu.Lock()
 	hooks := slices.Clone(h.replies)
 	h.mu.Unlock()
 	for _, fn := range hooks {
-		fn(t, r)
+		fn(m, r)
 	}
 }
 

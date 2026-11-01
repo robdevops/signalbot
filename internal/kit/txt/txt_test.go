@@ -9,8 +9,8 @@ func TestSafeName(t *testing.T) {
 	if got := SafeName("  Alice \n\t Bob\r "); got != "Alice Bob" {
 		t.Errorf("got %q", got)
 	}
-	long := strings.Repeat("é", MaxName+10)
-	if got := SafeName(long); len([]rune(got)) != MaxName {
+	long := strings.Repeat("é", maxName+10)
+	if got := SafeName(long); len([]rune(got)) != maxName {
 		t.Errorf("not capped: %d runes", len([]rune(got)))
 	}
 }

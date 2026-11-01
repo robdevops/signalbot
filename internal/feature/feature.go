@@ -49,7 +49,6 @@ type Quote struct {
 // Media is an image a message carries, or its sticker.
 type Media struct {
 	ID      string // the network's attachment ID; "" for a sticker
-	Type    string // an image's MIME type; "" for a sticker
 	Quoted  bool   // a thumbnail of an image in the quoted message
 	Pack    string // a sticker's pack ID; "" for an image
 	Sticker int    // a sticker's index in its pack
@@ -69,11 +68,6 @@ type Received struct {
 	// and that person's ID. It reports false for a message the core has
 	// nothing to do with.
 	Load func(ctx context.Context, learn func(name, id string)) (Message, bool)
-}
-
-// Turn is the message being answered, in its chat.
-type Turn struct {
-	Message
 }
 
 // Action is what an OnMessage hook decides. The zero value carries on.
@@ -137,10 +131,10 @@ type Tool struct {
 	Run               func(ctx context.Context, args string) (string, []Picture, error)
 }
 
-// Info is what the core knows about itself in a chat. All but Name and
-// Tools are known when features register.
+// Info is what the core knows about itself. All but Name and Tools are
+// known when features register.
 type Info struct {
-	Name       string   // the bot's name in the chat
+	Name       string   // the bot's name
 	Version    string   // the bot's version; "" if unknown
 	Model      string   // the model's ID, such as "provider/model" on OpenRouter; "" with no model
 	Images     bool     // the model takes images
@@ -160,10 +154,12 @@ type Host interface {
 	// reader goroutine, so it must not block or call the network. The first
 	// non-zero Action wins.
 	OnMessage(func(context.Context, Message) Action)
-	// OnTurn adds to the model's request for an addressed message.
-	OnTurn(func(context.Context, Turn) Additions)
-	// OnReply may change a reply. It runs only after the model replies.
-	OnReply(func(Turn, *Reply))
+	// OnTurn adds to the model's request for the addressed message being
+	// answered.
+	OnTurn(func(context.Context, Message) Additions)
+	// OnReply may change the reply to a message. It runs only after the
+	// model replies.
+	OnReply(func(Message, *Reply))
 	// Tools offers a group of tools to the model.
 	Tools(ToolGroup)
 	// At runs fn once at t, however late, passing the time it was due. It
@@ -172,8 +168,8 @@ type Host interface {
 
 	// Env reads a feature's own setting, recorded for the docs test.
 	Env(key, def string) string
-	// Info says what the bot is in a chat.
-	Info(Chat) Info
+	// Info says what the bot is.
+	Info() Info
 	// Media fetches the bytes of msg.Media[i].
 	Media(ctx context.Context, msg Message, i int) ([]byte, error)
 	// Deliver acts on msg as if its sender had just posted it in its chat.

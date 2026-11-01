@@ -53,10 +53,6 @@ type names struct {
 	pending     atomic.Bool // a reload is already scheduled
 }
 
-func newNames() names {
-	return names{byID: map[string]rankedName{}, numbers: map[string]string{}, minRefresh: 15 * time.Second}
-}
-
 // contact is the part of a listContacts entry the bot uses.
 type contact struct {
 	Number    string `json:"number"`

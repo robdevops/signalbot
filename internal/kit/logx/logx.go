@@ -14,18 +14,6 @@ import (
 	"time"
 )
 
-// Priority is a syslog priority, which journald reads from a "<N>" prefix.
-type Priority int
-
-const (
-	Crit   Priority = 2 // an error that stops the bot
-	Error  Priority = 3
-	Warn   Priority = 4
-	Notice Priority = 5 // startup, connect and reconnect
-	Info   Priority = 6
-	Debug  Priority = 7
-)
-
 var (
 	mu      sync.Mutex
 	stdout  io.Writer = os.Stdout
@@ -61,14 +49,15 @@ func SetOutput(out, errw io.Writer, journald bool) (restore func()) {
 
 var escaper = strings.NewReplacer("\n", `\n`, "\r", `\r`)
 
-// Logf writes one line at priority p. Line breaks are escaped, so no value
-// (an error body, a display name) can start a forged line.
-func Logf(p Priority, format string, args ...any) {
+// logf writes one line at priority p, which journald reads from a "<N>"
+// prefix. Line breaks are escaped, so no value (an error body, a display
+// name) can start a forged line.
+func logf(p int, format string, args ...any) {
 	line := escaper.Replace(fmt.Sprintf(format, args...))
 	mu.Lock()
 	defer mu.Unlock()
 	w := stdout
-	if p <= Warn {
+	if p <= 4 {
 		w = stderr
 	}
 	var b strings.Builder
@@ -83,12 +72,14 @@ func Logf(p Priority, format string, args ...any) {
 	io.WriteString(w, b.String())
 }
 
-func Critf(format string, args ...any)   { Logf(Crit, format, args...) }
-func Errorf(format string, args ...any)  { Logf(Error, format, args...) }
-func Warnf(format string, args ...any)   { Logf(Warn, format, args...) }
-func Noticef(format string, args ...any) { Logf(Notice, format, args...) }
-func Infof(format string, args ...any)   { Logf(Info, format, args...) }
-func Debugf(format string, args ...any)  { Logf(Debug, format, args...) }
+// Critf is for an error that stops the bot, and Noticef for startup,
+// connect and reconnect.
+func Critf(format string, args ...any)   { logf(2, format, args...) }
+func Errorf(format string, args ...any)  { logf(3, format, args...) }
+func Warnf(format string, args ...any)   { logf(4, format, args...) }
+func Noticef(format string, args ...any) { logf(5, format, args...) }
+func Infof(format string, args ...any)   { logf(6, format, args...) }
+func Debugf(format string, args ...any)  { logf(7, format, args...) }
 
 // Recover is deferred where message text is handled. A panic would otherwise
 // print its value and a stack trace, and either can hold message text. This

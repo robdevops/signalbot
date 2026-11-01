@@ -271,7 +271,7 @@ func chatter(text string) feature.Message {
 // with adds images to m.
 func with(m feature.Message, ids ...string) feature.Message {
 	for _, id := range ids {
-		m.Media = append(m.Media, feature.Media{ID: id, Type: "image/png"})
+		m.Media = append(m.Media, feature.Media{ID: id})
 	}
 	return m
 }

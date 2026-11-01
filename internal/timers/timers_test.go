@@ -120,7 +120,7 @@ func TestPanicRecovered(t *testing.T) {
 func TestCap(t *testing.T) {
 	ts := New()
 	later := time.Now().Add(time.Hour)
-	for i := range Max {
+	for i := range maxTimers {
 		if _, err := ts.At("t", later, func(context.Context, time.Time) {}); err != nil {
 			t.Fatalf("timer %d refused: %v", i, err)
 		}

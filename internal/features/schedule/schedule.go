@@ -355,7 +355,7 @@ func (s *store) add(ctx context.Context, m feature.Message, args string) string 
 // of the bot, which the core strips when the text is delivered. It matches
 // them as the core does: the longest name first, on a word boundary.
 func (s *store) schedulesItself(chat feature.Chat, text string) bool {
-	names := []string{"@" + s.h.Info(chat).Name, "@signalbot"}
+	names := []string{"@" + s.h.Info().Name, "@signalbot"}
 	slices.SortFunc(names, func(a, b string) int { return utf8.RuneCountInString(b) - utf8.RuneCountInString(a) })
 	for t := strings.TrimSpace(text); ; {
 		rest, ok := "", false

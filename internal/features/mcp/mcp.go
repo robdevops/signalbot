@@ -65,7 +65,7 @@ func Register(h feature.Host) error {
 	if path == "" {
 		return nil
 	}
-	if h.Info(feature.Chat{}).Model == "" {
+	if h.Info().Model == "" {
 		logx.Warnf("MCP off: no model")
 		return nil
 	}
@@ -144,7 +144,7 @@ func modelName(server, tool string) string {
 // servers are stopped when ctx ends, and the bot waits for them. While the
 // model can't call tools, no command is registered.
 func start(ctx context.Context, h feature.Host, servers map[string]server) error {
-	info := h.Info(feature.Chat{})
+	info := h.Info()
 	version := cmp.Or(info.Version, "dev")
 	taken := map[string]bool{} // the model's names for tools
 	var tools, cmds []string   // for the startup lines

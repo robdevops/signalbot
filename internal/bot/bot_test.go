@@ -424,8 +424,8 @@ func TestShutdownStopsWaiting(t *testing.T) {
 func TestWaitingPhotosSplit(t *testing.T) {
 	var media []int
 	h := start(t, options{features: func(b *Bot) {
-		b.OnTurn(func(_ context.Context, t feature.Turn) feature.Additions {
-			media = append(media, len(t.Media))
+		b.OnTurn(func(_ context.Context, m feature.Message) feature.Additions {
+			media = append(media, len(m.Media))
 			return feature.Additions{}
 		})
 	}})

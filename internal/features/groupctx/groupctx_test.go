@@ -46,9 +46,9 @@ func TestGroupChatterIsContext(t *testing.T) {
 func TestGroupChatterNotes(t *testing.T) {
 	h := host(t, "true")
 	ctx := context.Background()
-	photo := feature.Media{ID: "a1", Type: "image/jpeg"}
+	photo := feature.Media{ID: "a1"}
 	sticker := feature.Media{Pack: "p1", Sticker: 2}
-	quoted := feature.Media{ID: "a2", Type: "image/png", Quoted: true}
+	quoted := feature.Media{ID: "a2", Quoted: true}
 	for _, c := range []struct {
 		m    feature.Message
 		want string

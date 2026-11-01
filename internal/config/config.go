@@ -1,9 +1,11 @@
-// Package config reads the core's settings from the environment. Every
-// setting read, the core's or a feature's, is recorded for the docs test.
+// Package config reads the core's settings from the environment, and holds
+// the tests' hooks. Every setting read, the core's or a feature's, is
+// recorded for the docs test.
 package config
 
 import (
 	"errors"
+	"maps"
 	"os"
 	"slices"
 	"strconv"
@@ -11,6 +13,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+	"unicode"
 )
 
 // DefaultIntro is the self-introduction when INTRO is unset. {name},
@@ -74,8 +77,8 @@ func Env(key, def string) string {
 	return def
 }
 
-// Int is the setting key as a positive number, else def.
-func Int(key string, def int) int {
+// number is the setting key as a positive number, else def.
+func number(key string, def int) int {
 	if n, err := strconv.Atoi(Env(key, "")); err == nil && n > 0 {
 		return n
 	}
@@ -86,16 +89,8 @@ func Int(key string, def int) int {
 func Read() []string {
 	mu.Lock()
 	defer mu.Unlock()
-	var out []string
-	for k := range read {
-		out = append(out, k)
-	}
-	slices.Sort(out)
-	return out
+	return slices.Sorted(maps.Keys(read))
 }
-
-// DefaultAPIURL is OpenRouter's API, used when MODEL_API_URL is unset.
-const DefaultAPIURL = "https://openrouter.ai/api/v1"
 
 // Load reads the core's settings.
 func Load() (*Config, error) {
@@ -108,13 +103,13 @@ func Load() (*Config, error) {
 		SystemPrompt:   Env("MODEL_SYSTEM_PROMPT", ""),
 		Intro:          Env("INTRO", DefaultIntro),
 		AllowedSenders: map[string]bool{},
-		MaxConcurrency: Int("MAX_CONCURRENCY", 32),
-		HistoryTurns:   Int("HISTORY_TURNS", 10),
+		MaxConcurrency: number("MAX_CONCURRENCY", 32),
+		HistoryTurns:   number("HISTORY_TURNS", 10),
 	}
 	// Split on commas, semicolons and any white space, so a CRLF env file or
 	// a tab-separated list cannot leave an unmatchable ID in the list.
 	for _, id := range strings.FieldsFunc(Env("SIGNAL_DM_USER_IDS", ""), func(r rune) bool {
-		return r == ',' || r == ';' || r == ' ' || r == '\t' || r == '\n' || r == '\r'
+		return r == ',' || r == ';' || unicode.IsSpace(r)
 	}) {
 		c.AllowedSenders[id] = true
 	}
@@ -125,7 +120,7 @@ func Load() (*Config, error) {
 	// key, such as a local one.
 	c.NoModel = c.APIURL == "" && c.APIKey == ""
 	if c.APIURL == "" {
-		c.APIURL = DefaultAPIURL
+		c.APIURL = "https://openrouter.ai/api/v1"
 	}
 	return c, nil
 }

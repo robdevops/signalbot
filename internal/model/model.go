@@ -32,7 +32,6 @@ const (
 	budget = 3 * time.Minute
 )
 
-// retryDelay is the wait before a retry.
 var retryDelay = time.Second
 
 // Client talks to the model's API.
@@ -55,22 +54,13 @@ func New(cfg *config.Config) *Client {
 		openRouter: err == nil && strings.EqualFold(u.Hostname(), host), http: httpx.Client(cfg.MaxConcurrency)}
 }
 
-// provider is the name server tools use for the API: "openrouter" for
-// OpenRouter's, else "" (none known).
-func (c *Client) provider() string {
-	if c.openRouter {
-		return "openrouter"
-	}
-	return ""
-}
-
 // Usable is the tools the API can run: every function tool, and a server
-// tool ("provider:name") only on the provider it names. Each one left out
-// is logged.
+// tool ("provider:name") only on the provider it names, of which only
+// OpenRouter ("openrouter") is known. Each one left out is logged.
 func (c *Client) Usable(tools []feature.Tool) []feature.Tool {
 	var out []feature.Tool
 	for _, t := range tools {
-		if prefix, _, _ := strings.Cut(t.Server, ":"); t.Server != "" && (prefix != c.provider() || prefix == "") {
+		if prefix, _, _ := strings.Cut(t.Server, ":"); t.Server != "" && !(c.openRouter && prefix == "openrouter") {
 			logx.Warnf("tool %s left out: it runs only on %s's API", t.Server, prefix)
 			continue
 		}
@@ -323,7 +313,6 @@ func (c *Client) post(ctx context.Context, payload []byte) ([]byte, error) {
 	}
 }
 
-// authorize adds the API key to req, if there is one.
 func (c *Client) authorize(req *http.Request) {
 	if c.key != "" {
 		req.Header.Set("Authorization", "Bearer "+c.key)

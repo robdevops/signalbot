@@ -59,12 +59,10 @@ type Bot struct {
 	// The hooks and tool groups, in feature order. Features register them
 	// before Run.
 	messages []func(context.Context, feature.Message) feature.Action
-	turns    []func(context.Context, feature.Turn) feature.Additions
-	replies  []func(feature.Turn, *feature.Reply)
+	turns    []func(context.Context, feature.Message) feature.Additions
+	replies  []func(feature.Message, *feature.Reply)
 	groups   []feature.ToolGroup
 }
-
-var _ feature.Host = (*Bot)(nil)
 
 // New makes the bot on net and reads what the model can do, so features
 // know it when they register. With no model, only what a hook answers is

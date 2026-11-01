@@ -4,16 +4,16 @@ package txt
 
 import "strings"
 
-// MaxName caps a display name, in runes.
-const MaxName = 64
+// maxName caps a display name, in runes.
+const maxName = 64
 
 // SafeName makes an untrusted name safe to splice into a prompt or a log
-// line: no line breaks, no runs of white space, at most MaxName runes.
+// line: no line breaks, no runs of white space, at most maxName runes.
 // Signal profile names are chosen by their owner, so anyone can set one.
 func SafeName(s string) string {
 	s = strings.Join(strings.Fields(s), " ")
-	if r := []rune(s); len(r) > MaxName {
-		s = strings.TrimSpace(string(r[:MaxName]))
+	if r := []rune(s); len(r) > maxName {
+		s = strings.TrimSpace(string(r[:maxName]))
 	}
 	return s
 }

@@ -33,7 +33,7 @@ If a feature can't be built on these, that's a design finding. Either a port bec
 ## Plain Go, no ceremony
 
 - Use concrete types and structs freely. Add an interface only where there are two real implementations, or a test needs a fake. The one there is, `bot.Network`, is there for the bot's in-memory fake network.
-- Define each type once and use it everywhere, rather than copying it per package. `Message`, `Media`, `Picture`, `Turn` and the port types live in `internal/feature`, and the core uses them directly.
+- Define each type once and use it everywhere, rather than copying it per package. `Message`, `Media`, `Picture` and the port types live in `internal/feature`, and the core uses them directly.
 - When a function needs many inputs, pass a typed struct, never a map or a long list of positional arguments.
 - No wrappers or adapters that only pass calls through.
 - Files by role, no line limit. Kit gains a package only when a second user appears.

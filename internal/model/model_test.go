@@ -112,12 +112,12 @@ func client(t *testing.T, base string, openRouter bool) *Client {
 }
 
 func TestNewClient(t *testing.T) {
-	c := New(&config.Config{APIURL: config.DefaultAPIURL, MaxConcurrency: 40})
+	c := New(&config.Config{APIURL: "https://openrouter.ai/api/v1", MaxConcurrency: 40})
 	tr := c.http.Transport.(*http.Transport)
 	if tr.MaxIdleConnsPerHost != 40 || tr.TLSClientConfig.MinVersion != tls.VersionTLS13 {
 		t.Fatalf("idle %d, TLS %x", tr.MaxIdleConnsPerHost, tr.TLSClientConfig.MinVersion)
 	}
-	if !c.openRouter || c.provider() != "openrouter" {
+	if !c.openRouter {
 		t.Error("the default API is not OpenRouter's")
 	}
 	for _, u := range []string{"https://OpenRouter.ai/api/v1", "https://openrouter.ai:443/api/v1"} {
@@ -126,7 +126,7 @@ func TestNewClient(t *testing.T) {
 		}
 	}
 	for _, u := range []string{"http://localhost:11434/v1", "https://api.openai.com/v1", "https://openrouter.ai.example.com/api/v1", "::bad"} {
-		if c := New(&config.Config{APIURL: u}); c.openRouter || c.provider() != "" {
+		if c := New(&config.Config{APIURL: u}); c.openRouter {
 			t.Errorf("%s is taken for OpenRouter", u)
 		}
 	}

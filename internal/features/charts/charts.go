@@ -79,7 +79,7 @@ func Register(h feature.Host) error {
 	})
 	// A chart is sent as one message captioned with its title, in place of
 	// the model's text.
-	h.OnReply(func(_ feature.Turn, r *feature.Reply) {
+	h.OnReply(func(_ feature.Message, r *feature.Reply) {
 		for _, p := range r.Pictures {
 			if p.Caption != "" && p.HistoryNote == sentNote(p.Caption) {
 				r.Text = ""

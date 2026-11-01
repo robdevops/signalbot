@@ -15,7 +15,7 @@ func Register(h feature.Host) error {
 		if args != "" {
 			return feature.Action{} // only "/example" itself; anything more carries on
 		}
-		return feature.Action{Answer: text(m, h.Info(m.Chat))}
+		return feature.Action{Answer: text(m, h.Info())}
 	})
 }
 

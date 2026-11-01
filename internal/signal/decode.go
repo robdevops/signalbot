@@ -63,7 +63,6 @@ type attachment struct {
 	Thumbnail   *attachment `json:"thumbnail"`
 }
 
-// sticker names a sticker by its pack and its index in the pack.
 type sticker struct {
 	PackID    string `json:"packId"`
 	StickerID int    `json:"stickerId"`
@@ -217,7 +216,7 @@ func (c *Client) message(env *envelope, self string) feature.Message {
 	images := func(as []attachment, quoted bool) {
 		for i := range as {
 			if a := as[i].image(); a != nil && len(m.Media) < feature.MaxPictures {
-				m.Media = append(m.Media, feature.Media{ID: a.ID, Type: a.ContentType, Quoted: quoted})
+				m.Media = append(m.Media, feature.Media{ID: a.ID, Quoted: quoted})
 			}
 		}
 	}
@@ -236,8 +235,7 @@ func (c *Client) message(env *envelope, self string) feature.Message {
 // "@Name" in a reply can become a real mention: its sender's and those of
 // the people it mentions. A DM shows none.
 func (c *Client) people(env *envelope, self string, learn func(name, id string)) {
-	d := env.DataMessage
-	if d == nil || d.GroupInfo == nil || d.GroupInfo.GroupID == "" {
+	if env.chat().GroupID == "" {
 		return
 	}
 	add := func(name, id string) {
@@ -246,7 +244,7 @@ func (c *Client) people(env *envelope, self string, learn func(name, id string))
 		}
 	}
 	add(env.SourceName, env.SourceUUID)
-	for _, m := range d.Mentions {
+	for _, m := range env.DataMessage.Mentions {
 		if m.Number != self {
 			add(c.resolve(m), m.UUID)
 		}

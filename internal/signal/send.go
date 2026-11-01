@@ -36,8 +36,10 @@ func (c *Client) Send(chat feature.Chat, text string, images [][]byte, known map
 		logx.Warnf("reply truncated from %d chars", n)
 	}
 	var attachments []string
-	for i, data := range images {
-		attachments = append(attachments, attachmentURI(data, fmt.Sprintf("image%d", i+1)))
+	for i, data := range images { // named with the extension their type gives
+		mime := http.DetectContentType(data)
+		attachments = append(attachments, fmt.Sprintf("data:%s;filename=image%d.%s;base64,%s",
+			mime, i+1, strings.TrimPrefix(mime, "image/"), base64.StdEncoding.EncodeToString(data)))
 	}
 	ps := parts(text, c.BotName())
 	if len(ps) == 0 {
@@ -70,14 +72,6 @@ func (c *Client) send(chat feature.Chat, text string, mentions, attachments []st
 		p["attachments"] = attachments
 	}
 	return c.write(c.nextID.Add(1), "send", p)
-}
-
-// attachmentURI is data as a signal-cli attachment named name, with the
-// extension its type gives.
-func attachmentURI(data []byte, name string) string {
-	mime := http.DetectContentType(data)
-	ext := strings.TrimPrefix(mime, "image/")
-	return "data:" + mime + ";filename=" + name + "." + ext + ";base64," + base64.StdEncoding.EncodeToString(data)
 }
 
 func target(chat feature.Chat) map[string]any {

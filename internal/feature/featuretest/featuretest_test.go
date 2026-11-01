@@ -17,13 +17,13 @@ func TestHooksRunInOrder(t *testing.T) {
 	if a := h.Message(context.Background(), feature.Message{}); a.Context != "first" {
 		t.Errorf("got %+v", a)
 	}
-	h.OnTurn(func(context.Context, feature.Turn) feature.Additions { return feature.Additions{Note: "n"} })
-	if adds := h.Turn(context.Background(), feature.Turn{}); len(adds) != 1 || adds[0].Note != "n" {
+	h.OnTurn(func(context.Context, feature.Message) feature.Additions { return feature.Additions{Note: "n"} })
+	if adds := h.Turn(context.Background(), feature.Message{}); len(adds) != 1 || adds[0].Note != "n" {
 		t.Errorf("got %+v", adds)
 	}
-	h.OnReply(func(_ feature.Turn, r *feature.Reply) { r.Text += "!" })
+	h.OnReply(func(_ feature.Message, r *feature.Reply) { r.Text += "!" })
 	r := &feature.Reply{Text: "hi"}
-	h.Reply(feature.Turn{}, r)
+	h.Reply(feature.Message{}, r)
 	if r.Text != "hi!" {
 		t.Errorf("got %q", r.Text)
 	}

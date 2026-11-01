@@ -113,7 +113,7 @@ func TestTestHooks(t *testing.T) {
 }
 
 func TestNamesCapped(t *testing.T) {
-	n := newNames()
+	n := &New("x", nil, nil).names
 	for i := range maxNames + 10 {
 		n.set(rankedName{"Bob", rankSeen}, fmt.Sprint(i))
 	}

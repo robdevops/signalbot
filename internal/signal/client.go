@@ -67,7 +67,8 @@ type Client struct {
 // host:port, answering DMs from the senders in allowed.
 func New(addr string, allowed map[string]bool, test *config.Test) *Client {
 	c := &Client{addr: addr, allowed: allowed, typingEvery: 10 * time.Second, pending: map[string]chan *rpcMsg{},
-		known: make(chan struct{}), names: newNames(), test: test}
+		known: make(chan struct{}), test: test}
+	c.names.byID, c.names.numbers, c.names.minRefresh = map[string]rankedName{}, map[string]string{}, 15*time.Second
 	if test != nil && test.ReloadGap > 0 {
 		c.names.minRefresh = test.ReloadGap
 	}

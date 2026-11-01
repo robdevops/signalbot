@@ -57,7 +57,7 @@ internal/arch/          the guardrail tests and the sizes report
 
 - Core packages are concrete and call each other directly, with no interfaces between them. Files by role, no line limit.
 - **The network seam.** The bot reaches Signal only through `bot.Network` (defined in bot, feature types only); `*signal.Client` implements it, only main imports `internal/signal`, and the interface exists for the bot's in-memory test fake. The base prompt still names Signal and its 2,000-character limit, and the golden prompts pin it.
-- `Message`, `Media`, `Picture`, `Turn`, the port types and `Received` (a message as the network hands it to the core, or as a feature delivers it; what a chat's mailbox holds) are defined once, in `internal/feature`, and the core uses them directly: nothing is copied or converted.
+- `Message`, `Media`, `Picture`, the port types and `Received` (a message as the network hands it to the core, or as a feature delivers it; what a chat's mailbox holds) are defined once, in `internal/feature`, and the core uses them directly: nothing is copied or converted.
 - Kit holds what both the core and features use: `logx`, `txt`, `img` and `httpx`. It gains a package only when a second user appears, and never imports the core.
 
 ## Lifecycle and ports
@@ -67,8 +67,8 @@ The core's lifecycle has four stages. Each port is one stage; nothing else is a 
 | Stage | Port | Returns |
 |---|---|---|
 | A message arrives | `OnMessage(func(ctx, Message) Action)` | carry on, ignore it, answer with text without the model, choose a tool, or keep text as context |
-| The model is asked | `OnTurn(func(ctx, Turn) Additions)`, plus `Tools(ToolGroup)` | a system-prompt line, a note on the message (with its own version for history), and images |
-| The reply goes out | `OnReply(func(Turn, *Reply))` | may change the text or pictures |
+| The model is asked | `OnTurn(func(ctx, Message) Additions)`, plus `Tools(ToolGroup)` | a system-prompt line, a note on the message (with its own version for history), and images |
+| The reply goes out | `OnReply(func(Message, *Reply))` | may change the text or pictures |
 | Time arrives | `At` ([Timers](#timers)) | nothing: the timer may deliver a message |
 
 **Hook rules:**
@@ -79,7 +79,7 @@ The core's lifecycle has four stages. Each port is one stage; nothing else is a 
 
 **Services the host offers:**
 - `Env(key, def)`: a feature's own setting, recorded for the docs test.
-- `Info(chat)`: the bot's name in the chat, its version, the model ("" with no model), whether it takes images and can call tools, and the names of the tools (none when it can't call tools). All but the name and the tools are known when features register.
+- `Info()`: the bot's name, its version, the model ("" with no model), whether it takes images and can call tools, and the names of the tools (none when it can't call tools). All but the name and the tools are known when features register.
 - `Media(ctx, msg, i)`: the bytes of a message's image or sticker (15s). The core fills in each sticker's `Label` (its emoji and pack title) when it loads the message.
 - `Deliver(msg)`: act on a message as if its sender had just posted it in its chat, through the chat's mailbox. Inside the message's slot:
   - it waits up to 10s for the bot to be connected, else it is dropped with a warning;
@@ -102,7 +102,7 @@ type Picture   struct{ Data []byte; Caption, HistoryNote string }
 type ToolGroup struct{ Names []string; Listing, System string; Tools []Tool; Keywords *regexp.Regexp }
 type Tool      struct{ Name, Description string; Schema json.RawMessage; Server string; Run func(ctx context.Context, args string) (string, []Picture, error) }
 ```
-- **`Message`** is a message in a chat: sender, name, text (mentions as `@Name` or `[unnamed user]`), quote, media (its images, then the quoted message's thumbnails, at most 4, then its sticker), the disappearing-messages timer, and whether it is addressed. **`Turn`** is the message being answered, in its chat.
+- **`Message`** is a message in a chat: sender, name, text (mentions as `@Name` or `[unnamed user]`), quote, media (its images, then the quoted message's thumbnails, at most 4, then its sticker), the disappearing-messages timer, and whether it is addressed. `OnTurn` and `OnReply` get the message being answered.
 - **`Tool`:** a function tool has `Schema` and `Run`, which returns text and any pictures. A server tool, run by the model's provider itself, has only `Server`, as `provider:name` (for example `openrouter:web_search`).
 - **`ToolChoice`** is the model API's own concept, not a chat-command field: that tool is required through `tool_choice` until its result is in, then released.
 - **`Context`** is "keep this text in history", which the core does under its own expiry rules.
@@ -220,7 +220,7 @@ By convention:
 - **Golden prompts** in `testdata` pin the system prompt byte for byte: `prompt_full.txt` with every feature registered, against real fake MCP servers rather than a hand-set list, and `prompt_nofeatures.txt`, checked by the core's own tests with no features (with tool calling on and off) and by a scenario with every feature registered and a model that can't call tools. `go test . -run Golden -update` rewrites both files from the scenarios.
 - **Edge-only scenarios:** `scenario_test.go` drives the whole bot, features included, through a fake signal-cli socket and a fake model API (OpenRouter's or another provider's), and checks what is sent back, what the model receives (which shows the history), and the log, including that no message text, reply, tool argument or result reaches it. [docs/SCENARIOS.md](docs/SCENARIOS.md) describes the harness and maps the tests from before the core was written to the scenarios that cover them.
 - **One picture cap:** `feature.MaxPictures` (4) caps the pictures in a message, in or out, everywhere.
-- **One test hook:** `config.Test`, nil in production, is the only test hook that changes how the core behaves: the contact reload gap, the API host treated as OpenRouter, a callback after each frame the client reads, and `Begin` and `Idle`, which count chats' workers and contact loads so a scenario can wait for the bot to be idle. The only other exports for tests read rather than change: `logx.SetOutput` and `logx.Buffer` capture the log (kit can't import config), and `config.Read` lists the settings read, for the docs guardrail.
+- **One test hook:** `config.Test`, nil in production, is the only test hook that changes how the core behaves: the contact reload gap, the API host treated as OpenRouter, a callback after each frame the client reads, and `Begin` and `Idle`, which count chats' workers and contact loads so a scenario can wait for the bot to be idle. The only other exports for tests read rather than change: `logx.SetOutput` and `logx.Buffer` capture the log (kit can't import config), `config.Read` lists the settings read, for the docs guardrail, and `config.DefaultIntro` gives the bot's tests the default `INTRO`.
 - **Tests** that start slow work drain it before they end, and change the DM allowlist in place, since the client holds a reference to the map.
 - **Sizes:** `go run ./internal/arch/sizes` reports lines per package; CI reports them on each PR, not enforced.
 

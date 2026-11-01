@@ -74,8 +74,8 @@ func TestMessageInGroup(t *testing.T) {
 		Text:    "ask @Alice and [unnamed user] 🎉",
 		Quote:   &feature.Quote{Text: "earlier", Bot: true},
 		Expires: time.Hour, Addressed: true,
-		Media: []feature.Media{{ID: "a1", Type: "image/jpeg"}, {ID: "t1", Type: "image/png"},
-			{ID: "q1", Type: "image/png", Quoted: true}, {ID: "q2", Type: "image/png", Quoted: true}, {Pack: "p", Sticker: 2}},
+		Media: []feature.Media{{ID: "a1"}, {ID: "t1"},
+			{ID: "q1", Quoted: true}, {ID: "q2", Quoted: true}, {Pack: "p", Sticker: 2}},
 	}
 	if !reflect.DeepEqual(m, want) {
 		t.Fatalf("got  %+v\nwant %+v", m, want)

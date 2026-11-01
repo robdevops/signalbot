@@ -6,6 +6,8 @@ package chats
 
 import (
 	"errors"
+	"maps"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -14,13 +16,13 @@ import (
 )
 
 const (
-	// MaxChats caps the chats kept: chat keys come from the network.
-	MaxChats = 500
-	// MaxAge is the longest anything is kept in history. A chat's shorter
+	// maxChats caps the chats kept: chat keys come from the network.
+	maxChats = 500
+	// maxAge is the longest anything is kept in history. A chat's shorter
 	// disappearing-messages timer wins.
-	MaxAge = 24 * time.Hour
-	// Window is how long a message key is remembered, to drop a repeat.
-	Window = 10 * time.Second
+	maxAge = 24 * time.Hour
+	// window is how long a message key is remembered, to drop a repeat.
+	window = 10 * time.Second
 
 	maxQueue  = 4   // messages waiting in one chat's mailbox
 	maxNames  = 256 // names per chat
@@ -66,7 +68,7 @@ type chat struct {
 // must start the worker on a free slot without blocking and return true, or
 // return false when no slot is free.
 func New(turns int, handle func([]feature.Received), spawn func(worker func()) bool) *Store {
-	return &Store{chats: map[string]*chat{}, turns: turns, max: MaxChats, handle: handle, spawn: spawn}
+	return &Store{chats: map[string]*chat{}, turns: turns, max: maxChats, handle: handle, spawn: spawn}
 }
 
 // get returns the chat, creating it if create is set. When the map is full,
@@ -76,18 +78,16 @@ func (s *Store) get(key string, create bool) *chat {
 	if c := s.chats[key]; c != nil || !create {
 		return c
 	}
+	for k, c := range s.chats {
+		if len(s.chats) < s.max {
+			break
+		}
+		if !c.busy {
+			s.drop(k, c)
+		}
+	}
 	if len(s.chats) >= s.max {
-		evicted := false
-		for k, c := range s.chats {
-			if !c.busy {
-				s.drop(k, c)
-				evicted = true
-				break
-			}
-		}
-		if !evicted {
-			return nil
-		}
+		return nil
 	}
 	c := &chat{}
 	s.chats[key] = c
@@ -121,10 +121,10 @@ func (s *Store) tidy(key string, c *chat) {
 	if len(c.history) == 0 {
 		c.history, c.names, c.followUps = nil, nil, nil
 		for k, t := range c.recent {
-			if now.Sub(t) >= Window {
+			if now.Sub(t) >= window {
 				delete(c.recent, k)
 			} else {
-				soonest(t.Add(Window))
+				soonest(t.Add(window))
 			}
 		}
 		if !c.busy && len(c.recent) == 0 {
@@ -185,7 +185,7 @@ func (s *Store) work(key string, c *chat, rs []feature.Received) {
 	}
 }
 
-// Repeat reports whether the chat saw message key id within Window, and
+// Repeat reports whether the chat saw message key id within window, and
 // records it.
 func (s *Store) Repeat(key, id string) bool {
 	s.mu.Lock()
@@ -196,7 +196,7 @@ func (s *Store) Repeat(key, id string) bool {
 	}
 	now := time.Now()
 	for k, t := range c.recent {
-		if now.Sub(t) >= Window {
+		if now.Sub(t) >= window {
 			delete(c.recent, k)
 		}
 	}
@@ -222,14 +222,14 @@ func (s *Store) History(key string) []Entry {
 	return nil
 }
 
-// Add appends entries to the chat's history, to be forgotten MaxAge after
+// Add appends entries to the chat's history, to be forgotten maxAge after
 // start (when the message arrived), or disappearing after it if that is
 // shorter and not 0. Only the latest exchanges are kept.
 func (s *Store) Add(key string, start time.Time, disappearing time.Duration, entries ...Entry) {
 	if disappearing <= 0 {
-		disappearing = MaxAge
+		disappearing = maxAge
 	}
-	expires := start.Add(min(disappearing, MaxAge))
+	expires := start.Add(min(disappearing, maxAge))
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	c := s.get(key, true)
@@ -249,13 +249,7 @@ func (s *Store) Add(key string, start time.Time, disappearing time.Duration, ent
 }
 
 func unexpired(h []Entry, now time.Time) []Entry {
-	var out []Entry
-	for _, e := range h {
-		if now.Before(e.Expires) {
-			out = append(out, e)
-		}
-	}
-	return out
+	return slices.DeleteFunc(slices.Clone(h), func(e Entry) bool { return !now.Before(e.Expires) })
 }
 
 // Learn records that @name in the chat means the user id.
@@ -293,13 +287,10 @@ func Claim(names map[string]string, name, id string) {
 func (s *Store) Names(key string) map[string]string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	out := map[string]string{}
 	if c := s.get(key, false); c != nil {
-		for n, id := range c.names {
-			out[n] = id
-		}
+		return maps.Clone(c.names)
 	}
-	return out
+	return nil
 }
 
 // ForgetNames drops the chat's names, as when a group's members change.
