@@ -83,23 +83,32 @@ func TestStripAt(t *testing.T) {
 	}
 }
 
+// texts is the text of each part.
+func texts(ps []styled) []string {
+	var out []string
+	for _, p := range ps {
+		out = append(out, string(p.text))
+	}
+	return out
+}
+
 func TestParts(t *testing.T) {
-	if got := parts("@Bot hi @Alice", "Bot"); !reflect.DeepEqual(got, []string{"hi @Alice"}) {
+	if got := texts(parts("@Bot hi @Alice", "Bot")); !reflect.DeepEqual(got, []string{"hi @Alice"}) {
 		t.Errorf("got %q", got)
 	}
 	if got := parts("  ", "Bot"); got != nil {
-		t.Errorf("blank: %q", got)
+		t.Errorf("blank: %q", texts(got))
 	}
 	long := strings.Repeat("word ", 300) + "\n" + strings.Repeat("x", 1500)
-	got := parts(long, "Bot")
+	got := texts(parts(long, "Bot"))
 	if len(got) != 2 || got[0] != strings.TrimSpace(strings.Repeat("word ", 300)) || got[1] != strings.Repeat("x", 1500) {
 		t.Errorf("split at the line break: %d parts", len(got))
 	}
-	got = parts(strings.Repeat("y", 3*maxChars), "Bot")
+	got = texts(parts(strings.Repeat("y", 3*maxChars), "Bot"))
 	if len(got) != 3 || len([]rune(got[0])) != maxChars {
 		t.Errorf("hard split: %d parts", len(got))
 	}
-	got = parts(strings.Repeat("z ", 3*maxChars), "Bot")
+	got = texts(parts(strings.Repeat("z ", 3*maxChars), "Bot"))
 	total := 0
 	for _, p := range got {
 		total += len([]rune(p))

@@ -31,7 +31,8 @@ func (c *Client) Prompt() string {
 	return fmt.Sprintf("This is a Signal chat. Never exceed %d characters, which is Signal's limit for one message.", maxChars)
 }
 
-// Send posts text to chat: without the bot's own @name, with each @Name in
+// Send posts text to chat: its Markdown made plain text and text styles,
+// without the bot's own @name, with each @Name in
 // known (lowercased name to ID) made a real mention, cut short past maxReply
 // with a warning, and split at Signal's limit, with the images on the first
 // message. A failure is logged, and whether a message was delivered is
@@ -52,26 +53,30 @@ func (c *Client) Send(chat feature.Chat, text string, images [][]byte, known map
 			logx.Warnf("empty reply, nothing sent")
 			return
 		}
-		ps = []string{""}
+		ps = []styled{{}}
 	}
 	for i, part := range ps {
 		if i > 0 {
 			attachments = nil
 		}
-		if err := c.send(chat, part, mentions(part, known), attachments); err != nil {
+		text := string(part.text)
+		if err := c.send(chat, text, mentions(text, known), textStyles(part), attachments); err != nil {
 			logx.Errorf("send failed: %v", err)
 			return
 		}
 	}
 }
 
-// send posts one message, with mentions ("start:length:uuid") and
-// attachments.
-func (c *Client) send(chat feature.Chat, text string, mentions, attachments []string) error {
+// send posts one message, with mentions ("start:length:uuid"), text styles
+// ("start:length:STYLE") and attachments.
+func (c *Client) send(chat feature.Chat, text string, mentions, styles, attachments []string) error {
 	p := target(chat)
 	p["message"] = text
 	if len(mentions) > 0 {
 		p["mention"] = mentions
+	}
+	if len(styles) > 0 {
+		p["textStyle"] = styles
 	}
 	if len(attachments) > 0 {
 		p["attachments"] = attachments
@@ -106,19 +111,22 @@ func (c *Client) Typing(chat feature.Chat) (stop func()) {
 	return sync.OnceFunc(func() { close(done) })
 }
 
-// parts turns a reply into the messages to send: without the bot's own
-// @name, capped as a whole at maxReply, and split at Signal's limit,
-// preferring a line break and then a space.
-func parts(reply, self string) []string {
-	reply, _ = stripAt(reply, self)
-	r := []rune(reply)
-	if len(r) > maxReply {
-		r = append(r[:maxReply-utf8.RuneCountInString(truncated)], []rune(truncated)...)
+// parts turns a reply into the messages to send: its Markdown converted,
+// without the bot's own @name, capped as a whole at maxReply, and split at
+// Signal's limit, preferring a line break and then a space. A style
+// carries on across a split.
+func parts(reply, self string) []styled {
+	s, _ := strip(markdown(reply), self)
+	if len(s.text) > maxReply {
+		n := maxReply - utf8.RuneCountInString(truncated)
+		s.text, s.style = s.text[:n], s.style[:n]
+		s.add([]rune(truncated), 0)
 	}
-	var out []string
+	var out []styled
+	r, st := s.text, s.style
 	for {
 		for len(r) > 0 && unicode.IsSpace(r[0]) {
-			r = r[1:]
+			r, st = r[1:], st[1:]
 		}
 		if len(r) == 0 {
 			return out
@@ -131,8 +139,12 @@ func parts(reply, self string) []string {
 				end = i
 			}
 		}
-		out = append(out, strings.TrimRightFunc(string(r[:end]), unicode.IsSpace))
-		r = r[end:]
+		n := end
+		for unicode.IsSpace(r[n-1]) {
+			n--
+		}
+		out = append(out, styled{r[:n:n], st[:n:n]})
+		r, st = r[end:], st[end:]
 	}
 }
 
@@ -216,23 +228,37 @@ func mentions(text string, known map[string]string) []string {
 // stripAt removes "@name" for each of names from text, without leaving a
 // double space, and reports whether it found one.
 func stripAt(text string, names ...string) (string, bool) {
+	rs := []rune(text)
+	s, found := strip(styled{rs, make([]uint8, len(rs))}, names...)
+	return string(s.text), found
+}
+
+// strip is stripAt for styled text, dropping the styles of what it removes.
+func strip(s styled, names ...string) (styled, bool) {
 	known := map[string]string{} // findAt needs only the names
 	for _, n := range names {
 		known[txt.SafeName(n)] = ""
 	}
-	rs := []rune(text)
-	spans := findAt(rs, known)
+	spans := findAt(s.text, known)
 	if len(spans) == 0 {
-		return text, false
+		return s, false
 	}
-	var out []rune
+	var out styled
 	pos := 0
-	for _, s := range spans {
-		out = append(out, rs[pos:s.start]...)
-		pos = s.end
-		if pos < len(rs) && rs[pos] == ' ' && (len(out) == 0 || out[len(out)-1] == ' ') {
+	for _, sp := range spans {
+		out.text = append(out.text, s.text[pos:sp.start]...)
+		out.style = append(out.style, s.style[pos:sp.start]...)
+		pos = sp.end
+		if pos < len(s.text) && s.text[pos] == ' ' && (len(out.text) == 0 || out.text[len(out.text)-1] == ' ') {
 			pos++
 		}
 	}
-	return strings.TrimSpace(string(append(out, rs[pos:]...))), true
+	out.text, out.style = append(out.text, s.text[pos:]...), append(out.style, s.style[pos:]...)
+	for len(out.text) > 0 && unicode.IsSpace(out.text[0]) {
+		out.text, out.style = out.text[1:], out.style[1:]
+	}
+	for n := len(out.text); n > 0 && unicode.IsSpace(out.text[n-1]); n-- {
+		out.text, out.style = out.text[:n-1], out.style[:n-1]
+	}
+	return out, true
 }

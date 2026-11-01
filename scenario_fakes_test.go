@@ -125,8 +125,8 @@ type rpcCall struct {
 
 // sentMsg is one message the bot sent.
 type sentMsg struct {
-	GroupID, Recipient, Message string
-	Mentions, Attachments       []string
+	GroupID, Recipient, Message   string
+	Mentions, Styles, Attachments []string // Styles: textStyle
 }
 
 // modelReply is what the fake model API answers one request with: Text, a
@@ -452,7 +452,7 @@ func (h *harness) sends() []sentMsg {
 			s.Recipient, _ = r[0].(string)
 		}
 		s.Message, _ = p["message"].(string)
-		s.Mentions, s.Attachments = strs(p["mention"]), strs(p["attachments"])
+		s.Mentions, s.Styles, s.Attachments = strs(p["mention"]), strs(p["textStyle"]), strs(p["attachments"])
 		out = append(out, s)
 	}
 	return out

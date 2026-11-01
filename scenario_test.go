@@ -503,6 +503,19 @@ func TestScenarioMentionOffsetsAreUTF16(t *testing.T) {
 	equal(t, "mentions", s.Mentions, []string{"3:6:" + idAlice})
 }
 
+// The model's Markdown arrives as plain text with text styles, and a
+// mention in it is placed on the converted text.
+func TestScenarioMarkdownBecomesTextStyles(t *testing.T) {
+	h := startBot(t, world{})
+	h.queue(modelReply{Text: "**Yes**, @Alice, it's `ok`"})
+	s := h.ask(atBot("is it ok?"))
+	if s.Message != "Yes, @Alice, it's ok" {
+		t.Fatalf("sent %q", s.Message)
+	}
+	equal(t, "styles", s.Styles, []string{"0:3:BOLD", "18:2:MONOSPACE"})
+	equal(t, "mentions", s.Mentions, []string{"5:6:" + idAlice})
+}
+
 // The contact list is loaded on connect and again when a group changes, so a
 // member who left is forgotten.
 func TestScenarioContactsReloadWhenAGroupChanges(t *testing.T) {

@@ -234,7 +234,7 @@ func TestStalledWriteReconnects(t *testing.T) {
 		t.Fatal("no account")
 	}
 	sent := make(chan error)
-	go func() { sent <- c.send(feature.Chat{User: aliceID}, strings.Repeat("x", 8<<20), nil, nil) }()
+	go func() { sent <- c.send(feature.Chat{User: aliceID}, strings.Repeat("x", 8<<20), nil, nil, nil) }()
 	receive(srv, `{"sourceUuid":"`+aliceID+`","dataMessage":{"message":"hi"}}`)
 	next(t, got)
 	if err := <-sent; err == nil {
@@ -387,7 +387,7 @@ func TestFilesStickersAndGroups(t *testing.T) {
 
 func TestCallsFailWhenNotConnected(t *testing.T) {
 	c := newClient("x", nil, nil)
-	if err := c.send(feature.Chat{User: aliceID}, "hi", nil, nil); err == nil {
+	if err := c.send(feature.Chat{User: aliceID}, "hi", nil, nil, nil); err == nil {
 		t.Error("send while not connected")
 	}
 	if _, err := c.groups(context.Background()); err == nil {
