@@ -140,7 +140,7 @@ func TestCommands(t *testing.T) {
 	if c, _ := json.Marshal(r["tool_choice"]); string(c) != `{"function":{"name":"b_tool"},"type":"function"}` {
 		t.Fatalf("tool_choice %s", c)
 	}
-	if !strings.Contains(system(r), "\nYour tools: alpha; beta. If asked what tools you have: alpha, beta.\n") {
+	if !strings.Contains(system(r), "\nYour tools: alpha; beta. If asked what tools you have: alpha; beta.\n") {
 		t.Fatalf("system %q", system(r))
 	}
 	h.receive(chatter("/hi")) // not addressed: not a command
@@ -167,8 +167,8 @@ func TestOffering(t *testing.T) {
 	} {
 		r, _ := h.ask(dm(fmt.Sprint(c.text, " ", len(h.requests())))) // not a repeat
 		equal(t, c.text, toolNames(r), c.tools)
-		want := "\n" + c.listing + "If asked what tools you have: alpha, beta.\n"
-		if s := system(r); !strings.Contains(s, want) || !strings.Contains(s, "Tools:\\nalpha\\nbeta\\n") || strings.Contains(s, "beta system") != slices.Contains(c.tools, "b_tool") {
+		want := "\n" + c.listing + "If asked what tools you have: alpha; beta.\n"
+		if s := system(r); !strings.Contains(s, want) || !strings.Contains(s, "Tools:\\nalpha\\n\\nbeta\\n") || strings.Contains(s, "beta system") != slices.Contains(c.tools, "b_tool") {
 			t.Fatalf("%s: system %q", c.text, s)
 		}
 	}

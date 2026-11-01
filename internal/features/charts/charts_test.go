@@ -42,7 +42,7 @@ func TestChartsToolGroup(t *testing.T) {
 	if len(g) != 1 {
 		t.Fatalf("%d groups", len(g))
 	}
-	if strings.Join(g[0].Names, ",") != "**charts** (line, pie)" || g[0].Listing != "charts (make_chart, make_pie_chart)" || g[0].System != "" || g[0].Keywords == nil {
+	if strings.Join(g[0].Names, ",") != "**charts**: line, pie" || g[0].Listing != "charts (make_chart, make_pie_chart)" || g[0].System != "" || g[0].Keywords == nil {
 		t.Fatalf("group %+v", g[0])
 	}
 	if len(g[0].Tools) != 2 {

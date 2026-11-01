@@ -185,7 +185,7 @@ func (b *Bot) system(offered []int) string {
 		if len(items) > 0 {
 			p += "Your tools: " + strings.Join(items, "; ") + ". "
 		}
-		p += "If asked what tools you have: " + strings.Join(names, ", ") + "."
+		p += "If asked what tools you have: " + strings.Join(names, "; ") + "."
 	}
 	for _, i := range offered {
 		if s := b.groups[i].System; s != "" {
@@ -207,5 +207,5 @@ func (b *Bot) intro() string {
 		model = "no model"
 	}
 	return strings.NewReplacer("{name}", b.net.BotName(), "{model}", model,
-		"{tools}", cmp.Or(strings.Join(b.toolNames(), "\n"), "none")).Replace(b.cfg.Intro) // a line per tool category
+		"{tools}", cmp.Or(strings.Join(b.toolNames(), "\n\n"), "none")).Replace(b.cfg.Intro) // a paragraph per tool category
 }
