@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"image/png"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -24,24 +25,28 @@ func register(t *testing.T) *featuretest.Host {
 	return h
 }
 
-// tool is the tool named name in the feature's only group.
+// tool is the tool named name in any of the feature's groups.
 func tool(t *testing.T, h *featuretest.Host, name string) feature.Tool {
 	t.Helper()
-	for _, tl := range h.ToolGroups()[0].Tools {
-		if tl.Name == name {
-			return tl
+	for _, g := range h.ToolGroups() {
+		for _, tl := range g.Tools {
+			if tl.Name == name {
+				return tl
+			}
 		}
 	}
 	t.Fatalf("no tool %s", name)
 	return feature.Tool{}
 }
 
-// One group, offered on its keywords, with both chart tools; it reads only
-// DARKMODE.
+// The charts group, offered on its keywords, with the one-axis line chart
+// and the pie; and the dual-axis line chart in a group of its own, offered
+// only when a message asks for a second axis, with no Names of its own. It
+// reads only DARKMODE.
 func TestChartsToolGroup(t *testing.T) {
 	h := register(t)
 	g := h.ToolGroups()
-	if len(g) != 1 {
+	if len(g) != 2 {
 		t.Fatalf("%d groups", len(g))
 	}
 	if strings.Join(g[0].Names, ",") != "**charts**: line, pie" || g[0].Listing != "charts (make_chart, make_pie_chart)" || g[0].System != "" || g[0].Keywords == nil {
@@ -50,10 +55,20 @@ func TestChartsToolGroup(t *testing.T) {
 	if len(g[0].Tools) != 2 {
 		t.Fatalf("%d tools", len(g[0].Tools))
 	}
-	for _, tl := range g[0].Tools {
+	if g[1].Names != nil || g[1].Listing != "dual-axis chart (make_dual_axis_chart)" || g[1].Keywords == nil || len(g[1].Tools) != 1 || g[1].Tools[0].Name != "make_dual_axis_chart" {
+		t.Fatalf("dual-axis group %+v", g[1])
+	}
+	for _, tl := range append(slices.Clone(g[0].Tools), g[1].Tools...) {
 		if tl.Description == "" || tl.Server != "" || tl.Run == nil || !json.Valid(tl.Schema) {
 			t.Errorf("tool %s: %+v", tl.Name, tl)
 		}
+	}
+	// make_chart's schema has no right axis and no choice of axis.
+	if one := string(tool(t, h, "make_chart").Schema); strings.Contains(one, `"right"`) || strings.Contains(one, `"enum":["left","right"]`) || strings.Contains(one, "both") || !strings.Contains(one, `"left"`) {
+		t.Errorf("one-axis schema %s", one)
+	}
+	if two := string(tool(t, h, "make_dual_axis_chart").Schema); !strings.Contains(two, `"right"`) || !strings.Contains(two, `"enum": ["left", "right"]`) {
+		t.Errorf("dual-axis schema %s", two)
 	}
 	// Renamed from make_donut_chart, it is still drawn as a donut, and says so.
 	if d := tool(t, h, "make_pie_chart").Description; !strings.Contains(d, "donut") {
@@ -83,6 +98,35 @@ func TestWantsChart(t *testing.T) {
 
 // The model calls the line chart tool: it is told the final values, and the
 // chart comes back as a PNG with its caption and history note.
+func TestWantsSecondAxis(t *testing.T) {
+	kw := register(t).ToolGroups()[1].Keywords
+	for text, want := range map[string]bool{
+		"chart it with a second axis": true, "secondary y-axis for yield": true, "dual axis please": true,
+		"two Y axes": true, "on the right axis": true, "right-hand axis": true, "use both axes": true, "2 axes": true,
+		"chart NVDA vs MSFT": false, "the axis of evil": false, "a second chart": false, "axes": false,
+	} {
+		if got := kw.MatchString(text); got != want {
+			t.Errorf("%q: got %v, want %v", text, got, want)
+		}
+	}
+}
+
+// make_chart refuses a series on a right axis, saying how to fix it; the
+// dual-axis chart draws it.
+func TestSecondAxisOnlyWhenAsked(t *testing.T) {
+	h := register(t)
+	args := `{"title":"T","axes":{"left":{"title":"Price"},"right":{"title":"Yield"}},"series":[` +
+		`{"name":"A","points":[{"date":"2026-01-01","value":100},{"date":"2026-01-02","value":120}]},` +
+		`{"name":"B","axis":"right","points":[{"date":"2026-01-01","value":4},{"date":"2026-01-02","value":4.2}]}]}`
+	out, pics, err := tool(t, h, "make_chart").Run(context.Background(), args)
+	if !errors.Is(err, errArgs) || pics != nil || !strings.Contains(out, "make_chart has one Y axis: put every series on it") {
+		t.Fatalf("make_chart: %q, %v", out, err)
+	}
+	if _, pics, err := tool(t, h, "make_dual_axis_chart").Run(context.Background(), args); err != nil || len(pics) != 1 {
+		t.Fatalf("dual-axis: %d pictures, %v", len(pics), err)
+	}
+}
+
 func TestChartTool(t *testing.T) {
 	out, pics, err := tool(t, register(t), "make_chart").Run(context.Background(), sampleChart())
 	if err != nil || !strings.HasPrefix(out, chartNote+"Final values: NVDA ") || len(pics) != 1 {

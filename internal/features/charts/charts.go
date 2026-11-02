@@ -25,6 +25,10 @@ import (
 var wantsChart = regexp.MustCompile(`(?i)\b(chart(s|ed|ing)?|graph(s|ed|ing)?|plot(s|ted|ting)?|visuali[sz](e|es|ed|ing|ation|ations)|pies?|donuts?|doughnuts?|` +
 	`projections?|forward\s+estimates?|trending|forecast(s|ed|ing)?)\b`)
 
+// wantsSecondAxis matches a message that asks for a second Y axis, so the
+// dual-axis chart tool is offered only then, and for the replies that follow.
+var wantsSecondAxis = regexp.MustCompile(`(?i)\b(second(ary)?|dual|double|two|2|twin|both|separate|another|extra|right([\s-]*hand)?)[\s-]+(y[\s-]*)?ax(is|es)\b`)
+
 // errArgs marks arguments the model must fix. The log gets the same reason
 // the model does, which can quote a series name or a date from its
 // arguments, but never the user's message.
@@ -63,14 +67,7 @@ func Register(h feature.Host) error {
 		Listing:  "charts (" + chartTool + ", " + pieTool + ")",
 		Keywords: wantsChart,
 		Tools: []feature.Tool{
-			{Name: chartTool, Description: chartToolDescription, Schema: chartToolSchema, Run: func(_ context.Context, args string) (string, []feature.Picture, error) {
-				s, err := parseChart(args)
-				if err != nil {
-					return "error: " + err.Error(), nil, fmt.Errorf("%w: %v", errArgs, err)
-				}
-				data, err := renderChart(s, themeFor(mode))
-				return drawn(s.summary(), chartCaption(s.Title, s.Subtitle), fileName("line", s.Title), data, err)
-			}},
+			{Name: chartTool, Description: chartToolDescription, Schema: chartToolSchema, Run: lineChart(mode, false)},
 			{Name: pieTool, Description: pieToolDescription, Schema: pieToolSchema, Run: func(_ context.Context, args string) (string, []feature.Picture, error) {
 				s, err := parsePie(args)
 				if err != nil {
@@ -81,7 +78,28 @@ func Register(h feature.Host) error {
 			}},
 		},
 	})
+	// No Names: it is part of the charts the intro lists.
+	h.Tools(feature.ToolGroup{
+		Listing:  "dual-axis chart (" + dualAxisTool + ")",
+		Keywords: wantsSecondAxis,
+		Tools:    []feature.Tool{{Name: dualAxisTool, Description: dualAxisToolDescription, Schema: dualAxisToolSchema, Run: lineChart(mode, true)}},
+	})
 	return nil
+}
+
+// lineChart runs a line chart tool, on two Y axes if dual.
+func lineChart(mode string, dual bool) func(context.Context, string) (string, []feature.Picture, error) {
+	return func(_ context.Context, args string) (string, []feature.Picture, error) {
+		s, err := parseChart(args)
+		if err == nil && !dual && s.right.used {
+			err = errors.New(chartTool + " has one Y axis: put every series on it, using change mode to compare series on different scales")
+		}
+		if err != nil {
+			return "error: " + err.Error(), nil, fmt.Errorf("%w: %v", errArgs, err)
+		}
+		data, err := renderChart(s, themeFor(mode))
+		return drawn(s.summary(), chartCaption(s.Title, s.Subtitle), fileName("line", s.Title), data, err)
+	}
 }
 
 // drawn is a chart tool's result: the summary for the model and the chart,

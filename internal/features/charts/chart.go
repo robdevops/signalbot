@@ -26,10 +26,16 @@ import (
 )
 
 // chartTool is the tool the model calls to draw a line chart, which is
-// sent to the chat as an image.
-const chartTool = "make_chart"
+// sent to the chat as an image, on one Y axis; dualAxisTool draws one on two,
+// offered only when a message asks for a second axis.
+const (
+	chartTool    = "make_chart"
+	dualAxisTool = "make_dual_axis_chart"
+)
 
-var chartToolSchema = json.RawMessage(`{
+// dualAxisToolSchema takes series on a left and a right Y axis;
+// chartToolSchema is the same with the left axis alone.
+var dualAxisToolSchema = json.RawMessage(`{
   "type": "object",
   "required": ["title", "series"],
   "properties": {
@@ -58,9 +64,38 @@ var chartToolSchema = json.RawMessage(`{
   }}}
 }`)
 
-const chartToolDescription = "Draw a line chart of one or more series over time, on one or two Y axes, and attach it to your reply as an image. " +
-	"Use it when a chart would help, e.g. to show a trend or compare series. Pass the raw values: an axis shows them as given unless its mode is change, which computes the % change for you. " +
-	"The chart is sent alone with its title as the caption, so write no other text: it would be discarded."
+var chartToolSchema = oneAxis(dualAxisToolSchema)
+
+// oneAxis is a dual-axis chart schema without the right axis or a series'
+// choice of axis.
+func oneAxis(dual json.RawMessage) json.RawMessage {
+	var s map[string]any
+	if err := json.Unmarshal(dual, &s); err != nil {
+		panic(err)
+	}
+	props := s["properties"].(map[string]any)
+	axes := props["axes"].(map[string]any)
+	delete(axes["properties"].(map[string]any), "right")
+	axes["description"] = "Settings for the Y axis."
+	item := props["series"].(map[string]any)["items"].(map[string]any)
+	delete(item["properties"].(map[string]any), "axis")
+	title := s["$defs"].(map[string]any)["axis"].(map[string]any)["properties"].(map[string]any)["title"].(map[string]any)
+	title["description"] = "Axis title, e.g. \"Price ($)\" or \"Rainfall (mm)\""
+	out, err := json.Marshal(s)
+	if err != nil {
+		panic(err)
+	}
+	return out
+}
+
+const (
+	chartBody = "Use it when a chart would help, e.g. to show a trend or compare series. Pass the raw values: an axis shows them as given unless its mode is change, which computes the % change for you. " +
+		"The chart is sent alone with its title as the caption, so write no other text: it would be discarded."
+	chartToolDescription = "Draw a line chart of one or more series over time, on one Y axis, and attach it to your reply as an image. " +
+		"To compare series on different scales, use change mode. " + chartBody
+	dualAxisToolDescription = "Draw a line chart of one or more series over time on two Y axes, left and right, and attach it to your reply as an image. " +
+		"Use it only because the user asked for a second axis; otherwise use " + chartTool + ". " + chartBody
+)
 
 type chartPoint struct {
 	Date  string  `json:"date"`
