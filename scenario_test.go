@@ -966,7 +966,7 @@ func TestScenarioNoModel(t *testing.T) {
 		t.Fatalf("web search logged as on: %v", h.logLines())
 	}
 	s := h.ask(atBot("/intro"))
-	if !strings.HasPrefix(s.Message, "hi, I'm Botty, your open source assistant running no model.\n\nTools:\nnone\n\n") {
+	if !strings.HasPrefix(s.Message, "hi, I'm Botty, your open source assistant running no model.\n\nI respond to @Botty and replies to my messages.\n\nTools:\nnone\n\n") {
 		t.Fatalf("sent %q", s.Message)
 	}
 	h.ignored(inGroup("the moon is made of cheese"))
@@ -1229,8 +1229,8 @@ func TestScenarioExampleWithoutModel(t *testing.T) {
 	s := h.ask(atBot("/intro"))
 	// /intro sends INTRO, the same text the model gives when asked to
 	// introduce itself.
-	want := "hi, I'm Botty, your open source assistant running test-model.\n\nTools:\nweb search\n\ncharts: line, pie\n\n" +
-		"Type \"/schedule\" for schedules and reminders.\n\nI respond to @Botty and replies to my messages.\n\nSee https://github.com/robdevops/signalbot/blob/main/README.md for details.\n\nThis message did not use the model."
+	want := "hi, I'm Botty, your open source assistant running test-model.\n\nI respond to @Botty and replies to my messages.\n\nTools:\nweb search\n\ncharts: line, pie\n\n" +
+		"Type \"/schedule\" for schedules and reminders.\n\nhttps://github.com/robdevops/signalbot/blob/main/README.md\n\nThis message did not use the model."
 	if s.Message != want || s.GroupID != idGroup {
 		t.Fatalf("sent %q", s.Message)
 	}
@@ -1252,7 +1252,7 @@ func TestScenarioExampleWithoutModel(t *testing.T) {
 
 func TestScenarioBotWithoutProfileNameIsSignalbot(t *testing.T) {
 	h := startBot(t, world{NoBotName: true, MCP: true})
-	if s := h.ask(fromAlice("/intro")); !strings.HasPrefix(s.Message, "hi, I'm signalbot, your open source assistant running test-model.\n\nTools:\nweb search\n\ncharts: line, pie\n\nstocks MCP: get_quote, price_chart, /quote\n\nweather MCP: get_forecast, /forecast\n\n") {
+	if s := h.ask(fromAlice("/intro")); !strings.HasPrefix(s.Message, "hi, I'm signalbot, your open source assistant running test-model.\n\nI respond to @signalbot and replies to my messages.\n\nTools:\nweb search\n\ncharts: line, pie\n\nstocks MCP: get_quote, price_chart, /quote\n\nweather MCP: get_forecast, /forecast\n\n") {
 		t.Fatalf("sent %q", s.Message)
 	}
 }
