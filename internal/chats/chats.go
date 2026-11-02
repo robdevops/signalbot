@@ -42,12 +42,12 @@ type Entry struct {
 
 // Store is every chat's state, with mailboxes of M.
 type Store[M any] struct {
-	mu     sync.Mutex
-	chats  map[string]*chat[M]
-	turns  int                      // exchanges kept per chat
-	max    int                      // chats kept
-	handle func([]M)                // a chat's worker hands it what waits
-	spawn  func(worker func()) bool // starts a chat's worker on a free slot
+	mu       sync.Mutex
+	chats    map[string]*chat[M]
+	messages int                      // messages kept per chat
+	max      int                      // chats kept
+	handle   func([]M)                // a chat's worker hands it what waits
+	spawn    func(worker func()) bool // starts a chat's worker on a free slot
 }
 
 type chat[M any] struct {
@@ -60,13 +60,13 @@ type chat[M any] struct {
 	busy      bool                 // a worker is running
 }
 
-// New keeps up to turns exchanges (2 entries each) per chat. A chat with
+// New keeps up to messages entries per chat. A chat with
 // messages has one worker, which hands handle everything waiting in the
 // mailbox at once, in order, until nothing is left, and then exits. spawn
 // must start the worker on a free slot without blocking and return true, or
 // return false when no slot is free.
-func New[M any](turns int, handle func([]M), spawn func(worker func()) bool) *Store[M] {
-	return &Store[M]{chats: map[string]*chat[M]{}, turns: turns, max: maxChats, handle: handle, spawn: spawn}
+func New[M any](messages int, handle func([]M), spawn func(worker func()) bool) *Store[M] {
+	return &Store[M]{chats: map[string]*chat[M]{}, messages: messages, max: maxChats, handle: handle, spawn: spawn}
 }
 
 // get returns the chat, creating it if create is set. When the map is full,
@@ -238,7 +238,7 @@ func (s *Store[M]) Add(key string, start time.Time, disappearing time.Duration, 
 		e.Expires = expires
 		h = append(h, e)
 	}
-	if n := 2 * s.turns; len(h) > n {
+	if n := s.messages; len(h) > n {
 		h = append([]Entry(nil), h[len(h)-n:]...)
 	}
 	c.history = h

@@ -9,12 +9,12 @@ func setRequired(t *testing.T) {
 
 func TestDefaults(t *testing.T) {
 	setRequired(t)
-	for _, k := range []string{"MODEL", "MODEL_REASONING", "MODEL_SYSTEM_PROMPT", "INTRO", "MAX_CONCURRENCY", "HISTORY_TURNS"} {
+	for _, k := range []string{"MODEL", "MODEL_REASONING", "MODEL_SYSTEM_PROMPT", "INTRO", "MAX_CONCURRENCY", "HISTORY_MESSAGES"} {
 		t.Setenv(k, "")
 	}
 	c := Load()
 	if c.APIURL != "https://openrouter.ai/api/v1" || c.APIKey != "key" || c.NoModel || c.Model != "deepseek/deepseek-v4.1-flash-1017" || c.Reasoning != "low" || c.Intro != DefaultIntro ||
-		c.MaxConcurrency != 32 || c.HistoryTurns != 10 || c.SystemPrompt != "" {
+		c.MaxConcurrency != 32 || c.HistoryMessages != 10 || c.SystemPrompt != "" {
 		t.Errorf("got %+v", c)
 	}
 }
@@ -24,9 +24,9 @@ func TestSettings(t *testing.T) {
 	t.Setenv("MODEL_REASONING", " HIGH ")
 	t.Setenv("MODEL_SYSTEM_PROMPT", "Be brief.")
 	t.Setenv("MAX_CONCURRENCY", "-3")
-	t.Setenv("HISTORY_TURNS", "4")
+	t.Setenv("HISTORY_MESSAGES", "4")
 	c := Load()
-	if c.Reasoning != "high" || c.SystemPrompt != "Be brief." || c.MaxConcurrency != 32 || c.HistoryTurns != 4 {
+	if c.Reasoning != "high" || c.SystemPrompt != "Be brief." || c.MaxConcurrency != 32 || c.HistoryMessages != 4 {
 		t.Errorf("got %+v", c)
 	}
 }

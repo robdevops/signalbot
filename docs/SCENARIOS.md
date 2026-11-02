@@ -151,7 +151,7 @@ The table maps every `Test*` function in the 19 old test files to what covers it
 
 ## Scenarios with no old test
 
-TestScenarioHistoryAcrossTurns, TestScenarioHistoryIsPerChat, TestScenarioHistoryTurnsCap, TestScenarioLongReplyIsSplit, TestScenarioModelRetry, TestScenarioUnknownCommandIsAMessage, TestScenarioBotWithoutProfileNameIsSignalbot, TestScenarioAtMostFourImages, TestScenarioGroupSenderWithoutName and TestScenarioErasedHistoryEndsChartFollowUps pin behaviour that had no direct test before.
+TestScenarioHistoryAcrossTurns, TestScenarioHistoryIsPerChat, TestScenarioHistoryMessagesCap, TestScenarioLongReplyIsSplit, TestScenarioModelRetry, TestScenarioUnknownCommandIsAMessage, TestScenarioBotWithoutProfileNameIsSignalbot, TestScenarioAtMostFourImages, TestScenarioGroupSenderWithoutName and TestScenarioErasedHistoryEndsChartFollowUps pin behaviour that had no direct test before.
 
 ## Not pinned, or pinned with care
 

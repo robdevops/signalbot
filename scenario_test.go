@@ -363,8 +363,9 @@ func TestScenarioHistoryIsPerChat(t *testing.T) {
 	equal(t, "conversation", h.lastRequest().contents(), []string{"user: Alice: a group question"})
 }
 
-func TestScenarioHistoryTurnsCap(t *testing.T) {
-	h := startBot(t, world{Env: map[string]string{"HISTORY_TURNS": "1"}})
+// HISTORY_MESSAGES caps the messages kept, the bot's replies included.
+func TestScenarioHistoryMessagesCap(t *testing.T) {
+	h := startBot(t, world{Env: map[string]string{"HISTORY_MESSAGES": "2"}})
 	h.queue(modelReply{Text: "answer number one"}, modelReply{Text: "answer number two"})
 	h.ask(fromAlice("question number one"))
 	h.ask(fromAlice("question number two"))

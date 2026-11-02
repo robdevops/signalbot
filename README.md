@@ -23,7 +23,7 @@ A small, [privacy-conscious](PRIVACY.md) chat bot that connects to a running [si
 - [`/schedule`](#scheduling) a message or command, once or repeating, in a DM or a group
 - Understands images and stickers (if the configured model supports vision)
 - Typing indicators
-- Short per-conversation memory, for context. Frees from memory after 20 messages (HISTORY_TURNS), 24 hours, or when Signal's _disappearing messages_ timer expires, whichever comes first. Names and message bodies are never logged to disk.
+- Short per-conversation memory, for context. Frees from memory after 10 messages (HISTORY_MESSAGES), 24 hours, or when Signal's _disappearing messages_ timer expires, whichever comes first. Names and message bodies are never logged to disk.
 
 ## Use cases
 
@@ -140,7 +140,7 @@ Add the bot's account to a group and @mention it, reply to one of its messages, 
 | `MODEL_SYSTEM_PROMPT` | empty | Extra instructions, appended to the built-in prompt (which keeps answers short and Signal-sized and, when the model has tools, asks it to name its source) |
 | `INTRO` | built-in sentence | Overrides the self-introduction; `{name}`, `{model}` (without any OpenRouter `provider/` prefix) and `{tools}` (the names of the tools, or `none`) are substituted |
 | `MAX_CONCURRENCY` | `32` | Conversations in flight at once; messages beyond this are dropped |
-| `HISTORY_TURNS` | `10` | Exchanges remembered per chat (`HISTORY_TURNS` × 2 messages) |
+| `HISTORY_MESSAGES` | `10` | Messages remembered per chat, the bot's replies and, in groups, messages not addressed to it included |
 | `GROUP_CONTEXT` | `true` | Remember group messages not addressed to the bot as context, so "what do you think @bot" works without replying to the message; they are never logged |
 | `MCP_CONFIG` | empty | Path of an MCP servers file; see [MCP tools](#mcp-tools) |
 | `STATE_DIRECTORY` | working directory | Where `/schedule` saves `schedules.json`; the bot won't start if it can't list and write it. Set by systemd's `StateDirectory=signalbot` (`/var/lib/private/signalbot`) and by the Docker image (`/data`, which must be writable by user 65532) |

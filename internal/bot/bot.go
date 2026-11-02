@@ -98,7 +98,7 @@ type Bot struct {
 // shutdown signal so that Shutdown can let replies finish.
 func New(ctx context.Context, cfg *config.Config, net Network) *Bot {
 	b := &Bot{cfg: cfg, net: net, timers: timers.New(), slots: make(chan struct{}, cfg.MaxConcurrency), ctx: ctx}
-	b.chats = chats.New(cfg.HistoryTurns, b.work, b.spawn)
+	b.chats = chats.New(cfg.HistoryMessages, b.work, b.spawn)
 	b.timerCtx, b.stop = context.WithCancel(ctx)
 	if cfg.NoModel {
 		logx.Noticef("no model: only commands are answered")

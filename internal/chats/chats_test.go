@@ -104,7 +104,7 @@ func TestBusyChatNotEvicted(t *testing.T) {
 }
 
 func TestHistoryCapped(t *testing.T) {
-	s := New[string](2, nil, nil)
+	s := New[string](4, nil, nil) // messages, not exchanges
 	for i := range 5 {
 		s.Add("u:a", time.Now(), 0, Entry{Role: "user", Content: fmt.Sprint(i)}, Entry{Role: "assistant", Content: "ok"})
 	}

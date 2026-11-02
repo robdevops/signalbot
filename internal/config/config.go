@@ -19,17 +19,17 @@ const DefaultIntro = "hi, I'm *{name}*, your open source assistant running {mode
 
 // Config is the core's settings.
 type Config struct {
-	APIURL         string // MODEL_API_URL: the chat completions API's base URL
-	APIKey         string // MODEL_API_KEY; "" sends none
-	NoModel        bool   // neither MODEL_API_URL nor MODEL_API_KEY is set: only commands are answered
-	Model          string // MODEL: the model's ID at the API, such as "provider/model" on OpenRouter
-	Reasoning      string // MODEL_REASONING: the reasoning effort, "none" to leave it out
-	SystemPrompt   string // MODEL_SYSTEM_PROMPT: added to the built-in prompt
-	Intro          string // INTRO
-	MaxConcurrency int    // MAX_CONCURRENCY: messages answered at once
-	HistoryTurns   int    // HISTORY_TURNS: exchanges remembered per chat
-	Version        string // the bot's version, set by main
-	Test           *Test  // nil in production
+	APIURL          string // MODEL_API_URL: the chat completions API's base URL
+	APIKey          string // MODEL_API_KEY; "" sends none
+	NoModel         bool   // neither MODEL_API_URL nor MODEL_API_KEY is set: only commands are answered
+	Model           string // MODEL: the model's ID at the API, such as "provider/model" on OpenRouter
+	Reasoning       string // MODEL_REASONING: the reasoning effort, "none" to leave it out
+	SystemPrompt    string // MODEL_SYSTEM_PROMPT: added to the built-in prompt
+	Intro           string // INTRO
+	MaxConcurrency  int    // MAX_CONCURRENCY: messages answered at once
+	HistoryMessages int    // HISTORY_MESSAGES: messages remembered per chat
+	Version         string // the bot's version, set by main
+	Test            *Test  // nil in production
 }
 
 // Test is for tests only, and nil in production. A field left zero keeps
@@ -73,14 +73,14 @@ func number(key string, def int) int {
 // Load reads the core's settings.
 func Load() *Config {
 	c := &Config{
-		APIURL:         strings.TrimRight(Env("MODEL_API_URL", ""), "/"),
-		APIKey:         Env("MODEL_API_KEY", ""),
-		Model:          Env("MODEL", "deepseek/deepseek-v4.1-flash-1017"),
-		Reasoning:      strings.ToLower(Env("MODEL_REASONING", "low")),
-		SystemPrompt:   Env("MODEL_SYSTEM_PROMPT", ""),
-		Intro:          Env("INTRO", DefaultIntro),
-		MaxConcurrency: number("MAX_CONCURRENCY", 32),
-		HistoryTurns:   number("HISTORY_TURNS", 10),
+		APIURL:          strings.TrimRight(Env("MODEL_API_URL", ""), "/"),
+		APIKey:          Env("MODEL_API_KEY", ""),
+		Model:           Env("MODEL", "deepseek/deepseek-v4.1-flash-1017"),
+		Reasoning:       strings.ToLower(Env("MODEL_REASONING", "low")),
+		SystemPrompt:    Env("MODEL_SYSTEM_PROMPT", ""),
+		Intro:           Env("INTRO", DefaultIntro),
+		MaxConcurrency:  number("MAX_CONCURRENCY", 32),
+		HistoryMessages: number("HISTORY_MESSAGES", 10),
 	}
 	// A key alone is OpenRouter's; a URL alone is a provider that needs no
 	// key, such as a local one.
