@@ -1137,7 +1137,7 @@ func TestScenarioLargePhotosAreShown(t *testing.T) {
 func TestScenarioPhotoThatFailsToLoad(t *testing.T) {
 	h := startBot(t, world{Vision: true, Attachments: map[string][]byte{"huge.png": make([]byte, 30<<20)}})
 	m := fromAlice("what is this?")
-	m.Attachments = []attached{{ID: "huge.png", Type: "image/png", Size: 20000000}}
+	m.Attachments = []attached{{ID: "huge.png", Type: "image/png", Size: 10000000}}
 	h.ask(m)
 	if last := h.lastRequest().last(); last.Content != "what is this?\n[1 image attached, which failed to load; you can see images, just not this one]" || last.Images != nil {
 		t.Fatalf("model got %q with %d images", last.Content, len(last.Images))

@@ -383,7 +383,7 @@ func (c *Client) Media(ctx context.Context, msg feature.Message, i int) ([]byte,
 	defer cancel()
 	m := msg.Media[i]
 	var r struct {
-		Data string `json:"data"`
+		Data []byte `json:"data"` // base64, decoded as it is read: one copy fewer of a big image
 	}
 	var err error
 	switch {
@@ -397,7 +397,7 @@ func (c *Client) Media(ctx context.Context, msg feature.Message, i int) ([]byte,
 	if err != nil {
 		return nil, err
 	}
-	return base64.StdEncoding.DecodeString(r.Data)
+	return r.Data, nil
 }
 
 // stickerLabel describes a sticker by its emoji and its pack's title, e.g.
