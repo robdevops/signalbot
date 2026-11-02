@@ -334,7 +334,7 @@ func TestStartupErrors(t *testing.T) {
 }
 
 // Each server is its own group, named and listed by its tools then its
-// commands, with its prompt: a server's own instructions are not used.
+// commands, its {tools} label ending " MCP" unless its name has it, with its prompt: a server's own instructions are not used.
 // keywords gate it on whole words, ignoring capitals. Each server is told
 // the bot's version.
 func TestToolGroups(t *testing.T) {
@@ -344,7 +344,7 @@ func TestToolGroups(t *testing.T) {
 			"instructions":"Use yahoo for prices.","keywords":["stock"," AAPL ",""]},
 		"scout":{"url":"`+serve(t, scoutMCP)+`","allowed_tools":["fail"],
 			"chat_commands":{"scout":{"tool":"fail"}}},
-		"plain":{"url":"`+serve(t, &fakeMCP{})+`","allowed_tools":["echo"],"keywords":[]}}}`,
+		"plain_Mcp":{"url":"`+serve(t, &fakeMCP{})+`","allowed_tools":["echo"],"keywords":[]}}}`,
 		func(h *featuretest.Host) { h.Bot.Version = "v1.2.3" })
 	if err != nil {
 		t.Fatal(err)
@@ -357,10 +357,10 @@ func TestToolGroups(t *testing.T) {
 		t.Fatalf("groups %+v", gs)
 	}
 	plain, scout, yahoo := gs[0], gs[1], gs[2] // in name order
-	if plain.Listing != "plain: echo" || plain.System != "" || plain.Keywords != nil ||
-		scout.Listing != "scout: fail, /scout" || !slices.Equal(scout.Names, []string{"**scout**: fail, /scout"}) ||
+	if plain.Listing != "plain_Mcp: echo" || plain.System != "" || plain.Keywords != nil ||
+		scout.Listing != "scout: fail, /scout" || !slices.Equal(scout.Names, []string{"**scout MCP**: fail, /scout"}) ||
 		scout.System != "Use scout for everything." || scout.Keywords != nil || // the server's own instructions
-		yahoo.Listing != "yahoo: echo, pic" || !slices.Equal(yahoo.Names, []string{"**yahoo**: echo, pic"}) || !slices.Equal(plain.Names, []string{"**plain**: echo"}) || yahoo.System != "Use yahoo for prices." {
+		yahoo.Listing != "yahoo: echo, pic" || !slices.Equal(yahoo.Names, []string{"**yahoo MCP**: echo, pic"}) || !slices.Equal(plain.Names, []string{"**plain_Mcp**: echo"}) || yahoo.System != "Use yahoo for prices." {
 		t.Fatalf("groups %+v", gs)
 	}
 	if len(scout.Tools) != 1 || scout.Tools[0].Name != "scout__fail" {

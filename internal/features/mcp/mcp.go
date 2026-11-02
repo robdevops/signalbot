@@ -199,7 +199,11 @@ func start(ctx context.Context, h feature.Host, servers map[string]server) error
 		if len(g.Tools) > 0 {
 			all := strings.Join(append(g.Names, own...), ", ")
 			g.Listing = name + ": " + all
-			g.Names = []string{"**" + name + "**: " + all} // grouped by server in {tools}, in Markdown
+			label := name
+			if !strings.Contains(strings.ToLower(name), "mcp") {
+				label += " MCP" // so the intro shows it is an MCP server
+			}
+			g.Names = []string{"**" + label + "**: " + all} // grouped by server in {tools}, in Markdown
 			h.Tools(g)
 		}
 		if s, ok := c.(*stdioConn); ok {
