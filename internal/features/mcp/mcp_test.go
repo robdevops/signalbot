@@ -207,6 +207,15 @@ func TestLoad(t *testing.T) {
 			t.Errorf("%s: want an error", name)
 		}
 	}
+	// A JSON mistake says where; a setting outside its server's braces says so.
+	for bad, want := range map[string]string{
+		"{\n  \"mcpServers\": {\n    \"y\": {\"url\": \"u\"\n      \"keywords\": [\"k\"]}}}": "line 4, column 7: invalid character '\"' after object key:value pair",
+		`{"mcpServers":{"y":{"url":"u"},"keywords":["stock"]}}`:                              `MCP server "keywords" must be an object, not array: is "keywords" a setting outside its server's braces?`,
+	} {
+		if _, err := load(writeConfig(t, bad)); err == nil || !strings.Contains(err.Error(), want) {
+			t.Errorf("%q: got %v, want %q", bad, err, want)
+		}
+	}
 	// A disabled server is dropped unchecked, even if it is incomplete.
 	s, err = load(writeConfig(t, `{"mcpServers":{"on":{"url":"u"},"off":{"disabled":true},"off2":{"url":"u","disabled":true}}}`))
 	if err != nil || len(s) != 1 || s["on"].URL != "u" {

@@ -3,6 +3,7 @@
 package mcp
 
 import (
+	"bytes"
 	"cmp"
 	"context"
 	"encoding/base64"
@@ -87,6 +88,19 @@ func load(path string) (map[string]server, error) {
 		Servers map[string]server `json:"mcpServers"`
 	}
 	if err := json.Unmarshal(data, &f); err != nil {
+		var syntax *json.SyntaxError
+		var typ *json.UnmarshalTypeError
+		switch {
+		case errors.As(err, &syntax): // where, so a missing comma can be found
+			before := data[:min(max(int(syntax.Offset)-1, 0), len(data))] // up to the bad character
+			line := bytes.Count(before, []byte("\n")) + 1
+			col := len(before) - bytes.LastIndexByte(before, '\n')
+			return nil, fmt.Errorf("%s: line %d, column %d: %v", path, line, col, err)
+		case errors.As(err, &typ) && strings.Count(typ.Field, ".") == 1 && strings.HasPrefix(typ.Field, "mcpServers."):
+			name := strings.TrimPrefix(typ.Field, "mcpServers.")
+			return nil, fmt.Errorf("%s: MCP server %q must be an object, not %s: is %q a setting outside its server's braces?",
+				path, txt.Clamp(name, 40), typ.Value, txt.Clamp(name, 40))
+		}
 		return nil, fmt.Errorf("%s: %v", path, err)
 	}
 	for name, s := range f.Servers {
