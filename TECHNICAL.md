@@ -139,9 +139,9 @@ Each request sends a system prompt, then the chat's history, then the new messag
 
 The system prompt is, in order:
 
-1. The built-in prompt, with the network's own line (`Network.Prompt`, here Signal's) after the brevity rules:
+1. The built-in prompt, with the network's own line (`Network.Prompt`, here Signal's) after the brevity rules and the latest-message rule, which keeps the model from answering everything said since its last reply (in a group, history holds messages not addressed to it):
 
-   > You are a helpful assistant in a chat. Reply in Markdown. Aim for a single line. Two or three sentences at the very most, and only when asked for detail. This is a Signal chat. Never exceed 2000 characters, which is Signal's limit for one message. A mention shown as [unnamed user] is someone whose name you don't know; don't invent one. To mention someone, write @ followed by their exact name. Never write your own name with an @.
+   > You are a helpful assistant in a chat. Reply in Markdown. Aim for a single line. Two or three sentences at the very most, and only when asked for detail. Earlier messages are the conversation so far, not questions for you: reply to the latest message alone, using them only to understand it or when it asks you to. This is a Signal chat. Never exceed 2000 characters, which is Signal's limit for one message. A mention shown as [unnamed user] is someone whose name you don't know; don't invent one. To mention someone, write @ followed by their exact name. Never write your own name with an @.
 
    When the model can call tools and any are registered, one more sentence follows: `If your answer uses a tool or search, name the source briefly, e.g. "(Yahoo Finance)", or give its url when that helps.` It names no tool, so the core stays feature-free.
 

@@ -20,7 +20,11 @@ const (
 	// basePrompt and mentionPrompt always apply, with the network's own
 	// line between them; MODEL_SYSTEM_PROMPT is added to them.
 	basePrompt = "You are a helpful assistant in a chat. Reply in Markdown. " +
-		"Aim for a single line. Two or three sentences at the very most, and only when asked for detail."
+		"Aim for a single line. Two or three sentences at the very most, and only when asked for detail. " +
+		// Earlier messages include, in a group, others' talk not addressed
+		// to the bot, which it otherwise tends to answer all at once.
+		"Earlier messages are the conversation so far, not questions for you: " +
+		"reply to the latest message alone, using them only to understand it or when it asks you to."
 	mentionPrompt = "A mention shown as [unnamed user] is someone whose name you don't know; don't invent one. " +
 		"To mention someone, write @ followed by their exact name. Never write your own name with an @."
 	// sourcePrompt joins them when the model can call tools and has some.
