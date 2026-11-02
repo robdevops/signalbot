@@ -6,11 +6,13 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"io"
 	"maps"
 	"net"
 	"path/filepath"
 	"regexp"
 	"runtime"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -313,12 +315,50 @@ func TestDispatchRecovers(t *testing.T) {
 	}
 }
 
+// A frame over maxLine is skipped, failing the request it answers, and the
+// connection is kept: the next request works.
 func TestFrameTooLong(t *testing.T) {
+	defer func(n int) { maxLine = n }(maxLine)
+	maxLine = 1000
 	logs := captureLogs(t)
 	f := newFake(t)
-	_, conn := run(t, newClient(f.sock, nil, nil), f)
-	go fmt.Fprintf(conn, `{"x":"%s"}`+"\n", strings.Repeat("a", maxLine))
-	eventually(t, "the warning", func() bool { return strings.Contains(logs.String(), "signal-cli read failed") })
+	c := newClient(f.sock, nil, nil)
+	_, conn := run(t, c, f)
+	fmt.Fprintf(conn, `{"x":"%s"}`+"\n", strings.Repeat("a", maxLine)) // answers nothing
+	eventually(t, "the warning", func() bool { return strings.Contains(logs.String(), "skipped") })
+	ctx := context.Background()
+	msg := feature.Message{Chat: feature.Chat{User: aliceID}, Media: []feature.Media{{ID: "att1"}}}
+	f.set("getAttachment", `{"data":"`+strings.Repeat("A", maxLine)+`"}`)
+	if _, err := c.Media(ctx, msg, 0); err == nil || err.Error() != "getAttachment result too large" {
+		t.Fatalf("got %v", err)
+	}
+	f.set("getAttachment", `{"data":"UE5H"}`)
+	if b, err := c.Media(ctx, msg, 0); err != nil || string(b) != "PNG" {
+		t.Fatalf("after: %q %v", b, err)
+	}
+	if strings.Contains(logs.String(), "read failed") || len(f.calls("listAccounts")) != 1 {
+		t.Fatalf("reconnected: %s", logs.String())
+	}
+}
+
+// readFrames hands on each line whole, however the reads split it, and
+// skips one over the limit with its last 256 bytes.
+func TestReadFrames(t *testing.T) {
+	long := strings.Repeat("b", 100<<10) // over the reader's 64 KiB buffer
+	over := `{"result":"` + strings.Repeat("c", 200<<10) + `","id":7}`
+	in := "one\n\n" + long + "\n" + over + "\n" + "two\r\npartial"
+	var got, tails []string
+	err := readFrames(strings.NewReader(in), 150<<10, func(b []byte) { got = append(got, string(b)) },
+		func(tail []byte) { tails = append(tails, string(tail)) })
+	if err != io.EOF || !slices.Equal(got, []string{"one", "", long, "two\r"}) {
+		t.Fatalf("%v: %d frames", err, len(got))
+	}
+	if len(tails) != 1 || len(tails[0]) != 256 || !strings.HasSuffix(tails[0], `c","id":7}`+"\n") {
+		t.Fatalf("tails %q", tails)
+	}
+	if m := frameID.FindSubmatch([]byte(tails[0])); m == nil || string(m[1]) != "7" {
+		t.Fatalf("id %q", m)
+	}
 }
 
 func TestFilesStickersAndGroups(t *testing.T) {

@@ -5,13 +5,16 @@ package signal
 
 import (
 	"bufio"
+	"bytes"
 	"cmp"
 	"context"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -23,13 +26,19 @@ import (
 	"github.com/robdevops/signalbot/internal/bot"
 	"github.com/robdevops/signalbot/internal/config"
 	"github.com/robdevops/signalbot/internal/feature"
+	"github.com/robdevops/signalbot/internal/kit/img"
 	"github.com/robdevops/signalbot/internal/kit/logx"
 	"github.com/robdevops/signalbot/internal/kit/txt"
 )
 
 // maxLine caps one JSON-RPC frame from signal-cli, whose bodies, mentions
-// and quotes the sender controls.
-const maxLine = 1 << 20
+// and quotes the sender controls: room for a getAttachment result, the
+// largest image the bot fetches in base64, and more. A longer frame is
+// skipped, and the request it answers fails.
+var maxLine = base64.StdEncoding.EncodedLen(img.MaxReceived) + 1<<20
+
+// frameID finds a frame's ID at its end, where signal-cli writes it.
+var frameID = regexp.MustCompile(`"id"\s*:\s*(\d+)\s*}\s*$`)
 
 // writeTimeout bounds one request's write, so a stalled socket can't hold
 // up every sender.
@@ -45,6 +54,7 @@ type rpcMsg struct {
 		Message string `json:"message"`
 	} `json:"error"`
 	Envelope *envelope `json:"envelope"` // in a receive's params
+	tooLong  bool      // the response was skipped, being over maxLine
 }
 
 // Client is a JSON-RPC client for a signal-cli daemon socket.
@@ -168,13 +178,9 @@ func (c *Client) serve(ctx context.Context, conn net.Conn, handle func(bot.Recei
 		c.refreshSoon() // names, on every (re)connect
 	}()
 
-	sc := bufio.NewScanner(conn)
-	sc.Buffer(make([]byte, 64*1024), maxLine)
-	for sc.Scan() {
-		c.dispatch(sc.Bytes(), handle)
-	}
-	if err := sc.Err(); err != nil && ctx.Err() == nil {
-		logx.Warnf("signal-cli read failed: %v; reconnecting", err) // a frame over maxLine is bufio.ErrTooLong
+	err := readFrames(conn, maxLine, func(line []byte) { c.dispatch(line, handle) }, c.skipped)
+	if err != nil && !errors.Is(err, io.EOF) && ctx.Err() == nil {
+		logx.Warnf("signal-cli read failed: %v; reconnecting", err)
 	}
 	conn.Close()
 	c.mu.Lock()
@@ -183,6 +189,62 @@ func (c *Client) serve(ctx context.Context, conn net.Conn, handle func(bot.Recei
 	}
 	c.conn, c.pending = nil, map[string]chan *rpcMsg{}
 	c.mu.Unlock()
+}
+
+// readFrames calls frame with each line r holds, without its newline, and
+// skipped with the last bytes of each line longer than max, which it
+// skips, until r fails. frame's line is reused after it returns.
+func readFrames(r io.Reader, max int, frame func([]byte), skipped func(tail []byte)) error {
+	br := bufio.NewReaderSize(r, 64<<10)
+	var line, tail []byte
+	skipping := false
+	for {
+		chunk, err := br.ReadSlice('\n')
+		if err != nil && err != bufio.ErrBufferFull {
+			return err
+		}
+		if !skipping && len(line)+len(chunk) > max+1 { // +1: the newline
+			skipping, line = true, nil
+		}
+		if skipping {
+			tail = last(append(tail, last(chunk, 256)...), 256)
+		} else {
+			line = append(line, chunk...)
+		}
+		if err == bufio.ErrBufferFull {
+			continue
+		}
+		if skipping {
+			skipped(tail)
+			skipping, tail = false, tail[:0]
+		} else {
+			frame(bytes.TrimSuffix(line, []byte("\n")))
+			line = line[:0]
+			if cap(line) > 1<<20 {
+				line = nil // don't hold on to a big image's frame
+			}
+		}
+	}
+}
+
+// last is b's last n bytes, or b if shorter.
+func last(b []byte, n int) []byte { return b[max(0, len(b)-n):] }
+
+// skipped fails the request a frame over maxLine answers, if its ID is
+// found in tail, the frame's end.
+func (c *Client) skipped(tail []byte) {
+	logx.Warnf("signal-cli sent a frame over %d MiB, skipped", maxLine>>20)
+	m := frameID.FindSubmatch(tail)
+	if m == nil {
+		return
+	}
+	c.mu.Lock()
+	ch := c.pending[string(m[1])]
+	delete(c.pending, string(m[1]))
+	c.mu.Unlock()
+	if ch != nil {
+		ch <- &rpcMsg{tooLong: true}
+	}
 }
 
 func (c *Client) dispatch(line []byte, handle func(bot.Received)) {
@@ -278,6 +340,9 @@ func (c *Client) call(ctx context.Context, method string, params, out any) error
 	case resp, ok := <-ch:
 		if !ok {
 			return errors.New("connection closed")
+		}
+		if resp.tooLong {
+			return errors.New(method + " result too large")
 		}
 		if resp.Error != nil {
 			return fmt.Errorf("rpc error %d: %s", resp.Error.Code, txt.Clamp(resp.Error.Message, 200))

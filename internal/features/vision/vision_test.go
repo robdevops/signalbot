@@ -12,6 +12,7 @@ import (
 
 	"github.com/robdevops/signalbot/internal/feature"
 	"github.com/robdevops/signalbot/internal/feature/featuretest"
+	"github.com/robdevops/signalbot/internal/kit/img"
 	"github.com/robdevops/signalbot/internal/kit/logx"
 )
 
@@ -148,8 +149,8 @@ func TestPhotoAndSticker(t *testing.T) {
 }
 
 // One image that can't be fetched, or isn't an image, is skipped and
-// logged without its content. If none can be, the model is told it can't
-// see them, as the old bot did.
+// logged without its content, and the model is told it failed to load, not
+// that it can't see images.
 func TestFetchFailures(t *testing.T) {
 	var out, errw logx.Buffer
 	defer logx.SetOutput(&out, &errw, true)()
@@ -166,7 +167,8 @@ func TestFetchFailures(t *testing.T) {
 		return []byte("not a picture"), nil
 	}
 	a := additionsOf(t, h, turn("look", photo, photo, sticker))
-	if a.Note != "[1 image attached]\n[sticker attached"+sticker.Label+", which you can't see]" || len(a.Images) != 1 {
+	if a.Note != "[1 image attached]\n[1 image attached, which failed to load; you can see images, just not this one]\n[sticker attached"+sticker.Label+", which failed to load]" ||
+		a.HistoryNote != "[1 image attached"+notKept+"]\n[1 image attached, which failed to load; you can see images, just not this one]\n[sticker attached"+sticker.Label+", which failed to load]" || len(a.Images) != 1 {
 		t.Fatalf("got %q with %d images", a.Note, len(a.Images))
 	}
 	logs := errw.String()
@@ -176,9 +178,31 @@ func TestFetchFailures(t *testing.T) {
 	}
 
 	h.Fetch = nil // every fetch fails
-	a = additionsOf(t, h, turn("", photo))
-	if a.Note != "[1 image attached, which you can't see with this model]" || a.Images != nil {
+	a = additionsOf(t, h, turn("", photo, photo))
+	if a.Note != "[2 images attached, which failed to load; you can see images, just not these]" || a.Images != nil {
 		t.Fatalf("got %+v", a)
+	}
+}
+
+// An image too big for the model is shrunk to a JPEG that fits.
+func TestBigPhotoIsShrunk(t *testing.T) {
+	var fetched []int
+	h := host(t, true, &fetched)
+	m := image.NewRGBA(image.Rect(0, 0, 1400, 1400))
+	x := uint32(1)
+	for i := range m.Pix {
+		x = x*1664525 + 1013904223
+		m.Pix[i] = byte(x >> 24)
+	}
+	var b bytes.Buffer
+	png.Encode(&b, m)
+	if b.Len() <= img.MaxBytes {
+		t.Fatalf("only %d bytes", b.Len())
+	}
+	h.Fetch = func(feature.Message, int) ([]byte, error) { return b.Bytes(), nil }
+	a := additionsOf(t, h, turn("", photo))
+	if a.Note != "[1 image attached]" || len(a.Images) != 1 || !strings.HasPrefix(a.Images[0], "data:image/jpeg;base64,") {
+		t.Fatalf("got %q with %d images", a.Note, len(a.Images))
 	}
 }
 

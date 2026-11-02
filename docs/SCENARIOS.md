@@ -61,7 +61,7 @@ The table maps every `Test*` function in the 19 old test files to what covers it
 | TestReplyIsCappedToAFewMessages | fixes_test.go | TestScenarioHugeReplyIsCapped |
 | TestChatsAreCapped | fixes_test.go | Unit test, moves with its code (memory caps are not visible at the edges) |
 | TestNameCacheIsBounded | fixes_test.go | Unit test, moves with its code |
-| TestOversizedFrameDropsConnectionAndReconnects | fixes_test.go | TestScenarioOversizedFrameReconnects |
+| TestOversizedFrameDropsConnectionAndReconnects | fixes_test.go | TestScenarioOversizedFrameIsSkipped (now skipped, not reconnected), TestScenarioPhotoThatFailsToLoad |
 | TestStripMentionsHugeOffsetsDoNotPanic | fixes_test.go | Unit test, moves with its code |
 | TestOutOfOrderMentionsSpliceCorrectly | fixes_test.go | Unit test, moves with its code |
 | TestSocketNetwork | fixes_test.go | Unit test, moves with its code |

@@ -287,7 +287,7 @@ func TestScenarioUnaddressedMessagesAreNeverLogged(t *testing.T) {
 func TestScenarioMessageWithNothingUsableIsIgnored(t *testing.T) {
 	h := startBot(t, world{Vision: true})
 	big := fromAlice("")
-	big.Attachments = []attached{{ID: "big.png", Type: "image/png", Size: 9000000}}
+	big.Attachments = []attached{{ID: "big.png", Type: "image/png", Size: 30000000}}
 	h.ignored(big)
 	pdf := fromAlice("")
 	pdf.Attachments = []attached{{ID: "doc.pdf", Type: "application/pdf", Size: 1000}}
@@ -1072,17 +1072,17 @@ func TestScenarioShutdownDrainsReplies(t *testing.T) {
 
 // --- signal-cli ----------------------------------------------------------------------------
 
-// A frame over the size limit drops the connection; the bot reconnects and
-// carries on.
-func TestScenarioOversizedFrameReconnects(t *testing.T) {
+// A frame over the size limit is skipped with a warning; the bot keeps its
+// connection and carries on.
+func TestScenarioOversizedFrameIsSkipped(t *testing.T) {
 	h := startBot(t, world{})
-	h.receiveRaw(strings.Repeat("x", 1<<20+10))
-	h.waitFor("the bot to reconnect", func() bool { return len(h.callsTo("listAccounts")) >= 2 })
-	if s := h.ask(atBot("are you back")); s.Message != "ok" {
+	h.receiveRaw(strings.Repeat("x", 40<<20))
+	h.waitFor("the warning", func() bool { _, ok := h.logged("skipped"); return ok })
+	if s := h.ask(atBot("are you still there")); s.Message != "ok" {
 		t.Fatalf("sent %q", s.Message)
 	}
-	if _, ok := h.logged("signal-cli read failed"); !ok {
-		t.Fatalf("no warning: %v", h.logLines())
+	if n := len(h.callsTo("listAccounts")); n != 1 {
+		t.Fatalf("reconnected: listAccounts called %d times", n)
 	}
 }
 
@@ -1108,6 +1108,47 @@ func TestScenarioFailedSendIsLogged(t *testing.T) {
 }
 
 // --- images and stickers -----------------------------------------------------------------
+
+// A photo of a few megabytes, too big for one old signal-cli frame, is shown
+// as it is; one over the model's 5 MB is shrunk to a JPEG first.
+func TestScenarioLargePhotosAreShown(t *testing.T) {
+	medium, large := noisyPNG(t, 800, 800), noisyPNG(t, 1400, 1400)
+	if len(medium) < 2<<20 || len(medium) > 5<<20 || len(large) < 6<<20 {
+		t.Fatalf("sizes %d, %d", len(medium), len(large))
+	}
+	h := startBot(t, world{Vision: true, Attachments: map[string][]byte{"medium.png": medium, "large.png": large}})
+	for _, tc := range []struct{ id, mime string }{{"medium.png", "image/png"}, {"large.png", "image/jpeg"}} {
+		m := fromAlice("")
+		m.Attachments = []attached{{ID: tc.id, Type: "image/png", Size: len(large)}}
+		h.ask(m)
+		last := h.lastRequest().last()
+		if last.Content != "[1 image attached]" || len(last.Images) != 1 || !strings.HasPrefix(last.Images[0], "data:"+tc.mime+";base64,") || len(last.Images[0]) > 7<<20 {
+			t.Fatalf("%s: model got %q with %d images", tc.id, last.Content, len(last.Images))
+		}
+	}
+	if n := len(h.callsTo("listAccounts")); n != 1 {
+		t.Fatalf("reconnected: listAccounts called %d times", n)
+	}
+}
+
+// A photo that can't be fetched, here because signal-cli's answer is too
+// big, is left out, and the model is told it failed to load rather than
+// that it can't see images. The connection is kept.
+func TestScenarioPhotoThatFailsToLoad(t *testing.T) {
+	h := startBot(t, world{Vision: true, Attachments: map[string][]byte{"huge.png": make([]byte, 30<<20)}})
+	m := fromAlice("what is this?")
+	m.Attachments = []attached{{ID: "huge.png", Type: "image/png", Size: 20000000}}
+	h.ask(m)
+	if last := h.lastRequest().last(); last.Content != "what is this?\n[1 image attached, which failed to load; you can see images, just not this one]" || last.Images != nil {
+		t.Fatalf("model got %q with %d images", last.Content, len(last.Images))
+	}
+	if _, ok := h.logged("could not fetch an image: getAttachment result too large"); !ok {
+		t.Fatalf("no warning: %v", h.logLines())
+	}
+	if n := len(h.callsTo("listAccounts")); n != 1 {
+		t.Fatalf("reconnected: listAccounts called %d times", n)
+	}
+}
 
 // A photo alone is shown to a model that takes images, and the history keeps
 // only a note.

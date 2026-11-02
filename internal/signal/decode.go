@@ -81,7 +81,7 @@ type groupInfo struct {
 // its thumbnail if that is, else nil.
 func (a *attachment) image() *attachment {
 	for _, c := range []*attachment{a, a.Thumbnail} {
-		if c != nil && c.ID != "" && c.Size <= img.MaxBytes && img.Supported(c.ContentType) {
+		if c != nil && c.ID != "" && c.Size <= img.MaxReceived && img.Supported(c.ContentType) {
 			return c
 		}
 	}
