@@ -52,14 +52,14 @@ var chartToolSchema = json.RawMessage(`{
   },
   "$defs": {"axis": {"type": "object", "properties": {
     "title": {"type": "string", "description": "Axis title, e.g. \"Price ($)\" or \"Rainfall (mm)\"; required on both axes when both are used"},
-    "mode": {"type": "string", "enum": ["change", "value"], "description": "change (default): plot each series as % change from its first point. value: plot the values as given"},
+    "mode": {"type": "string", "enum": ["value", "change"], "description": "value (default): plot the values as given, e.g. a population, a price or rainfall. change: plot each series as % change from its first point, to compare series on different scales, e.g. two stocks' performance"},
     "unit": {"type": "string", "description": "Prefix for values in value mode, e.g. \"$\""},
     "invert": {"type": "boolean", "description": "Draw this axis upside down: higher values lower"}
   }}}
 }`)
 
 const chartToolDescription = "Draw a line chart of one or more series over time, on one or two Y axes, and attach it to your reply as an image. " +
-	"Use it when a chart would help, e.g. to show a trend or compare series. Pass the raw values: in change mode the % change is computed for you. " +
+	"Use it when a chart would help, e.g. to show a trend or compare series. Pass the raw values: an axis shows them as given unless its mode is change, which computes the % change for you. " +
 	"The chart is sent alone with its title as the caption, so write no other text: it would be discarded."
 
 type chartPoint struct {
@@ -129,7 +129,7 @@ func parseChart(arguments string) (*chartSpec, error) {
 		a.Title, a.Unit = txt.Clamp(strings.TrimSpace(a.Title), 24), txt.Clamp(a.Unit, 4)
 		switch a.Mode {
 		case "":
-			a.Mode = "change"
+			a.Mode = "value"
 		case "change", "value":
 		default:
 			return nil, errors.New(`an axis mode must be "change" or "value"`)
@@ -152,7 +152,7 @@ func parseChart(arguments string) (*chartSpec, error) {
 		s.axisOf(*sr).used = true
 	}
 	if !s.left.used { // everything on the right: draw it as the only axis
-		s.left, s.right = s.right, &chartAxis{Mode: "change"}
+		s.left, s.right = s.right, &chartAxis{Mode: "value"}
 		for i := range s.Series {
 			s.Series[i].Axis = "left"
 		}

@@ -33,6 +33,7 @@ func sampleChart() string {
 	}
 	args, _ := json.Marshal(map[string]any{
 		"title": "NVDA vs ACMR", "subtitle": "% change over the past month, 30 Sep - 28 Oct 2026",
+		"axes":   map[string]any{"left": map[string]any{"mode": "change"}},
 		"series": []any{map[string]any{"name": "NVDA", "points": a}, map[string]any{"name": "ACMR", "points": b}},
 	})
 	return string(args)
@@ -62,8 +63,24 @@ func TestRenderChart(t *testing.T) {
 	}
 }
 
+// Without a mode, an axis shows the values as given: a population in
+// billions is not turned into % change.
+func TestParseChartValueByDefault(t *testing.T) {
+	s, err := parseChart(`{"title":"T","axes":{"left":{"title":"Population (billions)"}},"series":[{"name":"India","points":[{"date":"2026-07-01","value":1.46},{"date":"2100-07-01","value":1.5}]}]}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p := s.Series[0].Points; p[0].Value != 1.46 || p[1].Value != 1.5 || s.left.Mode != "value" {
+		t.Fatalf("points %+v, mode %q", p, s.left.Mode)
+	}
+	// A series that starts at 0 is fine in value mode.
+	if _, err := parseChart(`{"title":"T","series":[{"name":"A","points":[{"date":"2026-01-01","value":0},{"date":"2026-01-02","value":2}]}]}`); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestParseChartChangeMode(t *testing.T) {
-	s, err := parseChart(`{"title":"T","series":[{"name":"A","points":[{"date":"2026-01-02","value":120},{"date":"2026-01-01","value":100}]}]}`)
+	s, err := parseChart(`{"title":"T","axes":{"left":{"mode":"change"}},"series":[{"name":"A","points":[{"date":"2026-01-02","value":120},{"date":"2026-01-01","value":100}]}]}`)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -94,7 +111,7 @@ func TestParseChartErrors(t *testing.T) {
 		"no name":             `{"title":"T","series":[{"points":` + pts + `}]}`,
 		"one point":           `{"title":"T","series":[{"name":"A","points":[{"date":"2026-01-01","value":1}]}]}`,
 		"bad date":            `{"title":"T","series":[{"name":"A","points":[{"date":"1 Jan","value":1},{"date":"2026-01-02","value":2}]}]}`,
-		"starts at 0":         `{"title":"T","series":[{"name":"A","points":[{"date":"2026-01-01","value":0},{"date":"2026-01-02","value":2}]}]}`,
+		"starts at 0":         `{"title":"T","axes":{"left":{"mode":"change"}},"series":[{"name":"A","points":[{"date":"2026-01-01","value":0},{"date":"2026-01-02","value":2}]}]}`,
 	} {
 		if _, err := parseChart(args); err == nil {
 			t.Errorf("%s: want an error", name)
@@ -152,7 +169,7 @@ func TestSpreadLabels(t *testing.T) {
 
 // Each axis has its own mode: % change is computed only for its own series.
 func TestChartTwoAxes(t *testing.T) {
-	s, err := parseChart(`{"title":"T","axes":{"left":{"title":"Price","mode":"value","unit":"$"},"right":{"title":"Change"}},"series":[` +
+	s, err := parseChart(`{"title":"T","axes":{"left":{"title":"Price","mode":"value","unit":"$"},"right":{"title":"Change","mode":"change"}},"series":[` +
 		`{"name":"A","points":[{"date":"2026-01-01","value":100},{"date":"2026-01-02","value":120}]},` +
 		`{"name":"B","axis":"right","points":[{"date":"2026-01-01","value":50},{"date":"2026-01-02","value":25}]}]}`)
 	if err != nil {

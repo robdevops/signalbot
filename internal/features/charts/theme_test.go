@@ -149,7 +149,7 @@ func sixSeries() string {
 		}
 		series = append(series, map[string]any{"name": name, "points": pts})
 	}
-	args, _ := json.Marshal(map[string]any{"title": "Six series", "subtitle": "% change over October 2026", "series": series})
+	args, _ := json.Marshal(map[string]any{"title": "Six series", "subtitle": "% change over October 2026", "axes": map[string]any{"left": map[string]any{"mode": "change"}}, "series": series})
 	return string(args)
 }
 
