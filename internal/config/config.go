@@ -28,6 +28,7 @@ type Config struct {
 	Intro          string // INTRO
 	MaxConcurrency int    // MAX_CONCURRENCY: messages answered at once
 	HistoryMax     int    // HISTORY_MAX: most messages remembered per chat; when full, the older half goes
+	ToolLinger     int    // TOOL_LINGER_ROUNDS: replies a keyword tool group stays offered after one that matched or used it; 0 to HistoryMax
 	Version        string // the bot's version, set by main
 	Test           *Test  // nil in production
 }
@@ -81,7 +82,15 @@ func Load() *Config {
 		Intro:          Env("INTRO", DefaultIntro),
 		MaxConcurrency: number("MAX_CONCURRENCY", 32),
 		HistoryMax:     number("HISTORY_MAX", 10),
+		ToolLinger:     2,
 	}
+	// 0 is allowed: offered only on a message that matches. More than
+	// HISTORY_MAX can't help: by then the exchange that used it has left
+	// history, so the model doesn't know it was in use.
+	if n, err := strconv.Atoi(strings.TrimSpace(Env("TOOL_LINGER_ROUNDS", ""))); err == nil && n >= 0 {
+		c.ToolLinger = n
+	}
+	c.ToolLinger = min(c.ToolLinger, c.HistoryMax)
 	// A key alone is OpenRouter's; a URL alone is a provider that needs no
 	// key, such as a local one.
 	c.NoModel = c.APIURL == "" && c.APIKey == ""

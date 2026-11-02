@@ -147,8 +147,8 @@ func TestCommands(t *testing.T) {
 	h.noSend()
 }
 
-// A group with Keywords is offered when a message matches, and for the 2
-// replies after one that matched or used its tools. A group with only
+// A group with Keywords is offered when a message matches, and for the
+// TOOL_LINGER_ROUNDS (here 2) replies after one that matched or used its tools. A group with only
 // Names is kept for the prompt's list, but isn't in {tools}.
 func TestOffering(t *testing.T) {
 	h := start(t, options{tools: true, features: func(b *Bot) {
@@ -186,6 +186,26 @@ func TestOffering(t *testing.T) {
 	}
 	if info := h.b.Info(); info.Name != "Botty" || info.Model != "test/test-model" || !info.CallsTools || !info.Images || strings.Join(info.Tools, ",") != "alpha,beta" {
 		t.Fatalf("info %+v", info)
+	}
+}
+
+// TOOL_LINGER_ROUNDS sets how many replies a group lingers: none at 0, more
+// at 3.
+func TestToolLinger(t *testing.T) {
+	for linger, want := range map[int][]bool{0: {true, false}, 3: {true, true, true, true, false}} {
+		h := start(t, options{tools: true, cfg: func(c *config.Config) { c.ToolLinger = linger }, features: func(b *Bot) {
+			b.Tools(group("beta", "b_tool", regexp.MustCompile(`\bplot\b`)))
+		}})
+		for i, offered := range want {
+			text := fmt.Sprint("more ", i)
+			if i == 0 {
+				text = "plot it"
+			}
+			r, _ := h.ask(dm(text))
+			if got := slices.Contains(toolNames(r), "b_tool"); got != offered {
+				t.Errorf("linger %d, reply %d: offered %v", linger, i, got)
+			}
+		}
 	}
 }
 

@@ -32,10 +32,7 @@ const (
 		"or give its url when that helps."
 	// maxQuote caps quoted text in a prompt.
 	maxQuote = 500
-	// followUps is how many replies after one that matched a tool group's
-	// keywords, or used its tools, still offer it.
-	followUps = 2
-	sorry     = "Sorry, I couldn't get an answer right now."
+	sorry    = "Sorry, I couldn't get an answer right now."
 	// noTools answers a chat command, which forces a tool, once tools are off.
 	noTools = "That command needs tools, which this model can't use."
 )
@@ -205,7 +202,7 @@ func (b *Bot) followUp(key string, offered []int, text string, used []string) {
 		}
 		n := b.chats.FollowUp(key, i) - 1
 		if g.Keywords.MatchString(text) || slices.ContainsFunc(g.Tools, func(t feature.Tool) bool { return slices.Contains(used, t.Name) }) {
-			n = followUps
+			n = b.cfg.ToolLinger
 		}
 		b.chats.SetFollowUp(key, i, n)
 	}
