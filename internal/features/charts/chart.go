@@ -66,17 +66,17 @@ var dualAxisToolSchema = json.RawMessage(`{
 
 var chartToolSchema = oneAxis(dualAxisToolSchema)
 
-// oneAxis is a dual-axis chart schema without the right axis or a series'
-// choice of axis.
+// oneAxis is a dual-axis chart schema with its axes replaced by one,
+// "y_axis", and without a series' choice of axis: the fewer levels, the
+// fewer mistakes a model makes.
 func oneAxis(dual json.RawMessage) json.RawMessage {
 	var s map[string]any
 	if err := json.Unmarshal(dual, &s); err != nil {
 		panic(err)
 	}
 	props := s["properties"].(map[string]any)
-	axes := props["axes"].(map[string]any)
-	delete(axes["properties"].(map[string]any), "right")
-	axes["description"] = "Settings for the Y axis."
+	delete(props, "axes")
+	props["y_axis"] = map[string]any{"$ref": "#/$defs/axis"}
 	item := props["series"].(map[string]any)["items"].(map[string]any)
 	delete(item["properties"].(map[string]any), "axis")
 	title := s["$defs"].(map[string]any)["axis"].(map[string]any)["properties"].(map[string]any)["title"].(map[string]any)
@@ -128,10 +128,51 @@ type chartSpec struct {
 	Title    string                `json:"title"`
 	Subtitle string                `json:"subtitle"`
 	Source   string                `json:"source"`
+	YAxis    *chartAxis            `json:"y_axis"` // make_chart's one axis: the left
 	Axes     map[string]*chartAxis `json:"axes"`
 	Series   []chartSeries         `json:"series"`
 
 	left, right *chartAxis
+}
+
+// axisShorthand is arguments with an axis given as just its title taken as
+// meant: "y_axis": "Population", or "axes": {"label": "Population"} (or
+// "title" or "name") for the left axis. Anything else is left as it is.
+func axisShorthand(arguments string) string {
+	var tree any
+	if json.Unmarshal([]byte(arguments), &tree) != nil {
+		return arguments
+	}
+	if inner, ok := tree.(string); ok && json.Unmarshal([]byte(inner), &tree) != nil {
+		return arguments
+	}
+	m, ok := tree.(map[string]any)
+	if !ok {
+		return arguments
+	}
+	changed := false
+	if t, ok := m["y_axis"].(string); ok {
+		m["y_axis"], changed = map[string]any{"title": t}, true
+	}
+	if axes, ok := m["axes"].(map[string]any); ok {
+		for _, k := range []string{"label", "title", "name"} {
+			if t, ok := axes[k].(string); ok {
+				delete(axes, k)
+				if _, set := axes["left"]; !set {
+					axes["left"] = map[string]any{"title": t}
+				}
+				changed = true
+			}
+		}
+	}
+	if !changed {
+		return arguments
+	}
+	out, err := json.Marshal(m)
+	if err != nil {
+		return arguments
+	}
+	return string(out)
 }
 
 func (s *chartSpec) axisOf(sr chartSeries) *chartAxis {
@@ -145,8 +186,16 @@ func (s *chartSpec) axisOf(sr chartSeries) *chartAxis {
 // the model, so it can fix its call.
 func parseChart(arguments string) (*chartSpec, error) {
 	var s chartSpec
-	if err := decodeArgs(chartTool, arguments, &s); err != nil {
+	if err := decodeArgs(chartTool, axisShorthand(arguments), &s); err != nil {
 		return nil, err
+	}
+	if s.YAxis != nil {
+		if s.Axes == nil {
+			s.Axes = map[string]*chartAxis{}
+		}
+		if s.Axes["left"] == nil {
+			s.Axes["left"] = s.YAxis
+		}
 	}
 	s.Title = txt.Clamp(strings.TrimSpace(s.Title), 80)
 	s.Subtitle = txt.Clamp(strings.TrimSpace(s.Subtitle), 120)

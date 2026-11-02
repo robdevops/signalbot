@@ -64,7 +64,7 @@ func TestChartsToolGroup(t *testing.T) {
 		}
 	}
 	// make_chart's schema has no right axis and no choice of axis.
-	if one := string(tool(t, h, "make_chart").Schema); strings.Contains(one, `"right"`) || strings.Contains(one, `"enum":["left","right"]`) || strings.Contains(one, "both") || !strings.Contains(one, `"left"`) {
+	if one := string(tool(t, h, "make_chart").Schema); strings.Contains(one, `"right"`) || strings.Contains(one, `"axes"`) || strings.Contains(one, "both") || !strings.Contains(one, `"y_axis":{"$ref":"#/$defs/axis"}`) {
 		t.Errorf("one-axis schema %s", one)
 	}
 	if two := string(tool(t, h, "make_dual_axis_chart").Schema); !strings.Contains(two, `"right"`) || !strings.Contains(two, `"enum": ["left", "right"]`) {
@@ -124,6 +124,32 @@ func TestSecondAxisOnlyWhenAsked(t *testing.T) {
 	}
 	if _, pics, err := tool(t, h, "make_dual_axis_chart").Run(context.Background(), args); err != nil || len(pics) != 1 {
 		t.Fatalf("dual-axis: %d pictures, %v", len(pics), err)
+	}
+}
+
+// make_chart's axis is "y_axis"; an axis given as just its title, as
+// models guess, is taken as meant.
+func TestChartYAxis(t *testing.T) {
+	pts := `"series":[{"name":"A","points":[{"date":"2026-01-01","value":1.4},{"date":"2026-01-02","value":1.5}]}]`
+	for _, args := range []string{
+		`{"title":"T","y_axis":{"title":"Population (bn)","mode":"value"},` + pts + `}`,
+		`{"title":"T","y_axis":"Population (bn)",` + pts + `}`,
+		`{"title":"T","axes":{"label":"Population (bn)"},` + pts + `}`,
+		`{"title":"T","axes":{"title":"Population (bn)"},` + pts + `}`,
+		`{"title":"T","axes":{"left":{"title":"Population (bn)"}},` + pts + `}`,
+	} {
+		s, err := parseChart(args)
+		if err != nil || s.left.Title != "Population (bn)" || s.left.Mode != "value" {
+			t.Errorf("%s: %+v, %v", args, s, err)
+			continue
+		}
+		if _, pics, err := tool(t, register(t), "make_chart").Run(context.Background(), args); err != nil || len(pics) != 1 {
+			t.Errorf("%s: drawn %d, %v", args, len(pics), err)
+		}
+	}
+	// A key that is neither still says what to fix.
+	if _, err := parseChart(`{"title":"T","axes":{"colour":"red"},` + pts + `}`); err == nil || !strings.Contains(err.Error(), "axes.colour") {
+		t.Errorf("got %v", err)
 	}
 }
 
