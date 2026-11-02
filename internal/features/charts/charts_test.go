@@ -71,6 +71,9 @@ func TestWantsChart(t *testing.T) {
 		"visualise it": true, "VISUALIZATION please": true, "charts?": true, "plotted over time": true,
 		"a pie chart": true, "donut please": true, "doughnut": true, "pied": false, "spied on": false,
 		"what is up": false, "a plotless film": false, "paragraph": false,
+		"revenue projections for 2027": true, "PROJECTION": true, "the forward estimate for EPS": true, "forward  estimates": true,
+		"what's trending": true, "Forecast for gold": true, "forecasting sales": true, "forecasted": true,
+		"projector": false, "a forward pass": false, "estimates": false, "trend": false, "forecaster": false,
 	} {
 		if got := kw.MatchString(text); got != want {
 			t.Errorf("%q: got %v, want %v", text, got, want)

@@ -19,9 +19,11 @@ import (
 	"github.com/robdevops/signalbot/internal/kit/txt"
 )
 
-// wantsChart matches a message that asks for a chart, so the chart tools are
-// offered only then, and for the replies that follow.
-var wantsChart = regexp.MustCompile(`(?i)\b(chart(s|ed|ing)?|graph(s|ed|ing)?|plot(s|ted|ting)?|visuali[sz](e|es|ed|ing|ation|ations)|pies?|donuts?|doughnuts?)\b`)
+// wantsChart matches a message that asks for a chart, or for a projection,
+// forecast or trend a line chart shows well, so the chart tools are offered
+// only then, and for the replies that follow.
+var wantsChart = regexp.MustCompile(`(?i)\b(chart(s|ed|ing)?|graph(s|ed|ing)?|plot(s|ted|ting)?|visuali[sz](e|es|ed|ing|ation|ations)|pies?|donuts?|doughnuts?|` +
+	`projections?|forward\s+estimates?|trending|forecast(s|ed|ing)?)\b`)
 
 // errArgs marks arguments the model must fix. The log gets the same reason
 // the model does, which can quote a series name or a date from its
