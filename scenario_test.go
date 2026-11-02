@@ -296,6 +296,23 @@ func TestScenarioMessageWithNothingUsableIsIgnored(t *testing.T) {
 
 // --- the conversation the model sees -----------------------------------------------
 
+// Each run of group messages not addressed to the bot reaches the model as
+// one labelled message, between its own exchanges, so the talk reads as
+// background rather than as questions each wanting an answer.
+func TestScenarioGroupChatterIsOneBlockPerRun(t *testing.T) {
+	h := startBot(t, world{Contacts: map[string]string{idBob: "Bob"}})
+	h.ignored(inGroup("source goes in the lower left"))
+	h.ignored(inGroup("any cool MCP servers?"))
+	h.ask(atBot("chart the top 5 countries by population"))
+	h.ignored(inGroup("nice profile pic").by(idBob, "Bob"))
+	h.ask(atBot("didn't realise India passed China"))
+	equal(t, "conversation", h.lastRequest().contents(), []string{
+		"user: [Messages not addressed to you, for context only:]\nAlice: source goes in the lower left\nAlice: any cool MCP servers?",
+		"user: Alice: chart the top 5 countries by population", "assistant: ok",
+		"user: [Messages not addressed to you, for context only:]\nBob: nice profile pic",
+		"user: Alice: didn't realise India passed China"})
+}
+
 // A group message that isn't for the bot is kept, unlogged, and the model
 // sees it the next time someone addresses the bot.
 func TestScenarioGroupChatterIsContext(t *testing.T) {
@@ -308,7 +325,7 @@ func TestScenarioGroupChatterIsContext(t *testing.T) {
 	}
 	h.ask(atBot("what do you think?"))
 	equal(t, "conversation", h.lastRequest().contents(),
-		[]string{"user: Alice: the moon is made of cheese", "user: Alice: what do you think?"})
+		[]string{"user: [Messages not addressed to you, for context only:]\nAlice: the moon is made of cheese", "user: Alice: what do you think?"})
 }
 
 // Photos and stickers in chatter are noted, never fetched; a group update
@@ -324,7 +341,7 @@ func TestScenarioGroupChatterNotesImagesWithoutFetching(t *testing.T) {
 	h.ignored(incoming{From: idAlice, Name: "Alice", Group: idGroup, Update: true})
 	h.ask(atBot("what was that?"))
 	equal(t, "conversation", h.lastRequest().contents(),
-		[]string{"user: Alice: [image]", "user: Bob: [sticker]", "user: Alice: what was that?"})
+		[]string{"user: [Messages not addressed to you, for context only:]\nAlice: [image]\nBob: [sticker]", "user: Alice: what was that?"})
 	if n := len(h.callsTo("getAttachment")) + len(h.callsTo("getSticker")); n != 0 {
 		t.Fatal("an image in chatter was fetched")
 	}
@@ -344,7 +361,7 @@ func TestScenarioGroupSenderWithoutName(t *testing.T) {
 	h.ignored(inGroup("the moon is made of cheese").by(idBob, ""))
 	h.ask(atBot("what do you think?").by(idBob, ""))
 	equal(t, "conversation", h.lastRequest().contents(),
-		[]string{"user: someone: the moon is made of cheese", "user: what do you think?"})
+		[]string{"user: [Messages not addressed to you, for context only:]\nsomeone: the moon is made of cheese", "user: what do you think?"})
 }
 
 func TestScenarioHistoryAcrossTurns(t *testing.T) {
@@ -1622,7 +1639,7 @@ func TestScenarioScheduleRunsInAGroup(t *testing.T) {
 		t.Fatalf("posted before %v", at)
 	}
 	h.ask(atBot("who said what?"))
-	equal(t, "conversation", h.lastRequest().contents(), []string{"user: Alice: lunch is ready @Bob", "user: Alice: who said what?"})
+	equal(t, "conversation", h.lastRequest().contents(), []string{"user: [Messages not addressed to you, for context only:]\nAlice: lunch is ready @Bob", "user: Alice: who said what?"})
 	if s := h.ask(fromAlice("/schedule LIST")); !strings.HasPrefix(s.Message, "You have no schedules.") { // not a repeat of the first
 		t.Fatalf("list %q", s.Message)
 	}

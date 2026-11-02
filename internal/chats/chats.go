@@ -37,6 +37,7 @@ var (
 type Entry struct {
 	Role    string // "user" or "assistant"
 	Content string
+	Context bool // a message not addressed to the bot, kept only as context
 	Expires time.Time
 }
 

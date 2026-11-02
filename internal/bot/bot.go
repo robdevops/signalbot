@@ -167,7 +167,7 @@ func (b *Bot) handle(r Received) {
 // the Context one returns in history.
 func (b *Bot) keep(msg feature.Message) {
 	if a := b.onMessage(b.ctx, msg); a.Context != "" && b.ai != nil { // with no model, nothing would read it
-		b.chats.Add(msg.Chat.Key(), time.Now(), msg.Expires, chats.Entry{Role: "user", Content: a.Context})
+		b.chats.Add(msg.Chat.Key(), time.Now(), msg.Expires, chats.Entry{Role: "user", Content: a.Context, Context: true})
 	}
 }
 

@@ -93,7 +93,7 @@ func (b *Bot) respond(msg feature.Message, act feature.Action, text string) {
 		offered, tools = b.offer(key, msg.Text, act.ToolChoice)
 		reply, err = b.ai.Ask(b.ctx, model.Request{
 			System:     b.system(offered, msg.Chat.GroupID == ""),
-			History:    b.chats.History(key),
+			History:    contextBlocks(b.chats.History(key)),
 			Text:       strings.TrimSpace(asked),
 			Images:     images,
 			Tools:      tools,
@@ -223,6 +223,29 @@ func (b *Bot) toolNames(all bool) []string {
 		if all || len(g.Tools) > 0 {
 			out = append(out, g.Names...)
 		}
+	}
+	return out
+}
+
+// contextLabel opens a block of messages not addressed to the bot.
+const contextLabel = "[Messages not addressed to you, for context only:]"
+
+// contextBlocks is history with each run of messages not addressed to the
+// bot merged into one labelled message, so the model sees them as the talk
+// around it rather than as questions, each wanting an answer.
+func contextBlocks(h []chats.Entry) []chats.Entry {
+	var out []chats.Entry
+	for i := 0; i < len(h); i++ {
+		if !h[i].Context {
+			out = append(out, h[i])
+			continue
+		}
+		block := contextLabel
+		for ; i < len(h) && h[i].Context; i++ {
+			block += "\n" + h[i].Content
+		}
+		i--
+		out = append(out, chats.Entry{Role: "user", Content: block, Context: true})
 	}
 	return out
 }

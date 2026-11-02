@@ -100,6 +100,6 @@ func (b *Bot) delivered(msg feature.Message) {
 	}
 	b.net.Send(msg.Chat, msg.Text, nil, known)
 	if b.ai != nil { // with no model, nothing would read it
-		b.chats.Add(key, time.Now(), msg.Expires, chats.Entry{Role: "user", Content: cmp.Or(msg.Name, "someone") + ": " + msg.Text})
+		b.chats.Add(key, time.Now(), msg.Expires, chats.Entry{Role: "user", Content: cmp.Or(msg.Name, "someone") + ": " + msg.Text, Context: true})
 	}
 }

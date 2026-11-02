@@ -57,7 +57,7 @@ func TestHooks(t *testing.T) {
 
 	// When no hook acts, the model is asked.
 	r, s := h.ask(atBot("look"))
-	equal(t, "model got", contents(r), []string{"user: Bob said: the moon is cheese", "user: Alice: look\n[a note]\n[second note]"})
+	equal(t, "model got", contents(r), []string{"user: [Messages not addressed to you, for context only:]\nBob said: the moon is cheese", "user: Alice: look\n[a note]\n[second note]"})
 	if parts := messages(r)[2]["content"].([]any); len(parts) != 1+feature.MaxPictures+1 {
 		t.Fatalf("content %v", parts)
 	}
@@ -247,7 +247,7 @@ func TestDeliver(t *testing.T) {
 	}
 	h.b.Deliver(feature.Message{Chat: group, Sender: aliceID, Text: "@Botty what's new?"}) // her name is looked up
 	r := h.nextSend()
-	equal(t, "model got", contents(h.requests()[0]), []string{"user: Alice: see you @bob and @Alice", "user: Alice: what's new?"})
+	equal(t, "model got", contents(h.requests()[0]), []string{"user: [Messages not addressed to you, for context only:]\nAlice: see you @bob and @Alice", "user: Alice: what's new?"})
 	if r.text != "ok" || !strings.Contains(h.logs.String(), "<6>reply 0.") {
 		t.Fatalf("sent %+v; logs:\n%s", r, h.logs)
 	}
