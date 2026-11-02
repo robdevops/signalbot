@@ -1270,9 +1270,10 @@ func TestScenarioExampleWithoutModel(t *testing.T) {
 	h := startBot(t, world{})
 	s := h.ask(atBot("/intro"))
 	// /intro sends INTRO, the same text the model gives when asked to
-	// introduce itself.
+	// introduce itself. In a group it leaves out /schedule, which is made
+	// only in a DM.
 	want := "hi, I'm Botty, your open source assistant running test-model.\n\nI respond to @Botty and replies to my messages.\n\nTools:\nweb search\n\ncharts: line, pie\n\n" +
-		"Type \"/schedule\" for schedules and reminders.\n\nhttps://github.com/robdevops/signalbot/blob/main/README.md\n\nThis message did not use the model."
+		"https://github.com/robdevops/signalbot/blob/main/README.md\n\nThis message did not use the model."
 	if s.Message != want || s.GroupID != idGroup {
 		t.Fatalf("sent %q", s.Message)
 	}
@@ -1282,8 +1283,14 @@ func TestScenarioExampleWithoutModel(t *testing.T) {
 	// The tool labels and the name are Markdown, so they arrive in bold and italic.
 	equal(t, "styles", s.Styles, []string{strconv.Itoa(strings.Index(want, "web search")) + ":10:BOLD",
 		strconv.Itoa(strings.Index(want, "charts")) + ":6:BOLD", strconv.Itoa(strings.Index(want, "Botty")) + ":5:ITALIC"})
-	if s := h.ask(fromAlice("/INTRO")); s.Message != want || s.Mentions != nil {
-		t.Fatalf("DM sent %q", s.Message)
+	if s := h.ask(atBot("/help")); s.Message != want {
+		t.Fatalf("/help sent %q", s.Message)
+	}
+	dm := strings.Replace(want, "https://", "Type \"/schedule\" for schedules and reminders.\n\nhttps://", 1)
+	for _, text := range []string{"/INTRO", "/Help"} {
+		if s := h.ask(fromAlice(text)); s.Message != dm || s.Mentions != nil {
+			t.Fatalf("DM %s sent %q", text, s.Message)
+		}
 	}
 	if n := len(h.requests()); n != 0 {
 		t.Fatalf("the model was asked %d times", n)
@@ -1567,6 +1574,21 @@ func TestScenarioGoldenPromptFull(t *testing.T) {
 	h.ignored(inGroup("the moon is made of cheese"))
 	h.ask(atBot("chart AAPL against the S&P 500 for a year"))
 	golden(t, "prompt_full.txt", h.lastRequest().System)
+}
+
+// In a DM the model's introduction includes /schedule, made only in a DM;
+// in a group it doesn't.
+func TestScenarioScheduleInIntroOnlyInDM(t *testing.T) {
+	h := startBot(t, world{})
+	line := `Type \"/schedule\" for schedules and reminders.`
+	h.ask(fromAlice("introduce yourself"))
+	if !strings.Contains(h.lastRequest().System, line) {
+		t.Fatalf("DM prompt %q", h.lastRequest().System)
+	}
+	h.ask(atBot("introduce yourself"))
+	if strings.Contains(h.lastRequest().System, line) {
+		t.Fatalf("group prompt %q", h.lastRequest().System)
+	}
 }
 
 // A model that can't call tools: {tools} is "none" and there is no tools line.

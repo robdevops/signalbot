@@ -124,7 +124,7 @@ Docker's journald driver records stderr at priority 3 (err) and stdout at 6 (inf
 
 ### Then
 
-Add the bot's account to a group and @mention it, reply to one of its messages, or DM it from an allowed sender. Send it `/intro` to see its introduction (`INTRO`), the same text the model gives when asked to introduce itself; that reply never goes to the model.
+Add the bot's account to a group and @mention it, reply to one of its messages, or DM it from an allowed sender. Send it `/intro` or `/help` to see its introduction (`INTRO`), the same text the model gives when asked to introduce itself; that reply never goes to the model.
 
 ## Configuration
 
@@ -149,7 +149,7 @@ Add the bot's account to a group and @mention it, reply to one of its messages, 
 
 `OPENROUTER_API_KEY` is now `MODEL_API_KEY`, and `REASONING` and `SYSTEM_PROMPT` are now `MODEL_REASONING` and `MODEL_SYSTEM_PROMPT`; the old names are ignored. `LOG_LEVEL` is gone: every level is always written (see [Logs](TECHNICAL.md#logs)).
 
-The default `INTRO` is short paragraphs: `hi, I'm *{name}*, your open source assistant running {model}.`, `I respond to @{name} and replies to my messages.`, `Tools:` then `{tools}`, one tool category per paragraph, then `{more}`, lines features add (such as `Type "/schedule" for schedules and reminders.`), then the link `https://github.com/robdevops/signalbot/blob/main/README.md` (Signal makes a bare url clickable; it has no named links).
+The default `INTRO` is short paragraphs: `hi, I'm *{name}*, your open source assistant running {model}.`, `I respond to @{name} and replies to my messages.`, `Tools:` then `{tools}`, one tool category per paragraph, then `{more}`, lines features add (such as `Type "/schedule" for schedules and reminders.`, only in a DM, where schedules are made), then the link `https://github.com/robdevops/signalbot/blob/main/README.md` (Signal makes a bare url clickable; it has no named links).
 
 The cost logged with each reply is the amount OpenRouter reports billing for it. An API that reports no cost gets none logged.
 

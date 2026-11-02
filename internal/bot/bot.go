@@ -89,7 +89,7 @@ type Bot struct {
 	messages []func(context.Context, feature.Message) feature.Action
 	turns    []func(context.Context, feature.Message) feature.Additions
 	groups   []feature.ToolGroup
-	more     []string // features' lines for the introduction
+	more     []introLine // features' lines for the introduction
 }
 
 // New makes the bot on net and reads what the model can do, so features
@@ -351,4 +351,10 @@ func (b *Bot) onMessage(ctx context.Context, msg feature.Message) feature.Action
 		}
 	}
 	return feature.Action{}
+}
+
+// introLine is a feature's line for the introduction, perhaps only in a DM.
+type introLine struct {
+	text   string
+	dmOnly bool
 }

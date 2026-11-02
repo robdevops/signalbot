@@ -383,7 +383,8 @@ func TestOtherAPI(t *testing.T) {
 }
 
 // Features' introduction lines go where INTRO has {more}, each padded with
-// a blank line, and the introduction never has two blank lines in a row.
+// a blank line, and the introduction never has two blank lines in a row. A
+// DM-only line is left out in a group.
 func TestIntroLines(t *testing.T) {
 	for intro, want := range map[string]string{
 		"hi\n\n{more}\n\nbye": "hi\n\nType one.\n\nType two.\n\nbye",
@@ -391,11 +392,15 @@ func TestIntroLines(t *testing.T) {
 		"hi\n\n\n\nbye{more}": "hi\n\nbye\n\nType one.\n\nType two.",
 	} {
 		h := start(t, options{cfg: func(c *config.Config) { c.Intro = intro }, features: func(b *Bot) {
-			b.IntroLine("Type one.")
-			b.IntroLine("Type two.")
+			b.IntroLine("Type one.", false)
+			b.IntroLine("Type two.", true)
 		}})
-		if got := h.b.Info().Intro; got != want {
+		if got := h.b.Info().IntroDM; got != want {
 			t.Errorf("INTRO %q gave %q, want %q", intro, got, want)
+		}
+		// In a group, only the lines not for DMs only.
+		if got, gw := h.b.Info().Intro, strings.Replace(strings.Replace(want, "\n\nType two.", "", 1), "Type two.\n\n", "", 1); got != gw {
+			t.Errorf("INTRO %q in a group gave %q, want %q", intro, got, gw)
 		}
 	}
 }

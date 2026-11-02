@@ -88,7 +88,7 @@ func (b *Bot) respond(msg feature.Message, act feature.Action, text string) {
 		var tools []feature.Tool
 		offered, tools = b.offer(key, msg.Text, act.ToolChoice)
 		reply, err = b.ai.Ask(b.ctx, model.Request{
-			System:     b.system(offered),
+			System:     b.system(offered, msg.Chat.GroupID == ""),
 			History:    b.chats.History(key),
 			Text:       strings.TrimSpace(asked),
 			Images:     images,
@@ -224,8 +224,9 @@ func (b *Bot) toolNames(all bool) []string {
 }
 
 // system is the system prompt: the base rules with the network's line (and
-// the source rule when there are tools), the tools line, the offered groups' lines, MODEL_SYSTEM_PROMPT and the intro.
-func (b *Bot) system(offered []int) string {
+// the source rule when there are tools), the tools line, the offered groups' lines, MODEL_SYSTEM_PROMPT and the intro,
+// the DM's one if dm.
+func (b *Bot) system(offered []int, dm bool) string {
 	p := basePrompt
 	if n := b.net.Prompt(); n != "" {
 		p += " " + n
@@ -255,17 +256,24 @@ func (b *Bot) system(offered []int) string {
 		p += "\n" + b.cfg.SystemPrompt
 	}
 	// Quoted, so a newline or quote in the name or INTRO can't escape it.
-	return p + "\nIf asked to introduce yourself, reply with exactly this text and nothing else: " + strconv.Quote(b.intro())
+	return p + "\nIf asked to introduce yourself, reply with exactly this text and nothing else: " + strconv.Quote(b.intro(dm))
 }
 
-// intro is INTRO with {name}, {model} and {tools} filled in: what the model
-// says when asked to introduce itself, which features may also send.
-func (b *Bot) intro() string {
+// intro is INTRO with {name}, {model}, {tools} and {more} filled in, with
+// the DM-only lines if dm: what the model says when asked to introduce
+// itself, which features may also send.
+func (b *Bot) intro(dm bool) string {
 	model := b.cfg.Model[strings.LastIndex(b.cfg.Model, "/")+1:] // without the provider
 	if b.ai == nil {
 		model = "no model"
 	}
-	more := "\n\n" + strings.Join(b.more, "\n\n") + "\n\n" // each feature line padded with blank lines
+	var lines []string
+	for _, l := range b.more {
+		if dm || !l.dmOnly {
+			lines = append(lines, l.text)
+		}
+	}
+	more := "\n\n" + strings.Join(lines, "\n\n") + "\n\n" // each feature line padded with blank lines
 	s := strings.NewReplacer("{name}", b.net.BotName(), "{model}", model, "{more}", more,
 		"{tools}", cmp.Or(strings.Join(b.toolNames(false), "\n\n"), "none")).Replace(b.cfg.Intro)
 	s = lineEnds.ReplaceAllString(s, "\n")
