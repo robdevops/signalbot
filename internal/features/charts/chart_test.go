@@ -332,8 +332,8 @@ func TestAreaStyle(t *testing.T) {
 // Argument errors say what to fix, so the model can correct its next call.
 func TestChartArgErrors(t *testing.T) {
 	for args, want := range map[string]string{
-		`{"title":"T","series":[{"name":"a","points":[{"date":"2026-10-01","value":"12.3"}]}]}`: "series.0.points.0.value must be a number, got string",
-		`{"title":"T","axes":{"left":{"invert":"true"}},"series":[]}`:                           "axes.left.invert must be true or false, got string",
+		`{"title":"T","series":[{"name":"a","points":[{"date":"2026-10-01","value":"12.3"}]}]}`: "series.0.points.0.value must be a number, got a string: pass it as JSON itself",
+		`{"title":"T","axes":{"left":{"invert":"true"}},"series":[]}`:                           "axes.left.invert must be true or false, got a string",
 		`{"title":"T","series":[`: "not valid JSON (at character 23)",
 		`[1,2]`:                   "must be a JSON object, got array",
 		``:                        "title is required",
@@ -345,6 +345,35 @@ func TestChartArgErrors(t *testing.T) {
 	}
 	if _, err := parsePie(`{"title":"T","slices":[{"label":"a","value":"1"}]}`); err == nil || !strings.Contains(err.Error(), "slices.0.value must be a number") {
 		t.Errorf("pie: %v", err)
+	}
+}
+
+// Some models send an object or array inside the arguments as a string
+// holding its JSON: it is taken as meant, at any depth, while a string
+// field that merely looks like JSON stays a string.
+func TestChartArgsWithStringifiedParts(t *testing.T) {
+	args := `{"title":"[draft] NVDA vs MSFT","axes":"{\"left\": {\"mode\": \"change\"}}","series":[` +
+		`{"name":"NVDA","points":"[{\"date\":\"2026-10-01\",\"value\":100},{\"date\":\"2026-10-02\",\"value\":110}]"},` +
+		`{"name":"[1]","points":[{"date":"2026-10-01","value":50},{"date":"2026-10-02","value":45}]}]}`
+	s, err := parseChart(args)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s.Title != "[draft] NVDA vs MSFT" || s.left.Mode != "change" || s.Series[0].Points[1].Value != 10 || s.Series[1].Name != "[1]" {
+		t.Fatalf("got %+v", s)
+	}
+	if _, err := parsePie(`{"title":"T","slices":"[{\"label\":\"a\",\"value\":1},{\"label\":\"b\",\"value\":2}]"}`); err != nil {
+		t.Fatalf("pie: %v", err)
+	}
+	// An element of an array, too.
+	one := `{"name":"A","points":[{"date":"2026-10-01","value":1},{"date":"2026-10-02","value":2}]}`
+	q, _ := json.Marshal(one)
+	if s, err := parseChart(`{"title":"T","series":[` + string(q) + `]}`); err != nil || s.Series[0].Name != "A" {
+		t.Fatalf("element: %v", err)
+	}
+	// A string that isn't JSON still gets the error, with how to fix it.
+	if _, err := parseChart(`{"title":"T","axes":"left","series":[` + one + `]}`); err == nil || !strings.Contains(err.Error(), "axes must be an object, got a string: pass it as JSON itself") {
+		t.Fatalf("not JSON: %v", err)
 	}
 }
 

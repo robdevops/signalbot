@@ -138,9 +138,27 @@ func decodeArgs(tool, arguments string, v any) error {
 	}
 	var typeErr *json.UnmarshalTypeError
 	var syntaxErr *json.SyntaxError
-	switch err := json.Unmarshal(data, v); {
+	err := json.Unmarshal(data, v)
+	// Some models pass an object or array as a string of its JSON, e.g.
+	// "axes": "{\"left\": …}": take each such field, as the error names it,
+	// as meant, and try again.
+	var tree any
+	for range 20 {
+		if !errors.As(err, &typeErr) || typeErr.Value != "string" || typeErr.Field == "" ||
+			(tree == nil && json.Unmarshal(data, &tree) != nil) || !unstring(tree, strings.Split(typeErr.Field, ".")) {
+			break
+		}
+		fixed, merr := json.Marshal(tree)
+		if merr != nil {
+			break
+		}
+		err = json.Unmarshal(fixed, v)
+	}
+	switch {
 	case err == nil:
 		return nil
+	case errors.As(err, &typeErr) && typeErr.Field != "" && typeErr.Value == "string":
+		return fmt.Errorf("%s must be %s, got a string: pass it as JSON itself, not as text in quotes", typeErr.Field, jsonType(typeErr.Type.Kind()))
 	case errors.As(err, &typeErr) && typeErr.Field != "":
 		return fmt.Errorf("%s must be %s, got %s", typeErr.Field, jsonType(typeErr.Type.Kind()), typeErr.Value)
 	case errors.As(err, &typeErr):
@@ -150,6 +168,53 @@ func decodeArgs(tool, arguments string, v any) error {
 	default:
 		return fmt.Errorf("the arguments for %s are not valid JSON: %v", tool, err)
 	}
+}
+
+// unstring replaces the string at path (keys and indices) in a decoded JSON
+// value, if it holds a JSON object or array, with what it holds, and
+// reports whether it did.
+func unstring(v any, path []string) bool {
+	for len(path) > 1 {
+		switch t := v.(type) {
+		case map[string]any:
+			v = t[path[0]]
+		case []any:
+			i, err := strconv.Atoi(path[0])
+			if err != nil || i < 0 || i >= len(t) {
+				return false
+			}
+			v = t[i]
+		default:
+			return false
+		}
+		path = path[1:]
+	}
+	if len(path) == 0 {
+		return false
+	}
+	parse := func(e any) (any, bool) {
+		str, ok := e.(string)
+		if s := strings.TrimSpace(str); !ok || s == "" || s[0] != '{' && s[0] != '[' {
+			return nil, false
+		}
+		var inner any
+		return inner, json.Unmarshal([]byte(str), &inner) == nil
+	}
+	switch t := v.(type) {
+	case map[string]any: // a field of an object
+		if inner, ok := parse(t[path[0]]); ok {
+			t[path[0]] = inner
+			return true
+		}
+	case []any: // an element of an array
+		if i, err := strconv.Atoi(path[0]); err == nil && i >= 0 && i < len(t) {
+			if inner, ok := parse(t[i]); ok {
+				t[i] = inner
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // jsonType names a Go kind as JSON calls it, e.g. "a number".
