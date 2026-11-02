@@ -27,7 +27,7 @@ func Register(h feature.Host) error {
 
 // chatter is what history keeps of a message, as "<name>: <text>". The core
 // keeps it only for an unaddressed group message, like any other message
-// (HISTORY_MESSAGES, a day at most, sooner with disappearing messages), and
+// (HISTORY_MAX, a day at most, sooner with disappearing messages), and
 // never logs it. Only text is kept: images are noted, not fetched.
 func chatter(m feature.Message) string {
 	text := txt.Clamp(m.Text, maxChars)

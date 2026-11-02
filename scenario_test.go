@@ -380,9 +380,9 @@ func TestScenarioHistoryIsPerChat(t *testing.T) {
 	equal(t, "conversation", h.lastRequest().contents(), []string{"user: Alice: a group question"})
 }
 
-// HISTORY_MESSAGES caps the messages kept, the bot's replies included.
-func TestScenarioHistoryMessagesCap(t *testing.T) {
-	h := startBot(t, world{Env: map[string]string{"HISTORY_MESSAGES": "2"}})
+// HISTORY_MAX caps the messages kept, the bot's replies included.
+func TestScenarioHistoryMax(t *testing.T) {
+	h := startBot(t, world{Env: map[string]string{"HISTORY_MAX": "2"}})
 	h.queue(modelReply{Text: "answer number one"}, modelReply{Text: "answer number two"})
 	h.ask(fromAlice("question number one"))
 	h.ask(fromAlice("question number two"))
@@ -395,7 +395,7 @@ func TestScenarioHistoryMessagesCap(t *testing.T) {
 // model's request stays the same for a few messages and is read from the
 // prompt cache.
 func TestScenarioHistoryDropsToHalf(t *testing.T) {
-	h := startBot(t, world{Env: map[string]string{"HISTORY_MESSAGES": "4"}})
+	h := startBot(t, world{Env: map[string]string{"HISTORY_MAX": "4"}})
 	h.queue(modelReply{Text: "a1"}, modelReply{Text: "a2"}, modelReply{Text: "a3"})
 	h.ask(fromAlice("q1"))
 	h.ask(fromAlice("q2"))
