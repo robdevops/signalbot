@@ -61,7 +61,20 @@ type chat[M any] struct {
 	busy      bool                 // a worker is running
 }
 
-// New keeps up to messages entries per chat. A chat with
+// keep is how many of the latest entries a history over its cap of n keeps.
+// It drops to half of n (rounded up), not by one, so the start of the
+// history, and so of the model's request, stays the same for several
+// messages and is read from the model API's prompt cache, rather than
+// changing with every message once the history is full. Under 4 it keeps n.
+func keep(n int) int {
+	if n < 4 {
+		return n
+	}
+	return n - n/2
+}
+
+// New keeps up to messages entries per chat, at least half of them once
+// that many have been kept (see keep). A chat with
 // messages has one worker, which hands handle everything waiting in the
 // mailbox at once, in order, until nothing is left, and then exits. spawn
 // must start the worker on a free slot without blocking and return true, or
@@ -240,7 +253,7 @@ func (s *Store[M]) Add(key string, start time.Time, disappearing time.Duration, 
 		h = append(h, e)
 	}
 	if n := s.messages; len(h) > n {
-		h = append([]Entry(nil), h[len(h)-n:]...)
+		h = append([]Entry(nil), h[len(h)-keep(n):]...)
 	}
 	c.history = h
 	s.tidy(key, c)

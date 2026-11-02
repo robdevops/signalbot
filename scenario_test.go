@@ -391,6 +391,22 @@ func TestScenarioHistoryMessagesCap(t *testing.T) {
 		[]string{"user: question number two", "assistant: answer number two", "user: question number three"})
 }
 
+// From 4 up, a full history drops to half, not by one, so the start of the
+// model's request stays the same for a few messages and is read from the
+// prompt cache.
+func TestScenarioHistoryDropsToHalf(t *testing.T) {
+	h := startBot(t, world{Env: map[string]string{"HISTORY_MESSAGES": "4"}})
+	h.queue(modelReply{Text: "a1"}, modelReply{Text: "a2"}, modelReply{Text: "a3"})
+	h.ask(fromAlice("q1"))
+	h.ask(fromAlice("q2"))
+	h.ask(fromAlice("q3")) // history was full at 4: it drops to the latest 2
+	equal(t, "before q3", h.lastRequest().contents(), []string{"user: q1", "assistant: a1", "user: q2", "assistant: a2", "user: q3"})
+	h.ask(fromAlice("q4"))
+	equal(t, "before q4", h.lastRequest().contents(), []string{"user: q3", "assistant: a3", "user: q4"})
+	h.ask(fromAlice("q5"))
+	equal(t, "before q5", h.lastRequest().contents(), []string{"user: q3", "assistant: a3", "user: q4", "assistant: ok", "user: q5"})
+}
+
 // A chat with disappearing messages forgets its history when they disappear.
 func TestScenarioDisappearingMessagesLeaveHistory(t *testing.T) {
 	h := startBot(t, world{})

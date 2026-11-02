@@ -27,7 +27,7 @@ type Config struct {
 	SystemPrompt    string // MODEL_SYSTEM_PROMPT: added to the built-in prompt
 	Intro           string // INTRO
 	MaxConcurrency  int    // MAX_CONCURRENCY: messages answered at once
-	HistoryMessages int    // HISTORY_MESSAGES: messages remembered per chat
+	HistoryMessages int    // HISTORY_MESSAGES: most messages remembered per chat; when full, the older half goes
 	Version         string // the bot's version, set by main
 	Test            *Test  // nil in production
 }

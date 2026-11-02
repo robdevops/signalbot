@@ -7,7 +7,7 @@ What happens to your messages when this bot is in a chat. For how the bot is bui
 When the bot answers a message, it sends this to the model's API: [OpenRouter](https://openrouter.ai) by default, which passes it to the model's provider, or the API you set in `MODEL_API_URL` (see [other providers](README.md#other-providers)). With [no model](README.md#no-model), nothing is sent anywhere:
 
 - its instructions (the built-in prompt, plus `MODEL_SYSTEM_PROMPT`, `INTRO` and any MCP server's `instructions`);
-- the chat's recent messages, with the bot's replies: at most `HISTORY_MESSAGES` messages, none older than a day. In a group this is the whole conversation, including messages not addressed to the bot, so it can answer "what do you think?" about something just said; set `GROUP_CONTEXT=false` to keep only the messages addressed to it;
+- the chat's recent messages, with the bot's replies: at most `HISTORY_MESSAGES` messages (the older half dropped when full), none older than a day. In a group this is the whole conversation, including messages not addressed to the bot, so it can answer "what do you think?" about something just said; set `GROUP_CONTEXT=false` to keep only the messages addressed to it;
 - the new message, with the display name of whoever sent it (in groups) and of anyone it @mentions;
 - the quoted text, when someone replies to one of the bot's messages, or mentions the bot in reply to someone else.
 - photos or a sticker in the message (a sticker also by its emoji and pack title), and the thumbnail of a quoted photo, when the model accepts images (on OpenRouter the bot checks its model list at startup; with another provider it sends them until the API rejects one).
