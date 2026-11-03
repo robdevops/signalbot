@@ -19,9 +19,15 @@ import (
 	"github.com/robdevops/signalbot/internal/kit/txt"
 )
 
-// wantsChart matches a message that asks for a chart, so the chart tools are
-// offered only then, and for the replies that follow.
-var wantsChart = regexp.MustCompile(`(?i)\b(chart(s|ed|ing)?|graph(s|ed|ing)?|plot(s|ted|ting)?|visuali[sz](e|es|ed|ing|ation|ations)|pies?|donuts?|doughnuts?)\b`)
+// wantsChart matches a message that asks for a chart, or for a projection,
+// forecast or trend a line chart shows well, so the chart tools are offered
+// only then, and for the replies that follow.
+var wantsChart = regexp.MustCompile(`(?i)\b(chart(s|ed|ing)?|graph(s|ed|ing)?|plot(s|ted|ting)?|visuali[sz](e|es|ed|ing|ation|ations)|pies?|donuts?|doughnuts?|` +
+	`projections?|forward\s+estimates?|trending|forecast(s|ed|ing)?)\b`)
+
+// wantsSecondAxis matches a message that asks for a second Y axis, so the
+// dual-axis chart tool is offered only then, and for the replies that follow.
+var wantsSecondAxis = regexp.MustCompile(`(?i)\b(second(ary)?|dual|double|two|2|twin|both|separate|another|extra|right([\s-]*hand)?)[\s-]+(y[\s-]*)?ax(is|es)\b`)
 
 // errArgs marks arguments the model must fix. The log gets the same reason
 // the model does, which can quote a series name or a date from its
@@ -61,14 +67,7 @@ func Register(h feature.Host) error {
 		Listing:  "charts (" + chartTool + ", " + pieTool + ")",
 		Keywords: wantsChart,
 		Tools: []feature.Tool{
-			{Name: chartTool, Description: chartToolDescription, Schema: chartToolSchema, Run: func(_ context.Context, args string) (string, []feature.Picture, error) {
-				s, err := parseChart(args)
-				if err != nil {
-					return "error: " + err.Error(), nil, fmt.Errorf("%w: %v", errArgs, err)
-				}
-				data, err := renderChart(s, themeFor(mode))
-				return drawn(s.summary(), chartCaption(s.Title, s.Subtitle), fileName("line", s.Title), data, err)
-			}},
+			{Name: chartTool, Description: chartToolDescription, Schema: chartToolSchema, Run: lineChart(mode, false)},
 			{Name: pieTool, Description: pieToolDescription, Schema: pieToolSchema, Run: func(_ context.Context, args string) (string, []feature.Picture, error) {
 				s, err := parsePie(args)
 				if err != nil {
@@ -79,7 +78,28 @@ func Register(h feature.Host) error {
 			}},
 		},
 	})
+	// No Names: it is part of the charts the intro lists.
+	h.Tools(feature.ToolGroup{
+		Listing:  "dual-axis chart (" + dualAxisTool + ")",
+		Keywords: wantsSecondAxis,
+		Tools:    []feature.Tool{{Name: dualAxisTool, Description: dualAxisToolDescription, Schema: dualAxisToolSchema, Run: lineChart(mode, true)}},
+	})
 	return nil
+}
+
+// lineChart runs a line chart tool, on two Y axes if dual.
+func lineChart(mode string, dual bool) func(context.Context, string) (string, []feature.Picture, error) {
+	return func(_ context.Context, args string) (string, []feature.Picture, error) {
+		s, err := parseChart(args)
+		if err == nil && !dual && s.right.used {
+			err = errors.New(chartTool + " has one Y axis: put every series on it, using change mode to compare series on different scales")
+		}
+		if err != nil {
+			return "error: " + err.Error(), nil, fmt.Errorf("%w: %v", errArgs, err)
+		}
+		data, err := renderChart(s, themeFor(mode))
+		return drawn(s.summary(), chartCaption(s.Title, s.Subtitle), fileName("line", s.Title), data, err)
+	}
 }
 
 // drawn is a chart tool's result: the summary for the model and the chart,
@@ -136,9 +156,27 @@ func decodeArgs(tool, arguments string, v any) error {
 	}
 	var typeErr *json.UnmarshalTypeError
 	var syntaxErr *json.SyntaxError
-	switch err := json.Unmarshal(data, v); {
+	err := json.Unmarshal(data, v)
+	// Some models pass an object or array as a string of its JSON, e.g.
+	// "axes": "{\"left\": …}": take each such field, as the error names it,
+	// as meant, and try again.
+	var tree any
+	for range 20 {
+		if !errors.As(err, &typeErr) || typeErr.Value != "string" || typeErr.Field == "" ||
+			(tree == nil && json.Unmarshal(data, &tree) != nil) || !unstring(tree, strings.Split(typeErr.Field, ".")) {
+			break
+		}
+		fixed, merr := json.Marshal(tree)
+		if merr != nil {
+			break
+		}
+		err = json.Unmarshal(fixed, v)
+	}
+	switch {
 	case err == nil:
 		return nil
+	case errors.As(err, &typeErr) && typeErr.Field != "" && typeErr.Value == "string":
+		return fmt.Errorf("%s must be %s, got a string: pass it as JSON itself, not as text in quotes", typeErr.Field, jsonType(typeErr.Type.Kind()))
 	case errors.As(err, &typeErr) && typeErr.Field != "":
 		return fmt.Errorf("%s must be %s, got %s", typeErr.Field, jsonType(typeErr.Type.Kind()), typeErr.Value)
 	case errors.As(err, &typeErr):
@@ -148,6 +186,53 @@ func decodeArgs(tool, arguments string, v any) error {
 	default:
 		return fmt.Errorf("the arguments for %s are not valid JSON: %v", tool, err)
 	}
+}
+
+// unstring replaces the string at path (keys and indices) in a decoded JSON
+// value, if it holds a JSON object or array, with what it holds, and
+// reports whether it did.
+func unstring(v any, path []string) bool {
+	for len(path) > 1 {
+		switch t := v.(type) {
+		case map[string]any:
+			v = t[path[0]]
+		case []any:
+			i, err := strconv.Atoi(path[0])
+			if err != nil || i < 0 || i >= len(t) {
+				return false
+			}
+			v = t[i]
+		default:
+			return false
+		}
+		path = path[1:]
+	}
+	if len(path) == 0 {
+		return false
+	}
+	parse := func(e any) (any, bool) {
+		str, ok := e.(string)
+		if s := strings.TrimSpace(str); !ok || s == "" || s[0] != '{' && s[0] != '[' {
+			return nil, false
+		}
+		var inner any
+		return inner, json.Unmarshal([]byte(str), &inner) == nil
+	}
+	switch t := v.(type) {
+	case map[string]any: // a field of an object
+		if inner, ok := parse(t[path[0]]); ok {
+			t[path[0]] = inner
+			return true
+		}
+	case []any: // an element of an array
+		if i, err := strconv.Atoi(path[0]); err == nil && i >= 0 && i < len(t) {
+			if inner, ok := parse(t[i]); ok {
+				t[i] = inner
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // jsonType names a Go kind as JSON calls it, e.g. "a number".

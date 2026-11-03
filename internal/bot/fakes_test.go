@@ -142,8 +142,8 @@ func start(t *testing.T, o options) *harness {
 	srv := httptest.NewServer(http.HandlerFunc(h.model))
 	t.Cleanup(srv.Close)
 
-	cfg := &config.Config{APIURL: srv.URL, APIKey: "k", Model: "test/test-model", Reasoning: "low", Intro: config.DefaultIntro,
-		MaxConcurrency: 4, HistoryTurns: 10, Test: &config.Test{}}
+	cfg := &config.Config{APIURL: srv.URL, APIKey: "k", Model: "test/test-model", Reasoning: "low", Intro: config.DefaultIntro, ToolLinger: 2,
+		MaxConcurrency: 4, HistoryMax: 20, Test: &config.Test{}}
 	if u, _ := url.Parse(srv.URL); !o.otherAPI {
 		cfg.Test.OpenRouter = u.Hostname() // the fake is OpenRouter
 	}

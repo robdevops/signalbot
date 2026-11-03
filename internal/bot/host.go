@@ -20,7 +20,9 @@ func (b *Bot) OnTurn(fn func(context.Context, feature.Message) feature.Additions
 	b.turns = append(b.turns, fn)
 }
 
-func (b *Bot) IntroLine(line string) { b.more = append(b.more, line) }
+func (b *Bot) IntroLine(line string, dmOnly bool) {
+	b.more = append(b.more, introLine{line, dmOnly})
+}
 
 // Tools keeps g with only the tools the model's API can run, and drops a
 // group whose tools it can run none of. A group with no tools at all, only
@@ -44,7 +46,7 @@ func (b *Bot) Env(key, def string) string { return config.Env(key, def) }
 
 func (b *Bot) Info() feature.Info {
 	info := feature.Info{Name: b.net.BotName(), Version: b.cfg.Version, Model: b.cfg.Model,
-		Images: b.images.Load(), CallsTools: b.callsTools.Load(), Tools: b.toolNames(false), Intro: b.intro()}
+		Images: b.images.Load(), CallsTools: b.callsTools.Load(), Tools: b.toolNames(false), Intro: b.intro(false), IntroDM: b.intro(true)}
 	if b.ai == nil {
 		info.Model = ""
 	}
@@ -98,6 +100,6 @@ func (b *Bot) delivered(msg feature.Message) {
 	}
 	b.net.Send(msg.Chat, msg.Text, nil, known)
 	if b.ai != nil { // with no model, nothing would read it
-		b.chats.Add(key, time.Now(), msg.Expires, chats.Entry{Role: "user", Content: cmp.Or(msg.Name, "someone") + ": " + msg.Text})
+		b.chats.Add(key, time.Now(), msg.Expires, chats.Entry{Role: "user", Content: cmp.Or(msg.Name, "someone") + ": " + msg.Text, Context: true})
 	}
 }

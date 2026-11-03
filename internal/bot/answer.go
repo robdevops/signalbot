@@ -20,7 +20,11 @@ const (
 	// basePrompt and mentionPrompt always apply, with the network's own
 	// line between them; MODEL_SYSTEM_PROMPT is added to them.
 	basePrompt = "You are a helpful assistant in a chat. Reply in Markdown. " +
-		"Aim for a single line. Two or three sentences at the very most, and only when asked for detail."
+		"Aim for a single line. Two or three sentences at the very most, and only when asked for detail. " +
+		// Earlier messages include, in a group, others' talk not addressed
+		// to the bot, which it otherwise tends to answer all at once.
+		"Earlier messages are the conversation so far, not questions for you: " +
+		"reply to the latest message alone, using them only to understand it or when it asks you to."
 	mentionPrompt = "A mention shown as [unnamed user] is someone whose name you don't know; don't invent one. " +
 		"To mention someone, write @ followed by their exact name. Never write your own name with an @."
 	// sourcePrompt joins them when the model can call tools and has some.
@@ -28,10 +32,7 @@ const (
 		"or give its url when that helps."
 	// maxQuote caps quoted text in a prompt.
 	maxQuote = 500
-	// followUps is how many replies after one that matched a tool group's
-	// keywords, or used its tools, still offer it.
-	followUps = 2
-	sorry     = "Sorry, I couldn't get an answer right now."
+	sorry    = "Sorry, I couldn't get an answer right now."
 	// noTools answers a chat command, which forces a tool, once tools are off.
 	noTools = "That command needs tools, which this model can't use."
 )
@@ -88,8 +89,8 @@ func (b *Bot) respond(msg feature.Message, act feature.Action, text string) {
 		var tools []feature.Tool
 		offered, tools = b.offer(key, msg.Text, act.ToolChoice)
 		reply, err = b.ai.Ask(b.ctx, model.Request{
-			System:     b.system(offered),
-			History:    b.chats.History(key),
+			System:     b.system(offered, msg.Chat.GroupID == ""),
+			History:    contextBlocks(b.chats.History(key)),
 			Text:       strings.TrimSpace(asked),
 			Images:     images,
 			Tools:      tools,
@@ -201,7 +202,7 @@ func (b *Bot) followUp(key string, offered []int, text string, used []string) {
 		}
 		n := b.chats.FollowUp(key, i) - 1
 		if g.Keywords.MatchString(text) || slices.ContainsFunc(g.Tools, func(t feature.Tool) bool { return slices.Contains(used, t.Name) }) {
-			n = followUps
+			n = b.cfg.ToolLinger
 		}
 		b.chats.SetFollowUp(key, i, n)
 	}
@@ -223,9 +224,33 @@ func (b *Bot) toolNames(all bool) []string {
 	return out
 }
 
+// contextLabel opens a block of messages not addressed to the bot.
+const contextLabel = "[Messages not addressed to you, for context only:]"
+
+// contextBlocks is history with each run of messages not addressed to the
+// bot merged into one labelled message, so the model sees them as the talk
+// around it rather than as questions, each wanting an answer.
+func contextBlocks(h []chats.Entry) []chats.Entry {
+	var out []chats.Entry
+	for i := 0; i < len(h); i++ {
+		if !h[i].Context {
+			out = append(out, h[i])
+			continue
+		}
+		block := contextLabel
+		for ; i < len(h) && h[i].Context; i++ {
+			block += "\n" + h[i].Content
+		}
+		i--
+		out = append(out, chats.Entry{Role: "user", Content: block, Context: true})
+	}
+	return out
+}
+
 // system is the system prompt: the base rules with the network's line (and
-// the source rule when there are tools), the tools line, the offered groups' lines, MODEL_SYSTEM_PROMPT and the intro.
-func (b *Bot) system(offered []int) string {
+// the source rule when there are tools), the tools line, the offered groups' lines, MODEL_SYSTEM_PROMPT and the intro,
+// the DM's one if dm.
+func (b *Bot) system(offered []int, dm bool) string {
 	p := basePrompt
 	if n := b.net.Prompt(); n != "" {
 		p += " " + n
@@ -255,17 +280,24 @@ func (b *Bot) system(offered []int) string {
 		p += "\n" + b.cfg.SystemPrompt
 	}
 	// Quoted, so a newline or quote in the name or INTRO can't escape it.
-	return p + "\nIf asked to introduce yourself, reply with exactly this text and nothing else: " + strconv.Quote(b.intro())
+	return p + "\nIf asked to introduce yourself, reply with exactly this text and nothing else: " + strconv.Quote(b.intro(dm))
 }
 
-// intro is INTRO with {name}, {model} and {tools} filled in: what the model
-// says when asked to introduce itself, which features may also send.
-func (b *Bot) intro() string {
+// intro is INTRO with {name}, {model}, {tools} and {more} filled in, with
+// the DM-only lines if dm: what the model says when asked to introduce
+// itself, which features may also send.
+func (b *Bot) intro(dm bool) string {
 	model := b.cfg.Model[strings.LastIndex(b.cfg.Model, "/")+1:] // without the provider
 	if b.ai == nil {
 		model = "no model"
 	}
-	more := "\n\n" + strings.Join(b.more, "\n\n") + "\n\n" // each feature line padded with blank lines
+	var lines []string
+	for _, l := range b.more {
+		if dm || !l.dmOnly {
+			lines = append(lines, l.text)
+		}
+	}
+	more := "\n\n" + strings.Join(lines, "\n\n") + "\n\n" // each feature line padded with blank lines
 	s := strings.NewReplacer("{name}", b.net.BotName(), "{model}", model, "{more}", more,
 		"{tools}", cmp.Or(strings.Join(b.toolNames(false), "\n\n"), "none")).Replace(b.cfg.Intro)
 	s = lineEnds.ReplaceAllString(s, "\n")

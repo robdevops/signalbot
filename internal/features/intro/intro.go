@@ -1,5 +1,6 @@
-// Package intro answers "/intro" without the model, with the bot's
-// introduction (INTRO), the same text the model gives when asked.
+// Package intro answers "/intro", and its alias "/help", without the model,
+// with the bot's introduction (INTRO), the same text the model gives when
+// asked: a DM's in a DM.
 package intro
 
 import (
@@ -8,12 +9,22 @@ import (
 	"github.com/robdevops/signalbot/internal/feature"
 )
 
-// Register adds /intro to h.
+// Register adds /intro and /help to h.
 func Register(h feature.Host) error {
-	return feature.Command(h, "intro", func(_ context.Context, _ feature.Message, args string) feature.Action {
+	answer := func(_ context.Context, m feature.Message, args string) feature.Action {
 		if args != "" {
-			return feature.Action{} // only "/intro" itself; anything more carries on
+			return feature.Action{} // only the command itself; anything more carries on
 		}
-		return feature.Action{Answer: h.Info().Intro + "\n\nThis message did not use the model."}
-	})
+		intro := h.Info().Intro
+		if m.Chat.GroupID == "" {
+			intro = h.Info().IntroDM
+		}
+		return feature.Action{Answer: intro + "\n\nThis message did not use the model."}
+	}
+	for _, name := range []string{"intro", "help"} {
+		if err := feature.Command(h, name, answer); err != nil {
+			return err
+		}
+	}
+	return nil
 }

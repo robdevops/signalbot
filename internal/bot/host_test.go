@@ -57,7 +57,7 @@ func TestHooks(t *testing.T) {
 
 	// When no hook acts, the model is asked.
 	r, s := h.ask(atBot("look"))
-	equal(t, "model got", contents(r), []string{"user: Bob said: the moon is cheese", "user: Alice: look\n[a note]\n[second note]"})
+	equal(t, "model got", contents(r), []string{"user: [Messages not addressed to you, for context only:]\nBob said: the moon is cheese", "user: Alice: look\n[a note]\n[second note]"})
 	if parts := messages(r)[2]["content"].([]any); len(parts) != 1+feature.MaxPictures+1 {
 		t.Fatalf("content %v", parts)
 	}
@@ -147,8 +147,8 @@ func TestCommands(t *testing.T) {
 	h.noSend()
 }
 
-// A group with Keywords is offered when a message matches, and for the 2
-// replies after one that matched or used its tools. A group with only
+// A group with Keywords is offered when a message matches, and for the
+// TOOL_LINGER_ROUNDS (here 2) replies after one that matched or used its tools. A group with only
 // Names is kept for the prompt's list, but isn't in {tools}.
 func TestOffering(t *testing.T) {
 	h := start(t, options{tools: true, features: func(b *Bot) {
@@ -186,6 +186,26 @@ func TestOffering(t *testing.T) {
 	}
 	if info := h.b.Info(); info.Name != "Botty" || info.Model != "test/test-model" || !info.CallsTools || !info.Images || strings.Join(info.Tools, ",") != "alpha,beta" {
 		t.Fatalf("info %+v", info)
+	}
+}
+
+// TOOL_LINGER_ROUNDS sets how many replies a group lingers: none at 0, more
+// at 3.
+func TestToolLinger(t *testing.T) {
+	for linger, want := range map[int][]bool{0: {true, false}, 3: {true, true, true, true, false}} {
+		h := start(t, options{tools: true, cfg: func(c *config.Config) { c.ToolLinger = linger }, features: func(b *Bot) {
+			b.Tools(group("beta", "b_tool", regexp.MustCompile(`\bplot\b`)))
+		}})
+		for i, offered := range want {
+			text := fmt.Sprint("more ", i)
+			if i == 0 {
+				text = "plot it"
+			}
+			r, _ := h.ask(dm(text))
+			if got := slices.Contains(toolNames(r), "b_tool"); got != offered {
+				t.Errorf("linger %d, reply %d: offered %v", linger, i, got)
+			}
+		}
 	}
 }
 
@@ -247,7 +267,7 @@ func TestDeliver(t *testing.T) {
 	}
 	h.b.Deliver(feature.Message{Chat: group, Sender: aliceID, Text: "@Botty what's new?"}) // her name is looked up
 	r := h.nextSend()
-	equal(t, "model got", contents(h.requests()[0]), []string{"user: Alice: see you @bob and @Alice", "user: Alice: what's new?"})
+	equal(t, "model got", contents(h.requests()[0]), []string{"user: [Messages not addressed to you, for context only:]\nAlice: see you @bob and @Alice", "user: Alice: what's new?"})
 	if r.text != "ok" || !strings.Contains(h.logs.String(), "<6>reply 0.") {
 		t.Fatalf("sent %+v; logs:\n%s", r, h.logs)
 	}
@@ -383,7 +403,8 @@ func TestOtherAPI(t *testing.T) {
 }
 
 // Features' introduction lines go where INTRO has {more}, each padded with
-// a blank line, and the introduction never has two blank lines in a row.
+// a blank line, and the introduction never has two blank lines in a row. A
+// DM-only line is left out in a group.
 func TestIntroLines(t *testing.T) {
 	for intro, want := range map[string]string{
 		"hi\n\n{more}\n\nbye": "hi\n\nType one.\n\nType two.\n\nbye",
@@ -391,11 +412,15 @@ func TestIntroLines(t *testing.T) {
 		"hi\n\n\n\nbye{more}": "hi\n\nbye\n\nType one.\n\nType two.",
 	} {
 		h := start(t, options{cfg: func(c *config.Config) { c.Intro = intro }, features: func(b *Bot) {
-			b.IntroLine("Type one.")
-			b.IntroLine("Type two.")
+			b.IntroLine("Type one.", false)
+			b.IntroLine("Type two.", true)
 		}})
-		if got := h.b.Info().Intro; got != want {
+		if got := h.b.Info().IntroDM; got != want {
 			t.Errorf("INTRO %q gave %q, want %q", intro, got, want)
+		}
+		// In a group, only the lines not for DMs only.
+		if got, gw := h.b.Info().Intro, strings.Replace(strings.Replace(want, "\n\nType two.", "", 1), "Type two.\n\n", "", 1); got != gw {
+			t.Errorf("INTRO %q in a group gave %q, want %q", intro, got, gw)
 		}
 	}
 }

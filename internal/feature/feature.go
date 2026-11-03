@@ -120,7 +120,8 @@ type Info struct {
 	Images     bool     // the model takes images
 	CallsTools bool     // the model can call tools
 	Tools      []string // the Names of every tool group with tools, in feature order; none when it can't call tools
-	Intro      string   // INTRO with {name}, {model} and {tools} filled in
+	Intro      string   // INTRO with {name}, {model}, {tools} and {more} filled in, as in a group
+	IntroDM    string   // the same in a DM, with IntroLine's DM-only lines too
 }
 
 // Group is a group chat.
@@ -141,8 +142,9 @@ type Host interface {
 	// Tools offers a group of tools to the model.
 	Tools(ToolGroup)
 	// IntroLine adds a paragraph to the bot's introduction, where INTRO has
-	// {more}, such as a pointer to a command.
-	IntroLine(line string)
+	// {more}, such as a pointer to a command; with dmOnly, only to the
+	// introduction in a DM.
+	IntroLine(line string, dmOnly bool)
 	// At runs fn once at t, however late, passing the time it was due. It
 	// fails when too many timers are set.
 	At(name string, t time.Time, fn func(ctx context.Context, due time.Time)) (cancel func(), err error)

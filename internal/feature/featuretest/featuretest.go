@@ -60,10 +60,14 @@ func (h *Host) OnTurn(fn func(context.Context, feature.Message) feature.Addition
 	h.turns = append(h.turns, fn)
 }
 
-// IntroLine records an introduction line; IntroLines returns them.
-func (h *Host) IntroLine(line string) {
+// IntroLine records an introduction line, ending " (DM only)" if dmOnly;
+// IntroLines returns them.
+func (h *Host) IntroLine(line string, dmOnly bool) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
+	if dmOnly {
+		line += " (DM only)"
+	}
 	h.more = append(h.more, line)
 }
 

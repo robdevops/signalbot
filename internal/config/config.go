@@ -13,9 +13,9 @@ import (
 // DefaultIntro is the self-introduction when INTRO is unset. {name},
 // {model}, {tools} and {more} (features' lines) are filled in.
 const DefaultIntro = "hi, I'm *{name}*, your open source assistant running {model}.\n\n" +
-	"Tools:\n{tools}\n\n{more}" +
 	"I respond to @{name} and replies to my messages.\n\n" +
-	"See https://github.com/robdevops/signalbot/blob/main/README.md for details."
+	"Tools:\n{tools}\n\n{more}" +
+	"https://github.com/robdevops/signalbot/blob/main/README.md"
 
 // Config is the core's settings.
 type Config struct {
@@ -27,7 +27,8 @@ type Config struct {
 	SystemPrompt   string // MODEL_SYSTEM_PROMPT: added to the built-in prompt
 	Intro          string // INTRO
 	MaxConcurrency int    // MAX_CONCURRENCY: messages answered at once
-	HistoryTurns   int    // HISTORY_TURNS: exchanges remembered per chat
+	HistoryMax     int    // HISTORY_MAX: most messages remembered per chat; when full, the older half goes
+	ToolLinger     int    // TOOL_LINGER_ROUNDS: replies a keyword tool group stays offered after one that matched or used it; 0 to HistoryMax
 	Version        string // the bot's version, set by main
 	Test           *Test  // nil in production
 }
@@ -80,8 +81,16 @@ func Load() *Config {
 		SystemPrompt:   Env("MODEL_SYSTEM_PROMPT", ""),
 		Intro:          Env("INTRO", DefaultIntro),
 		MaxConcurrency: number("MAX_CONCURRENCY", 32),
-		HistoryTurns:   number("HISTORY_TURNS", 10),
+		HistoryMax:     number("HISTORY_MAX", 10),
+		ToolLinger:     2,
 	}
+	// 0 is allowed: offered only on a message that matches. More than
+	// HISTORY_MAX can't help: by then the exchange that used it has left
+	// history, so the model doesn't know it was in use.
+	if n, err := strconv.Atoi(strings.TrimSpace(Env("TOOL_LINGER_ROUNDS", ""))); err == nil && n >= 0 {
+		c.ToolLinger = n
+	}
+	c.ToolLinger = min(c.ToolLinger, c.HistoryMax)
 	// A key alone is OpenRouter's; a URL alone is a provider that needs no
 	// key, such as a local one.
 	c.NoModel = c.APIURL == "" && c.APIKey == ""

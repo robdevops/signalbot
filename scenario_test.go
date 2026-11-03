@@ -287,7 +287,7 @@ func TestScenarioUnaddressedMessagesAreNeverLogged(t *testing.T) {
 func TestScenarioMessageWithNothingUsableIsIgnored(t *testing.T) {
 	h := startBot(t, world{Vision: true})
 	big := fromAlice("")
-	big.Attachments = []attached{{ID: "big.png", Type: "image/png", Size: 9000000}}
+	big.Attachments = []attached{{ID: "big.png", Type: "image/png", Size: 30000000}}
 	h.ignored(big)
 	pdf := fromAlice("")
 	pdf.Attachments = []attached{{ID: "doc.pdf", Type: "application/pdf", Size: 1000}}
@@ -295,6 +295,23 @@ func TestScenarioMessageWithNothingUsableIsIgnored(t *testing.T) {
 }
 
 // --- the conversation the model sees -----------------------------------------------
+
+// Each run of group messages not addressed to the bot reaches the model as
+// one labelled message, between its own exchanges, so the talk reads as
+// background rather than as questions each wanting an answer.
+func TestScenarioGroupChatterIsOneBlockPerRun(t *testing.T) {
+	h := startBot(t, world{Contacts: map[string]string{idBob: "Bob"}})
+	h.ignored(inGroup("source goes in the lower left"))
+	h.ignored(inGroup("any cool MCP servers?"))
+	h.ask(atBot("chart the top 5 countries by population"))
+	h.ignored(inGroup("nice profile pic").by(idBob, "Bob"))
+	h.ask(atBot("didn't realise India passed China"))
+	equal(t, "conversation", h.lastRequest().contents(), []string{
+		"user: [Messages not addressed to you, for context only:]\nAlice: source goes in the lower left\nAlice: any cool MCP servers?",
+		"user: Alice: chart the top 5 countries by population", "assistant: ok",
+		"user: [Messages not addressed to you, for context only:]\nBob: nice profile pic",
+		"user: Alice: didn't realise India passed China"})
+}
 
 // A group message that isn't for the bot is kept, unlogged, and the model
 // sees it the next time someone addresses the bot.
@@ -308,7 +325,7 @@ func TestScenarioGroupChatterIsContext(t *testing.T) {
 	}
 	h.ask(atBot("what do you think?"))
 	equal(t, "conversation", h.lastRequest().contents(),
-		[]string{"user: Alice: the moon is made of cheese", "user: Alice: what do you think?"})
+		[]string{"user: [Messages not addressed to you, for context only:]\nAlice: the moon is made of cheese", "user: Alice: what do you think?"})
 }
 
 // Photos and stickers in chatter are noted, never fetched; a group update
@@ -324,7 +341,7 @@ func TestScenarioGroupChatterNotesImagesWithoutFetching(t *testing.T) {
 	h.ignored(incoming{From: idAlice, Name: "Alice", Group: idGroup, Update: true})
 	h.ask(atBot("what was that?"))
 	equal(t, "conversation", h.lastRequest().contents(),
-		[]string{"user: Alice: [image]", "user: Bob: [sticker]", "user: Alice: what was that?"})
+		[]string{"user: [Messages not addressed to you, for context only:]\nAlice: [image]\nBob: [sticker]", "user: Alice: what was that?"})
 	if n := len(h.callsTo("getAttachment")) + len(h.callsTo("getSticker")); n != 0 {
 		t.Fatal("an image in chatter was fetched")
 	}
@@ -344,7 +361,7 @@ func TestScenarioGroupSenderWithoutName(t *testing.T) {
 	h.ignored(inGroup("the moon is made of cheese").by(idBob, ""))
 	h.ask(atBot("what do you think?").by(idBob, ""))
 	equal(t, "conversation", h.lastRequest().contents(),
-		[]string{"user: someone: the moon is made of cheese", "user: what do you think?"})
+		[]string{"user: [Messages not addressed to you, for context only:]\nsomeone: the moon is made of cheese", "user: what do you think?"})
 }
 
 func TestScenarioHistoryAcrossTurns(t *testing.T) {
@@ -363,14 +380,31 @@ func TestScenarioHistoryIsPerChat(t *testing.T) {
 	equal(t, "conversation", h.lastRequest().contents(), []string{"user: Alice: a group question"})
 }
 
-func TestScenarioHistoryTurnsCap(t *testing.T) {
-	h := startBot(t, world{Env: map[string]string{"HISTORY_TURNS": "1"}})
+// HISTORY_MAX caps the messages kept, the bot's replies included.
+func TestScenarioHistoryMax(t *testing.T) {
+	h := startBot(t, world{Env: map[string]string{"HISTORY_MAX": "2"}})
 	h.queue(modelReply{Text: "answer number one"}, modelReply{Text: "answer number two"})
 	h.ask(fromAlice("question number one"))
 	h.ask(fromAlice("question number two"))
 	h.ask(fromAlice("question number three"))
 	equal(t, "conversation", h.lastRequest().contents(),
 		[]string{"user: question number two", "assistant: answer number two", "user: question number three"})
+}
+
+// From 4 up, a full history drops to half, not by one, so the start of the
+// model's request stays the same for a few messages and is read from the
+// prompt cache.
+func TestScenarioHistoryDropsToHalf(t *testing.T) {
+	h := startBot(t, world{Env: map[string]string{"HISTORY_MAX": "4"}})
+	h.queue(modelReply{Text: "a1"}, modelReply{Text: "a2"}, modelReply{Text: "a3"})
+	h.ask(fromAlice("q1"))
+	h.ask(fromAlice("q2"))
+	h.ask(fromAlice("q3")) // history was full at 4: it drops to the latest 2
+	equal(t, "before q3", h.lastRequest().contents(), []string{"user: q1", "assistant: a1", "user: q2", "assistant: a2", "user: q3"})
+	h.ask(fromAlice("q4"))
+	equal(t, "before q4", h.lastRequest().contents(), []string{"user: q3", "assistant: a3", "user: q4"})
+	h.ask(fromAlice("q5"))
+	equal(t, "before q5", h.lastRequest().contents(), []string{"user: q3", "assistant: a3", "user: q4", "assistant: ok", "user: q5"})
 }
 
 // A chat with disappearing messages forgets its history when they disappear.
@@ -966,7 +1000,7 @@ func TestScenarioNoModel(t *testing.T) {
 		t.Fatalf("web search logged as on: %v", h.logLines())
 	}
 	s := h.ask(atBot("/intro"))
-	if !strings.HasPrefix(s.Message, "hi, I'm Botty, your open source assistant running no model.\n\nTools:\nnone\n\n") {
+	if !strings.HasPrefix(s.Message, "hi, I'm Botty, your open source assistant running no model.\n\nI respond to @Botty and replies to my messages.\n\nTools:\nnone\n\n") {
 		t.Fatalf("sent %q", s.Message)
 	}
 	h.ignored(inGroup("the moon is made of cheese"))
@@ -1072,17 +1106,17 @@ func TestScenarioShutdownDrainsReplies(t *testing.T) {
 
 // --- signal-cli ----------------------------------------------------------------------------
 
-// A frame over the size limit drops the connection; the bot reconnects and
-// carries on.
-func TestScenarioOversizedFrameReconnects(t *testing.T) {
+// A frame over the size limit is skipped with a warning; the bot keeps its
+// connection and carries on.
+func TestScenarioOversizedFrameIsSkipped(t *testing.T) {
 	h := startBot(t, world{})
-	h.receiveRaw(strings.Repeat("x", 1<<20+10))
-	h.waitFor("the bot to reconnect", func() bool { return len(h.callsTo("listAccounts")) >= 2 })
-	if s := h.ask(atBot("are you back")); s.Message != "ok" {
+	h.receiveRaw(strings.Repeat("x", 40<<20))
+	h.waitFor("the warning", func() bool { _, ok := h.logged("skipped"); return ok })
+	if s := h.ask(atBot("are you still there")); s.Message != "ok" {
 		t.Fatalf("sent %q", s.Message)
 	}
-	if _, ok := h.logged("signal-cli read failed"); !ok {
-		t.Fatalf("no warning: %v", h.logLines())
+	if n := len(h.callsTo("listAccounts")); n != 1 {
+		t.Fatalf("reconnected: listAccounts called %d times", n)
 	}
 }
 
@@ -1108,6 +1142,47 @@ func TestScenarioFailedSendIsLogged(t *testing.T) {
 }
 
 // --- images and stickers -----------------------------------------------------------------
+
+// A photo of a few megabytes, too big for one old signal-cli frame, is shown
+// as it is; one over the model's 5 MB is shrunk to a JPEG first.
+func TestScenarioLargePhotosAreShown(t *testing.T) {
+	medium, large := noisyPNG(t, 800, 800), noisyPNG(t, 1400, 1400)
+	if len(medium) < 2<<20 || len(medium) > 5<<20 || len(large) < 6<<20 {
+		t.Fatalf("sizes %d, %d", len(medium), len(large))
+	}
+	h := startBot(t, world{Vision: true, Attachments: map[string][]byte{"medium.png": medium, "large.png": large}})
+	for _, tc := range []struct{ id, mime string }{{"medium.png", "image/png"}, {"large.png", "image/jpeg"}} {
+		m := fromAlice("")
+		m.Attachments = []attached{{ID: tc.id, Type: "image/png", Size: len(large)}}
+		h.ask(m)
+		last := h.lastRequest().last()
+		if last.Content != "[1 image attached]" || len(last.Images) != 1 || !strings.HasPrefix(last.Images[0], "data:"+tc.mime+";base64,") || len(last.Images[0]) > 7<<20 {
+			t.Fatalf("%s: model got %q with %d images", tc.id, last.Content, len(last.Images))
+		}
+	}
+	if n := len(h.callsTo("listAccounts")); n != 1 {
+		t.Fatalf("reconnected: listAccounts called %d times", n)
+	}
+}
+
+// A photo that can't be fetched, here because signal-cli's answer is too
+// big, is left out, and the model is told it failed to load rather than
+// that it can't see images. The connection is kept.
+func TestScenarioPhotoThatFailsToLoad(t *testing.T) {
+	h := startBot(t, world{Vision: true, Attachments: map[string][]byte{"huge.png": make([]byte, 30<<20)}})
+	m := fromAlice("what is this?")
+	m.Attachments = []attached{{ID: "huge.png", Type: "image/png", Size: 10000000}}
+	h.ask(m)
+	if last := h.lastRequest().last(); last.Content != "what is this?\n[1 image attached, which failed to load; you can see images, just not this one]" || last.Images != nil {
+		t.Fatalf("model got %q with %d images", last.Content, len(last.Images))
+	}
+	if _, ok := h.logged("could not fetch an image: getAttachment result too large"); !ok {
+		t.Fatalf("no warning: %v", h.logLines())
+	}
+	if n := len(h.callsTo("listAccounts")); n != 1 {
+		t.Fatalf("reconnected: listAccounts called %d times", n)
+	}
+}
 
 // A photo alone is shown to a model that takes images, and the history keeps
 // only a note.
@@ -1228,9 +1303,10 @@ func TestScenarioExampleWithoutModel(t *testing.T) {
 	h := startBot(t, world{})
 	s := h.ask(atBot("/intro"))
 	// /intro sends INTRO, the same text the model gives when asked to
-	// introduce itself.
-	want := "hi, I'm Botty, your open source assistant running test-model.\n\nTools:\nweb search\n\ncharts: line, pie\n\n" +
-		"Type \"/schedule\" for schedules and reminders.\n\nI respond to @Botty and replies to my messages.\n\nSee https://github.com/robdevops/signalbot/blob/main/README.md for details.\n\nThis message did not use the model."
+	// introduce itself. In a group it leaves out /schedule, which is made
+	// only in a DM.
+	want := "hi, I'm Botty, your open source assistant running test-model.\n\nI respond to @Botty and replies to my messages.\n\nTools:\nweb search\n\ncharts: line, pie\n\n" +
+		"https://github.com/robdevops/signalbot/blob/main/README.md\n\nThis message did not use the model."
 	if s.Message != want || s.GroupID != idGroup {
 		t.Fatalf("sent %q", s.Message)
 	}
@@ -1240,8 +1316,14 @@ func TestScenarioExampleWithoutModel(t *testing.T) {
 	// The tool labels and the name are Markdown, so they arrive in bold and italic.
 	equal(t, "styles", s.Styles, []string{strconv.Itoa(strings.Index(want, "web search")) + ":10:BOLD",
 		strconv.Itoa(strings.Index(want, "charts")) + ":6:BOLD", strconv.Itoa(strings.Index(want, "Botty")) + ":5:ITALIC"})
-	if s := h.ask(fromAlice("/INTRO")); s.Message != want || s.Mentions != nil {
-		t.Fatalf("DM sent %q", s.Message)
+	if s := h.ask(atBot("/help")); s.Message != want {
+		t.Fatalf("/help sent %q", s.Message)
+	}
+	dm := strings.Replace(want, "https://", "Type \"/schedule\" for schedules and reminders.\n\nhttps://", 1)
+	for _, text := range []string{"/INTRO", "/Help"} {
+		if s := h.ask(fromAlice(text)); s.Message != dm || s.Mentions != nil {
+			t.Fatalf("DM %s sent %q", text, s.Message)
+		}
 	}
 	if n := len(h.requests()); n != 0 {
 		t.Fatalf("the model was asked %d times", n)
@@ -1252,7 +1334,7 @@ func TestScenarioExampleWithoutModel(t *testing.T) {
 
 func TestScenarioBotWithoutProfileNameIsSignalbot(t *testing.T) {
 	h := startBot(t, world{NoBotName: true, MCP: true})
-	if s := h.ask(fromAlice("/intro")); !strings.HasPrefix(s.Message, "hi, I'm signalbot, your open source assistant running test-model.\n\nTools:\nweb search\n\ncharts: line, pie\n\nstocks: get_quote, price_chart, /quote\n\nweather: get_forecast, /forecast\n\n") {
+	if s := h.ask(fromAlice("/intro")); !strings.HasPrefix(s.Message, "hi, I'm signalbot, your open source assistant running test-model.\n\nI respond to @signalbot and replies to my messages.\n\nTools:\nweb search\n\ncharts: line, pie\n\nstocks MCP: get_quote, price_chart, /quote\n\nweather MCP: get_forecast, /forecast\n\n") {
 		t.Fatalf("sent %q", s.Message)
 	}
 }
@@ -1527,6 +1609,21 @@ func TestScenarioGoldenPromptFull(t *testing.T) {
 	golden(t, "prompt_full.txt", h.lastRequest().System)
 }
 
+// In a DM the model's introduction includes /schedule, made only in a DM;
+// in a group it doesn't.
+func TestScenarioScheduleInIntroOnlyInDM(t *testing.T) {
+	h := startBot(t, world{})
+	line := `Type \"/schedule\" for schedules and reminders.`
+	h.ask(fromAlice("introduce yourself"))
+	if !strings.Contains(h.lastRequest().System, line) {
+		t.Fatalf("DM prompt %q", h.lastRequest().System)
+	}
+	h.ask(atBot("introduce yourself"))
+	if strings.Contains(h.lastRequest().System, line) {
+		t.Fatalf("group prompt %q", h.lastRequest().System)
+	}
+}
+
 // A model that can't call tools: {tools} is "none" and there is no tools line.
 func TestScenarioGoldenPromptNoFeatures(t *testing.T) {
 	h := startBot(t, world{NoTools: true})
@@ -1558,7 +1655,7 @@ func TestScenarioScheduleRunsInAGroup(t *testing.T) {
 		t.Fatalf("posted before %v", at)
 	}
 	h.ask(atBot("who said what?"))
-	equal(t, "conversation", h.lastRequest().contents(), []string{"user: Alice: lunch is ready @Bob", "user: Alice: who said what?"})
+	equal(t, "conversation", h.lastRequest().contents(), []string{"user: [Messages not addressed to you, for context only:]\nAlice: lunch is ready @Bob", "user: Alice: who said what?"})
 	if s := h.ask(fromAlice("/schedule LIST")); !strings.HasPrefix(s.Message, "You have no schedules.") { // not a repeat of the first
 		t.Fatalf("list %q", s.Message)
 	}

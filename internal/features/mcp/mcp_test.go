@@ -207,6 +207,15 @@ func TestLoad(t *testing.T) {
 			t.Errorf("%s: want an error", name)
 		}
 	}
+	// A JSON mistake says where; a setting outside its server's braces says so.
+	for bad, want := range map[string]string{
+		"{\n  \"mcpServers\": {\n    \"y\": {\"url\": \"u\"\n      \"keywords\": [\"k\"]}}}": "line 4, column 7: invalid character '\"' after object key:value pair",
+		`{"mcpServers":{"y":{"url":"u"},"keywords":["stock"]}}`:                              `MCP server "keywords" must be an object, not array: is "keywords" a setting outside its server's braces?`,
+	} {
+		if _, err := load(writeConfig(t, bad)); err == nil || !strings.Contains(err.Error(), want) {
+			t.Errorf("%q: got %v, want %q", bad, err, want)
+		}
+	}
 	// A disabled server is dropped unchecked, even if it is incomplete.
 	s, err = load(writeConfig(t, `{"mcpServers":{"on":{"url":"u"},"off":{"disabled":true},"off2":{"url":"u","disabled":true}}}`))
 	if err != nil || len(s) != 1 || s["on"].URL != "u" {
@@ -334,7 +343,7 @@ func TestStartupErrors(t *testing.T) {
 }
 
 // Each server is its own group, named and listed by its tools then its
-// commands, with its prompt: a server's own instructions are not used.
+// commands, its {tools} label ending " MCP" unless its name has it, with its prompt: a server's own instructions are not used.
 // keywords gate it on whole words, ignoring capitals. Each server is told
 // the bot's version.
 func TestToolGroups(t *testing.T) {
@@ -344,7 +353,7 @@ func TestToolGroups(t *testing.T) {
 			"instructions":"Use yahoo for prices.","keywords":["stock"," AAPL ",""]},
 		"scout":{"url":"`+serve(t, scoutMCP)+`","allowed_tools":["fail"],
 			"chat_commands":{"scout":{"tool":"fail"}}},
-		"plain":{"url":"`+serve(t, &fakeMCP{})+`","allowed_tools":["echo"],"keywords":[]}}}`,
+		"plain_Mcp":{"url":"`+serve(t, &fakeMCP{})+`","allowed_tools":["echo"],"keywords":[]}}}`,
 		func(h *featuretest.Host) { h.Bot.Version = "v1.2.3" })
 	if err != nil {
 		t.Fatal(err)
@@ -357,10 +366,10 @@ func TestToolGroups(t *testing.T) {
 		t.Fatalf("groups %+v", gs)
 	}
 	plain, scout, yahoo := gs[0], gs[1], gs[2] // in name order
-	if plain.Listing != "plain: echo" || plain.System != "" || plain.Keywords != nil ||
-		scout.Listing != "scout: fail, /scout" || !slices.Equal(scout.Names, []string{"**scout**: fail, /scout"}) ||
+	if plain.Listing != "plain_Mcp: echo" || plain.System != "" || plain.Keywords != nil ||
+		scout.Listing != "scout: fail, /scout" || !slices.Equal(scout.Names, []string{"**scout MCP**: fail, /scout"}) ||
 		scout.System != "Use scout for everything." || scout.Keywords != nil || // the server's own instructions
-		yahoo.Listing != "yahoo: echo, pic" || !slices.Equal(yahoo.Names, []string{"**yahoo**: echo, pic"}) || !slices.Equal(plain.Names, []string{"**plain**: echo"}) || yahoo.System != "Use yahoo for prices." {
+		yahoo.Listing != "yahoo: echo, pic" || !slices.Equal(yahoo.Names, []string{"**yahoo MCP**: echo, pic"}) || !slices.Equal(plain.Names, []string{"**plain_Mcp**: echo"}) || yahoo.System != "Use yahoo for prices." {
 		t.Fatalf("groups %+v", gs)
 	}
 	if len(scout.Tools) != 1 || scout.Tools[0].Name != "scout__fail" {

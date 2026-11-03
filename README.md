@@ -19,11 +19,11 @@ A small, [privacy-conscious](PRIVACY.md) chat bot that connects to a running [si
 ## Features
 
 - Responds to @mentions, replies to its messages, and DMs from senders in `SIGNAL_DM_USER_IDS`
-- Tools: web search, built-in line and pie charts (with the data's source, such as the site or tool, written small under the chart), and your own [MCP](#mcp-tools) tools
+- Tools: web search, built-in line and pie charts, and your own [MCP](#mcp-tools) tools
 - [`/schedule`](#scheduling) a message or command, once or repeating, in a DM or a group
 - Understands images and stickers (if the configured model supports vision)
 - Typing indicators
-- Short per-conversation memory, for context. Frees from memory after 20 messages (HISTORY_TURNS), 24 hours, or when Signal's _disappearing messages_ timer expires, whichever comes first. Names and message bodies are never logged to disk.
+- Short per-conversation memory, for context. Keeps at most 10 messages (HISTORY_MAX), dropping the older half when full, and frees them after 24 hours, or when Signal's _disappearing messages_ timer expires, whichever comes first. Names and message bodies are never logged to disk.
 
 ## Use cases
 
@@ -124,34 +124,41 @@ Docker's journald driver records stderr at priority 3 (err) and stdout at 6 (inf
 
 ### Then
 
-Add the bot's account to a group and @mention it, reply to one of its messages, or DM it from an allowed sender. Send it `/intro` to see its introduction (`INTRO`), the same text the model gives when asked to introduce itself; that reply never goes to the model.
+Add the bot's account to a group and @mention it, reply to one of its messages, or DM it from an allowed sender. Send it `/intro` or `/help` to see its introduction (`INTRO`), the same text the model gives when asked to introduce itself; that reply never goes to the model.
 
 ## Configuration
 
 | Variable | Default | Description |
 |---|---|---|
 | `SIGNALCLI_SOCKET` | required | Unix socket path, or `host:port` for TCP |
+| `SIGNAL_DM_USER_IDS` | empty | UUIDs/numbers allowed to DM the bot, separated by commas or whitespace |
+| `MODEL` | `deepseek/deepseek-v4.1-flash-1017` | The model's name at the API: on OpenRouter as `provider/model` |
 | `MODEL_API_KEY` | empty | API key for the model's API, such as your [OpenRouter](https://openrouter.ai) key; none is sent when empty. With neither this nor `MODEL_API_URL` the bot has [no model](#no-model) |
 | `MODEL_API_URL` | `https://openrouter.ai/api/v1` | Base URL of an OpenAI-compatible chat completions API; see [Other providers](#other-providers) |
-| `MODEL` | `deepseek/deepseek-v4.1-flash-1017` | The model's name at the API: on OpenRouter as `provider/model` |
 | `MODEL_REASONING` | `low` | Reasoning effort, e.g. `low`, `medium`, `high` (`none` to omit). Sent as OpenRouter's `reasoning.effort`, or elsewhere as `reasoning_effort` |
 | `MODEL_SEARCH` | `true` | Lets the model search the web (OpenRouter's web search tool) when it decides to, citing the sites it uses by url; searches are billed. Only on OpenRouter: on another API it is left out, with a warning. Accepts `true`/`false`, `yes`/`no`, `on`/`off`, `1`/`0` |
-| `SIGNAL_DM_USER_IDS` | empty | UUIDs/numbers allowed to DM the bot, separated by commas or whitespace |
 | `MODEL_SYSTEM_PROMPT` | empty | Extra instructions, appended to the built-in prompt (which keeps answers short and Signal-sized and, when the model has tools, asks it to name its source) |
+| `DARKMODE` | `off` | Chart colours: `off` for light charts, `on` for dark, `auto` for dark from 21:00 to 07:00 in `TZ` and light otherwise |
+| `GROUP_CONTEXT` | `true` | Remember group messages not addressed to the bot as context, so "what do you think @bot" works without replying to the message; they are never logged |
+| `HISTORY_MAX` | `10` | Most messages remembered per chat, the bot's replies and, in groups, messages not addressed to it included. When full, the older half is dropped, so the start of the model's request stays the same for several messages and comes from the API's prompt cache (cheaper and faster); below 4, the oldest message is dropped |
 | `INTRO` | built-in sentence | Overrides the self-introduction; `{name}`, `{model}` (without any OpenRouter `provider/` prefix) and `{tools}` (the names of the tools, or `none`) are substituted |
 | `MAX_CONCURRENCY` | `32` | Conversations in flight at once; messages beyond this are dropped |
-| `HISTORY_TURNS` | `10` | Exchanges remembered per chat (`HISTORY_TURNS` × 2 messages) |
-| `GROUP_CONTEXT` | `true` | Remember group messages not addressed to the bot as context, so "what do you think @bot" works without replying to the message; they are never logged |
 | `MCP_CONFIG` | empty | Path of an MCP servers file; see [MCP tools](#mcp-tools) |
 | `STATE_DIRECTORY` | working directory | Where `/schedule` saves `schedules.json`; the bot won't start if it can't list and write it. Set by systemd's `StateDirectory=signalbot` (`/var/lib/private/signalbot`) and by the Docker image (`/data`, which must be writable by user 65532) |
-| `DARKMODE` | `off` | Chart colours: `off` for light charts, `on` for dark, `auto` for dark from 21:00 to 07:00 in `TZ` and light otherwise |
+| `TOOL_LINGER_ROUNDS` | `2` | Replies a keyword-gated tool group (charts, an MCP server with `keywords`) stays offered after the last one that matched its keywords or used its tools; `0` offers it only on a matching message. Any use or match starts the count again, so a run of follow-ups keeps it. Capped at `HISTORY_MAX`. See [How tools are offered](#how-tools-are-offered) |
 | `TZ` | `UTC` in Docker, the host's under systemd | Time zone for `/schedule` times without an offset and for `DARKMODE=auto`, e.g. `Australia/Sydney` |
 
 `OPENROUTER_API_KEY` is now `MODEL_API_KEY`, and `REASONING` and `SYSTEM_PROMPT` are now `MODEL_REASONING` and `MODEL_SYSTEM_PROMPT`; the old names are ignored. `LOG_LEVEL` is gone: every level is always written (see [Logs](TECHNICAL.md#logs)).
 
-The default `INTRO` is four short paragraphs: `hi, I'm *{name}*, your open source assistant running {model}.`, `Tools:` then `{tools}`, one tool category per paragraph, then `{more}`, lines features add (such as `Type "/schedule" for schedules and reminders.`), then `I respond to @{name} and replies to my messages.` and `See https://github.com/robdevops/signalbot/blob/main/README.md for details.`
+The default `INTRO` is short paragraphs: `hi, I'm *{name}*, your open source assistant running {model}.`, `I respond to @{name} and replies to my messages.`, `Tools:` then `{tools}`, one tool category per paragraph, then `{more}`, lines features add (such as `Type "/schedule" for schedules and reminders.`, only in a DM, where schedules are made), then the link `https://github.com/robdevops/signalbot/blob/main/README.md` (Signal makes a bare url clickable; it has no named links).
 
 The cost logged with each reply is the amount OpenRouter reports billing for it. An API that reports no cost gets none logged.
+
+### How tools are offered
+
+Web search and tools without `keywords` are offered with every message. Charts, and MCP servers with `keywords`, are offered only when a message matches their words, then for `TOOL_LINGER_ROUNDS` more replies, and each reply that matches or uses one of their tools starts that count again. So "chart NVDA", "add AMD", "make it a year" keeps the charts on however long it runs; only replies that leave them unused count down.
+
+The default of 2 is meant to cover a short aside ("thanks!", "what's AMD's ticker again?") before you come back to the chart, without the tools still being on when the conversation has moved on. Lingering longer has two costs: a tool on for unrelated messages is one the model may use when it shouldn't (a stock tool picked for a population question), and its descriptions add to every request. The prompt cache gains little, because the offered tools change once either way when a group drops off. Raise it if people often come back to a chart after several other questions; set `0` to offer a group only on messages that name it.
 
 ### Other providers
 
@@ -218,7 +225,7 @@ The model can call tools from [MCP](https://modelcontextprotocol.io) servers, re
 Two optional fields shape how a server's tools are offered:
 
 - `instructions` is a line added to the system prompt while the server's tools are offered. MCP servers can send their own `instructions` when the bot connects (the MCP spec's hint for the system prompt); without this key those are used, capped at 1,000 characters. Set it to replace them, or to `""` to use none.
-- `keywords` offers the server's tools only when a message contains one of the words, ignoring capitals and matching whole words only, and for the 2 replies after one that matched or used its tools. Without it, the tools are always offered. A chat command always gets its tool.
+- `keywords` offers the server's tools only when a message contains one of the words, ignoring capitals and matching whole words only, and for the `TOOL_LINGER_ROUNDS` replies (default 2) after one that matched or used its tools. Without it, the tools are always offered. A chat command always gets its tool.
 
 `chat_commands` are optional shortcuts on top of asking. `/forecast sydney this weekend` asks the model, which gets that tool on top of whatever else is on and must call it first. With `require_arg`, a bare `/forecast` gets a usage reply from the bot without asking the model.
 

@@ -5,7 +5,6 @@ package vision
 import (
 	"context"
 	"encoding/base64"
-	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -28,10 +27,12 @@ func Register(h feature.Host) error {
 
 // additions notes m's images and sticker, with the history's own version,
 // and fetches them as data: URLs if the model can see images. One that
-// can't be fetched is skipped.
+// can't be fetched is skipped, and the model told it failed to load, so it
+// doesn't conclude that it can't see images.
 func additions(ctx context.Context, h feature.Host, m feature.Message) feature.Additions {
 	see := h.Info().Images
 	var notes, kept, seen []string
+	note := func(n string) { notes, kept = append(notes, n), append(kept, n) }
 	images, sticker := 0, -1
 	for i, md := range m.Media {
 		if md.Sticker {
@@ -45,26 +46,32 @@ func additions(ctx context.Context, h feature.Host, m feature.Message) feature.A
 			}
 		}
 	}
-	switch {
-	case len(seen) > 0:
+	if len(seen) > 0 {
 		notes = append(notes, imageNote(len(seen), "attached"))
 		kept = append(kept, imageNote(len(seen), "attached"+notKept))
-	case images > 0:
-		n := imageNote(images, "attached, which you can't see with this model")
-		notes, kept = append(notes, n), append(kept, n)
+	}
+	switch failed := images - len(seen); {
+	case !see && images > 0:
+		note(imageNote(images, "attached, which you can't see with this model"))
+	case failed == 1:
+		note("[1 image attached, which failed to load; you can see images, just not this one]")
+	case failed > 1:
+		note(fmt.Sprintf("[%d images attached, which failed to load; you can see images, just not these]", failed))
 	}
 	if sticker >= 0 {
 		label, url := m.Media[sticker].Label, ""
 		if see {
 			url = fetch(ctx, h, m, sticker, "a sticker")
 		}
-		if url != "" {
+		switch {
+		case !see:
+			note("[sticker attached" + label + ", which you can't see]")
+		case url == "":
+			note("[sticker attached" + label + ", which failed to load]")
+		default:
 			notes = append(notes, "[sticker attached"+label+"]")
 			kept = append(kept, "[sticker attached"+label+notKept+"]")
 			seen = append(seen, url)
-		} else {
-			n := "[sticker attached" + label + ", which you can't see]"
-			notes, kept = append(notes, n), append(kept, n)
 		}
 	}
 	return feature.Additions{Note: strings.Join(notes, "\n"), HistoryNote: strings.Join(kept, "\n"), Images: seen}
@@ -78,12 +85,12 @@ func imageNote(n int, what string) string {
 	return fmt.Sprintf("[%d images %s]", n, what)
 }
 
-// fetch is m.Media[i] as a data: URL for the model, or "" if it can't be
-// fetched or isn't an image the model takes.
+// fetch is m.Media[i] as a data: URL for the model, shrunk if too big, or
+// "" if it can't be fetched or isn't an image the model takes.
 func fetch(ctx context.Context, h feature.Host, m feature.Message, i int, what string) string {
 	data, err := h.Media(ctx, m, i)
-	if err == nil && !img.Sendable(data) {
-		err = errors.New("not an image")
+	if err == nil {
+		data, err = img.Fit(data)
 	}
 	if err != nil {
 		logx.Warnf("could not fetch %s: %v", what, err)

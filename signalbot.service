@@ -61,6 +61,8 @@ RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
 MemoryAccounting=yes
 MemoryHigh=200M
 MemoryMax=300M
+# Go collects garbage harder as it nears this, well before MemoryMax
+Environment=GOMEMLIMIT=180MiB
 # Never swap, so conversation history cannot reach disk
 MemorySwapMax=0
 # No core dumps, which would write conversation history and the API key to disk

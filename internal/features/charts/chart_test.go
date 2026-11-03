@@ -33,6 +33,7 @@ func sampleChart() string {
 	}
 	args, _ := json.Marshal(map[string]any{
 		"title": "NVDA vs ACMR", "subtitle": "% change over the past month, 30 Sep - 28 Oct 2026",
+		"axes":   map[string]any{"left": map[string]any{"mode": "change"}},
 		"series": []any{map[string]any{"name": "NVDA", "points": a}, map[string]any{"name": "ACMR", "points": b}},
 	})
 	return string(args)
@@ -62,8 +63,24 @@ func TestRenderChart(t *testing.T) {
 	}
 }
 
+// Without a mode, an axis shows the values as given: a population in
+// billions is not turned into % change.
+func TestParseChartValueByDefault(t *testing.T) {
+	s, err := parseChart(`{"title":"T","axes":{"left":{"title":"Population (billions)"}},"series":[{"name":"India","points":[{"date":"2026-07-01","value":1.46},{"date":"2100-07-01","value":1.5}]}]}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p := s.Series[0].Points; p[0].Value != 1.46 || p[1].Value != 1.5 || s.left.Mode != "value" {
+		t.Fatalf("points %+v, mode %q", p, s.left.Mode)
+	}
+	// A series that starts at 0 is fine in value mode.
+	if _, err := parseChart(`{"title":"T","series":[{"name":"A","points":[{"date":"2026-01-01","value":0},{"date":"2026-01-02","value":2}]}]}`); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestParseChartChangeMode(t *testing.T) {
-	s, err := parseChart(`{"title":"T","series":[{"name":"A","points":[{"date":"2026-01-02","value":120},{"date":"2026-01-01","value":100}]}]}`)
+	s, err := parseChart(`{"title":"T","axes":{"left":{"mode":"change"}},"series":[{"name":"A","points":[{"date":"2026-01-02","value":120},{"date":"2026-01-01","value":100}]}]}`)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -94,7 +111,7 @@ func TestParseChartErrors(t *testing.T) {
 		"no name":             `{"title":"T","series":[{"points":` + pts + `}]}`,
 		"one point":           `{"title":"T","series":[{"name":"A","points":[{"date":"2026-01-01","value":1}]}]}`,
 		"bad date":            `{"title":"T","series":[{"name":"A","points":[{"date":"1 Jan","value":1},{"date":"2026-01-02","value":2}]}]}`,
-		"starts at 0":         `{"title":"T","series":[{"name":"A","points":[{"date":"2026-01-01","value":0},{"date":"2026-01-02","value":2}]}]}`,
+		"starts at 0":         `{"title":"T","axes":{"left":{"mode":"change"}},"series":[{"name":"A","points":[{"date":"2026-01-01","value":0},{"date":"2026-01-02","value":2}]}]}`,
 	} {
 		if _, err := parseChart(args); err == nil {
 			t.Errorf("%s: want an error", name)
@@ -152,7 +169,7 @@ func TestSpreadLabels(t *testing.T) {
 
 // Each axis has its own mode: % change is computed only for its own series.
 func TestChartTwoAxes(t *testing.T) {
-	s, err := parseChart(`{"title":"T","axes":{"left":{"title":"Price","mode":"value","unit":"$"},"right":{"title":"Change"}},"series":[` +
+	s, err := parseChart(`{"title":"T","axes":{"left":{"title":"Price","mode":"value","unit":"$"},"right":{"title":"Change","mode":"change"}},"series":[` +
 		`{"name":"A","points":[{"date":"2026-01-01","value":100},{"date":"2026-01-02","value":120}]},` +
 		`{"name":"B","axis":"right","points":[{"date":"2026-01-01","value":50},{"date":"2026-01-02","value":25}]}]}`)
 	if err != nil {
@@ -315,8 +332,8 @@ func TestAreaStyle(t *testing.T) {
 // Argument errors say what to fix, so the model can correct its next call.
 func TestChartArgErrors(t *testing.T) {
 	for args, want := range map[string]string{
-		`{"title":"T","series":[{"name":"a","points":[{"date":"2026-10-01","value":"12.3"}]}]}`: "series.0.points.0.value must be a number, got string",
-		`{"title":"T","axes":{"left":{"invert":"true"}},"series":[]}`:                           "axes.left.invert must be true or false, got string",
+		`{"title":"T","series":[{"name":"a","points":[{"date":"2026-10-01","value":"12.3"}]}]}`: "series.0.points.0.value must be a number, got a string: pass it as JSON itself",
+		`{"title":"T","axes":{"left":{"invert":"true"}},"series":[]}`:                           "axes.left.invert must be true or false, got a string",
 		`{"title":"T","series":[`: "not valid JSON (at character 23)",
 		`[1,2]`:                   "must be a JSON object, got array",
 		``:                        "title is required",
@@ -328,6 +345,35 @@ func TestChartArgErrors(t *testing.T) {
 	}
 	if _, err := parsePie(`{"title":"T","slices":[{"label":"a","value":"1"}]}`); err == nil || !strings.Contains(err.Error(), "slices.0.value must be a number") {
 		t.Errorf("pie: %v", err)
+	}
+}
+
+// Some models send an object or array inside the arguments as a string
+// holding its JSON: it is taken as meant, at any depth, while a string
+// field that merely looks like JSON stays a string.
+func TestChartArgsWithStringifiedParts(t *testing.T) {
+	args := `{"title":"[draft] NVDA vs MSFT","axes":"{\"left\": {\"mode\": \"change\"}}","series":[` +
+		`{"name":"NVDA","points":"[{\"date\":\"2026-10-01\",\"value\":100},{\"date\":\"2026-10-02\",\"value\":110}]"},` +
+		`{"name":"[1]","points":[{"date":"2026-10-01","value":50},{"date":"2026-10-02","value":45}]}]}`
+	s, err := parseChart(args)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s.Title != "[draft] NVDA vs MSFT" || s.left.Mode != "change" || s.Series[0].Points[1].Value != 10 || s.Series[1].Name != "[1]" {
+		t.Fatalf("got %+v", s)
+	}
+	if _, err := parsePie(`{"title":"T","slices":"[{\"label\":\"a\",\"value\":1},{\"label\":\"b\",\"value\":2}]"}`); err != nil {
+		t.Fatalf("pie: %v", err)
+	}
+	// An element of an array, too.
+	one := `{"name":"A","points":[{"date":"2026-10-01","value":1},{"date":"2026-10-02","value":2}]}`
+	q, _ := json.Marshal(one)
+	if s, err := parseChart(`{"title":"T","series":[` + string(q) + `]}`); err != nil || s.Series[0].Name != "A" {
+		t.Fatalf("element: %v", err)
+	}
+	// A string that isn't JSON still gets the error, with how to fix it.
+	if _, err := parseChart(`{"title":"T","axes":"left","series":[` + one + `]}`); err == nil || !strings.Contains(err.Error(), "axes must be an object, got a string: pass it as JSON itself") {
+		t.Fatalf("not JSON: %v", err)
 	}
 }
 

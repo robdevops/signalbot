@@ -61,7 +61,7 @@ The table maps every `Test*` function in the 19 old test files to what covers it
 | TestReplyIsCappedToAFewMessages | fixes_test.go | TestScenarioHugeReplyIsCapped |
 | TestChatsAreCapped | fixes_test.go | Unit test, moves with its code (memory caps are not visible at the edges) |
 | TestNameCacheIsBounded | fixes_test.go | Unit test, moves with its code |
-| TestOversizedFrameDropsConnectionAndReconnects | fixes_test.go | TestScenarioOversizedFrameReconnects |
+| TestOversizedFrameDropsConnectionAndReconnects | fixes_test.go | TestScenarioOversizedFrameIsSkipped (now skipped, not reconnected), TestScenarioPhotoThatFailsToLoad |
 | TestStripMentionsHugeOffsetsDoNotPanic | fixes_test.go | Unit test, moves with its code |
 | TestOutOfOrderMentionsSpliceCorrectly | fixes_test.go | Unit test, moves with its code |
 | TestSocketNetwork | fixes_test.go | Unit test, moves with its code |
@@ -151,12 +151,12 @@ The table maps every `Test*` function in the 19 old test files to what covers it
 
 ## Scenarios with no old test
 
-TestScenarioHistoryAcrossTurns, TestScenarioHistoryIsPerChat, TestScenarioHistoryTurnsCap, TestScenarioLongReplyIsSplit, TestScenarioModelRetry, TestScenarioUnknownCommandIsAMessage, TestScenarioBotWithoutProfileNameIsSignalbot, TestScenarioAtMostFourImages, TestScenarioGroupSenderWithoutName and TestScenarioErasedHistoryEndsChartFollowUps pin behaviour that had no direct test before.
+TestScenarioHistoryAcrossTurns, TestScenarioHistoryIsPerChat, TestScenarioHistoryMax, TestScenarioLongReplyIsSplit, TestScenarioModelRetry, TestScenarioUnknownCommandIsAMessage, TestScenarioBotWithoutProfileNameIsSignalbot, TestScenarioAtMostFourImages, TestScenarioGroupSenderWithoutName and TestScenarioErasedHistoryEndsChartFollowUps pin behaviour that had no direct test before.
 
 ## Not pinned, or pinned with care
 
 - **The 15-second contact reload limit.** `startBot` lowers it to `contactReloadGap` (50ms) through `config.Test`, so a scenario can see a reload after a group change, or after an unknown mention once it has waited out the gap. A burst of group changes costing one reload depends on that timing, so it isn't asserted.
 - **Typing every 10 seconds.** Only the first typing indicator, before the reply, and that none follows the reply, are asserted.
 - **Day-long limits** (contacts over a day old, the 24-hour history cap, the dedupe window ending) need the clock moved; they stay unit tests.
-- **Log wording.** Scenarios check only lines with no deliberate change: the stranger's id with "not in SIGNAL_DM_USER_IDS", "OpenRouter error" (now "model error", changed with `MODEL_API_URL`), "at capacity", "truncated", the cost, "tools are off", "images are off", "signal-cli read failed", signal-cli's error text, and each line's priority. "mention from Alice(id)" is not pinned, as it becomes "received group chat".
+- **Log wording.** Scenarios check only lines with no deliberate change: the stranger's id with "not in SIGNAL_DM_USER_IDS", "OpenRouter error" (now "model error", changed with `MODEL_API_URL`), "at capacity", "truncated", the cost, "tools are off", "images are off", "skipped" (an oversized frame), "could not fetch an image", signal-cli's error text, and each line's priority. "mention from Alice(id)" is not pinned, as it becomes "received group chat".
 - **At `e40dc5f` with `LOG_LEVEL=debug`,** an unaddressed group message that mentions someone whose name the bot doesn't know logs "unresolved mention of <id>" at debug. The spec says an unaddressed message is never logged, so TestScenarioUnaddressedMessagesAreNeverLogged uses a known name. The new core, which always writes debug, must not log it.

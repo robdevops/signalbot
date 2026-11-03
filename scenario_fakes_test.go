@@ -56,6 +56,9 @@ type world struct {
 	Env map[string]string
 	// Vision says the model list shows the model accepting images.
 	Vision bool
+	// Attachments is what signal-cli's getAttachment returns, by attachment
+	// ID; scenarioPNG for any other.
+	Attachments map[string][]byte
 	// NoTools says the model list shows the model unable to call tools.
 	NoTools bool
 	// NoModelList makes the model list fail to load.
@@ -250,7 +253,11 @@ func (h *harness) serveSignal(c net.Conn) {
 		case "listContacts":
 			result = h.contactList()
 		case "getAttachment":
-			result = `{"data":"` + base64.StdEncoding.EncodeToString(scenarioPNG()) + `"}`
+			data := scenarioPNG()
+			if d, ok := h.w.Attachments[fmt.Sprint(req.Params["id"])]; ok {
+				data = d
+			}
+			result = `{"data":"` + base64.StdEncoding.EncodeToString(data) + `"}`
 		case "getSticker":
 			result = `{"data":"` + base64.StdEncoding.EncodeToString([]byte("RIFF\x00\x00\x00\x00WEBPVP8 \x00\x00\x00\x00")) + `"}`
 		case "listStickerPacks":
@@ -918,4 +925,21 @@ func scenarioPNG() []byte {
 	var buf bytes.Buffer
 	png.Encode(&buf, image.NewRGBA(image.Rect(0, 0, 1, 1)))
 	return buf.Bytes()
+}
+
+// noisyPNG is a w by h PNG of noise, which barely compresses: about 4 bytes
+// a pixel.
+func noisyPNG(t *testing.T, w, h int) []byte {
+	t.Helper()
+	m := image.NewRGBA(image.Rect(0, 0, w, h))
+	x := uint32(1)
+	for i := range m.Pix {
+		x = x*1664525 + 1013904223
+		m.Pix[i] = byte(x >> 24)
+	}
+	var b bytes.Buffer
+	if err := png.Encode(&b, m); err != nil {
+		t.Fatal(err)
+	}
+	return b.Bytes()
 }

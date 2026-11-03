@@ -89,7 +89,7 @@ type Bot struct {
 	messages []func(context.Context, feature.Message) feature.Action
 	turns    []func(context.Context, feature.Message) feature.Additions
 	groups   []feature.ToolGroup
-	more     []string // features' lines for the introduction
+	more     []introLine // features' lines for the introduction
 }
 
 // New makes the bot on net and reads what the model can do, so features
@@ -98,7 +98,7 @@ type Bot struct {
 // shutdown signal so that Shutdown can let replies finish.
 func New(ctx context.Context, cfg *config.Config, net Network) *Bot {
 	b := &Bot{cfg: cfg, net: net, timers: timers.New(), slots: make(chan struct{}, cfg.MaxConcurrency), ctx: ctx}
-	b.chats = chats.New(cfg.HistoryTurns, b.work, b.spawn)
+	b.chats = chats.New(cfg.HistoryMax, b.work, b.spawn)
 	b.timerCtx, b.stop = context.WithCancel(ctx)
 	if cfg.NoModel {
 		logx.Noticef("no model: only commands are answered")
@@ -167,7 +167,7 @@ func (b *Bot) handle(r Received) {
 // the Context one returns in history.
 func (b *Bot) keep(msg feature.Message) {
 	if a := b.onMessage(b.ctx, msg); a.Context != "" && b.ai != nil { // with no model, nothing would read it
-		b.chats.Add(msg.Chat.Key(), time.Now(), msg.Expires, chats.Entry{Role: "user", Content: a.Context})
+		b.chats.Add(msg.Chat.Key(), time.Now(), msg.Expires, chats.Entry{Role: "user", Content: a.Context, Context: true})
 	}
 }
 
@@ -351,4 +351,10 @@ func (b *Bot) onMessage(ctx context.Context, msg feature.Message) feature.Action
 		}
 	}
 	return feature.Action{}
+}
+
+// introLine is a feature's line for the introduction, perhaps only in a DM.
+type introLine struct {
+	text   string
+	dmOnly bool
 }
