@@ -19,7 +19,7 @@ A small, [privacy-conscious](PRIVACY.md) chat bot that connects to a running [si
 ## Features
 
 - Responds to @mentions, replies to its messages, and DMs from senders in `SIGNAL_DM_USER_IDS`
-- Tools: web search, built-in line and pie charts (with the data's source, such as the site or tool, written small under the chart), and your own [MCP](#mcp-tools) tools
+- Tools: web search, built-in line and pie charts, and your own [MCP](#mcp-tools) tools
 - [`/schedule`](#scheduling) a message or command, once or repeating, in a DM or a group
 - Understands images and stickers (if the configured model supports vision)
 - Typing indicators
