@@ -65,9 +65,10 @@ type chat[M any] struct {
 // It drops to half of n (rounded up), not by one, so the start of the
 // history, and so of the model's request, stays the same for several
 // messages and is read from the model API's prompt cache, rather than
-// changing with every message once the history is full. Under 4 it keeps n.
+// changing with every message once the history is full. Under 3 it keeps n:
+// half of 2 would leave one message.
 func keep(n int) int {
-	if n < 4 {
+	if n < 3 {
 		return n
 	}
 	return n - n/2

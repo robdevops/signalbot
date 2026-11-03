@@ -391,7 +391,7 @@ func TestScenarioHistoryMax(t *testing.T) {
 		[]string{"user: question number two", "assistant: answer number two", "user: question number three"})
 }
 
-// From 4 up, a full history drops to half, not by one, so the start of the
+// From 3 up, a full history drops to half (rounded up), not by one, so the start of the
 // model's request stays the same for a few messages and is read from the
 // prompt cache.
 func TestScenarioHistoryDropsToHalf(t *testing.T) {

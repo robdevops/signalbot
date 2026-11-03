@@ -140,7 +140,7 @@ Add the bot's account to a group and @mention it, reply to one of its messages, 
 | `MODEL_SYSTEM_PROMPT` | empty | Extra instructions, appended to the built-in prompt (which keeps answers short and Signal-sized and, when the model has tools, asks it to name its source) |
 | `DARKMODE` | `off` | Chart colours: `off` for light charts, `on` for dark, `auto` for dark from 21:00 to 07:00 in `TZ` and light otherwise |
 | `GROUP_CONTEXT` | `true` | Remember group messages not addressed to the bot as context, so "what do you think @bot" works without replying to the message; they are never logged |
-| `HISTORY_MAX` | `10` | Most messages remembered per chat, the bot's replies and, in groups, messages not addressed to it included. When full, the older half is dropped, so the start of the model's request stays the same for several messages and comes from the API's prompt cache (cheaper and faster); below 4, the oldest message is dropped |
+| `HISTORY_MAX` | `10` | Most messages remembered per chat, the bot's replies and, in groups, messages not addressed to it included. When full, the older half is dropped, so the start of the model's request stays the same for several messages and comes from the API's prompt cache (cheaper and faster); below 3, the oldest message is dropped |
 | `INTRO` | built-in sentence | Overrides the self-introduction; `{name}`, `{model}` (without any OpenRouter `provider/` prefix) and `{tools}` (the names of the tools, or `none`) are substituted |
 | `MAX_CONCURRENCY` | `32` | Conversations in flight at once; messages beyond this are dropped |
 | `MCP_CONFIG` | empty | Path of an MCP servers file; see [MCP tools](#mcp-tools) |
