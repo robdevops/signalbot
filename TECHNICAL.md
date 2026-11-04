@@ -207,7 +207,7 @@ In `features.go` order, which is the order hooks run in and of the tools line an
 
 ### `/schedule`
 
-A user schedules anything they could post in the chat. The user guide is in the [README](README.md#scheduling). `/timer`, `/reminder` and `/job` are aliases. All four are named, with no tools, in the prompt's `If asked what tools you have:` list as `**schedules and reminders**: /schedule, /timer, /reminder, /job`, so the model can point a near-miss such as `/time` to them; there is no `/time` alias. It works only in a DM from a sender in `SIGNAL_DM_USER_IDS`; in a group it answers that schedules are made in a DM.
+A user schedules anything they could post in the chat. The user guide is [docs/SCHEDULING.md](docs/SCHEDULING.md). `/timer`, `/reminder` and `/job` are aliases. All four are named, with no tools, in the prompt's `If asked what tools you have:` list as `**schedules and reminders**: /schedule, /timer, /reminder, /job`, so the model can point a near-miss such as `/time` to them; there is no `/time` alias. It works only in a DM from a sender in `SIGNAL_DM_USER_IDS`; in a group it answers that schedules are made in a DM.
 
 ```
 /schedule "<message or /command>" <ISO 8601 time> [every hour|day|week|month|quarter|year] [group name]
