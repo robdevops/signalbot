@@ -125,15 +125,16 @@ func one(ctx context.Context, h feature.Host, info feature.Info, m feature.Messa
 		logx.Infof("%s, attached", head)
 		return label, " attached", "", &feature.File{Name: name, MIME: mime, Data: data}
 	case "office":
-		if text, err = officeText(data, ext); err != nil || strings.TrimSpace(text) == "" {
+		var cut bool
+		if text, cut, err = officeText(data, ext); err != nil || strings.TrimSpace(text) == "" {
 			logx.Warnf("could not read an Office file (%s, %d bytes): %s", what, len(data), errKind(cmp.Or(err, errEmpty)))
 			return label, ", which couldn't be read", "", nil
 		}
 		// The count is what the fence shows, without the newlines it trims.
-		// officeText stops a little past the cap, so past it the document's
-		// length is unknown.
+		// officeText stops a little past the cap, or where the file's budget
+		// ran out, so a cut document's length is unknown.
 		n, shown := utf8.RuneCountInString(strings.Trim(text, "\n")), ""
-		if len(text) > maxText {
+		if cut {
 			shown = "first " + strconv.Itoa(min(n, maxText)) + " chars of text"
 		} else {
 			shown = txt.Chars(n, maxText)

@@ -49,7 +49,8 @@ func TestURLs(t *testing.T) {
 		{"https://1.com https://2.com https://1.com", "", []string{"https://1.com", "https://2.com"}, 0},
 		{"https://1.com https://2.com https://3.com https://3.com https://3.com#x", "", []string{"https://1.com", "https://2.com"}, 1},
 		{"ftp://x.com mailto:a@b.c https://user:pw@c.com/ http://", "", nil, 0},
-		{"see https://a.com/x\u00a0and https://b.com/y\u3000too", "", []string{"https://a.com/x", "https://b.com/y"}, 0}, // Unicode spaces end a URL
+		{"see https://a.com/x\u00a0and https://b.com/y\u3000too", "", []string{"https://a.com/x", "https://b.com/y"}, 0},                                     // Unicode spaces end a URL
+		{"http://a.com/x\vand http://b.com/y\u0085and http://c.com/z\u200band http://d.com/w\u2028and", "", []string{"http://a.com/x", "http://b.com/y"}, 2}, // so do controls, format characters and line separators
 	} {
 		if got, dropped := urls(msg(tc.text, tc.quote)); !slices.Equal(got, tc.want) || dropped != tc.dropped {
 			t.Errorf("%q: %q, %d dropped, want %q, %d", tc.text, got, dropped, tc.want, tc.dropped)
@@ -146,6 +147,12 @@ func TestFetch(t *testing.T) {
 		w.Write([]byte("<html><body><p>Short page.</p></body></html>"))
 	})
 	mux.HandleFunc("/moved", func(w http.ResponseWriter, r *http.Request) { http.Redirect(w, r, "/page", http.StatusFound) })
+	mux.HandleFunc("/far", func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "/page?p="+strings.Repeat("a", 3000), http.StatusFound)
+	})
+	mux.HandleFunc("/creds", func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "http://alice:hunter2@"+r.Host+"/page", http.StatusFound)
+	})
 	mux.HandleFunc("/blank", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/plain")
 		w.Write([]byte(" \n\t "))
@@ -185,7 +192,7 @@ func TestFetch(t *testing.T) {
 	all := feature.Info{Files: true}
 
 	a := additions(context.Background(), c, newLimiter(), all, msg("what's this "+srv.URL+"/page?", ""))
-	if !strings.HasPrefix(a.Note, "[page "+srv.URL+`/page: "Gold news"]`+"\n```\nGold\nGold rose today.") ||
+	if !strings.HasPrefix(a.Note, "[page "+srv.URL+`/page: "Gold news"]`+"\n```\nGold\nGold rose today.") || !a.Content ||
 		strings.Contains(a.Note, "evil") || strings.Contains(a.Note, "Home | About") || strings.Contains(a.Note, "©") {
 		t.Fatalf("note %q", a.Note)
 	}
@@ -198,11 +205,11 @@ func TestFetch(t *testing.T) {
 	}
 	logged(`<6>link \d+\.\ds, 4 bytes text, 4 chars of text\n`)
 	a = additions(context.Background(), c, newLimiter(), all, msg("", "read "+srv.URL+"/report.pdf"))
-	if a.Note != "[page "+srv.URL+"/report.pdf, a PDF, attached]" || len(a.Files) != 1 || a.Files[0].Name != "report.pdf" || a.Files[0].MIME != "application/pdf" {
+	if a.Note != "[page "+srv.URL+"/report.pdf, a PDF, attached]" || len(a.Files) != 1 || a.Files[0].Name != "report.pdf" || a.Files[0].MIME != "application/pdf" || !a.Content {
 		t.Fatalf("pdf %+v", a)
 	}
 	logged(`<6>link \d+\.\ds, 13 bytes pdf, attached\n`)
-	if a := additions(context.Background(), c, newLimiter(), feature.Info{}, msg(srv.URL+"/report.pdf", "")); a.Files != nil || !strings.Contains(a.Note, "which you can't read with this model") {
+	if a := additions(context.Background(), c, newLimiter(), feature.Info{}, msg(srv.URL+"/report.pdf", "")); a.Files != nil || a.Content || !strings.Contains(a.Note, "which you can't read with this model") {
 		t.Fatalf("pdf without files %+v", a)
 	}
 	logged(`<6>link \d+\.\ds, 13 bytes pdf, not sent: this model can't read files\n`)
@@ -216,8 +223,18 @@ func TestFetch(t *testing.T) {
 	}
 	// A redirect's note says where the link ended up; history keeps the link.
 	a = additions(context.Background(), c, newLimiter(), all, msg(srv.URL+"/moved", ""))
-	if !strings.HasPrefix(a.Note, "[page "+srv.URL+"/moved, redirected to "+srv.URL+`/page: "Gold news"]`+"\n```\nGold") || a.HistoryNote != "[page "+srv.URL+"/moved was shown to you; it isn't kept]" {
+	if !strings.HasPrefix(a.Note, "[page "+srv.URL+"/moved, redirected to "+srv.URL+`/page: "Gold news"]`+"\n```\nGold") || a.HistoryNote != "[page "+srv.URL+"/moved was shown to you; it isn't kept]" || !a.Content {
 		t.Fatalf("moved %.120q / %q", a.Note, a.HistoryNote)
+	}
+	// Where a redirect ended up is the server's choice: it is cut short, and
+	// shown without a user name or password.
+	a = additions(context.Background(), c, newLimiter(), all, msg(srv.URL+"/far", ""))
+	if !strings.HasPrefix(a.Note, "[page "+srv.URL+"/far, redirected to "+srv.URL+"/page?p=aaa") || !strings.Contains(a.Note, `aaa…: "Gold news"]`+"\n") || strings.Index(a.Note, "]") > 400 {
+		t.Fatalf("far %.300q", a.Note)
+	}
+	a = additions(context.Background(), c, newLimiter(), all, msg(srv.URL+"/creds", ""))
+	if !strings.HasPrefix(a.Note, "[page "+srv.URL+"/creds, redirected to "+srv.URL+`/page: "Gold news"]`) || strings.Contains(a.Note, "hunter2") {
+		t.Fatalf("creds %.200q", a.Note)
 	}
 	logged(`<6>link \d+\.\ds, \d+ bytes html, 11 chars of text \(whole page\)\n`)
 	for path, want := range map[string]string{
@@ -229,7 +246,7 @@ func TestFetch(t *testing.T) {
 		"/missing": " failed to load: status 404]",
 		"/loop":    " failed to load: too many or bad redirects]",
 	} {
-		if a := additions(context.Background(), c, newLimiter(), all, msg(srv.URL+path, "")); !strings.HasSuffix(a.Note, want) || a.HistoryNote != a.Note {
+		if a := additions(context.Background(), c, newLimiter(), all, msg(srv.URL+path, "")); !strings.HasSuffix(a.Note, want) || a.HistoryNote != a.Note || a.Content {
 			t.Errorf("%s: %q / %q", path, a.Note, a.HistoryNote)
 		}
 	}
@@ -243,13 +260,13 @@ func TestFetch(t *testing.T) {
 	if a := additions(context.Background(), c, newLimiter(), all, msg("no links here", "")); a.Note != "" {
 		t.Fatalf("no links: %+v", a)
 	}
-	for _, s := range []string{srv.URL, "127.0.0.1", "Gold", "evil", "xxx", "Short", "example", "zip"} {
+	for _, s := range []string{srv.URL, "127.0.0.1", "Gold", "evil", "xxx", "Short", "example", "zip", "hunter2", "aaa"} {
 		if strings.Contains(logs.String(), s) {
 			t.Errorf("%q reached the log: %q", s, logs.String())
 		}
 	}
-	if n := strings.Count(logs.String(), "\n"); n != 14 {
-		t.Fatalf("%d log lines for 14 links:\n%s", n, logs.String())
+	if n := strings.Count(logs.String(), "\n"); n != 16 {
+		t.Fatalf("%d log lines for 16 links:\n%s", n, logs.String())
 	}
 }
 
@@ -277,14 +294,15 @@ func TestPageTextIsStreamed(t *testing.T) {
 	for name, page := range map[string][]byte{
 		"many tokens": []byte("<html><head><title>Big</title></head><body>" + strings.Repeat("<p>a", 1_300_000) + "</body></html>"),
 		"one token":   []byte("<html><head><title>Big" + strings.Repeat(" title", 500_000) + "</title></head><body><p>" + strings.Repeat("a ", 1_500_000) + "</p></body></html>"),
+		"multibyte":   []byte("<html><head><title>Big</title></head><body><p>" + strings.Repeat("日", 1_000_000) + "</p></body></html>"),
 	} {
 		var before, after runtime.MemStats
 		runtime.GC()
 		runtime.ReadMemStats(&before)
 		title, text, _ := pageText(page, "text/html")
 		runtime.ReadMemStats(&after)
-		if !strings.HasPrefix(title, "Big") || len(title) > 1000 || len(text) > maxText*2+10 {
-			t.Fatalf("%s: title %d bytes, text %d bytes", name, len(title), len(text))
+		if !strings.HasPrefix(title, "Big") || len(title) > 1000 || len(text) > maxText*2+10 || !utf8.ValidString(text) { // cut between runes, never inside one
+			t.Fatalf("%s: title %d bytes, text %d bytes, valid %v", name, len(title), len(text), utf8.ValidString(text))
 		}
 		if n := after.TotalAlloc - before.TotalAlloc; n > 30<<20 {
 			t.Fatalf("%s: allocated %d MB", name, n>>20)

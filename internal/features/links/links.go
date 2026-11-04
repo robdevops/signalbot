@@ -107,9 +107,10 @@ func (l *limiter) allow(chat string) bool {
 	return true
 }
 
-// urlPattern finds URLs in text, ending at white space or a Unicode
-// separator; trailing punctuation is trimmed after.
-var urlPattern = regexp.MustCompile("https?://[^\\s\\p{Z}<>\"'`]+")
+// urlPattern finds URLs in text, ending at white space, a Unicode separator
+// or a control or format character (a zero-width space, say); trailing
+// punctuation is trimmed after.
+var urlPattern = regexp.MustCompile("https?://[^\\s\\p{Z}\\p{C}<>\"'`]+")
 
 // Register adds the pages a message links to to the model's request on h.
 func Register(h feature.Host) error {
@@ -234,9 +235,14 @@ func fetch(ctx context.Context, c *http.Client, info feature.Info, u string) (no
 	if resp.StatusCode != http.StatusOK {
 		return failed(time.Since(start).Seconds(), "status "+strconv.Itoa(resp.StatusCode))
 	}
-	shown := u // the link as the note names it: with where it ended up, if redirected
-	if f := resp.Request.URL.String(); f != u {
-		shown = u + ", redirected to " + f
+	// shown is the link as the note names it: with where it ended up, if
+	// redirected. The redirecting server chose that, so it is cut short and
+	// shown without any user name or password.
+	final := *resp.Request.URL
+	final.User = nil
+	shown := u
+	if f := final.String(); f != u {
+		shown = u + ", redirected to " + txt.Clamp(f, 200)
 	}
 	mediaType, _, _ := mime.ParseMediaType(resp.Header.Get("Content-Type"))
 	limit := int64(maxBody)
@@ -406,13 +412,12 @@ func pageText(body []byte, contentType string) (title, text, from string) {
 			// One text node can be the whole 5 MB page: only as much as
 			// the cap can use is split into words, kept as a title or
 			// written, so the page's text is never copied whole.
-			raw := z.Text()
-			t := strings.Join(strings.Fields(string(raw[:min(len(raw), maxText*4)])), " ")
+			t := strings.Join(strings.Fields(string(head(z.Text(), maxText*4))), " ")
 			switch {
 			case t == "":
 			case inTitle:
 				if title == "" {
-					title = t[:min(len(t), 1000)]
+					title = head(t, 1000)
 				}
 			case skip == 0:
 				for _, w := range []*strings.Builder{&b, &art} {
@@ -422,12 +427,23 @@ func pageText(body []byte, contentType string) (title, text, from string) {
 					if w.Len() > 0 && !strings.HasSuffix(w.String(), "\n") {
 						w.WriteByte(' ')
 					}
-					w.WriteString(t[:min(len(t), max(0, maxText*2+1-w.Len()))])
+					w.WriteString(head(t, max(0, maxText*2+1-w.Len())))
 				}
 			}
 		}
 	}
 	return result()
+}
+
+// head is s cut to at most n bytes, on a rune boundary.
+func head[S ~string | ~[]byte](s S, n int) S {
+	if n >= len(s) {
+		return s
+	}
+	for n > 0 && !utf8.RuneStart(s[n]) {
+		n--
+	}
+	return s[:n]
 }
 
 // squeeze drops blank lines and the spaces around lines.

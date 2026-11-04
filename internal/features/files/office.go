@@ -43,14 +43,15 @@ var (
 
 // officeText is the text of a docx (its paragraphs), xlsx (each sheet's
 // rows, cells separated by tabs) or pptx (each slide's paragraphs), cut a
-// little past maxText.
-func officeText(data []byte, ext string) (string, error) {
+// little past maxText, or where the file's byte budget ran out: what was
+// read by then stands, and cut says the document has more.
+func officeText(data []byte, ext string) (text string, cut bool, err error) {
 	if entries(data) > maxParts {
-		return "", errParts
+		return "", false, errParts
 	}
 	z, err := zip.NewReader(bytes.NewReader(data), int64(len(data)))
 	if err != nil {
-		return "", err
+		return "", false, err
 	}
 	var out strings.Builder
 	budget := maxTotal
@@ -72,7 +73,11 @@ func officeText(data []byte, ext string) (string, error) {
 	default:
 		err = errors.New("not an Office file")
 	}
-	return out.String(), err
+	text = out.String()
+	if errors.Is(err, errSize) && strings.TrimSpace(text) != "" {
+		return text, true, nil
+	}
+	return text, len(text) > maxText, err
 }
 
 // errKind is what went wrong reading an Office file, for the log: the kind
@@ -114,21 +119,25 @@ func entries(data []byte) int {
 }
 
 // part is the tokens of the zip's file called name, read to at most maxPart
-// bytes and what is left of the file's budget (errSize once that is spent),
-// refusing elements nested past maxDepth (errDeep).
+// bytes (a longer part is cut there) and to what is left of the file's
+// budget (errSize when it needs more), refusing elements nested past
+// maxDepth (errDeep).
 func part(z *zip.Reader, name string, budget *int) (next func() (xml.Token, error), err error) {
 	f, err := z.Open(name)
 	if err != nil {
 		return nil, err
 	}
-	data, err := io.ReadAll(io.LimitReader(f, int64(min(maxPart, *budget))))
+	limit := min(maxPart, *budget)
+	data, err := io.ReadAll(io.LimitReader(f, int64(limit)+1)) // one more, to tell a cut from a fit
 	f.Close()
 	if err != nil {
 		return nil, err
 	}
-	if *budget -= len(data); *budget <= 0 {
+	if len(data) > limit && limit == *budget {
 		return nil, errSize
 	}
+	data = data[:min(len(data), limit)]
+	*budget -= len(data)
 	d, depth := xml.NewDecoder(bytes.NewReader(data)), 0
 	return func() (xml.Token, error) {
 		tok, err := d.Token()
