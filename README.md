@@ -28,7 +28,7 @@ A small, [privacy-conscious](PRIVACY.md) chat bot that connects to a running [si
 ## Use cases
 
 - Your group's brain trust: ask it to explain things, check facts or settle debates
-- Explain or translate any message, photo, document, or url by replying to it and tagging the bot
+- Explain or translate any message, photo, document, or website by replying to it and tagging the bot
 - Connect MCP tools, data, and charting to your group chat
 - Modify the bot to add your own /commands (see `/intro`)
 - A private assistant in your DMs, or just the fun of a sassy LLM in your Signal groups
