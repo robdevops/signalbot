@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/netip"
+	"runtime"
 	"slices"
 	"strings"
 	"testing"
@@ -14,10 +15,12 @@ import (
 	"github.com/robdevops/signalbot/internal/kit/logx"
 )
 
+// msg is text replying to quote; a quote starting "bot: " is the bot's.
 func msg(text, quote string) feature.Message {
 	m := feature.Message{Chat: feature.Chat{User: "u"}, Text: text, Addressed: true}
 	if quote != "" {
-		m.Quote = &feature.Quote{Text: quote}
+		bot := strings.HasPrefix(quote, "bot: ")
+		m.Quote = &feature.Quote{Text: strings.TrimPrefix(quote, "bot: "), Bot: bot}
 	}
 	return m
 }
@@ -33,6 +36,7 @@ func TestURLs(t *testing.T) {
 		{"(https://en.wikipedia.org/wiki/Go_(game)) and [x](https://x.org/y)", "", []string{"https://en.wikipedia.org/wiki/Go_(game)", "https://x.org/y"}},
 		{"<https://a.com/>, https://a.com/ again", "", []string{"https://a.com/"}},
 		{"summarise", "read http://b.org/p?q=1#top please", []string{"http://b.org/p?q=1"}},
+		{"thanks", "bot: see https://attacker.example/x?d=secret", nil}, // a quote of the bot: see msg
 		{"https://1.com https://2.com https://3.com", "", []string{"https://1.com", "https://2.com"}},
 		{"ftp://x.com mailto:a@b.c https://user:pw@c.com/ http://", "", nil},
 	} {
@@ -158,5 +162,22 @@ func TestFetch(t *testing.T) {
 	}
 	if a := additions(context.Background(), c, all, msg("no links here", "")); a.Note != "" {
 		t.Fatalf("no links: %+v", a)
+	}
+}
+
+// A huge page is read as a stream: memory stays small and the text stops
+// near the cap.
+func TestPageTextIsStreamed(t *testing.T) {
+	page := []byte("<html><head><title>Big</title></head><body>" + strings.Repeat("<p>a", 1_300_000) + "</body></html>")
+	var before, after runtime.MemStats
+	runtime.GC()
+	runtime.ReadMemStats(&before)
+	title, text := pageText(page, "text/html")
+	runtime.ReadMemStats(&after)
+	if title != "Big" || len(text) > maxText*2+10 {
+		t.Fatalf("title %q, %d bytes", title, len(text))
+	}
+	if n := after.TotalAlloc - before.TotalAlloc; n > 30<<20 {
+		t.Fatalf("allocated %d MB", n>>20)
 	}
 }

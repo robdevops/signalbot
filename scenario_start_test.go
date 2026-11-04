@@ -50,7 +50,7 @@ func startBot(t *testing.T, w world) *harness {
 	// provider's, let a scenario see contacts reload, and say when the bot
 	// has read a frame and when it is idle.
 	t.Cleanup(logx.SetOutput(h, h, true)) // runs last
-	test := &config.Test{ReloadGap: contactReloadGap, Handled: func() { h.handled <- struct{}{} }}
+	test := &config.Test{ReloadGap: contactReloadGap, Handled: func() { h.handled <- struct{}{} }, Now: w.Now}
 	if u, _ := url.Parse(h.modelURL); !w.OtherProvider {
 		test.OpenRouter = u.Hostname()
 	}

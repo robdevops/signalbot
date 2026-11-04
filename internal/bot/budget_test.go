@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/robdevops/signalbot/internal/feature"
 )
 
 // The notice rounds the time to midnight up to whole minutes, and from 60
@@ -50,8 +52,8 @@ func TestBudget(t *testing.T) {
 	if over, tell, _ := b.over(group); !over || tell {
 		t.Fatalf("told twice: over %v, tell %v", over, tell)
 	}
-	if over, _, _ := b.over(dm); over {
-		t.Fatal("another chat is over")
+	if over, _, _ := b.over(dm); over || len(b.chats) != 1 {
+		t.Fatalf("another chat is over, or kept: %d chats", len(b.chats))
 	}
 	data, err := os.ReadFile(filepath.Join(dir, "budget.json"))
 	if err != nil || strings.Contains(string(data), "Z3JvdXA") || strings.Contains(string(data), "15551234567") || !strings.Contains(string(data), `"day":"2026-11-04"`) {
@@ -67,12 +69,25 @@ func TestBudget(t *testing.T) {
 	if over, _, _ := b.over(group); over {
 		t.Fatal("over the next day")
 	}
-	if b2 := newBudget(dir, 1, clock); len(b2.chats) != 0 { // the file is the day before's
-		t.Fatalf("%d chats from yesterday's file", len(b2.chats))
+	if data, _ := os.ReadFile(filepath.Join(dir, "budget.json")); !strings.Contains(string(data), `"day":"2026-11-05","chats":{}`) {
+		t.Fatalf("yesterday's spending stayed on disk: %s", data)
 	}
 	// A file from another day, or broken, starts at 0.
 	os.WriteFile(filepath.Join(dir, "budget.json"), []byte("{broken"), 0o600)
 	if b := newBudget(dir, 1, clock); len(b.chats) != 0 {
 		t.Fatal("a broken file was read")
+	}
+}
+
+// Files sent with one message stop at maxFileBytes together; the rest are
+// counted, in order.
+func TestFitFiles(t *testing.T) {
+	mb := func(n int) feature.File { return feature.File{Data: make([]byte, n<<20)} }
+	fit, left := fitFiles([]feature.File{mb(10), mb(10), mb(5), mb(1)})
+	if len(fit) != 3 || left != 1 || len(fit[1].Data) != 5<<20 {
+		t.Fatalf("fit %d, left %d", len(fit), left)
+	}
+	if fit, left := fitFiles(nil); fit != nil || left != 0 {
+		t.Fatal("nil")
 	}
 }

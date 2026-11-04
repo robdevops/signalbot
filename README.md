@@ -174,11 +174,11 @@ Send the bot a file in a DM, attach one when you @mention it or reply to it, or 
 | Word, Excel, PowerPoint (`.docx`, `.xlsx`, `.pptx`) | Its text: paragraphs, cells by sheet, slides in order |
 | Anything else | A note that it was attached and can't be read |
 
-Up to 4 files a message, 12 MB each. **OCR costs money:** OpenRouter charges about $2 per 1,000 pages, so a 150-page filing is about $0.30 each time it's sent, on top of the reply, and shows in the reply's logged cost. The bot never keeps a file, so asking about it again means replying to it again, and it's read again. To fetch the original of a file someone else posted, the bot remembers recent attachments' IDs and names in memory for a day; see [PRIVACY.md](PRIVACY.md).
+Up to 4 files a message, 12 MB each and 16 MB together (the model is told of any left out). **OCR costs money:** OpenRouter charges about $2 per 1,000 pages, so a 150-page filing is about $0.30 each time it's sent, on top of the reply, and shows in the reply's logged cost. The bot never keeps a file, so asking about it again means replying to it again, and it's read again. To fetch the original of a file someone else posted, the bot remembers recent attachments' IDs and names in memory for a day; see [PRIVACY.md](PRIVACY.md).
 
 ### Links
 
-A message that addresses the bot and has a URL, or replies to a message with one, gets the page read for the model: up to 2 links, the page's main text up to 15,000 characters, a PDF link as a PDF (see [Files](#files)). Only links a person sent are fetched, never ones the model or a page suggests. A link to a private or local address (the bot's own machine, your network, a cloud metadata service) is refused, however its name resolves, and the model is told it couldn't load it.
+A message that addresses the bot and has a URL, or replies to a message with one, gets the page read for the model: up to 2 links, the page's main text up to 15,000 characters, a PDF link as a PDF (see [Files](#files)). Only links a person sent are fetched, never ones the model or a page suggests, so a link in a reply to one of the bot's own messages isn't fetched. A link to a private or local address (the bot's own machine, your network, a cloud metadata service) is refused, however its name resolves, and the model is told it couldn't load it.
 
 ### Other providers
 

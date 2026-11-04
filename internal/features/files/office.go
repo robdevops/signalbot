@@ -38,6 +38,9 @@ func officeText(data []byte, ext string) (string, error) {
 		err = paragraphs(z, "word/document.xml", "p", "t", &out)
 	case ".pptx":
 		for i, name := range numbered(z, slidePart) {
+			if out.Len() > maxText {
+				break
+			}
 			fmt.Fprintf(&out, "Slide %d:\n", i+1)
 			if err = paragraphs(z, name, "p", "t", &out); err != nil {
 				break
@@ -196,7 +199,7 @@ func rows(z *zip.Reader, name string, shared []string, out *strings.Builder) err
 					case "t":
 						cellType = a.Value
 					case "r": // e.g. "C7": move to column C, so gaps stay gaps
-						for c := column(a.Value); col < c && col < 100; col++ {
+						for c := column(a.Value); col < c && col < 100 && row.Len() <= maxText; col++ {
 							row.WriteByte('\t')
 						}
 					}
@@ -214,8 +217,10 @@ func rows(z *zip.Reader, name string, shared []string, out *strings.Builder) err
 						value = shared[n]
 					}
 				}
-				row.WriteString(strings.ReplaceAll(value, "\n", " "))
-				row.WriteByte('\t')
+				if row.Len()+out.Len() <= maxText { // a row of many long shared strings stays small
+					row.WriteString(strings.ReplaceAll(value, "\n", " "))
+					row.WriteByte('\t')
+				}
 				col++
 			case "row":
 				out.WriteString(strings.TrimRight(row.String(), "\t") + "\n")

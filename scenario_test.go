@@ -1161,11 +1161,12 @@ func TestScenarioFailedSendIsLogged(t *testing.T) {
 // until midnight; a DM has its own budget. Spending is saved in
 // STATE_DIRECTORY, under no one's ID.
 func TestScenarioDailyBudget(t *testing.T) {
-	h := startBot(t, world{Env: map[string]string{"DAILY_BUDGET": "0.003"}}) // each reply costs $0.002
+	noon := time.Date(2026, 11, 4, 12, 0, 0, 0, time.Local)                                                         // so the day can't end mid-test
+	h := startBot(t, world{Now: func() time.Time { return noon }, Env: map[string]string{"DAILY_BUDGET": "0.003"}}) // each reply costs $0.002
 	h.ask(atBot("one"))
 	h.ask(atBot("two")) // $0.004: over
 	s := h.ask(atBot("three"))
-	if !strings.HasPrefix(s.Message, "I've reached today's spending limit for this chat; I'll be back in ") || s.GroupID != idGroup {
+	if s.Message != "I've reached today's spending limit for this chat; I'll be back in 12 hours." || s.GroupID != idGroup {
 		t.Fatalf("sent %q", s.Message)
 	}
 	if n := len(h.requests()); n != 2 {

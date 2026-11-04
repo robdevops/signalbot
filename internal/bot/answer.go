@@ -3,6 +3,7 @@ package bot
 import (
 	"cmp"
 	"errors"
+	"fmt"
 	"regexp"
 	"slices"
 	"strconv"
@@ -98,6 +99,11 @@ func (b *Bot) respond(msg feature.Message, act feature.Action, text string) {
 		if !b.files.Load() {
 			files = nil
 		}
+		var left int
+		if files, left = fitFiles(files); left > 0 {
+			note := fmt.Sprintf("[%d of the files attached left out: together they are over %d MB]", left, maxFileBytes>>20)
+			asked, kept = asked+"\n"+note, kept+"\n"+note
+		}
 		if msg.Text == "" && !added && len(images) == 0 && len(files) == 0 {
 			return
 		}
@@ -112,6 +118,9 @@ func (b *Bot) respond(msg feature.Message, act feature.Action, text string) {
 			Tools:      tools,
 			ToolChoice: act.ToolChoice,
 		})
+		if b.budget != nil && reply.Costed { // every request counts, a failed or rejected one too
+			b.budget.add(key, reply.Cost)
+		}
 		if !b.fallBack(err, &imagesOff) {
 			break
 		}
@@ -121,9 +130,6 @@ func (b *Bot) respond(msg feature.Message, act feature.Action, text string) {
 		logx.Errorf("model error after %.1fs: %v", time.Since(start).Seconds(), err)
 		b.net.Send(msg.Chat, sorry, nil, b.chats.Names(key))
 		return
-	}
-	if b.budget != nil && reply.Costed {
-		b.budget.add(key, reply.Cost)
 	}
 	b.followUp(key, offered, msg.Text, reply.ToolsUsed)
 	// History notes the pictures sent, which the model would otherwise not
@@ -186,6 +192,26 @@ func (b *Bot) fallBack(err error, imagesOff *bool) bool {
 		logx.Warnf("the model's API rejected a request with %s, so %s are off: %v", what, what, err)
 	}
 	return true
+}
+
+// maxFileBytes caps the files sent with one message, all together: each is
+// sent as base64 in a JSON request, copied a few times on the way, so this
+// keeps a message with several large files well inside the bot's memory.
+const maxFileBytes = 16 << 20
+
+// fitFiles is files, in order, as far as they fit in maxFileBytes, and how
+// many were left out.
+func fitFiles(files []feature.File) (fit []feature.File, left int) {
+	total := 0
+	for _, f := range files {
+		if total+len(f.Data) > maxFileBytes {
+			left++
+			continue
+		}
+		total += len(f.Data)
+		fit = append(fit, f)
+	}
+	return fit, left
 }
 
 // prompt is the message as the model sees it: its quote, escaped and capped

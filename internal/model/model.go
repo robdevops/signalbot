@@ -115,7 +115,7 @@ type Reply struct {
 	Text      string
 	Pictures  []feature.Picture
 	ToolsUsed []string // the tools the model ran, as the tool loop reports them
-	Cost      float64  // what the API reported the reply cost, every request summed, in US dollars
+	Cost      float64  // what the API reported the reply cost, every request summed, in US dollars; set on an error too
 	Costed    bool     // the API reported a cost
 }
 
@@ -148,18 +148,24 @@ func (m message) MarshalJSON() ([]byte, error) {
 		parts = append(parts, map[string]any{"type": "image_url", "image_url": map[string]string{"url": u}})
 	}
 	for _, f := range m.Files {
-		data := base64.StdEncoding.EncodeToString(f.Data)
 		if format := audioFormat(f.MIME); format != "" {
-			parts = append(parts, map[string]any{"type": "input_audio", "input_audio": map[string]string{"data": data, "format": format}})
+			parts = append(parts, map[string]any{"type": "input_audio", "input_audio": map[string]string{"data": encoded("", f.Data), "format": format}})
 			continue
 		}
 		parts = append(parts, map[string]any{"type": "file", "file": map[string]string{
-			"filename": f.Name, "file_data": "data:" + f.MIME + ";base64," + data}})
+			"filename": f.Name, "file_data": encoded("data:"+f.MIME+";base64,", f.Data)}})
 	}
 	return json.Marshal(struct {
 		plain
 		Content []any `json:"content"`
 	}{plain(m), parts})
+}
+
+// encoded is prefix and data in base64, built in one buffer.
+func encoded(prefix string, data []byte) string {
+	b := make([]byte, len(prefix)+base64.StdEncoding.EncodedLen(len(data)))
+	base64.StdEncoding.Encode(b[copy(b, prefix):], data)
+	return string(b)
 }
 
 // audioFormat is the input_audio format of an audio file's type, e.g. "aac"
@@ -245,6 +251,7 @@ func (c *Client) Ask(ctx context.Context, r Request) (Reply, error) {
 		}
 		total.input, total.cached, total.output, total.cost = total.input+a.input, total.cached+a.cached, total.output+a.output, total.cost+a.cost
 		total.costed = total.costed || a.costed
+		reply.Cost, reply.Costed = total.cost, total.costed // what was spent, even on the way to an error
 		if err != nil {
 			return reply, err
 		}
@@ -263,7 +270,6 @@ func (c *Client) Ask(ctx context.Context, r Request) (Reply, error) {
 			}
 			logx.Infof("reply %.1fs, tokens in/out: %d/%d (%d%% cached)%s",
 				time.Since(start).Seconds(), total.input, total.output, cached, cost)
-			reply.Cost, reply.Costed = total.cost, total.costed
 			return reply, nil
 		}
 		msgs = append(msgs, message{Role: "assistant", Content: a.text, ToolCalls: a.calls, Annotations: a.annotations})

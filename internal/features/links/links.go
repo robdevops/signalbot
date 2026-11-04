@@ -51,10 +51,11 @@ func Register(h feature.Host) error {
 }
 
 // urls is the distinct http and https URLs in m's text, then its quote's,
-// at most maxLinks.
+// at most maxLinks. A quote of the bot's own message is the model's words,
+// so its URLs are not fetched.
 func urls(m feature.Message) []string {
 	text := m.Text
-	if m.Quote != nil {
+	if m.Quote != nil && !m.Quote.Bot {
 		text += "\n" + m.Quote.Text
 	}
 	var out []string
@@ -205,62 +206,72 @@ var block = map[string]bool{"p": true, "div": true, "br": true, "li": true, "h1"
 	"pre": true, "table": true, "ul": true, "ol": true, "dd": true, "dt": true, "main": true, "hr": true}
 
 // pageText is an HTML page's title and its text, a line per block, with
-// navigation, scripts and forms left out.
+// navigation, scripts and forms left out. It reads the page as a stream of
+// tokens, never building the whole tree, and stops once it has enough text.
 func pageText(body []byte, contentType string) (title, text string) {
 	r, err := charset.NewReader(bytes.NewReader(body), contentType)
 	if err != nil {
 		r = bytes.NewReader(body)
 	}
-	doc, err := html.Parse(r)
-	if err != nil {
-		return "", ""
-	}
-	var find func(*html.Node)
-	find = func(n *html.Node) {
-		if n.Type == html.ElementNode && n.Data == "title" && n.FirstChild != nil && title == "" {
-			title = n.FirstChild.Data
-		}
-		for c := n.FirstChild; c != nil && title == ""; c = c.NextSibling {
-			find(c)
-		}
-	}
-	find(doc)
-	return title, textOf(doc)
-}
-
-// textOf is n's text, a line per block, blank lines squeezed.
-func textOf(n *html.Node) string {
+	z := html.NewTokenizer(r)
 	var b strings.Builder
-	var walk func(*html.Node)
-	walk = func(n *html.Node) {
-		if b.Len() > maxText*2 {
-			return
-		}
-		switch n.Type {
-		case html.TextNode:
-			if s := strings.Join(strings.Fields(n.Data), " "); s != "" {
-				if b.Len() > 0 && !strings.HasSuffix(b.String(), "\n") {
-					b.WriteByte(' ')
-				}
-				b.WriteString(s)
-			}
-			return
-		case html.ElementNode:
-			if skipped[n.Data] || n.Data == "head" {
-				return
-			}
-		}
-		for c := n.FirstChild; c != nil; c = c.NextSibling {
-			walk(c)
-		}
-		if n.Type == html.ElementNode && block[n.Data] && !strings.HasSuffix(b.String(), "\n") {
+	skip, inTitle := 0, false // skip: depth inside elements left out
+	newline := func() {
+		if b.Len() > 0 && !strings.HasSuffix(b.String(), "\n") {
 			b.WriteByte('\n')
 		}
 	}
-	walk(n)
-	lines := strings.Split(b.String(), "\n")
+	for b.Len() <= maxText*2 {
+		switch tt := z.Next(); tt {
+		case html.ErrorToken:
+			return title, squeeze(b.String())
+		case html.StartTagToken, html.SelfClosingTagToken:
+			name, _ := z.TagName()
+			tag := string(name)
+			switch {
+			case skipped[tag]:
+				if tt == html.StartTagToken {
+					skip++
+				}
+			case tag == "title":
+				inTitle = true
+			case block[tag]:
+				newline()
+			}
+		case html.EndTagToken:
+			name, _ := z.TagName()
+			tag := string(name)
+			switch {
+			case skipped[tag] && skip > 0:
+				skip--
+			case tag == "title":
+				inTitle = false
+			case block[tag]:
+				newline()
+			}
+		case html.TextToken:
+			t := strings.Join(strings.Fields(string(z.Text())), " ")
+			switch {
+			case t == "":
+			case inTitle:
+				if title == "" {
+					title = t
+				}
+			case skip == 0:
+				if b.Len() > 0 && !strings.HasSuffix(b.String(), "\n") {
+					b.WriteByte(' ')
+				}
+				b.WriteString(t)
+			}
+		}
+	}
+	return title, squeeze(b.String())
+}
+
+// squeeze drops blank lines and the spaces around lines.
+func squeeze(s string) string {
 	var out []string
-	for _, l := range lines {
+	for _, l := range strings.Split(s, "\n") {
 		if l = strings.TrimSpace(l); l != "" {
 			out = append(out, l)
 		}

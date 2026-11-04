@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -175,5 +176,26 @@ func TestNotes(t *testing.T) {
 	}
 	if a := additionsOf(t, h, turn(feature.Media{ID: "img"})); a.Note != "" || a.Files != nil {
 		t.Fatalf("no files: %+v", a)
+	}
+}
+
+// Many cells of one long shared string, or many slides, stop at the cap:
+// a small file can't inflate into a huge text.
+func TestOfficeAmplification(t *testing.T) {
+	cells := strings.Repeat(`<c t="s"><v>0</v></c>`, 20_000)
+	xlsx := officeFile(t, map[string]string{
+		"xl/sharedStrings.xml":     "<sst><si><t>" + strings.Repeat("x", maxText) + "</t></si></sst>",
+		"xl/worksheets/sheet1.xml": "<worksheet><sheetData><row>" + cells + "</row><row>" + cells + "</row></sheetData></worksheet>",
+	})
+	got, err := officeText(xlsx, ".xlsx")
+	if err != nil || len(got) > 3*maxText {
+		t.Fatalf("xlsx gave %d bytes, %v", len(got), err)
+	}
+	slides := map[string]string{}
+	for i := range 500 {
+		slides[fmt.Sprintf("ppt/slides/slide%d.xml", i+1)] = "<p:sld><a:p><a:r><a:t>" + strings.Repeat("y", 1000) + "</a:t></a:r></a:p></p:sld>"
+	}
+	if got, err := officeText(officeFile(t, slides), ".pptx"); err != nil || len(got) > 3*maxText || strings.Contains(got, "Slide 100:") {
+		t.Fatalf("pptx gave %d bytes, %v", len(got), err)
 	}
 }

@@ -49,7 +49,14 @@ func (r *recent) add(chat, author string, ts int64, as []attachment) {
 		r.order = append(r.order, key)
 	}
 	r.byKey[key] = recentEntry{r.clock(), as}
-	for len(r.order) > recentMax {
+	r.prune()
+}
+
+// prune drops the oldest beyond recentMax, and any older than recentAge,
+// so nothing is remembered longer than a day. r.mu is held.
+func (r *recent) prune() {
+	now := r.clock()
+	for len(r.order) > 0 && (len(r.order) > recentMax || now.Sub(r.byKey[r.order[0]].at) > recentAge) {
 		delete(r.byKey, r.order[0])
 		r.order = r.order[1:]
 	}
@@ -60,6 +67,7 @@ func (r *recent) add(chat, author string, ts int64, as []attachment) {
 func (r *recent) get(chat, author string, ts int64) ([]attachment, bool) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	r.prune()
 	e, ok := r.byKey[recentKey(chat, author, ts)]
 	if !ok || r.clock().Sub(e.at) > recentAge {
 		return nil, false

@@ -582,3 +582,14 @@ func TestCapabilitiesAudioAndFiles(t *testing.T) {
 		t.Fatalf("caps %+v, native %v", caps, c.nativeFiles)
 	}
 }
+
+// A reply that fails after a request was billed still reports that cost,
+// so a daily budget counts it.
+func TestCostOnError(t *testing.T) {
+	echo := feature.Tool{Name: "echo", Run: func(context.Context, string) (string, []feature.Picture, error) { return "done", nil, nil }}
+	c, _, _ := start(t, calls("echo"), served{status: 500, body: `{}`})
+	r, err := c.Ask(context.Background(), Request{Text: "hi", Tools: []feature.Tool{echo}})
+	if err == nil || !r.Costed || r.Cost != 0.001 {
+		t.Fatalf("cost %v (%v), %v", r.Cost, r.Costed, err)
+	}
+}

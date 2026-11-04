@@ -61,17 +61,24 @@ func newBudget(dir string, limit float64, now func() time.Time) *budget {
 
 func (b *budget) today() string { return b.now().In(time.Local).Format(time.DateOnly) }
 
-// roll starts a new day's spending once the date changes. b.mu is held.
+// roll starts a new day's spending once the date changes, saving it at
+// once so yesterday's spending doesn't stay on disk. b.mu is held.
 func (b *budget) roll() {
 	if d := b.today(); d != b.day {
+		had := len(b.chats) > 0
 		b.day, b.chats = d, map[string]*spend{}
+		if had {
+			b.save()
+		}
 	}
 }
 
-func (b *budget) of(key string) *spend {
+// of is the chat's spending today; with create, made if it has none, else
+// nil.
+func (b *budget) of(key string, create bool) *spend {
 	sum := sha256.Sum256([]byte(key))
 	k := hex.EncodeToString(sum[:])
-	if b.chats[k] == nil {
+	if b.chats[k] == nil && create {
 		b.chats[k] = &spend{}
 	}
 	return b.chats[k]
@@ -84,8 +91,8 @@ func (b *budget) over(key string) (over, tell bool, left time.Duration) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	b.roll()
-	s := b.of(key)
-	if s.Spent < b.limit {
+	s := b.of(key, false)
+	if s == nil || s.Spent < b.limit {
 		return false, false, 0
 	}
 	if tell = !s.Told; tell {
@@ -105,7 +112,7 @@ func (b *budget) add(key string, cost float64) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	b.roll()
-	b.of(key).Spent += cost
+	b.of(key, true).Spent += cost
 	b.save()
 }
 

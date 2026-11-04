@@ -58,6 +58,8 @@ type world struct {
 	Vision bool
 	// Audio says the model list shows the model accepting audio.
 	Audio bool
+	// Now is the bot's clock for its daily budget; nil for the real one.
+	Now func() time.Time
 	// Attachments is what signal-cli's getAttachment returns, by attachment
 	// ID; scenarioPNG for any other.
 	Attachments map[string][]byte

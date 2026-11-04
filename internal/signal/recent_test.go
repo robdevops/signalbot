@@ -31,8 +31,8 @@ func TestRecent(t *testing.T) {
 		}
 	}
 	now = now.Add(recentAge + time.Second)
-	if _, ok := r.get("g:x", "alice", 1); ok {
-		t.Error("found after a day")
+	if _, ok := r.get("g:x", "alice", 1); ok || len(r.byKey) != 0 || len(r.order) != 0 {
+		t.Errorf("kept after a day: %d", len(r.byKey))
 	}
 	for i := range recentMax + 5 {
 		r.add("g:x", "bob", int64(100+i), pdf)
