@@ -47,33 +47,34 @@ const (
 var now = time.Now
 
 // privateParams are query parameter names, lowercased and without - or _,
-// that carry a secret or a one-time token; a name ending in signature,
-// token or key does too (X-Amz-Signature, access_token, api_key).
+// that carry a secret or a one-time token; a name ending in signature or
+// token does too (X-Amz-Signature, access_token). Names common in ordinary
+// links (code, session, hash, ticket) are left out.
 var privateParams = map[string]bool{"token": true, "accesstoken": true, "authtoken": true, "key": true, "apikey": true,
-	"secret": true, "password": true, "passwd": true, "pwd": true, "sig": true, "signature": true, "auth": true,
-	"code": true, "otp": true, "session": true, "sessionid": true, "jwt": true, "ticket": true, "hash": true}
+	"secret": true, "password": true, "passwd": true, "pwd": true, "sig": true, "signature": true, "otp": true,
+	"sessionid": true, "jwt": true}
 
-// actionWords start the path segments of links that do something when
-// opened, or are someone's one-time link.
-var actionWords = []string{"unsubscribe", "confirm", "verify", "verification", "reset", "login", "logout", "signin",
-	"signout", "magic", "activate", "delete", "remove", "approve", "webhook", "hooks", "trigger", "callback",
-	"oauth", "authorize"}
+// actionWords are path segments, whole, of links that do something when
+// opened or are someone's one-time link. Pages that are harmless to open
+// without being signed in, which the bot never is (login, logout, oauth),
+// are left out, and so are words common in ordinary paths (hooks).
+var actionWords = map[string]bool{"unsubscribe": true, "confirm": true, "verify": true, "verification": true,
+	"reset": true, "magic": true, "activate": true, "delete": true, "remove": true, "approve": true,
+	"webhook": true, "webhooks": true, "trigger": true}
 
 // private reports whether u looks like a private or one-time link, which
-// fetching could spend or act on: a password reset, a login or unsubscribe
-// link, a webhook, or one carrying a token, key or signature.
+// fetching could spend or act on: a password reset or unsubscribe link, a
+// webhook, or one carrying a token, key or signature.
 func private(u *url.URL) bool {
 	for name := range u.Query() {
 		n := strings.NewReplacer("-", "", "_", "").Replace(strings.ToLower(name))
-		if privateParams[n] || strings.HasSuffix(n, "signature") || strings.HasSuffix(n, "token") || strings.HasSuffix(n, "key") {
+		if privateParams[n] || strings.HasSuffix(n, "signature") || strings.HasSuffix(n, "token") {
 			return true
 		}
 	}
 	for _, seg := range strings.Split(strings.ToLower(u.Path), "/") {
-		for _, w := range actionWords {
-			if strings.HasPrefix(seg, w) {
-				return true
-			}
+		if actionWords[seg] {
+			return true
 		}
 	}
 	return false

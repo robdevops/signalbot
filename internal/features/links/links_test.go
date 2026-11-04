@@ -213,19 +213,23 @@ func TestPrivate(t *testing.T) {
 	for raw, want := range map[string]bool{
 		"https://news.example.com/article?id=123":                   false,
 		"https://youtube.com/watch?v=x":                             false,
-		"https://example.com/keyboards?keyword=go":                  false,
+		"https://example.com/keyboards?keyword=go&sortkey=price":    false,
 		"https://example.com/":                                      false,
+		"https://example.com/reset-your-thinking-article":           false, // a whole segment only
+		"https://react.dev/reference/react/hooks":                   false,
+		"https://example.com/login":                                 false, // harmless to open signed out
+		"https://shop.example.com/promo?code=AU&session=x&hash=y":   false,
+		"https://example.com/auth/callback?state=x":                 false,
 		"https://app.example.com/reset?token=abc":                   true,
+		"https://app.example.com/reset/abc123":                      true,
 		"https://maker.ifttt.com/trigger/x/with/key/abc":            true,
 		"https://example.com/unsubscribe/abc":                       true,
 		"https://example.com/Unsubscribe/abc":                       true,
 		"https://bucket.s3.amazonaws.com/f.pdf?X-Amz-Signature=abc": true,
 		"https://api.example.com/v1/quote?API_KEY=abc":              true,
+		"https://maps.example.com/embed?key=abc":                    true,
 		"https://example.com/data?access-token=abc":                 true,
-		"https://example.com/auth/callback?code=abc":                true,
-		"https://example.com/reset-your-thinking-article":           true,  // the prefix rule: acceptable
-		"https://hooks.slack.com/services/T0/B0/x":                  false, // the host isn't checked, only the path
-		"https://example.com/api/hooks/123":                         true,
+		"https://example.com/api/webhooks/123":                      true,
 	} {
 		u, err := url.Parse(raw)
 		if err != nil {
