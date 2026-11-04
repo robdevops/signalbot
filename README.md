@@ -20,9 +20,8 @@ A small, [privacy-conscious](PRIVACY.md) chat bot that connects to a running [si
 
 - Responds to @mentions, replies to its messages, and DMs from senders in `SIGNAL_DM_USER_IDS`
 - Tools: web search, built-in line and pie charts, and your own [MCP](#mcp-tools) tools
-- Reads the pages you link to: a URL in a message, or in the message you reply to, is fetched and its text shown to the model (public sites only)
 - [`/schedule`](#scheduling) a message or command, once or repeating, in a DM or a group
-- Understands images and stickers (if the configured model supports vision), and [files](#files): PDFs, voice notes and other audio, text and code, Word, Excel and PowerPoint
+- Understands images and stickers (if the configured model supports vision), [files](#files) (PDFs, voice notes and other audio, text and code, Word, Excel and PowerPoint), and the [pages you link to](#links)
 - Typing indicators, and a reaction (👍) instead of a message when an emoji is all it would say
 - Short per-conversation memory, for context. Keeps at most 10 messages (HISTORY_MAX), dropping the older half when full, and frees them after 24 hours, or when Signal's _disappearing messages_ timer expires, whichever comes first. Names and message bodies are never logged to disk.
 
