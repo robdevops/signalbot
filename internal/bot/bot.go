@@ -128,7 +128,7 @@ func New(ctx context.Context, cfg *config.Config, net Network) *Bot {
 			now = cfg.Test.Now
 		}
 		b.budget = newBudget(cfg.StateDir, cfg.DailyBudget, now)
-		logx.Noticef("daily budget $%.2f a chat", cfg.DailyBudget)
+		logx.Noticef("daily budget $%.2f per chat", cfg.DailyBudget)
 	}
 	return b
 }
