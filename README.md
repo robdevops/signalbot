@@ -20,7 +20,7 @@ A small, [privacy-conscious](PRIVACY.md) chat bot that connects to a running [si
 
 - Responds to @mentions, replies to its messages, and DMs from whitelisted contacts
 - Tools: web search, built-in line and pie charts, and your own [MCP](#mcp-tools) tools
-- [`/schedule`](#scheduling) a message or command, once or repeating, in a DM or a group
+- [`/schedule`](#scheduling) a message or command, once or repeating
 - Understands [files](#files) (PDFs, text and code, Word, Excel and PowerPoint) and the [pages you link to](#links), and if the model supports it, images, stickers, voice notes and other audio
 - Supports various Signal features: typing indicators, reactions, stickers, contacts, @mentions, quoted replies
 - Short per-conversation memory, for context. Frees from memory after 24 hours, or when Signal's _disappearing messages_ timer expires, whichever comes first. Names and message bodies are never logged to disk.
