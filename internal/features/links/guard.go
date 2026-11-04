@@ -10,8 +10,12 @@ import (
 	"time"
 )
 
-// errBlocked is a connection refused because its address isn't public.
-var errBlocked = errors.New("not a public address")
+// errBlocked is a connection refused because its address isn't public;
+// errPrivateRedirect a redirect to a link that looks private or one-time.
+var (
+	errBlocked         = errors.New("not a public address")
+	errPrivateRedirect = errors.New("redirected to a private or one-time link")
+)
 
 // allowLoopback lets this package's own tests reach their local server.
 var allowLoopback bool
@@ -69,7 +73,8 @@ func guard(_, address string, _ syscall.RawConn) error {
 
 // newClient is the HTTP client links are fetched with: no proxy, so the
 // address guarded is the one reached; TLS 1.2 or later, since many sites
-// have no 1.3; at most maxRedirects redirects, each to http or https.
+// have no 1.3; at most maxRedirects redirects, each to http or https and
+// none to a link that looks private or one-time.
 func newClient() *http.Client {
 	dialer := &net.Dialer{Timeout: 10 * time.Second, Control: guard}
 	return &http.Client{
@@ -89,6 +94,9 @@ func newClient() *http.Client {
 			}
 			if req.URL.Scheme != "http" && req.URL.Scheme != "https" {
 				return errors.New("redirected away from the web")
+			}
+			if private(req.URL) { // a short link to someone's reset link, say
+				return errPrivateRedirect
 			}
 			return nil
 		},

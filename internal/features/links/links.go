@@ -19,6 +19,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 	"unicode/utf8"
 
@@ -39,15 +40,81 @@ const (
 	maxRedirects = 3
 	timeout      = 15 * time.Second
 	userAgent    = "signalbot (+https://github.com/robdevops/signalbot)"
+	maxPerHour   = 20 // links fetched for one chat in an hour
 )
+
+// now is the clock the per-chat cap reads; tests replace it.
+var now = time.Now
+
+// privateParams are query parameter names, lowercased and without - or _,
+// that carry a secret or a one-time token; a name ending in signature,
+// token or key does too (X-Amz-Signature, access_token, api_key).
+var privateParams = map[string]bool{"token": true, "accesstoken": true, "authtoken": true, "key": true, "apikey": true,
+	"secret": true, "password": true, "passwd": true, "pwd": true, "sig": true, "signature": true, "auth": true,
+	"code": true, "otp": true, "session": true, "sessionid": true, "jwt": true, "ticket": true, "hash": true}
+
+// actionWords start the path segments of links that do something when
+// opened, or are someone's one-time link.
+var actionWords = []string{"unsubscribe", "confirm", "verify", "verification", "reset", "login", "logout", "signin",
+	"signout", "magic", "activate", "delete", "remove", "approve", "webhook", "hooks", "trigger", "callback",
+	"oauth", "authorize"}
+
+// private reports whether u looks like a private or one-time link, which
+// fetching could spend or act on: a password reset, a login or unsubscribe
+// link, a webhook, or one carrying a token, key or signature.
+func private(u *url.URL) bool {
+	for name := range u.Query() {
+		n := strings.NewReplacer("-", "", "_", "").Replace(strings.ToLower(name))
+		if privateParams[n] || strings.HasSuffix(n, "signature") || strings.HasSuffix(n, "token") || strings.HasSuffix(n, "key") {
+			return true
+		}
+	}
+	for _, seg := range strings.Split(strings.ToLower(u.Path), "/") {
+		for _, w := range actionWords {
+			if strings.HasPrefix(seg, w) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// limiter caps the links fetched for each chat in an hour, in memory: the
+// times of each chat's recent fetches, never their URLs.
+type limiter struct {
+	mu     sync.Mutex
+	recent map[string][]time.Time
+}
+
+// allow reports whether the chat may have another link fetched, and if so
+// counts it.
+func (l *limiter) allow(chat string) bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	t := now()
+	for c, times := range l.recent { // chats idle for an hour leave nothing behind
+		if c != chat && t.Sub(times[len(times)-1]) >= time.Hour {
+			delete(l.recent, c)
+		}
+	}
+	times := slices.DeleteFunc(l.recent[chat], func(at time.Time) bool { return t.Sub(at) >= time.Hour })
+	if len(times) >= maxPerHour {
+		l.recent[chat] = times
+		return false
+	}
+	l.recent[chat] = append(times, t)
+	return true
+}
 
 // urlPattern finds URLs in text; trailing punctuation is trimmed after.
 var urlPattern = regexp.MustCompile("https?://[^\\s<>\"'`]+")
 
 // Register adds the pages a message links to to the model's request on h.
 func Register(h feature.Host) error {
-	c := newClient()
-	h.OnTurn(func(ctx context.Context, m feature.Message) feature.Additions { return additions(ctx, c, h.Info(), m) })
+	c, l := newClient(), &limiter{recent: map[string][]time.Time{}}
+	h.OnTurn(func(ctx context.Context, m feature.Message) feature.Additions {
+		return additions(ctx, c, l, h.Info(), m)
+	})
 	return nil
 }
 
@@ -93,11 +160,20 @@ func trim(u string) string {
 
 // additions fetches each URL in m and notes it, with its text or as a PDF
 // file; history keeps a note only.
-func additions(ctx context.Context, c *http.Client, info feature.Info, m feature.Message) feature.Additions {
+func additions(ctx context.Context, c *http.Client, l *limiter, info feature.Info, m feature.Message) feature.Additions {
 	var notes, kept []string
 	var files []feature.File
 	for _, u := range urls(m) {
-		note, text, file := fetch(ctx, c, info, u)
+		var note, text string
+		var file *feature.File
+		switch parsed, _ := url.Parse(u); {
+		case private(parsed):
+			note = "[link " + u + " not fetched: it looks like a private or one-time link"
+		case !l.allow(m.Chat.Key()):
+			note = "[link " + u + " not fetched: too many links this hour; try again later"
+		default:
+			note, text, file = fetch(ctx, c, info, u)
+		}
 		kept = append(kept, note+"]")
 		if text != "" || file != nil {
 			kept[len(kept)-1] = "[page " + u + " was shown to you; it isn't kept]"
@@ -184,6 +260,8 @@ func reason(err error) string {
 		return "it isn't a public address"
 	case errors.Is(err, context.DeadlineExceeded), strings.Contains(err.Error(), "Client.Timeout"):
 		return "timed out"
+	case errors.Is(err, errPrivateRedirect):
+		return "redirected to a private or one-time link"
 	case strings.Contains(err.Error(), "redirect"):
 		return "too many or bad redirects"
 	}

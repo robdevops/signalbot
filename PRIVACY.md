@@ -15,7 +15,7 @@ When the bot answers a message, it sends this to the model's API: [OpenRouter](h
 
 With web search on (`MODEL_SEARCH`), the model decides whether to search and writes the query itself. The query can contain anything the model was sent (see above), such as a name or a phrase from a message, and goes to the search service OpenRouter uses. Web search runs only on OpenRouter.
 
-When a message that addresses the bot has a link, or replies to one with a link, the bot fetches the page from its own machine, so the site sees that machine's address and the user agent `signalbot (+https://github.com/robdevops/signalbot)`, never who sent the link. The page's text then goes to the model's API with the message. The bot never fetches a link the model or a page suggests, and never a private or local address.
+When a message that addresses the bot has a link, or replies to one with a link, the bot fetches the page from its own machine, so the site sees that machine's address and the user agent `signalbot (+https://github.com/robdevops/signalbot)`, never who sent the link. The page's text then goes to the model's API with the message. The bot never fetches a link the model or a page suggests, never a private or local address, and never a link that looks private or one-time (a reset, login, unsubscribe or webhook link, or one carrying a token, key or signature), so it can't spend one. To cap links at 20 an hour per chat it counts, in memory, when each chat last had links fetched, never which.
 
 Charts are drawn on the bot's own machine from the numbers the model passes in; nothing extra leaves it.
 

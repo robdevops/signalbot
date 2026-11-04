@@ -6,10 +6,13 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/netip"
+	"net/url"
 	"runtime"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/robdevops/signalbot/internal/feature"
 	"github.com/robdevops/signalbot/internal/kit/logx"
@@ -133,7 +136,7 @@ func TestFetch(t *testing.T) {
 	c := newClient()
 	all := feature.Info{Files: true}
 
-	a := additions(context.Background(), c, all, msg("what's this "+srv.URL+"/page?", ""))
+	a := additions(context.Background(), c, newLimiter(), all, msg("what's this "+srv.URL+"/page?", ""))
 	if !strings.HasPrefix(a.Note, "[page "+srv.URL+`/page: "Gold news"]`+"\n```\nGold\nGold rose today.") ||
 		strings.Contains(a.Note, "evil") || strings.Contains(a.Note, "Home | About") || strings.Contains(a.Note, "©") {
 		t.Fatalf("note %q", a.Note)
@@ -141,14 +144,14 @@ func TestFetch(t *testing.T) {
 	if a.HistoryNote != "[page "+srv.URL+"/page was shown to you; it isn't kept]" {
 		t.Fatalf("history %q", a.HistoryNote)
 	}
-	if a := additions(context.Background(), c, all, msg(srv.URL+"/latin1", "")); a.Note != "[page "+srv.URL+"/latin1]\n```\ncafé\n```" {
+	if a := additions(context.Background(), c, newLimiter(), all, msg(srv.URL+"/latin1", "")); a.Note != "[page "+srv.URL+"/latin1]\n```\ncafé\n```" {
 		t.Fatalf("latin-1 %q", a.Note)
 	}
-	a = additions(context.Background(), c, all, msg("", "read "+srv.URL+"/report.pdf"))
+	a = additions(context.Background(), c, newLimiter(), all, msg("", "read "+srv.URL+"/report.pdf"))
 	if a.Note != "[page "+srv.URL+"/report.pdf, a PDF, attached]" || len(a.Files) != 1 || a.Files[0].Name != "report.pdf" || a.Files[0].MIME != "application/pdf" {
 		t.Fatalf("pdf %+v", a)
 	}
-	if a := additions(context.Background(), c, feature.Info{}, msg(srv.URL+"/report.pdf", "")); a.Files != nil || !strings.Contains(a.Note, "which you can't read with this model") {
+	if a := additions(context.Background(), c, newLimiter(), feature.Info{}, msg(srv.URL+"/report.pdf", "")); a.Files != nil || !strings.Contains(a.Note, "which you can't read with this model") {
 		t.Fatalf("pdf without files %+v", a)
 	}
 	for path, want := range map[string]string{
@@ -156,11 +159,11 @@ func TestFetch(t *testing.T) {
 		"/missing": " failed to load: status 404]",
 		"/loop":    " failed to load: too many or bad redirects]",
 	} {
-		if a := additions(context.Background(), c, all, msg(srv.URL+path, "")); !strings.HasSuffix(a.Note, want) || a.HistoryNote != a.Note {
+		if a := additions(context.Background(), c, newLimiter(), all, msg(srv.URL+path, "")); !strings.HasSuffix(a.Note, want) || a.HistoryNote != a.Note {
 			t.Errorf("%s: %q / %q", path, a.Note, a.HistoryNote)
 		}
 	}
-	if a := additions(context.Background(), c, all, msg("no links here", "")); a.Note != "" {
+	if a := additions(context.Background(), c, newLimiter(), all, msg("no links here", "")); a.Note != "" {
 		t.Fatalf("no links: %+v", a)
 	}
 }
@@ -200,5 +203,105 @@ func TestArticleText(t *testing.T) {
 		if _, got := pageText([]byte("<html><body>"+tc.page+"</body></html>"), "text/html"); got != tc.want {
 			t.Errorf("got %q\nwant %q", got, tc.want)
 		}
+	}
+}
+
+func newLimiter() *limiter { return &limiter{recent: map[string][]time.Time{}} }
+
+// Links that look private or one-time are not fetched; ordinary ones are.
+func TestPrivate(t *testing.T) {
+	for raw, want := range map[string]bool{
+		"https://news.example.com/article?id=123":                   false,
+		"https://youtube.com/watch?v=x":                             false,
+		"https://example.com/keyboards?keyword=go":                  false,
+		"https://example.com/":                                      false,
+		"https://app.example.com/reset?token=abc":                   true,
+		"https://maker.ifttt.com/trigger/x/with/key/abc":            true,
+		"https://example.com/unsubscribe/abc":                       true,
+		"https://example.com/Unsubscribe/abc":                       true,
+		"https://bucket.s3.amazonaws.com/f.pdf?X-Amz-Signature=abc": true,
+		"https://api.example.com/v1/quote?API_KEY=abc":              true,
+		"https://example.com/data?access-token=abc":                 true,
+		"https://example.com/auth/callback?code=abc":                true,
+		"https://example.com/reset-your-thinking-article":           true,  // the prefix rule: acceptable
+		"https://hooks.slack.com/services/T0/B0/x":                  false, // the host isn't checked, only the path
+		"https://example.com/api/hooks/123":                         true,
+	} {
+		u, err := url.Parse(raw)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := private(u); got != want {
+			t.Errorf("private(%s) = %v", raw, got)
+		}
+	}
+}
+
+// A private-looking link isn't fetched, and neither is one a redirect
+// points at: the server never sees either.
+func TestPrivateLinksAreNotFetched(t *testing.T) {
+	capture(t)
+	allowLoopback = true
+	defer func() { allowLoopback = false }()
+	var mu sync.Mutex
+	var hits []string
+	hit := func(r *http.Request) { mu.Lock(); hits = append(hits, r.URL.Path); mu.Unlock() }
+	mux := http.NewServeMux()
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) { hit(r) })
+	mux.HandleFunc("/short", func(w http.ResponseWriter, r *http.Request) {
+		hit(r)
+		http.Redirect(w, r, "/reset?token=x", http.StatusFound)
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+	c := newClient()
+	a := additions(context.Background(), c, newLimiter(), feature.Info{}, msg("is this legit? "+srv.URL+"/login?token=abc", ""))
+	if a.Note != "[link "+srv.URL+"/login?token=abc not fetched: it looks like a private or one-time link]" || a.HistoryNote != a.Note {
+		t.Fatalf("note %q", a.Note)
+	}
+	a = additions(context.Background(), c, newLimiter(), feature.Info{}, msg(srv.URL+"/short", ""))
+	if a.Note != "[link "+srv.URL+"/short failed to load: redirected to a private or one-time link]" {
+		t.Fatalf("redirect note %q", a.Note)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if !slices.Equal(hits, []string{"/short"}) {
+		t.Fatalf("server saw %v", hits)
+	}
+}
+
+// Each chat can have maxPerHour links fetched an hour; another chat is
+// counted apart, and an hour later the first can again.
+func TestFetchesPerHour(t *testing.T) {
+	defer func(f func() time.Time) { now = f }(now)
+	clock := time.Now()
+	now = func() time.Time { return clock }
+	l := newLimiter()
+	for i := range maxPerHour {
+		if !l.allow("g:a") {
+			t.Fatalf("fetch %d refused", i+1)
+		}
+		clock = clock.Add(time.Minute)
+	}
+	if l.allow("g:a") {
+		t.Fatal("fetch over the cap allowed")
+	}
+	if !l.allow("g:b") {
+		t.Fatal("another chat refused")
+	}
+	clock = clock.Add(time.Hour)
+	if !l.allow("g:a") {
+		t.Fatal("refused an hour later")
+	}
+	if _, kept := l.recent["g:b"]; kept {
+		t.Fatal("an idle chat was kept")
+	}
+	// Over the cap, the model is told why.
+	for range maxPerHour {
+		l.allow("u:c")
+	}
+	a := additions(context.Background(), newClient(), l, feature.Info{}, feature.Message{Chat: feature.Chat{User: "c"}, Text: "https://example.com/a", Addressed: true})
+	if a.Note != "[link https://example.com/a not fetched: too many links this hour; try again later]" {
+		t.Fatalf("note %q", a.Note)
 	}
 }
