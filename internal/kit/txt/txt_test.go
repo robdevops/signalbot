@@ -39,3 +39,16 @@ func TestBool(t *testing.T) {
 		t.Error("an unknown value is not the default")
 	}
 }
+
+func TestSingleEmoji(t *testing.T) {
+	for s, want := range map[string]bool{
+		"👍": true, " 🙏 ": true, "❤️": true, "❤": true, "👍🏽": true, "🇦🇺": true, "👨‍👩‍👧": true, "🏳️‍🌈": true,
+		"1️⃣": true, "#⃣": true, "©️": true, "⭐": true, "☕": true, "🏴\U000E0067\U000E0062\U000E0065\U000E006E\U000E0067\U000E007F": true,
+		"": false, "ok": false, "👍👍": false, "👍 thanks": false, "thanks 👍": false, "7": false, "©": false, "™": false,
+		"↔": false, "🇦": false, "🇦🇺🇳🇿": false, "‍": false, "👍‍": false, "🏽": false, "1": false,
+	} {
+		if got := SingleEmoji(s); got != want {
+			t.Errorf("SingleEmoji(%q) = %v, want %v", s, got, want)
+		}
+	}
+}

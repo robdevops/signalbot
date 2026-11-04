@@ -21,6 +21,7 @@ const (
 	// line between them; MODEL_SYSTEM_PROMPT is added to them.
 	basePrompt = "You are a helpful assistant in a chat. Reply in Markdown. " +
 		"Aim for a single line. Two or three sentences at the very most, and only when asked for detail. " +
+		"To just acknowledge a message, reply with a single emoji; it is sent as a reaction. " +
 		// Earlier messages include, in a group, others' talk not addressed
 		// to the bot, which it otherwise tends to answer all at once.
 		"Earlier messages are the conversation so far, not questions for you: " +
@@ -123,6 +124,16 @@ func (b *Bot) respond(msg feature.Message, act feature.Action, text string) {
 		if p.Caption != "" {
 			captions = append(captions, p.Caption)
 		}
+	}
+	// A reply that is one emoji, and nothing else, is a reaction to the
+	// message, unless the bot made the message (a scheduled post), which
+	// can't be reacted to.
+	if len(reply.Pictures) == 0 && msg.Timestamp != 0 && txt.SingleEmoji(reply.Text) {
+		emoji := strings.TrimSpace(reply.Text)
+		b.chats.Add(key, start, msg.Expires, chats.Entry{Role: "user", Content: strings.TrimSpace(kept)},
+			chats.Entry{Role: "assistant", Content: "[reacted " + emoji + "]"})
+		b.net.React(msg.Chat, msg, emoji)
+		return
 	}
 	sent := reply.Text
 	if len(captions) > 0 {

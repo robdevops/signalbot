@@ -12,6 +12,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"flag"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -1148,6 +1149,33 @@ func TestScenarioFailedSendIsLogged(t *testing.T) {
 	h.receive(fromAlice("what is up").frame())
 	if l := h.waitLog("Failed to send message"); l.Pri != 3 {
 		t.Fatalf("logged %+v", l)
+	}
+}
+
+// --- reactions -------------------------------------------------------------------------
+
+// A reply that is one emoji goes out as a reaction to the message, in a DM
+// or a group, and no message is sent; one with words is a message.
+func TestScenarioOneEmojiIsAReaction(t *testing.T) {
+	h := startBot(t, world{})
+	h.queue(modelReply{Text: "🙏"}, modelReply{Text: "👍"}, modelReply{Text: "👍 sure"})
+	for i, m := range []incoming{fromAlice("thanks!"), atBot("cheers")} {
+		frame := m.frame()
+		var f struct{ Envelope struct{ Timestamp int64 } }
+		json.Unmarshal([]byte(frame), &f)
+		h.receive(frame)
+		h.waitFor("the reaction", func() bool { return len(h.callsTo("sendReaction")) == i+1 })
+		p := h.callsTo("sendReaction")[i]
+		if p["emoji"] != []string{"🙏", "👍"}[i] || p["targetAuthor"] != idAlice || p["targetTimestamp"] != float64(f.Envelope.Timestamp) {
+			t.Fatalf("sendReaction %v", p)
+		}
+		if i == 0 && fmt.Sprint(p["recipient"]) != "["+idAlice+"]" || i == 1 && p["groupId"] != idGroup {
+			t.Fatalf("sendReaction to %v", p)
+		}
+	}
+	h.noMoreSends()
+	if s := h.ask(fromAlice("ok?")); s.Message != "👍 sure" {
+		t.Fatalf("sent %q", s.Message)
 	}
 }
 

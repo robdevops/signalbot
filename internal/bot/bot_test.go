@@ -544,3 +544,26 @@ func (g *gate) open() { g.once.Do(func() { close(g.c) }) }
 func (g *gate) answer(s string) func() (int, string) {
 	return func() (int, string) { <-g.c; return 200, reply(s) }
 }
+
+// A reply that is one emoji is a reaction to the message answered, kept in
+// history as "[reacted …]"; one with words is a message, and so is one to
+// a message the bot made (no timestamp), which can't be reacted to.
+func TestOneEmojiIsAReaction(t *testing.T) {
+	h := start(t, options{})
+	h.answer(text(" 🙏 "), text("👍 sure"), text("👍"), text("ok"))
+	m := dm("thanks!")
+	m.Timestamp = 1700
+	if _, s := h.ask(m); s.text != "react 🙏 to "+aliceID+"@1700" || s.chat.User != aliceID {
+		t.Fatalf("sent %+v", s)
+	}
+	m.Text, m.Timestamp = "great", 1701
+	if _, s := h.ask(m); s.text != "👍 sure" {
+		t.Fatalf("sent %q", s.text)
+	}
+	m.Text, m.Timestamp = "scheduled", 0
+	if _, s := h.ask(m); s.text != "👍" {
+		t.Fatalf("sent %q", s.text)
+	}
+	r, _ := h.ask(dm("what did you do?"))
+	equal(t, "history", contents(r)[:2], []string{"user: thanks!", "assistant: [reacted 🙏]"})
+}

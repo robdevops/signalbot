@@ -30,6 +30,8 @@ type Network interface {
 	Run(ctx context.Context, handle func(Received))
 	WaitID(ctx context.Context) string
 	Send(chat feature.Chat, text string, pics []feature.Picture, known map[string]string)
+	// React puts emoji on msg in chat, as a reaction from the bot.
+	React(chat feature.Chat, msg feature.Message, emoji string)
 	Typing(chat feature.Chat) (stop func())
 	// Delivered readies a delivered message in its slot: its sender's name
 	// filled in, the bot's @name stripped (Mentioned if it was there), and

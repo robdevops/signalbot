@@ -224,6 +224,7 @@ func (c *Client) message(env *envelope, self string) feature.Message {
 		Name:      txt.SafeName(env.SourceName),
 		Text:      c.text(d.Message, d.Mentions, self),
 		Expires:   time.Duration(d.ExpiresInSeconds) * time.Second,
+		Timestamp: env.Timestamp,
 		Addressed: isAddressed(env, self, c.allowed),
 	}
 	var images, files []feature.Media

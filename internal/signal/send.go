@@ -113,6 +113,15 @@ func (c *Client) send(chat feature.Chat, text string, mentions, styles, attachme
 	return c.write(c.nextID.Add(1), "send", p)
 }
 
+// React puts emoji on msg, as a reaction from the bot.
+func (c *Client) React(chat feature.Chat, msg feature.Message, emoji string) {
+	p := target(chat)
+	p["emoji"], p["targetAuthor"], p["targetTimestamp"] = emoji, msg.Sender, msg.Timestamp
+	if err := c.write(c.nextID.Add(1), "sendReaction", p); err != nil {
+		logx.Errorf("reaction failed: %v", err)
+	}
+}
+
 func target(chat feature.Chat) map[string]any {
 	if chat.GroupID != "" {
 		return map[string]any{"groupId": chat.GroupID}
