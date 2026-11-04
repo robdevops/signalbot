@@ -6,6 +6,7 @@ import (
 	"cmp"
 	"context"
 	"slices"
+	"strconv"
 	"strings"
 
 	"github.com/robdevops/signalbot/internal/feature"
@@ -28,11 +29,17 @@ func Register(h feature.Host) error {
 // chatter is what history keeps of a message, as "<name>: <text>". The core
 // keeps it only for an unaddressed group message, like any other message
 // (HISTORY_MAX, a day at most, sooner with disappearing messages), and
-// never logs it. Only text is kept: images are noted, not fetched.
+// never logs it. Only text is kept: images and files are noted, not
+// fetched.
 func chatter(m feature.Message) string {
 	text := txt.Clamp(m.Text, maxChars)
-	if slices.ContainsFunc(m.Media, func(md feature.Media) bool { return !md.Sticker && !md.Quoted }) {
+	if slices.ContainsFunc(m.Media, func(md feature.Media) bool { return !md.Sticker && !md.File && !md.Quoted }) {
 		text = strings.TrimSpace(text + " [image]")
+	}
+	for _, md := range m.Media {
+		if md.File && !md.Quoted {
+			text = strings.TrimSpace(text + " [file " + strconv.Quote(cmp.Or(txt.SafeName(md.Name), "untitled")) + "]")
+		}
 	}
 	if slices.ContainsFunc(m.Media, func(md feature.Media) bool { return md.Sticker }) {
 		text = strings.TrimSpace(text + " [sticker]")

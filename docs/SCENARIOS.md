@@ -88,7 +88,7 @@ The table maps every `Test*` function in the 19 old test files to what covers it
 | TestGroupContextOff | groupcontext_test.go | TestScenarioGroupContextOff |
 | TestOneEraserPerChat | groupcontext_test.go | Unit test, moves with its code (timers are not visible at the edges) |
 | TestGroupContextConfig | groupcontext_test.go | TestScenarioGroupChatterIsContext (default on), TestScenarioGroupContextOff |
-| TestPhotoTriggers | images_test.go | TestScenarioPhotoIsShownToModel, TestScenarioUnaddressedMessagesAreNeverLogged (voice note), TestScenarioMessageWithNothingUsableIsIgnored (too big), TestScenarioGroupChatterNotesImagesWithoutFetching (group photo) |
+| TestPhotoTriggers | images_test.go | TestScenarioPhotoIsShownToModel, TestScenarioUnaddressedMessagesAreNeverLogged (group voice note), TestScenarioMessageWithNothingUsableIsIgnored (too big), TestScenarioGroupChatterNotesImagesWithoutFetching (group photo) |
 | TestQuotedPhotoIsSeen | images_test.go | TestScenarioImagesAreFetchedFromTheirChat |
 | TestPhotoShownToModel | images_test.go | TestScenarioPhotoIsShownToModel |
 | TestQuotedPhotoFetchedByGroup | images_test.go | TestScenarioImagesAreFetchedFromTheirChat |
@@ -152,6 +152,8 @@ The table maps every `Test*` function in the 19 old test files to what covers it
 ## Scenarios with no old test
 
 TestScenarioHistoryAcrossTurns, TestScenarioHistoryIsPerChat, TestScenarioHistoryMax, TestScenarioLongReplyIsSplit, TestScenarioModelRetry, TestScenarioUnknownCommandIsAMessage, TestScenarioBotWithoutProfileNameIsSignalbot, TestScenarioAtMostFourImages, TestScenarioGroupSenderWithoutName and TestScenarioErasedHistoryEndsChartFollowUps pin behaviour that had no direct test before.
+
+Files: TestScenarioPDFInADM, TestScenarioTextAndOfficeFiles, TestScenarioVoiceNote, TestScenarioOtherProviderRejectsFiles and TestScenarioReplyToSomeonesPDF pin forwarding files to the model, new with the files feature.
 
 ## Not pinned, or pinned with care
 

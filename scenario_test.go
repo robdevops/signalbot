@@ -8,8 +8,11 @@ package main
 // old tests to these.
 
 import (
+	"archive/zip"
+	"bytes"
 	"encoding/json"
 	"flag"
+	"io"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -49,6 +52,7 @@ type quoteOf struct {
 
 type attached struct {
 	ID, Type string
+	Name     string // its file name; none if ""
 	Size     int
 	Thumb    *attached
 }
@@ -62,6 +66,9 @@ var timestamps atomic.Int64
 
 func (a attached) json() map[string]any {
 	m := map[string]any{"contentType": a.Type, "filename": nil, "id": a.ID, "size": a.Size, "caption": nil, "isVoiceNote": false}
+	if a.Name != "" {
+		m["filename"] = a.Name
+	}
 	if a.ID == "" {
 		delete(m, "id")
 	}
@@ -254,7 +261,7 @@ func TestScenarioUnaddressedMessagesAreNeverLogged(t *testing.T) {
 	replyToBob.Quote = &quoteOf{Author: idBob, Text: "lunch at noon?"}
 	mentionsBob := inGroup("\uFFFC lunch?")
 	mentionsBob.Mentions = []atMention{{ID: idBob, Name: idBob, Start: 0, Length: 1}}
-	voice := fromAlice("")
+	voice := inGroup("") // in a DM it would be answered
 	voice.Attachments = []attached{{ID: "voice1.aac", Type: "audio/aac", Size: 5000}}
 	for name, frame := range map[string]string{
 		"group message to nobody":     inGroup("Group test message").frame(),
@@ -262,7 +269,7 @@ func TestScenarioUnaddressedMessagesAreNeverLogged(t *testing.T) {
 		"mention of someone else":     mentionsBob.frame(),
 		"message from the bot itself": dmFrom(idBot, "Botty", "note to self, ignore").frame(),
 		"DM with no text":             fromAlice("").frame(),
-		"voice note with no text":     voice.frame(),
+		"group voice note to nobody":  voice.frame(),
 		"typing indicator": `{"envelope":{"source":"` + idAlice + `","sourceUuid":"` + idAlice + `","sourceName":"Alice","timestamp":1,` +
 			`"typingMessage":{"action":"STARTED","timestamp":1,"groupId":"` + idGroup + `"}},"account":"` + idBot + `"}`,
 		"read receipt": `{"envelope":{"source":"` + idAlice + `","sourceUuid":"` + idAlice + `","sourceName":"Alice","timestamp":1,` +
@@ -282,16 +289,19 @@ func TestScenarioUnaddressedMessagesAreNeverLogged(t *testing.T) {
 	}
 }
 
-// A photo or sticker alone is answered; anything else with no text, or an
-// image too big to show, is not.
+// An attachment or sticker alone is answered; one too big to fetch, or one
+// signal-cli has no ID for, with no text, is not.
 func TestScenarioMessageWithNothingUsableIsIgnored(t *testing.T) {
 	h := startBot(t, world{Vision: true})
 	big := fromAlice("")
 	big.Attachments = []attached{{ID: "big.png", Type: "image/png", Size: 30000000}}
 	h.ignored(big)
 	pdf := fromAlice("")
-	pdf.Attachments = []attached{{ID: "doc.pdf", Type: "application/pdf", Size: 1000}}
+	pdf.Attachments = []attached{{ID: "doc.pdf", Type: "application/pdf", Size: 30000000}}
 	h.ignored(pdf)
+	noID := fromAlice("")
+	noID.Attachments = []attached{{Type: "application/pdf", Size: 1000}}
+	h.ignored(noID)
 }
 
 // --- the conversation the model sees -----------------------------------------------
@@ -819,7 +829,7 @@ func TestScenarioModelListUnavailable(t *testing.T) {
 	if r := h.lastRequest(); r.last().Content != "[1 image attached, which you can't see with this model]" || !slices.Contains(r.Tools, "openrouter:web_search") {
 		t.Fatalf("model got %q with tools %v", r.last().Content, r.Tools)
 	}
-	if l, ok := h.logged("images are off"); !ok || l.Pri != 4 {
+	if l, ok := h.logged("images and audio are off"); !ok || l.Pri != 4 {
 		t.Fatalf("no warning: %v", h.logLines())
 	}
 }
@@ -833,7 +843,7 @@ func TestScenarioModelNotListed(t *testing.T) {
 	if r := h.lastRequest(); r.last().Content != "[1 image attached, which you can't see with this model]" || !slices.Contains(r.Tools, "openrouter:web_search") {
 		t.Fatalf("model got %q with tools %v", r.last().Content, r.Tools)
 	}
-	if l, ok := h.logged("images are off"); !ok || l.Pri != 4 {
+	if l, ok := h.logged("images and audio are off"); !ok || l.Pri != 4 {
 		t.Fatalf("no warning: %v", h.logLines())
 	}
 }
@@ -872,7 +882,7 @@ func TestScenarioOtherProvider(t *testing.T) {
 	if _, ok := h.logged("web search on"); ok {
 		t.Fatalf("web search logged as on: %v", h.logLines())
 	}
-	if l, ok := h.logged("images and tools are on until the API rejects them"); !ok || l.Pri != 5 {
+	if l, ok := h.logged("images, files and tools are on until the API rejects them"); !ok || l.Pri != 5 {
 		t.Fatalf("no notice: %v", h.logLines())
 	}
 	m := fromAlice("")
@@ -1138,6 +1148,117 @@ func TestScenarioFailedSendIsLogged(t *testing.T) {
 	h.receive(fromAlice("what is up").frame())
 	if l := h.waitLog("Failed to send message"); l.Pri != 3 {
 		t.Fatalf("logged %+v", l)
+	}
+}
+
+// --- files ---------------------------------------------------------------------------
+
+// A PDF alone in a DM is answered: it goes to the model as a file, read by
+// OpenRouter's OCR for a model that can't read files itself, and history
+// keeps only a note.
+func TestScenarioPDFInADM(t *testing.T) {
+	h := startBot(t, world{Attachments: map[string][]byte{"doc1": []byte("%PDF-1.7 quarterly results")}})
+	m := fromAlice("")
+	m.Attachments = []attached{{ID: "doc1", Type: "application/pdf", Name: "q3.pdf", Size: 26}}
+	if s := h.ask(m); s.Message != "ok" {
+		t.Fatalf("sent %q", s.Message)
+	}
+	r := h.lastRequest()
+	if last := r.last(); last.Content != `[file "q3.pdf" attached]` || !slices.Equal(last.Files, []string{"file:q3.pdf"}) {
+		t.Fatalf("model got %q with %v", last.Content, last.Files)
+	}
+	if p, _ := json.Marshal(r.Body["plugins"]); string(p) != `[{"id":"file-parser","pdf":{"engine":"mistral-ocr"}}]` {
+		t.Fatalf("plugins %s", p)
+	}
+	h.ask(fromAlice("and the total?"))
+	if first := h.lastRequest().Messages[0]; !strings.HasPrefix(first.Content, `[file "q3.pdf" attached; you see files only in the latest message`) || first.Files != nil {
+		t.Fatalf("history kept %q with %v", first.Content, first.Files)
+	}
+}
+
+// A text file with an @mention in a group is shown inline; a docx as its
+// text.
+func TestScenarioTextAndOfficeFiles(t *testing.T) {
+	var docx bytes.Buffer
+	z := zip.NewWriter(&docx)
+	w, _ := z.Create("word/document.xml")
+	io.WriteString(w, `<w:document><w:body><w:p><w:r><w:t>Minutes of the meeting</w:t></w:r></w:p></w:body></w:document>`)
+	z.Close()
+	h := startBot(t, world{Attachments: map[string][]byte{"t1": []byte("line one\nline two"), "d1": docx.Bytes()}})
+	m := atBot("what's this?")
+	m.Attachments = []attached{{ID: "t1", Type: "text/plain", Name: "notes.txt", Size: 17}, {ID: "d1", Type: "application/vnd.openxmlformats-officedocument.wordprocessingml.document", Name: "minutes.docx", Size: docx.Len()}}
+	h.ask(m)
+	want := "Alice: what's this?\n[file \"notes.txt\" attached, its text]\n```\nline one\nline two\n```\n" +
+		"[file \"minutes.docx\" attached, its text]\n```\nMinutes of the meeting\n```"
+	if last := h.lastRequest().last(); last.Content != want || last.Files != nil {
+		t.Fatalf("model got %q", last.Content)
+	}
+}
+
+// A voice note in a reply to the bot goes to a model that takes audio as
+// audio, and is noted for one that doesn't.
+func TestScenarioVoiceNote(t *testing.T) {
+	for _, audio := range []bool{true, false} {
+		h := startBot(t, world{Audio: audio, Attachments: map[string][]byte{"v1": []byte("aac data")}})
+		m := inGroup("")
+		m.Quote = &quoteOf{Author: idBot, Text: "ok"}
+		m.Attachments = []attached{{ID: "v1", Type: "audio/aac", Size: 8}}
+		h.ask(m)
+		last := h.lastRequest().last()
+		if audio && (!slices.Equal(last.Files, []string{"audio:aac"}) || !strings.Contains(last.Content, `[file "untitled" attached]`)) ||
+			!audio && (last.Files != nil || !strings.Contains(last.Content, "which you can't hear with this model")) {
+			t.Fatalf("audio %v: model got %q with %v", audio, last.Content, last.Files)
+		}
+	}
+}
+
+// On another provider, a request with a PDF that the API rejects is asked
+// again without it, the model told it can't read it; files and audio stay
+// off for the run, with one warning.
+func TestScenarioOtherProviderRejectsFiles(t *testing.T) {
+	h := startBot(t, world{OtherProvider: true, Attachments: map[string][]byte{"d": []byte("%PDF-1.7")}})
+	h.queue(modelReply{Status: 400, Body: `{"error":{"message":"unsupported content type"}}`})
+	m := fromAlice("summarise")
+	m.Attachments = []attached{{ID: "d", Type: "application/pdf", Name: "a.pdf", Size: 8}}
+	if s := h.ask(m); s.Message != "ok" {
+		t.Fatalf("sent %q", s.Message)
+	}
+	reqs := h.requests()
+	if len(reqs) != 2 || len(reqs[0].last().Files) != 1 || reqs[1].last().Files != nil ||
+		reqs[1].last().Content != "summarise\n[file \"a.pdf\", a PDF, which you can't read with this model]" {
+		t.Fatalf("%d requests; asked again with %q", len(reqs), reqs[len(reqs)-1].last().Content)
+	}
+	if _, ok := reqs[0].Body["plugins"]; ok {
+		t.Fatal("plugins sent to another provider")
+	}
+	if n := h.warnings("rejected a request with files", "files are off"); n != 1 {
+		t.Fatalf("%d warnings: %v", n, h.logLines())
+	}
+}
+
+// Replying to Bob's PDF with an @mention fetches the original, which the
+// quote alone doesn't carry: the bot remembered it when Bob posted it.
+// Bob's PDF itself, to no one, is noted in the context and never fetched.
+func TestScenarioReplyToSomeonesPDF(t *testing.T) {
+	h := startBot(t, world{Contacts: map[string]string{idBob: "Bob"}, Attachments: map[string][]byte{"bobs": []byte("%PDF-1.4 menu")}})
+	bobs := inGroup("the menu").by(idBob, "Bob")
+	bobs.Attachments = []attached{{ID: "bobs", Type: "application/pdf", Name: "menu.pdf", Size: 13}}
+	h.ignored(bobs)
+	if n := len(h.callsTo("getAttachment")); n != 0 {
+		t.Fatalf("fetched %d attachments for chatter", n)
+	}
+	m := atBot("what's cheapest?") // its quote id is the previous frame's timestamp, Bob's
+	m.Quote = &quoteOf{Author: idBob, Text: "the menu", Attachments: []attached{{Type: "application/pdf", Name: "menu.pdf"}}}
+	h.ask(m)
+	r := h.lastRequest()
+	if p := h.callsTo("getAttachment"); len(p) != 1 || p[0]["id"] != "bobs" || p[0]["groupId"] != idGroup {
+		t.Fatalf("getAttachment %v", p)
+	}
+	if last := r.last(); !slices.Equal(last.Files, []string{"file:menu.pdf"}) || !strings.HasSuffix(last.Content, `[file "menu.pdf" attached]`) {
+		t.Fatalf("model got %q with %v", last.Content, last.Files)
+	}
+	if first := r.Messages[0]; !strings.Contains(first.Content, `Bob: the menu [file "menu.pdf"]`) {
+		t.Fatalf("context %q", first.Content)
 	}
 }
 

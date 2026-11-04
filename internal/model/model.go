@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"cmp"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -30,17 +31,29 @@ const (
 	maxRounds = 5
 	// budget bounds one whole reply, tool rounds included.
 	budget = 3 * time.Minute
+	// pdfEngine is the OpenRouter engine that reads a PDF for a model that
+	// can't read files itself: named, not left to OpenRouter's default, so
+	// what is billed is predictable. mistral-ocr reads tables, columns and
+	// scans, at OpenRouter's per-page price.
+	pdfEngine = "mistral-ocr"
 )
 
 var retryDelay = time.Second
 
-// ErrImages and ErrTools mean an API other than OpenRouter's rejected a
-// request for carrying images, or tools: capabilities there are assumed,
-// so the caller turns that one off and asks again.
+// ErrImages, ErrFiles and ErrTools mean an API other than OpenRouter's
+// rejected a request for carrying images, files (PDFs or audio), or tools:
+// capabilities there are assumed, so the caller turns that one off and
+// asks again.
 var (
 	ErrImages = errors.New("images rejected")
+	ErrFiles  = errors.New("files rejected")
 	ErrTools  = errors.New("tools rejected")
 )
+
+// Caps is what the model can take: images, audio, PDF files and tools.
+type Caps struct {
+	Images, Audio, Files, Tools bool
+}
 
 // statusError is an error response, reduced to its status and message.
 type statusError struct {
@@ -54,6 +67,7 @@ func (e *statusError) Error() string { return fmt.Sprintf("status %d: %s", e.cod
 type Client struct {
 	key, model, reasoning, base string
 	openRouter                  bool // the API is OpenRouter's
+	nativeFiles                 bool // OpenRouter's list says the model reads files itself
 	http                        *http.Client
 }
 
@@ -91,6 +105,7 @@ type Request struct {
 	History    []chats.Entry
 	Text       string
 	Images     []string // data: URLs shown with Text
+	Files      []feature.File
 	Tools      []feature.Tool
 	ToolChoice string // a function tool the model must call before it answers
 }
@@ -108,24 +123,59 @@ type message struct {
 	Content    string     `json:"content"`
 	ToolCalls  []toolCall `json:"tool_calls,omitempty"`
 	ToolCallID string     `json:"tool_call_id,omitempty"`
-	Images     []string   `json:"-"`
+	// Annotations are OpenRouter's notes on a reply, such as a PDF it parsed,
+	// sent back with the reply so that it isn't parsed, and paid for, again.
+	Annotations json.RawMessage `json:"annotations,omitempty"`
+	Images      []string        `json:"-"`
+	Files       []feature.File  `json:"-"`
 }
 
-// MarshalJSON sends a message with images as content parts: the text, then
-// each image.
+// MarshalJSON sends a message with images or files as content parts: the
+// text, each image, then each file, a PDF as a file and audio as audio.
 func (m message) MarshalJSON() ([]byte, error) {
 	type plain message // without this method
-	if len(m.Images) == 0 {
+	if len(m.Images) == 0 && len(m.Files) == 0 {
 		return json.Marshal(plain(m))
 	}
 	parts := []any{map[string]string{"type": "text", "text": m.Content}}
 	for _, u := range m.Images {
 		parts = append(parts, map[string]any{"type": "image_url", "image_url": map[string]string{"url": u}})
 	}
+	for _, f := range m.Files {
+		data := base64.StdEncoding.EncodeToString(f.Data)
+		if format := audioFormat(f.MIME); format != "" {
+			parts = append(parts, map[string]any{"type": "input_audio", "input_audio": map[string]string{"data": data, "format": format}})
+			continue
+		}
+		parts = append(parts, map[string]any{"type": "file", "file": map[string]string{
+			"filename": f.Name, "file_data": "data:" + f.MIME + ";base64," + data}})
+	}
 	return json.Marshal(struct {
 		plain
 		Content []any `json:"content"`
 	}{plain(m), parts})
+}
+
+// audioFormat is the input_audio format of an audio file's type, e.g. "aac"
+// for "audio/aac"; "" if it isn't audio.
+func audioFormat(mime string) string {
+	sub, ok := strings.CutPrefix(strings.ToLower(mime), "audio/")
+	if !ok {
+		return ""
+	}
+	switch sub, _, _ = strings.Cut(sub, ";"); sub {
+	case "mpeg", "mp3":
+		return "mp3"
+	case "wav", "wave", "x-wav", "vnd.wave":
+		return "wav"
+	case "mp4", "m4a", "x-m4a":
+		return "m4a"
+	case "ogg", "opus":
+		return "ogg"
+	case "x-flac":
+		return "flac"
+	}
+	return sub
 }
 
 type toolCall struct {
@@ -141,6 +191,7 @@ type toolCall struct {
 type answer struct {
 	text                  string
 	calls                 []toolCall
+	annotations           json.RawMessage // OpenRouter's, sent back with the reply
 	input, cached, output int
 	cost                  float64
 	costed                bool // the API reported the cost
@@ -158,7 +209,8 @@ func (c *Client) Ask(ctx context.Context, r Request) (Reply, error) {
 	for _, e := range r.History {
 		msgs = append(msgs, message{Role: e.Role, Content: e.Content})
 	}
-	msgs = append(msgs, message{Role: "user", Content: r.Text, Images: r.Images})
+	msgs = append(msgs, message{Role: "user", Content: r.Text, Images: r.Images, Files: r.Files})
+	pdf := slices.ContainsFunc(r.Files, func(f feature.File) bool { return audioFormat(f.MIME) == "" })
 	tools, defs := map[string]feature.Tool{}, []any{}
 	for _, t := range r.Tools {
 		if t.Server != "" {
@@ -181,9 +233,9 @@ func (c *Client) Ask(ctx context.Context, r Request) (Reply, error) {
 	var reply Reply
 	var total answer
 	for round := 1; ; round++ {
-		a, err := c.request(ctx, msgs, defs, choice)
+		a, err := c.request(ctx, msgs, defs, choice, pdf)
 		if round == 1 {
-			err = c.rejected(err, len(r.Images) > 0, len(defs) > 0)
+			err = c.rejected(err, len(r.Images) > 0, len(r.Files) > 0, len(defs) > 0)
 		}
 		total.input, total.cached, total.output, total.cost = total.input+a.input, total.cached+a.cached, total.output+a.output, total.cost+a.cost
 		total.costed = total.costed || a.costed
@@ -207,7 +259,7 @@ func (c *Client) Ask(ctx context.Context, r Request) (Reply, error) {
 				time.Since(start).Seconds(), total.input, total.output, cached, cost)
 			return reply, nil
 		}
-		msgs = append(msgs, message{Role: "assistant", Content: a.text, ToolCalls: a.calls})
+		msgs = append(msgs, message{Role: "assistant", Content: a.text, ToolCalls: a.calls, Annotations: a.annotations})
 		for _, tc := range a.calls {
 			name := tc.Function.Name
 			out, pics, err := run(ctx, tools[name], tc.Function.Arguments)
@@ -228,15 +280,17 @@ func (c *Client) Ask(ctx context.Context, r Request) (Reply, error) {
 // rejected is err as ErrImages if the first request carried images and an
 // API other than OpenRouter's refused it as malformed (400 or 422; other
 // 4xx codes are about the key, the credit, the rate, the model id, a
-// timeout or the size), else as ErrTools if it carried tools; any other
-// error is left as it is.
-func (c *Client) rejected(err error, images, tools bool) error {
+// timeout or the size), else as ErrFiles if it carried files, else as
+// ErrTools if it carried tools; any other error is left as it is.
+func (c *Client) rejected(err error, images, files, tools bool) error {
 	if se, ok := errors.AsType[*statusError](err); c.openRouter || !ok || se.code != 400 && se.code != 422 {
 		return err
 	}
 	switch {
 	case images:
 		return fmt.Errorf("%w: %v", ErrImages, err)
+	case files:
+		return fmt.Errorf("%w: %v", ErrFiles, err)
 	case tools:
 		return fmt.Errorf("%w: %v", ErrTools, err)
 	}
@@ -266,15 +320,19 @@ func run(ctx context.Context, t feature.Tool, args string) (out string, pics []f
 }
 
 // request makes one chat completions request. On OpenRouter it routes only
-// to providers that don't collect the data, and asks for the cost to be
-// reported.
-func (c *Client) request(ctx context.Context, msgs []message, tools []any, choice string) (answer, error) {
+// to providers that don't collect the data, asks for the cost to be
+// reported, and has a PDF read by pdfEngine for a model that can't read
+// files itself.
+func (c *Client) request(ctx context.Context, msgs []message, tools []any, choice string, pdf bool) (answer, error) {
 	body := map[string]any{"model": c.model, "messages": msgs}
 	effort := c.reasoning != "" && c.reasoning != "none"
 	switch {
 	case c.openRouter:
 		body["provider"] = map[string]string{"data_collection": "deny"}
 		body["usage"] = map[string]bool{"include": true}
+		if pdf && !c.nativeFiles {
+			body["plugins"] = []any{map[string]any{"id": "file-parser", "pdf": map[string]string{"engine": pdfEngine}}}
+		}
 		if effort {
 			body["reasoning"] = map[string]string{"effort": c.reasoning}
 		}
@@ -298,8 +356,9 @@ func (c *Client) request(ctx context.Context, msgs []message, tools []any, choic
 	var r struct {
 		Choices []struct {
 			Message struct {
-				Content   string     `json:"content"`
-				ToolCalls []toolCall `json:"tool_calls"`
+				Content     string          `json:"content"`
+				ToolCalls   []toolCall      `json:"tool_calls"`
+				Annotations json.RawMessage `json:"annotations"`
 			} `json:"message"`
 		} `json:"choices"`
 		Usage struct {
@@ -322,6 +381,9 @@ func (c *Client) request(ctx context.Context, msgs []message, tools []any, choic
 	if len(r.Choices) > 0 {
 		a.text = strings.TrimSpace(r.Choices[0].Message.Content)
 		a.calls = r.Choices[0].Message.ToolCalls
+		if an := r.Choices[0].Message.Annotations; len(an) > 0 && string(an) != "null" {
+			a.annotations = an
+		}
 	}
 	return a, nil
 }
@@ -379,23 +441,26 @@ func errorText(data []byte) string {
 }
 
 // Capabilities reads from OpenRouter's model list whether the model takes
-// images and can call tools. If the list can't tell, images are off
-// (sending them would fail every such message) and tools stay on. Any
-// other API has no list, so both are assumed until a request carrying them
-// is rejected (ErrImages, ErrTools). Either way it says so.
-func (c *Client) Capabilities(ctx context.Context) (images, tools bool) {
+// images and audio, reads files itself, and can call tools. PDFs are always
+// taken there: one the model can't read is read for it (pdfEngine). If the
+// list can't tell, images and audio are off (sending them would fail every
+// such message) and tools stay on. Any other API has no list, so all are
+// assumed until a request carrying them is rejected (ErrImages, ErrFiles,
+// ErrTools). Either way it says so.
+func (c *Client) Capabilities(ctx context.Context) Caps {
 	if !c.openRouter {
-		logx.Noticef("only OpenRouter's model list says what a model supports, so images and tools are on until the API rejects them")
-		return true, true
+		logx.Noticef("only OpenRouter's model list says what a model supports, so images, files and tools are on until the API rejects them")
+		return Caps{Images: true, Audio: true, Files: true, Tools: true}
 	}
+	unknown := Caps{Files: true, Tools: true}
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, c.base+"/models", nil)
 	c.authorize(req)
 	resp, err := c.http.Do(req)
 	if err != nil {
-		logx.Warnf("could not check what %s supports, so images are off: %v", c.model, err)
-		return false, true
+		logx.Warnf("could not check what %s supports, so images and audio are off: %v", c.model, err)
+		return unknown
 	}
 	defer resp.Body.Close()
 	var r struct {
@@ -408,14 +473,17 @@ func (c *Client) Capabilities(ctx context.Context) (images, tools bool) {
 		} `json:"data"`
 	}
 	if resp.StatusCode != http.StatusOK || json.NewDecoder(io.LimitReader(resp.Body, 32<<20)).Decode(&r) != nil {
-		logx.Warnf("could not check what %s supports, so images are off: status %d", c.model, resp.StatusCode)
-		return false, true
+		logx.Warnf("could not check what %s supports, so images and audio are off: status %d", c.model, resp.StatusCode)
+		return unknown
 	}
 	for _, m := range r.Data {
 		if m.ID == c.model {
-			return slices.Contains(m.Architecture.InputModalities, "image"), slices.Contains(m.SupportedParameters, "tools")
+			in := m.Architecture.InputModalities
+			c.nativeFiles = slices.Contains(in, "file")
+			return Caps{Images: slices.Contains(in, "image"), Audio: slices.Contains(in, "audio"), Files: true,
+				Tools: slices.Contains(m.SupportedParameters, "tools")}
 		}
 	}
-	logx.Warnf("model %s is not in OpenRouter's model list, so images are off", c.model)
-	return false, true
+	logx.Warnf("model %s is not in OpenRouter's model list, so images and audio are off", c.model)
+	return unknown
 }

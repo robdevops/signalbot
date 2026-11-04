@@ -72,6 +72,7 @@ func (b *Bot) respond(msg feature.Message, act feature.Action, text string) {
 		}
 		asked, added := text, false
 		var images []string
+		var files []feature.File
 		kept = text
 		for _, fn := range b.turns {
 			a := fn(b.ctx, msg)
@@ -79,11 +80,15 @@ func (b *Bot) respond(msg feature.Message, act feature.Action, text string) {
 				asked, kept, added = asked+"\n"+a.Note, kept+"\n"+cmp.Or(a.HistoryNote, a.Note), true
 			}
 			images = append(images, a.Images...)
+			files = append(files, a.Files...)
 		}
 		if !b.images.Load() {
 			images = nil
 		}
-		if msg.Text == "" && !added && len(images) == 0 {
+		if !b.files.Load() {
+			files = nil
+		}
+		if msg.Text == "" && !added && len(images) == 0 && len(files) == 0 {
 			return
 		}
 		var tools []feature.Tool
@@ -93,6 +98,7 @@ func (b *Bot) respond(msg feature.Message, act feature.Action, text string) {
 			History:    contextBlocks(b.chats.History(key)),
 			Text:       strings.TrimSpace(asked),
 			Images:     images,
+			Files:      files,
 			Tools:      tools,
 			ToolChoice: act.ToolChoice,
 		})
@@ -128,17 +134,22 @@ func (b *Bot) respond(msg feature.Message, act feature.Action, text string) {
 }
 
 // fallBack reports whether err is the API rejecting a request for its
-// images or tools, which it turns off for the rest of the run, with one
-// warning, so the turn is asked again without them. A request with both
-// is blamed on its images first; if the turn turned them off (*imagesOff)
-// and the request without them is rejected for its tools, they are turned
-// back on, since they weren't the problem. That ends: with images off none
-// are sent, with tools off none are offered, and images come back once.
+// images, files or tools, which it turns off for the rest of the run, with
+// one warning, so the turn is asked again without them; audio goes with
+// files. A request with several is blamed on its images first, then its
+// files; if the turn turned images off (*imagesOff) and the request without
+// them is rejected for its files or tools, they are turned back on, since
+// they weren't the problem. That ends: what is off is never sent again, and
+// images come back once.
 func (b *Bot) fallBack(err error, imagesOff *bool) bool {
 	on, what := &b.images, "images"
 	switch {
-	case errors.Is(err, model.ErrTools):
+	case errors.Is(err, model.ErrFiles), errors.Is(err, model.ErrTools):
 		on, what = &b.callsTools, "tools"
+		if errors.Is(err, model.ErrFiles) {
+			on, what = &b.files, "files"
+			b.audio.Store(false)
+		}
 		if *imagesOff {
 			*imagesOff = false
 			b.images.Store(true)

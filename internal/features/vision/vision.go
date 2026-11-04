@@ -35,6 +35,9 @@ func additions(ctx context.Context, h feature.Host, m feature.Message) feature.A
 	note := func(n string) { notes, kept = append(notes, n), append(kept, n) }
 	images, sticker := 0, -1
 	for i, md := range m.Media {
+		if md.File {
+			continue // another feature's
+		}
 		if md.Sticker {
 			sticker = i
 			continue

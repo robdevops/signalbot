@@ -72,6 +72,7 @@ type Client struct {
 	knownOnce   sync.Once
 	closed      atomic.Bool // Run has returned
 	names       names
+	recent      recent       // attachments of recent messages, for replies to them
 	test        *config.Test // nil in production
 }
 

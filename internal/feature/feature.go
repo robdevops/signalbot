@@ -11,8 +11,11 @@ import (
 )
 
 // MaxPictures caps a message's images, besides its sticker, and a reply's
-// pictures.
-const MaxPictures = 4
+// pictures; MaxFiles caps its other files.
+const (
+	MaxPictures = 4
+	MaxFiles    = 4
+)
 
 // Chat is a conversation: a group, or a DM with one user.
 type Chat struct {
@@ -35,7 +38,7 @@ type Message struct {
 	Name      string        // the sender's display name, made safe; "" if unknown
 	Text      string        // the text, without the bot's @mention, other mentions as @Name or [unnamed user]
 	Quote     *Quote        // the message it replies to, if any
-	Media     []Media       // its images, then the quoted message's, at most MaxPictures; then its sticker
+	Media     []Media       // its images, then the quoted message's, at most MaxPictures; then its files and the quoted message's, at most MaxFiles; then its sticker
 	Expires   time.Duration // the chat's disappearing-messages timer; 0 if off
 	Addressed bool          // it mentions the bot, replies to it, or is a DM from an allowed sender
 }
@@ -47,12 +50,22 @@ type Quote struct {
 	Bot    bool   // the bot wrote it
 }
 
-// Media is an image a message carries, or its sticker.
+// Media is an image a message carries, another file, or its sticker.
 type Media struct {
-	ID      string // the network's ID for it
-	Quoted  bool   // a thumbnail of an image in the quoted message
+	ID      string // the network's ID for it; "" for a quoted file it can't fetch
+	Quoted  bool   // from the quoted message: an image's thumbnail, or the original image or file
 	Sticker bool   // a sticker, not an image
 	Label   string // a sticker's emoji and pack title, e.g. `: 🙂 from "Pack"`; filled in by the network
+	File    bool   // a file that isn't an image: a document, audio, …
+	Name    string // a file's name as its sender gave it, unsafe; "" if none
+	MIME    string // a file's type as its sender's app gave it, unchecked
+	Size    int    // a file's size in bytes, as its sender's app gave it
+}
+
+// File is a file shown to the model with a message: a PDF, or audio.
+type File struct {
+	Name, MIME string
+	Data       []byte
 }
 
 // Action is what an OnMessage hook decides. The zero value carries on.
@@ -78,6 +91,7 @@ type Additions struct {
 	Note        string   // a line added to the message
 	HistoryNote string   // the line history keeps in Note's place; "" keeps Note
 	Images      []string // data: URLs shown to the model with the message
+	Files       []File   // files shown to the model with the message
 }
 
 // Picture is an image sent with a reply.
@@ -111,13 +125,15 @@ type Tool struct {
 }
 
 // Info is what the core knows about itself. All but Name and Tools are
-// known when features register, though Images and CallsTools turn off for
+// known when features register, though Images, Audio, Files and CallsTools turn off for
 // the rest of the run if the model's API rejects them.
 type Info struct {
 	Name       string   // the bot's name
 	Version    string   // the bot's version; "" if unknown
 	Model      string   // the model's ID, such as "provider/model" on OpenRouter; "" with no model
 	Images     bool     // the model takes images
+	Audio      bool     // the model takes audio
+	Files      bool     // the model's API takes PDF files
 	CallsTools bool     // the model can call tools
 	Tools      []string // the Names of every tool group with tools, in feature order; none when it can't call tools
 	Intro      string   // INTRO with {name}, {model}, {tools} and {more} filled in, as in a group

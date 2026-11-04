@@ -56,6 +56,8 @@ type world struct {
 	Env map[string]string
 	// Vision says the model list shows the model accepting images.
 	Vision bool
+	// Audio says the model list shows the model accepting audio.
+	Audio bool
 	// Attachments is what signal-cli's getAttachment returns, by attachment
 	// ID; scenarioPNG for any other.
 	Attachments map[string][]byte
@@ -159,6 +161,7 @@ type modelRequest struct {
 type chatMessage struct {
 	Role, Content string
 	Images        []string // image URLs sent with Content
+	Files         []string // files sent with Content: "file:<name>" or "audio:<format>"
 	ToolCallID    string
 	ToolCalls     []string // function names
 }
@@ -529,10 +532,14 @@ func (h *harness) startModel() {
 			return
 		}
 		if r.Method == http.MethodGet { // the model list
-			in, params := `["text"]`, `["reasoning","tools"]`
+			mods, params := []string{`"text"`}, `["reasoning","tools"]`
 			if h.w.Vision {
-				in = `["text","image"]`
+				mods = append(mods, `"image"`)
 			}
+			if h.w.Audio {
+				mods = append(mods, `"audio"`)
+			}
+			in := "[" + strings.Join(mods, ",") + "]"
 			if h.w.NoTools {
 				params = `["reasoning"]`
 			}
@@ -619,12 +626,23 @@ func parseModelRequest(body []byte) modelRequest {
 				ImageURL struct {
 					URL string `json:"url"`
 				} `json:"image_url"`
+				File struct {
+					Filename string `json:"filename"`
+				} `json:"file"`
+				InputAudio struct {
+					Format string `json:"format"`
+				} `json:"input_audio"`
 			}
 			json.Unmarshal(m.Content, &parts)
 			for _, p := range parts {
-				if p.Type == "text" {
+				switch p.Type {
+				case "text":
 					cm.Content += p.Text
-				} else {
+				case "file":
+					cm.Files = append(cm.Files, "file:"+p.File.Filename)
+				case "input_audio":
+					cm.Files = append(cm.Files, "audio:"+p.InputAudio.Format)
+				default:
 					cm.Images = append(cm.Images, p.ImageURL.URL)
 				}
 			}

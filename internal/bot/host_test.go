@@ -397,7 +397,7 @@ func TestOtherAPI(t *testing.T) {
 	h.mu.Unlock()
 	logs := h.logs.String()
 	if lists != 0 || !strings.Contains(logs, "<4>tool openrouter:served left out") || !strings.Contains(logs, "<4>tool openrouter:other left out") ||
-		!strings.Contains(logs, "images and tools are on until the API rejects them") {
+		!strings.Contains(logs, "images, files and tools are on until the API rejects them") {
 		t.Fatalf("%d model lists; logs:\n%s", lists, logs)
 	}
 }

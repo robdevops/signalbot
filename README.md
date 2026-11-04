@@ -21,7 +21,7 @@ A small, [privacy-conscious](PRIVACY.md) chat bot that connects to a running [si
 - Responds to @mentions, replies to its messages, and DMs from senders in `SIGNAL_DM_USER_IDS`
 - Tools: web search, built-in line and pie charts, and your own [MCP](#mcp-tools) tools
 - [`/schedule`](#scheduling) a message or command, once or repeating, in a DM or a group
-- Understands images and stickers (if the configured model supports vision)
+- Understands images and stickers (if the configured model supports vision), and [files](#files): PDFs, voice notes and other audio, text and code, Word, Excel and PowerPoint
 - Typing indicators
 - Short per-conversation memory, for context. Keeps at most 10 messages (HISTORY_MAX), dropping the older half when full, and frees them after 24 hours, or when Signal's _disappearing messages_ timer expires, whichever comes first. Names and message bodies are never logged to disk.
 
@@ -159,6 +159,20 @@ The cost logged with each reply is the amount OpenRouter reports billing for it.
 Web search and tools without `keywords` are offered with every message. Charts, and MCP servers with `keywords`, are offered only when a message matches their words, then for `TOOL_LINGER_ROUNDS` more replies, and each reply that matches or uses one of their tools starts that count again. So "chart NVDA", "add AMD", "make it a year" keeps the charts on however long it runs; only replies that leave them unused count down.
 
 The default of 2 is meant to cover a short aside ("thanks!", "what's AMD's ticker again?") before you come back to the chart, without the tools still being on when the conversation has moved on. Lingering longer has two costs: a tool on for unrelated messages is one the model may use when it shouldn't (a stock tool picked for a population question), and its descriptions add to every request. The prompt cache gains little, because the offered tools change once either way when a group drops off. Raise it if people often come back to a chart after several other questions; set `0` to offer a group only on messages that name it.
+
+### Files
+
+Send the bot a file in a DM, attach one when you @mention it or reply to it, or @mention it in reply to someone else's file. Each reaches the model in the form it can use:
+
+| File | What the model gets |
+|---|---|
+| PDF | The PDF itself. A model that reads files natively gets it as it is; for any other, OpenRouter reads it first with its `mistral-ocr` engine, which handles tables, columns and scanned pages |
+| Audio, including voice notes | The audio, if the model takes audio (OpenRouter's model list says); otherwise a note that it can't hear it |
+| Text and code (`.txt`, `.md`, `.csv`, `.json`, source files, …) | Its text, up to 50,000 characters |
+| Word, Excel, PowerPoint (`.docx`, `.xlsx`, `.pptx`) | Its text: paragraphs, cells by sheet, slides in order |
+| Anything else | A note that it was attached and can't be read |
+
+Up to 4 files a message, 12 MB each. **OCR costs money:** OpenRouter charges about $2 per 1,000 pages, so a 150-page filing is about $0.30 each time it's sent, on top of the reply, and shows in the reply's logged cost. The bot never keeps a file, so asking about it again means replying to it again, and it's read again. To fetch the original of a file someone else posted, the bot remembers recent attachments' IDs and names in memory for a day; see [PRIVACY.md](PRIVACY.md).
 
 ### Other providers
 
