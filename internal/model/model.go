@@ -168,6 +168,26 @@ func encoded(prefix string, data []byte) string {
 	return string(b)
 }
 
+// logRequest logs one request of a reply at debug level, so the journal
+// shows what each tool round cost, and whether OpenRouter returned
+// annotations (such as a parsed PDF) and they were sent back, which keeps
+// a PDF from being parsed and paid for again. No content.
+func logRequest(round int, a answer, sentBack bool) {
+	cost := "no cost reported"
+	if a.costed {
+		cost = fmt.Sprintf("$%.4f", a.cost)
+	}
+	logx.Debugf("request %d: tokens in/out %d/%d, %s, annotations returned: %s, sent back: %s",
+		round, a.input, a.output, cost, yesNo(a.annotations != nil), yesNo(sentBack))
+}
+
+func yesNo(b bool) string {
+	if b {
+		return "yes"
+	}
+	return "no"
+}
+
 // audioFormat is the input_audio format of an audio file's type, e.g. "aac"
 // for "audio/aac"; "" if it isn't audio.
 func audioFormat(mime string) string {
@@ -252,6 +272,9 @@ func (c *Client) Ask(ctx context.Context, r Request) (Reply, error) {
 		total.input, total.cached, total.output, total.cost = total.input+a.input, total.cached+a.cached, total.output+a.output, total.cost+a.cost
 		total.costed = total.costed || a.costed
 		reply.Cost, reply.Costed = total.cost, total.costed // what was spent, even on the way to an error
+		if err == nil {
+			logRequest(round, a, slices.ContainsFunc(msgs, func(m message) bool { return m.Annotations != nil }))
+		}
 		if err != nil {
 			return reply, err
 		}

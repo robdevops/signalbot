@@ -560,7 +560,7 @@ func TestAnnotationsSentBack(t *testing.T) {
 	echo := feature.Tool{Name: "echo", Run: func(context.Context, string) (string, []feature.Picture, error) { return "done", nil, nil }}
 	withNotes := served{body: `{"choices":[{"message":{"content":"","annotations":[{"type":"file","file":{"hash":"h1"}}],` +
 		`"tool_calls":[{"id":"c0","type":"function","function":{"name":"echo","arguments":"{}"}}]}}],"usage":{"prompt_tokens":10,"completion_tokens":2}}`}
-	c, m, _ := start(t, withNotes, text("ok"))
+	c, m, logs := start(t, withNotes, text("ok"))
 	if _, err := c.Ask(context.Background(), Request{Text: "read", Tools: []feature.Tool{echo}}); err != nil {
 		t.Fatal(err)
 	}
@@ -568,6 +568,14 @@ func TestAnnotationsSentBack(t *testing.T) {
 	got, _ := json.Marshal(msgs[2])
 	if !strings.Contains(string(got), `"annotations":[{"file":{"hash":"h1"},"type":"file"}]`) {
 		t.Fatalf("assistant message %s", got)
+	}
+	// Each request is logged at debug level with what it cost and whether
+	// annotations came back and went back, never the content.
+	for _, want := range []string{"request 1: tokens in/out 10/2, no cost reported, annotations returned: yes, sent back: no",
+		"request 2: tokens in/out 20/3, $0.0020, annotations returned: no, sent back: yes"} {
+		if !strings.Contains(logs.String(), want) {
+			t.Errorf("log %q, want %q", logs.String(), want)
+		}
 	}
 }
 

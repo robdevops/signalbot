@@ -794,7 +794,7 @@ func TestScenarioModelRequestSettings(t *testing.T) {
 	if _, ok := b["plugins"]; ok {
 		t.Fatal("the web plugin searches every time; the search tool is the model's choice")
 	}
-	if l, ok := h.logged("$0.002"); !ok || l.Pri != 6 {
+	if l, ok := h.logged("tokens in/out: 20/3 (0% cached), $0.002"); !ok || l.Pri != 6 {
 		t.Fatalf("the cost was not logged: %v", h.logLines())
 	}
 }
