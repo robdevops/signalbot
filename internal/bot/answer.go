@@ -101,6 +101,7 @@ func (b *Bot) respond(msg feature.Message, act feature.Action, text string) {
 		}
 		var left int
 		if files, left = fitFiles(files); left > 0 {
+			logx.Warnf("%d of the files left out: together they are over %d MB", left, maxFileBytes>>20)
 			note := fmt.Sprintf("[%d of the files attached left out: together they are over %d MB]", left, maxFileBytes>>20)
 			asked, kept = asked+"\n"+note, kept+"\n"+note
 		}
@@ -151,6 +152,7 @@ func (b *Bot) respond(msg feature.Message, act feature.Action, text string) {
 		b.chats.Add(key, start, msg.Expires, chats.Entry{Role: "user", Content: strings.TrimSpace(kept)},
 			chats.Entry{Role: "assistant", Content: "[reacted " + emoji + "]"})
 		b.net.React(msg.Chat, msg, emoji)
+		logx.Infof("reacted instead of replying")
 		return
 	}
 	sent := reply.Text

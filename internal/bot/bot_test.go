@@ -546,8 +546,9 @@ func (g *gate) answer(s string) func() (int, string) {
 }
 
 // A reply that is one emoji is a reaction to the message answered, kept in
-// history as "[reacted …]"; one with words is a message, and so is one to
-// a message the bot made (no timestamp), which can't be reacted to.
+// history as "[reacted …]" and logged without the emoji; one with words is
+// a message, and so is one to a message the bot made (no timestamp), which
+// can't be reacted to.
 func TestOneEmojiIsAReaction(t *testing.T) {
 	h := start(t, options{})
 	h.answer(text(" 🙏 "), text("👍 sure"), text("👍"), text("ok"))
@@ -556,6 +557,8 @@ func TestOneEmojiIsAReaction(t *testing.T) {
 	if _, s := h.ask(m); s.text != "react 🙏 to "+aliceID+"@1700" || s.chat.User != aliceID {
 		t.Fatalf("sent %+v", s)
 	}
+	reacted := func() int { return strings.Count(h.logs.String(), "<6>reacted instead of replying\n") }
+	h.eventually("the reaction's log line", func() bool { return reacted() == 1 })
 	m.Text, m.Timestamp = "great", 1701
 	if _, s := h.ask(m); s.text != "👍 sure" {
 		t.Fatalf("sent %q", s.text)
@@ -566,4 +569,7 @@ func TestOneEmojiIsAReaction(t *testing.T) {
 	}
 	r, _ := h.ask(dm("what did you do?"))
 	equal(t, "history", contents(r)[:2], []string{"user: thanks!", "assistant: [reacted 🙏]"})
+	if reacted() != 1 || strings.Contains(h.logs.String(), "🙏") || strings.Contains(h.logs.String(), "👍") {
+		t.Fatalf("log %q", h.logs.String())
+	}
 }

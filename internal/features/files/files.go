@@ -9,6 +9,7 @@ import (
 	"cmp"
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"path"
 	"strconv"
@@ -81,12 +82,14 @@ func additions(ctx context.Context, h feature.Host, m feature.Message) feature.A
 
 // one handles m.Media[i]: its label (`[file "name"`), its status (such as
 // " attached" or ", which failed to load"), and the text or file the model
-// is shown, if any.
+// is shown, if any. It logs one line, what the file came to, by kind and
+// size: never its name or declared type, which the sender chose.
 func one(ctx context.Context, h feature.Host, info feature.Info, m feature.Message, i int) (label, status, text string, file *feature.File) {
 	md := m.Media[i]
 	name := cmp.Or(txt.Clamp(txt.SafeName(md.Name), maxName), "untitled")
 	label = "[file " + strconv.Quote(name)
 	if md.ID == "" {
+		logx.Warnf("file no longer available")
 		return label, ", which is no longer available", "", nil
 	}
 	data, err := h.Media(ctx, m, i)
@@ -94,31 +97,44 @@ func one(ctx context.Context, h feature.Host, info feature.Info, m feature.Messa
 		logx.Warnf("could not fetch a file: %v", err)
 		return label, ", which failed to load", "", nil
 	}
-	ext := strings.ToLower(path.Ext(md.Name))
-	switch kind := kindOf(md.MIME, ext, http.DetectContentType(data), data); kind {
+	ext, sniffed := strings.ToLower(path.Ext(md.Name)), http.DetectContentType(data)
+	kind := kindOf(md.MIME, ext, sniffed, data)
+	what := kind
+	if kind == "office" {
+		what = ext[1:] // docx, xlsx or pptx
+	}
+	head := fmt.Sprintf("file %s %d bytes", what, len(data))
+	switch kind {
 	case "pdf":
 		if !info.Files {
+			logx.Infof("%s, not sent: this model can't read files", head)
 			return label, ", a PDF, which you can't read with this model", "", nil
 		}
+		logx.Infof("%s, attached", head)
 		return label, " attached", "", &feature.File{Name: name, MIME: "application/pdf", Data: data}
 	case "audio":
 		if !info.Audio {
+			logx.Infof("%s, not sent: this model can't hear audio", head)
 			return label, ", audio such as a voice note, which you can't hear with this model", "", nil
 		}
 		mime := md.MIME
 		if !strings.HasPrefix(strings.ToLower(mime), "audio/") {
 			mime = cmp.Or(audioExts[ext], "audio/aac")
 		}
+		logx.Infof("%s, attached", head)
 		return label, " attached", "", &feature.File{Name: name, MIME: mime, Data: data}
 	case "office":
 		if text, err = officeText(data, ext); err != nil || strings.TrimSpace(text) == "" {
-			logx.Warnf("could not read an Office file: %v", cmp.Or(err, errEmpty))
+			logx.Warnf("could not read an Office file (%s, %d bytes): %s", what, len(data), errKind(cmp.Or(err, errEmpty)))
 			return label, ", which couldn't be read", "", nil
 		}
+		logx.Infof("%s, %s", head, txt.Chars(utf8.RuneCountInString(text), maxText))
 		return label, " attached, its text", text, nil
 	case "text":
+		logx.Infof("%s, %s", head, txt.Chars(utf8.RuneCount(data), maxText))
 		return label, " attached, its text", string(data), nil
 	}
+	logx.Infof("file %d bytes %s, not a kind the bot reads", len(data), txt.Clamp(sniffed, 40))
 	return label, ", which you can't read", "", nil
 }
 

@@ -1215,6 +1215,7 @@ func TestScenarioOneEmojiIsAReaction(t *testing.T) {
 		json.Unmarshal([]byte(frame), &f)
 		h.receive(frame)
 		h.waitFor("the reaction", func() bool { return len(h.callsTo("sendReaction")) == i+1 })
+		h.waitLog("reacted instead of replying")
 		p := h.callsTo("sendReaction")[i]
 		if p["emoji"] != []string{"🙏", "👍"}[i] || p["targetAuthor"] != idAlice || p["targetTimestamp"] != float64(f.Envelope.Timestamp) {
 			t.Fatalf("sendReaction %v", p)
@@ -1232,6 +1233,19 @@ func TestScenarioOneEmojiIsAReaction(t *testing.T) {
 	h.noMoreSends()
 	if s := h.ask(fromAlice("ok?")); s.Message != "👍 sure" {
 		t.Fatalf("sent %q", s.Message)
+	}
+	// Each reaction was logged, without its emoji; the message wasn't.
+	n := 0
+	for _, l := range h.logLines() {
+		if l.Text == "reacted instead of replying" && l.Pri == 6 {
+			n++
+		}
+		if strings.Contains(l.Text, "🙏") || strings.Contains(l.Text, "👍") {
+			t.Fatalf("an emoji reached the log: %q", l.Text)
+		}
+	}
+	if n != 2 {
+		t.Fatalf("%d reactions logged", n)
 	}
 }
 
@@ -1253,6 +1267,33 @@ func TestScenarioLinkToAPrivateAddressIsRefused(t *testing.T) {
 	if n := hits.Load(); n != 0 {
 		t.Fatalf("the local server was hit %d times", n)
 	}
+	// The failure is logged as a warning, without the URL.
+	if l, ok := h.logged("link failed after", "it isn't a public address"); !ok || l.Pri != 4 {
+		t.Fatalf("log %+v, %v", l, ok)
+	}
+	for _, l := range h.logLines() {
+		if strings.Contains(l.Text, local.URL) || strings.Contains(l.Text, "secrets") {
+			t.Fatalf("the URL reached the log: %q", l.Text)
+		}
+	}
+}
+
+// A link that looks private or one-time (a reset link with a token) isn't
+// fetched; the model is told, and the log says so without the URL.
+func TestScenarioPrivateLookingLinkIsNotFetched(t *testing.T) {
+	h := startBot(t, world{})
+	h.ask(atBot("is this legit? https://example.com/reset?token=abc"))
+	if last := h.lastRequest().last(); !strings.Contains(last.Content, "[link https://example.com/reset?token=abc not fetched: it looks like a private or one-time link]") {
+		t.Fatalf("model got %q", last.Content)
+	}
+	if l, ok := h.logged("link not fetched: looks private or one-time"); !ok || l.Pri != 6 {
+		t.Fatalf("log %+v, %v", l, ok)
+	}
+	for _, l := range h.logLines() {
+		if strings.Contains(l.Text, "example.com") || strings.Contains(l.Text, "token=") {
+			t.Fatalf("the URL reached the log: %q", l.Text)
+		}
+	}
 }
 
 // --- files ---------------------------------------------------------------------------
@@ -1273,6 +1314,14 @@ func TestScenarioPDFInADM(t *testing.T) {
 	}
 	if p, _ := json.Marshal(r.Body["plugins"]); string(p) != `[{"id":"file-parser","pdf":{"engine":"mistral-ocr"}}]` {
 		t.Fatalf("plugins %s", p)
+	}
+	if l, ok := h.logged("file pdf 26 bytes, attached"); !ok || l.Pri != 6 {
+		t.Fatalf("log %+v, %v", l, ok)
+	}
+	for _, l := range h.logLines() {
+		if strings.Contains(l.Text, "q3") {
+			t.Fatalf("the file's name reached the log: %q", l.Text)
+		}
 	}
 	h.ask(fromAlice("and the total?"))
 	if first := h.lastRequest().Messages[0]; !strings.HasPrefix(first.Content, `[file "q3.pdf" attached; you see files only in the latest message`) || first.Files != nil {
@@ -1297,6 +1346,18 @@ func TestScenarioTextAndOfficeFiles(t *testing.T) {
 	if last := h.lastRequest().last(); last.Content != want || last.Files != nil {
 		t.Fatalf("model got %q", last.Content)
 	}
+	// Each file is logged by kind and size, with how much text it gave,
+	// never its name.
+	for _, want := range []string{"file text 17 bytes, 17 chars of text", fmt.Sprintf("file docx %d bytes, 23 chars of text", docx.Len())} {
+		if l, ok := h.logged(want); !ok || l.Pri != 6 {
+			t.Fatalf("no log line %q; %v", want, h.logLines())
+		}
+	}
+	for _, l := range h.logLines() {
+		if strings.Contains(l.Text, "notes") || strings.Contains(l.Text, "minutes") {
+			t.Fatalf("a file's name reached the log: %q", l.Text)
+		}
+	}
 }
 
 // A voice note in a reply to the bot goes to a model that takes audio as
@@ -1312,6 +1373,13 @@ func TestScenarioVoiceNote(t *testing.T) {
 		if audio && (!slices.Equal(last.Files, []string{"audio:aac"}) || !strings.Contains(last.Content, `[file "untitled" attached]`)) ||
 			!audio && (last.Files != nil || !strings.Contains(last.Content, "which you can't hear with this model")) {
 			t.Fatalf("audio %v: model got %q with %v", audio, last.Content, last.Files)
+		}
+		want := "file audio 8 bytes, attached"
+		if !audio {
+			want = "file audio 8 bytes, not sent: this model can't hear audio"
+		}
+		if l, ok := h.logged(want); !ok || l.Pri != 6 {
+			t.Fatalf("audio %v: no log line %q; %v", audio, want, h.logLines())
 		}
 	}
 }
@@ -1376,13 +1444,21 @@ func TestScenarioLargePhotosAreShown(t *testing.T) {
 		t.Fatalf("sizes %d, %d", len(medium), len(large))
 	}
 	h := startBot(t, world{Vision: true, Attachments: map[string][]byte{"medium.png": medium, "large.png": large}})
-	for _, tc := range []struct{ id, mime string }{{"medium.png", "image/png"}, {"large.png", "image/jpeg"}} {
+	for _, tc := range []struct {
+		id, mime string
+		data     []byte
+	}{{"medium.png", "image/png", medium}, {"large.png", "image/jpeg", large}} {
 		m := fromAlice("")
 		m.Attachments = []attached{{ID: tc.id, Type: "image/png", Size: len(large)}}
 		h.ask(m)
 		last := h.lastRequest().last()
 		if last.Content != "[1 image attached]" || len(last.Images) != 1 || !strings.HasPrefix(last.Images[0], "data:"+tc.mime+";base64,") || len(last.Images[0]) > 7<<20 {
 			t.Fatalf("%s: model got %q with %d images", tc.id, last.Content, len(last.Images))
+		}
+		// The image is logged by size, and the size sent when it was shrunk.
+		l, ok := h.logged(fmt.Sprintf("image %d bytes, ", len(tc.data)))
+		if !ok || l.Pri != 6 || strings.Contains(l.Text, "sent as") != (tc.mime == "image/jpeg") {
+			t.Fatalf("%s: log %+v, %v", tc.id, l, ok)
 		}
 	}
 	if n := len(h.callsTo("listAccounts")); n != 1 {

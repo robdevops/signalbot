@@ -120,26 +120,29 @@ func Register(h feature.Host) error {
 }
 
 // urls is the distinct http and https URLs in m's text, then its quote's,
-// at most maxLinks. A quote of the bot's own message is the model's words,
-// so its URLs are not fetched.
-func urls(m feature.Message) []string {
+// at most maxLinks, and how many more there were. A quote of the bot's own
+// message is the model's words, so its URLs are not fetched.
+func urls(m feature.Message) (out []string, dropped int) {
 	text := m.Text
 	if m.Quote != nil && !m.Quote.Bot {
 		text += "\n" + m.Quote.Text
 	}
-	var out []string
 	for _, raw := range urlPattern.FindAllString(text, -1) {
 		raw = trim(raw)
 		u, err := url.Parse(raw)
-		if err != nil || u.Host == "" || u.User != nil || len(out) == maxLinks {
+		if err != nil || u.Host == "" || u.User != nil {
 			continue
 		}
 		u.Fragment = ""
-		if s := u.String(); !slices.Contains(out, s) {
+		switch s := u.String(); {
+		case slices.Contains(out, s):
+		case len(out) == maxLinks:
+			dropped++
+		default:
 			out = append(out, s)
 		}
 	}
-	return out
+	return out, dropped
 }
 
 // trim drops punctuation that ends a sentence rather than the URL: a
@@ -164,13 +167,22 @@ func trim(u string) string {
 func additions(ctx context.Context, c *http.Client, l *limiter, info feature.Info, m feature.Message) feature.Additions {
 	var notes, kept []string
 	var files []feature.File
-	for _, u := range urls(m) {
+	found, dropped := urls(m)
+	switch {
+	case dropped == 1:
+		logx.Infof("link ignored: more than %d in a message", maxLinks)
+	case dropped > 1:
+		logx.Infof("%d links ignored: more than %d in a message", dropped, maxLinks)
+	}
+	for _, u := range found {
 		var note, text string
 		var file *feature.File
 		switch parsed, _ := url.Parse(u); {
 		case private(parsed):
+			logx.Infof("link not fetched: looks private or one-time")
 			note = "[link " + u + " not fetched: it looks like a private or one-time link"
 		case !l.allow(m.Chat.Key()):
+			logx.Warnf("link not fetched: %d an hour for this chat reached", maxPerHour)
 			note = "[link " + u + " not fetched: too many links this hour; try again later"
 		default:
 			note, text, file = fetch(ctx, c, info, u)
@@ -196,28 +208,30 @@ func additions(ctx context.Context, c *http.Client, l *limiter, info feature.Inf
 }
 
 // fetch gets u: its note, open for the caller to close with "]", and its
-// text or, for a PDF, the file.
+// text or, for a PDF, the file. It logs one line, what the link came to,
+// never the URL or the page's title.
 func fetch(ctx context.Context, c *http.Client, info feature.Info, u string) (note, text string, file *feature.File) {
-	failed := func(why string) (string, string, *feature.File) {
+	failed := func(secs float64, why string) (string, string, *feature.File) {
+		logx.Warnf("link failed after %.1fs: %s", secs, why)
 		return "[link " + u + " failed to load: " + why, "", nil
 	}
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
 	if err != nil {
-		return failed("not a web address")
+		logx.Warnf("link failed: not a web address")
+		return "[link " + u + " failed to load: not a web address", "", nil
 	}
 	req.Header.Set("User-Agent", userAgent)
 	req.Header.Set("Accept", "text/html,application/xhtml+xml,text/plain;q=0.9,application/json;q=0.9,application/pdf;q=0.8,*/*;q=0.5")
 	start := time.Now()
 	resp, err := c.Do(req)
 	if err != nil {
-		logx.Warnf("link failed after %.1fs: %v", time.Since(start).Seconds(), reason(err))
-		return failed(reason(err))
+		return failed(time.Since(start).Seconds(), reason(err))
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return failed("status " + strconv.Itoa(resp.StatusCode))
+		return failed(time.Since(start).Seconds(), "status "+strconv.Itoa(resp.StatusCode))
 	}
 	mediaType, _, _ := mime.ParseMediaType(resp.Header.Get("Content-Type"))
 	limit := int64(maxBody)
@@ -226,30 +240,45 @@ func fetch(ctx context.Context, c *http.Client, info feature.Info, u string) (no
 	}
 	body, err := io.ReadAll(io.LimitReader(resp.Body, limit))
 	if err != nil {
-		return failed(reason(err))
+		return failed(time.Since(start).Seconds(), reason(err))
 	}
-	logx.Infof("link %.1fs, %d bytes", time.Since(start).Seconds(), len(body))
+	// done logs the link's time, size, kind (the server's media type, a
+	// type/subtype token, unless the content says better) and outcome.
+	took, size, typ := time.Since(start).Seconds(), len(body), cmp.Or(txt.Clamp(mediaType, 40), "unknown type")
+	done := func(warn bool, kind, outcome string) {
+		f := logx.Infof
+		if warn {
+			f = logx.Warnf
+		}
+		f("link %.1fs, %d bytes %s, %s", took, size, kind, outcome)
+	}
 	switch {
 	case bytes.HasPrefix(body, []byte("%PDF-")):
 		if !info.Files {
+			done(false, "pdf", "not sent: this model can't read files")
 			return "[link " + u + ", a PDF, which you can't read with this model", "", nil
 		}
+		done(false, "pdf", "attached")
 		return "[page " + u + ", a PDF, attached", "", &feature.File{Name: cmp.Or(txt.SafeName(path.Base(resp.Request.URL.Path)), "page.pdf"), MIME: "application/pdf", Data: body}
 	case mediaType == "text/html" || mediaType == "application/xhtml+xml":
-		title, text := pageText(body, resp.Header.Get("Content-Type"))
-		if strings.TrimSpace(text) == "" {
+		title, text, from := pageText(body, resp.Header.Get("Content-Type"))
+		if text = strings.TrimSpace(text); text == "" {
+			done(true, "html", "no readable text")
 			return "[link " + u + ", a page with no text you can read", "", nil
 		}
+		done(false, "html", txt.Chars(utf8.RuneCountInString(text), maxText)+" ("+from+")")
 		return "[page " + u + titled(title), text, nil
 	case strings.HasPrefix(mediaType, "text/") || mediaType == "application/json":
 		r, err := charset.NewReader(bytes.NewReader(body), resp.Header.Get("Content-Type"))
 		if err == nil {
 			body, _ = io.ReadAll(r)
 		}
-		if utf8.Valid(body) && !bytes.ContainsRune(body, 0) {
-			return "[page " + u, string(body), nil
+		if text := strings.TrimSpace(string(body)); utf8.ValidString(text) && !strings.ContainsRune(text, 0) {
+			done(false, typ, txt.Chars(utf8.RuneCountInString(text), maxText))
+			return "[page " + u, text, nil
 		}
 	}
+	done(false, typ, "not a page the bot reads")
 	return "[link " + u + ", which isn't a page you can read", "", nil
 }
 
@@ -289,9 +318,10 @@ var block = map[string]bool{"p": true, "div": true, "br": true, "li": true, "h1"
 // navigation, scripts and forms left out: the text of its first article or
 // main element if that has minArticle characters or more, else the whole
 // page's, so menus and sidebars built of plain divs don't crowd out the
-// content. It reads the page as a stream of tokens, never building the
-// whole tree, and stops once it has enough text.
-func pageText(body []byte, contentType string) (title, text string) {
+// content; from says which, "<article>", "<main>" or "whole page", for the
+// log. It reads the page as a stream of tokens, never building the whole
+// tree, and stops once it has enough text.
+func pageText(body []byte, contentType string) (title, text, from string) {
 	r, err := charset.NewReader(bytes.NewReader(body), contentType)
 	if err != nil {
 		r = bytes.NewReader(body)
@@ -307,11 +337,11 @@ func pageText(body []byte, contentType string) (title, text string) {
 			}
 		}
 	}
-	result := func() (string, string) {
+	result := func() (string, string, string) {
 		if a := squeeze(art.String()); len(a) >= minArticle {
-			return title, a
+			return title, a, "<" + artTag + ">"
 		}
-		return title, squeeze(b.String())
+		return title, squeeze(b.String()), "whole page"
 	}
 	for b.Len() <= maxText*2 {
 		switch tt := z.Next(); tt {

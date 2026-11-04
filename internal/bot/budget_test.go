@@ -1,6 +1,7 @@
 package bot
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
@@ -89,5 +90,24 @@ func TestFitFiles(t *testing.T) {
 	}
 	if fit, left := fitFiles(nil); fit != nil || left != 0 {
 		t.Fatal("nil")
+	}
+}
+
+// Files left out by the cap are noted for the model and logged, as a
+// warning, without their names.
+func TestFilesOverTheCapAreLogged(t *testing.T) {
+	h := start(t, options{features: func(b *Bot) {
+		b.OnTurn(func(context.Context, feature.Message) feature.Additions {
+			return feature.Additions{Files: []feature.File{{Name: "big.pdf", MIME: "application/pdf", Data: make([]byte, 9<<20)},
+				{Name: "bigger.pdf", MIME: "application/pdf", Data: make([]byte, 8<<20)}}}
+		})
+	}})
+	h.b.files.Store(true)
+	r, _ := h.ask(dm("read these"))
+	if c := contents(r); !strings.HasSuffix(c[len(c)-1], "\n[1 of the files attached left out: together they are over 16 MB]") {
+		t.Fatalf("model got %q", c[len(c)-1])
+	}
+	if logs := h.logs.String(); strings.Count(logs, "<4>1 of the files left out: together they are over 16 MB\n") != 1 || strings.Contains(logs, "big") {
+		t.Fatalf("log %q", logs)
 	}
 }

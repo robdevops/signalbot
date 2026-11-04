@@ -61,3 +61,13 @@ func TestFence(t *testing.T) {
 		t.Errorf("got %q", got)
 	}
 }
+
+// Chars says how much of a text a cap shows.
+func TestChars(t *testing.T) {
+	if got := Chars(1532, 50_000); got != "1532 chars of text" {
+		t.Errorf("got %q", got)
+	}
+	if got := Chars(83210, 50_000); got != "50000 of 83210 chars of text" {
+		t.Errorf("got %q", got)
+	}
+}

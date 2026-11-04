@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"regexp"
 	"slices"
 	"strconv"
@@ -52,6 +53,24 @@ func officeText(data []byte, ext string) (string, error) {
 		err = errors.New("not an Office file")
 	}
 	return out.String(), err
+}
+
+// errKind is what went wrong reading an Office file, for the log: the kind
+// of error, never its text, since encoding/xml's messages quote the
+// document (its declared encoding, element and entity names).
+func errKind(err error) string {
+	var syntax *xml.SyntaxError
+	switch {
+	case errors.Is(err, errEmpty):
+		return "no text"
+	case errors.Is(err, zip.ErrFormat), errors.Is(err, zip.ErrChecksum), errors.Is(err, zip.ErrAlgorithm):
+		return "not a zip"
+	case errors.Is(err, fs.ErrNotExist):
+		return "missing part"
+	case errors.As(err, &syntax):
+		return "bad xml"
+	}
+	return "unreadable"
 }
 
 // part opens the zip's file called name, reading at most maxPart bytes.

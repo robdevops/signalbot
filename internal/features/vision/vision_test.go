@@ -7,6 +7,7 @@ import (
 	"image"
 	"image/png"
 	"reflect"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -65,10 +66,18 @@ func additionsOf(t *testing.T, h *featuretest.Host, tn feature.Message) feature.
 	return as[0]
 }
 
+// capture collects the log with journald priorities.
+func capture(t *testing.T) (out, errw *logx.Buffer) {
+	out, errw = new(logx.Buffer), new(logx.Buffer)
+	t.Cleanup(logx.SetOutput(out, errw, true))
+	return out, errw
+}
+
 // With a vision model, a photo is fetched and shown to the model; history
 // keeps only a note, saying the image isn't kept. A photo alone has a note,
-// so it is answered.
+// so it is answered. Each image is logged by size and time.
 func TestPhotoShownToModel(t *testing.T) {
+	out, errw := capture(t)
 	var fetched []int
 	h := host(t, true, &fetched)
 	a := additionsOf(t, h, turn("", photo))
@@ -77,6 +86,9 @@ func TestPhotoShownToModel(t *testing.T) {
 	}
 	if len(a.Images) != 1 || !strings.HasPrefix(a.Images[0], "data:image/png;base64,") || len(fetched) != 1 || fetched[0] != 0 {
 		t.Fatalf("images %d, fetched %v", len(a.Images), fetched)
+	}
+	if !regexp.MustCompile(`^<6>image \d+ bytes, \d+\.\ds\n$`).MatchString(out.String()) || errw.String() != "" {
+		t.Fatalf("log %q / %q", out.String(), errw.String())
 	}
 
 	// The message's own images and the quoted one's are counted together.
@@ -87,8 +99,9 @@ func TestPhotoShownToModel(t *testing.T) {
 }
 
 // Without a vision model, nothing is fetched and the model is told it can't
-// see the image; history keeps the same note.
+// see the image; history keeps the same note, and the log says so.
 func TestPhotoWithoutVision(t *testing.T) {
+	out, errw := capture(t)
 	var fetched []int
 	h := host(t, false, &fetched)
 	a := additionsOf(t, h, turn("", photo))
@@ -102,11 +115,16 @@ func TestPhotoWithoutVision(t *testing.T) {
 	if len(fetched) != 0 {
 		t.Fatalf("fetched %v for a model that can't see images", fetched)
 	}
+	if out.String() != "<6>1 image not sent: this model can't see images\n<6>2 images not sent: this model can't see images\n" || errw.String() != "" {
+		t.Fatalf("log %q / %q", out.String(), errw.String())
+	}
 }
 
 // With a vision model the sticker is fetched and shown with its label;
 // without one, the model is told it can't see it, and nothing is fetched.
+// The log has its size, never its label.
 func TestStickerShownToModel(t *testing.T) {
+	out, errw := capture(t)
 	var fetched []int
 	h := host(t, true, &fetched)
 	a := additionsOf(t, h, turn("", sticker))
@@ -116,6 +134,9 @@ func TestStickerShownToModel(t *testing.T) {
 	if len(a.Images) != 1 || !strings.HasPrefix(a.Images[0], "data:image/webp;base64,") || len(fetched) != 1 {
 		t.Fatalf("images %d, fetched %v", len(a.Images), fetched)
 	}
+	if !regexp.MustCompile(`^<6>sticker 20 bytes, \d+\.\ds\n$`).MatchString(out.String()) {
+		t.Fatalf("log %q", out.String())
+	}
 
 	fetched = nil
 	h = host(t, false, &fetched)
@@ -123,6 +144,9 @@ func TestStickerShownToModel(t *testing.T) {
 	want := `[sticker attached: 🕵️ from "My Daily Life", which you can't see]`
 	if !reflect.DeepEqual(a, feature.Additions{Note: want, HistoryNote: want}) || len(fetched) != 0 {
 		t.Fatalf("got %+v, fetched %v", a, fetched)
+	}
+	if l := out.String(); !strings.HasSuffix(l, "<6>sticker not sent: this model can't see images\n") || strings.Contains(l, "Daily") || errw.String() != "" {
+		t.Fatalf("log %q / %q", l, errw.String())
 	}
 
 	// A pack signal-cli doesn't know has no label.
@@ -176,6 +200,9 @@ func TestFetchFailures(t *testing.T) {
 		!strings.Contains(logs, "<4>could not fetch a sticker: not an image") || strings.Contains(logs, "look") || strings.Contains(logs, "Alice") {
 		t.Fatalf("log %q", logs)
 	}
+	if n := strings.Count(out.String(), "<6>image "); n != 1 || strings.Contains(out.String(), "sticker") {
+		t.Fatalf("%d images logged: %q", n, out.String())
+	}
 
 	h.Fetch = nil // every fetch fails
 	a = additionsOf(t, h, turn("", photo, photo))
@@ -184,8 +211,10 @@ func TestFetchFailures(t *testing.T) {
 	}
 }
 
-// An image too big for the model is shrunk to a JPEG that fits.
+// An image too big for the model is shrunk to a JPEG that fits; the log
+// has both sizes.
 func TestBigPhotoIsShrunk(t *testing.T) {
+	out, _ := capture(t)
 	var fetched []int
 	h := host(t, true, &fetched)
 	m := image.NewRGBA(image.Rect(0, 0, 1400, 1400))
@@ -203,6 +232,9 @@ func TestBigPhotoIsShrunk(t *testing.T) {
 	a := additionsOf(t, h, turn("", photo))
 	if a.Note != "[1 image attached]" || len(a.Images) != 1 || !strings.HasPrefix(a.Images[0], "data:image/jpeg;base64,") {
 		t.Fatalf("got %q with %d images", a.Note, len(a.Images))
+	}
+	if !regexp.MustCompile(`^<6>image \d+ bytes, sent as \d+ bytes, \d+\.\ds\n$`).MatchString(out.String()) {
+		t.Fatalf("log %q", out.String())
 	}
 }
 

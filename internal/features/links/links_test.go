@@ -7,12 +7,15 @@ import (
 	"net/http/httptest"
 	"net/netip"
 	"net/url"
+	"regexp"
 	"runtime"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/robdevops/signalbot/internal/feature"
 	"github.com/robdevops/signalbot/internal/kit/logx"
@@ -29,22 +32,25 @@ func msg(text, quote string) feature.Message {
 }
 
 // URLs come from the text, then the quote, distinct, at most two, with
-// sentence punctuation and unbalanced brackets trimmed.
+// sentence punctuation and unbalanced brackets trimmed; distinct ones past
+// two are counted.
 func TestURLs(t *testing.T) {
 	for _, tc := range []struct {
 		text, quote string
 		want        []string
+		dropped     int
 	}{
-		{"see https://example.com/a.", "", []string{"https://example.com/a"}},
-		{"(https://en.wikipedia.org/wiki/Go_(game)) and [x](https://x.org/y)", "", []string{"https://en.wikipedia.org/wiki/Go_(game)", "https://x.org/y"}},
-		{"<https://a.com/>, https://a.com/ again", "", []string{"https://a.com/"}},
-		{"summarise", "read http://b.org/p?q=1#top please", []string{"http://b.org/p?q=1"}},
-		{"thanks", "bot: see https://attacker.example/x?d=secret", nil}, // a quote of the bot: see msg
-		{"https://1.com https://2.com https://3.com", "", []string{"https://1.com", "https://2.com"}},
-		{"ftp://x.com mailto:a@b.c https://user:pw@c.com/ http://", "", nil},
+		{"see https://example.com/a.", "", []string{"https://example.com/a"}, 0},
+		{"(https://en.wikipedia.org/wiki/Go_(game)) and [x](https://x.org/y)", "", []string{"https://en.wikipedia.org/wiki/Go_(game)", "https://x.org/y"}, 0},
+		{"<https://a.com/>, https://a.com/ again", "", []string{"https://a.com/"}, 0},
+		{"summarise", "read http://b.org/p?q=1#top please", []string{"http://b.org/p?q=1"}, 0},
+		{"thanks", "bot: see https://attacker.example/x?d=secret", nil, 0}, // a quote of the bot: see msg
+		{"https://1.com https://2.com https://3.com", "", []string{"https://1.com", "https://2.com"}, 1},
+		{"https://1.com https://2.com https://1.com", "", []string{"https://1.com", "https://2.com"}, 0},
+		{"ftp://x.com mailto:a@b.c https://user:pw@c.com/ http://", "", nil, 0},
 	} {
-		if got := urls(msg(tc.text, tc.quote)); !slices.Equal(got, tc.want) {
-			t.Errorf("%q: %q, want %q", tc.text, got, tc.want)
+		if got, dropped := urls(msg(tc.text, tc.quote)); !slices.Equal(got, tc.want) || dropped != tc.dropped {
+			t.Errorf("%q: %q, %d dropped, want %q, %d", tc.text, got, dropped, tc.want, tc.dropped)
 		}
 	}
 }
@@ -95,21 +101,39 @@ func TestClientRefusesPrivate(t *testing.T) {
 	}
 }
 
+// capture collects the log, with journald priorities, so a test can check
+// each line's level.
 func capture(t *testing.T) *logx.Buffer {
 	var b logx.Buffer
-	t.Cleanup(logx.SetOutput(&b, &b, false))
+	t.Cleanup(logx.SetOutput(&b, &b, true))
 	return &b
 }
 
 // A page's article text and title are shown, without its navigation or
 // scripts; history keeps a note. Plain text is shown as it is, a PDF as a
 // file, and anything else, an error status or too many redirects as a note.
+// Each link gets one log line, its outcome without its URL or title.
 func TestFetch(t *testing.T) {
-	capture(t)
+	logs := capture(t)
+	logged := func(pattern string) {
+		t.Helper()
+		if !regexp.MustCompile(pattern).MatchString(logs.String()) {
+			t.Errorf("no log line matching %q in %q", pattern, logs.String())
+		}
+	}
 	allowLoopback = true
 	defer func() { allowLoopback = false }()
 	article := strings.Repeat("Gold rose today. ", 20)
+	long := strings.Repeat("x", 20_000)
 	mux := http.NewServeMux()
+	mux.HandleFunc("/empty", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		w.Write([]byte("<html><body><nav>Home</nav></body></html>"))
+	})
+	mux.HandleFunc("/long", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		w.Write([]byte("<html><body><div>menu</div><main><p>" + long + "</p></main></body></html>"))
+	})
 	mux.HandleFunc("/page", func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get("User-Agent") != userAgent {
 			w.WriteHeader(400)
@@ -144,18 +168,28 @@ func TestFetch(t *testing.T) {
 	if a.HistoryNote != "[page "+srv.URL+"/page was shown to you; it isn't kept]" {
 		t.Fatalf("history %q", a.HistoryNote)
 	}
+	logged(`<6>link \d+\.\ds, \d+ bytes html, ` + strconv.Itoa(utf8.RuneCountInString("Gold\n"+strings.TrimSpace(article))) + ` chars of text \(<article>\)\n`)
 	if a := additions(context.Background(), c, newLimiter(), all, msg(srv.URL+"/latin1", "")); a.Note != "[page "+srv.URL+"/latin1]\n```\ncafé\n```" {
 		t.Fatalf("latin-1 %q", a.Note)
 	}
+	logged(`<6>link \d+\.\ds, 4 bytes text/plain, 4 chars of text\n`)
 	a = additions(context.Background(), c, newLimiter(), all, msg("", "read "+srv.URL+"/report.pdf"))
 	if a.Note != "[page "+srv.URL+"/report.pdf, a PDF, attached]" || len(a.Files) != 1 || a.Files[0].Name != "report.pdf" || a.Files[0].MIME != "application/pdf" {
 		t.Fatalf("pdf %+v", a)
 	}
+	logged(`<6>link \d+\.\ds, 13 bytes pdf, attached\n`)
 	if a := additions(context.Background(), c, newLimiter(), feature.Info{}, msg(srv.URL+"/report.pdf", "")); a.Files != nil || !strings.Contains(a.Note, "which you can't read with this model") {
 		t.Fatalf("pdf without files %+v", a)
 	}
+	logged(`<6>link \d+\.\ds, 13 bytes pdf, not sent: this model can't read files\n`)
+	a = additions(context.Background(), c, newLimiter(), all, msg(srv.URL+"/long", ""))
+	if !strings.HasPrefix(a.Note, "[page "+srv.URL+"/long]\n```\nxxx") || !strings.Contains(a.Note, "\n[…truncated]\n```") {
+		t.Fatalf("long %.80q", a.Note)
+	}
+	logged(`<6>link \d+\.\ds, \d+ bytes html, 15000 of 20000 chars of text \(<main>\)\n`)
 	for path, want := range map[string]string{
 		"/bin":     ", which isn't a page you can read]",
+		"/empty":   ", a page with no text you can read]",
 		"/missing": " failed to load: status 404]",
 		"/loop":    " failed to load: too many or bad redirects]",
 	} {
@@ -163,8 +197,17 @@ func TestFetch(t *testing.T) {
 			t.Errorf("%s: %q / %q", path, a.Note, a.HistoryNote)
 		}
 	}
+	logged(`<6>link \d+\.\ds, 2 bytes application/zip, not a page the bot reads\n`)
+	logged(`<4>link \d+\.\ds, \d+ bytes html, no readable text\n`)
+	logged(`<4>link failed after \d+\.\ds: status 404\n`)
+	logged(`<4>link failed after \d+\.\ds: too many or bad redirects\n`)
 	if a := additions(context.Background(), c, newLimiter(), all, msg("no links here", "")); a.Note != "" {
 		t.Fatalf("no links: %+v", a)
+	}
+	for _, s := range []string{srv.URL, "127.0.0.1", "Gold", "evil", "xxx"} {
+		if strings.Contains(logs.String(), s) {
+			t.Errorf("%q reached the log: %q", s, logs.String())
+		}
 	}
 }
 
@@ -175,7 +218,7 @@ func TestPageTextIsStreamed(t *testing.T) {
 	var before, after runtime.MemStats
 	runtime.GC()
 	runtime.ReadMemStats(&before)
-	title, text := pageText(page, "text/html")
+	title, text, _ := pageText(page, "text/html")
 	runtime.ReadMemStats(&after)
 	if title != "Big" || len(text) > maxText*2+10 {
 		t.Fatalf("title %q, %d bytes", title, len(text))
@@ -188,20 +231,22 @@ func TestPageTextIsStreamed(t *testing.T) {
 // A page's first article or main element stands for it when it has
 // minArticle characters, so a menu of plain divs is left out; a short one,
 // or none, gives the whole page. A nested article stays in its outer one.
+// The log is told which.
 func TestArticleText(t *testing.T) {
 	menu := "<div class=menu>" + strings.Repeat("Menu item ", 30) + "</div>"
 	story := strings.Repeat("The story goes on. ", 22)
 	for _, tc := range []struct {
-		page, want string
+		page, want, from string
 	}{
-		{menu + "<article><p>" + story + "</p></article>", strings.TrimSpace(story)},
-		{menu + "<main><p>Short.</p></main>", strings.TrimSpace(strings.Repeat("Menu item ", 30)) + "\nShort."},
+		{menu + "<article><p>" + story + "</p></article>", strings.TrimSpace(story), "<article>"},
+		{menu + "<main><p>Short.</p></main>", strings.TrimSpace(strings.Repeat("Menu item ", 30)) + "\nShort.", "whole page"},
 		{menu + "<article><p>" + story + "</p><article><p>Inner.</p></article><p>Tail.</p></article><article>Second</article>",
-			strings.TrimSpace(story) + "\nInner.\nTail."},
-		{"<p>No article here.</p>", "No article here."},
+			strings.TrimSpace(story) + "\nInner.\nTail.", "<article>"},
+		{menu + "<main><p>" + story + "</p></main>", strings.TrimSpace(story), "<main>"},
+		{"<p>No article here.</p>", "No article here.", "whole page"},
 	} {
-		if _, got := pageText([]byte("<html><body>"+tc.page+"</body></html>"), "text/html"); got != tc.want {
-			t.Errorf("got %q\nwant %q", got, tc.want)
+		if _, got, from := pageText([]byte("<html><body>"+tc.page+"</body></html>"), "text/html"); got != tc.want || from != tc.from {
+			t.Errorf("got %q from %s\nwant %q from %s", got, from, tc.want, tc.from)
 		}
 	}
 }
@@ -242,9 +287,10 @@ func TestPrivate(t *testing.T) {
 }
 
 // A private-looking link isn't fetched, and neither is one a redirect
-// points at: the server never sees either.
+// points at: the server never sees either. Both are logged, without the
+// URL.
 func TestPrivateLinksAreNotFetched(t *testing.T) {
-	capture(t)
+	logs := capture(t)
 	allowLoopback = true
 	defer func() { allowLoopback = false }()
 	var mu sync.Mutex
@@ -267,6 +313,11 @@ func TestPrivateLinksAreNotFetched(t *testing.T) {
 	if a.Note != "[link "+srv.URL+"/short failed to load: redirected to a private or one-time link]" {
 		t.Fatalf("redirect note %q", a.Note)
 	}
+	if l := logs.String(); !strings.Contains(l, "<6>link not fetched: looks private or one-time\n") ||
+		!regexp.MustCompile(`<4>link failed after \d+\.\ds: redirected to a private or one-time link\n`).MatchString(l) ||
+		strings.Contains(l, srv.URL) || strings.Contains(l, "token") {
+		t.Fatalf("log %q", l)
+	}
 	mu.Lock()
 	defer mu.Unlock()
 	if !slices.Equal(hits, []string{"/short"}) {
@@ -275,8 +326,10 @@ func TestPrivateLinksAreNotFetched(t *testing.T) {
 }
 
 // Each chat can have maxPerHour links fetched an hour; another chat is
-// counted apart, and an hour later the first can again.
+// counted apart, and an hour later the first can again. Over the cap, the
+// model is told why, and the log, without the URL.
 func TestFetchesPerHour(t *testing.T) {
+	logs := capture(t)
 	defer func(f func() time.Time) { now = f }(now)
 	clock := time.Now()
 	now = func() time.Time { return clock }
@@ -307,5 +360,8 @@ func TestFetchesPerHour(t *testing.T) {
 	a := additions(context.Background(), newClient(), l, feature.Info{}, feature.Message{Chat: feature.Chat{User: "c"}, Text: "https://example.com/a", Addressed: true})
 	if a.Note != "[link https://example.com/a not fetched: too many links this hour; try again later]" {
 		t.Fatalf("note %q", a.Note)
+	}
+	if l := logs.String(); l != "<4>link not fetched: 20 an hour for this chat reached\n" {
+		t.Fatalf("log %q", l)
 	}
 }

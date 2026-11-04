@@ -2,7 +2,10 @@
 // line, and reads settings written as text.
 package txt
 
-import "strings"
+import (
+	"strconv"
+	"strings"
+)
 
 // maxName caps a display name, in runes.
 const maxName = 64
@@ -50,4 +53,13 @@ func Fence(text string, max int) string {
 		fence += "`"
 	}
 	return fence + "\n" + strings.Trim(text, "\n") + "\n" + fence
+}
+
+// Chars says how much of n characters of text a cap of max shows, for a
+// log line: "1532 chars of text", or "50000 of 83210 chars of text".
+func Chars(n, max int) string {
+	if n > max {
+		return strconv.Itoa(max) + " of " + strconv.Itoa(n) + " chars of text"
+	}
+	return strconv.Itoa(n) + " chars of text"
 }

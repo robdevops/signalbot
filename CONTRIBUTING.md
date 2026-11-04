@@ -52,7 +52,7 @@ And by convention:
 - **Scenarios:** `scenario_test.go` drives the whole bot through a fake signal-cli socket and a fake model API (OpenRouter's, or another provider's), and checks no message text reaches the log. The golden prompts in `testdata` pin the system prompt byte for byte (`go test . -run Golden -update` rewrites them).
 - **One test hook:** what a test needs to change inside the bot goes in `config.Test` (nil in production), never in an exported variable or method. The only other exports for tests only read: `logx.SetOutput` and `logx.Buffer` capture the log (kit can't import config).
 - **Sizes:** `go run ./internal/arch/sizes` reports lines per package; CI reports them on each PR, not enforced.
-- **Never log message text,** including in errors and panics. `logx` escapes line breaks; don't log what a user wrote.
+- **Never log message text,** including in errors and panics, nor a URL, file name, page title or declared type. `logx` escapes line breaks; don't log what a user wrote.
 - Tests use only the names Alice and Bob.
 
 Before sending a change: `gofmt -l .`, `go vet ./...` and `go test -race ./...`, with `GOTOOLCHAIN=local`. No new dependencies.
