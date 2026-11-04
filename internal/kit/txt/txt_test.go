@@ -60,6 +60,12 @@ func TestFence(t *testing.T) {
 	if got := Fence("abcdef", 3); got != "```\nabc\n[…truncated]\n```" {
 		t.Errorf("got %q", got)
 	}
+	if got := Fence("ééé", 2); got != "```\néé\n[…truncated]\n```" { // cut between runes
+		t.Errorf("got %q", got)
+	}
+	if got := Fence("éé", 2); got != "```\néé\n```" {
+		t.Errorf("got %q", got)
+	}
 }
 
 // Chars says how much of a text a cap shows.

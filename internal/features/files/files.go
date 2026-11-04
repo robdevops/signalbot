@@ -57,6 +57,7 @@ func additions(ctx context.Context, h feature.Host, m feature.Message) feature.A
 	info := h.Info()
 	var notes, kept []string
 	var files []feature.File
+	content := false // the model gets what a file says
 	for i, md := range m.Media {
 		if !md.File {
 			continue
@@ -64,7 +65,7 @@ func additions(ctx context.Context, h feature.Host, m feature.Message) feature.A
 		label, status, text, file := one(ctx, h, info, m, i)
 		note, keep := label+status+"]", label+status+"]"
 		if text != "" || file != nil {
-			keep = label + status + notKept + "]"
+			keep, content = label+status+notKept+"]", true
 		}
 		if text != "" {
 			note += "\n" + txt.Fence(text, maxText)
@@ -77,7 +78,7 @@ func additions(ctx context.Context, h feature.Host, m feature.Message) feature.A
 	if len(notes) == 0 {
 		return feature.Additions{}
 	}
-	return feature.Additions{Note: strings.Join(notes, "\n"), HistoryNote: strings.Join(kept, "\n"), Files: files}
+	return feature.Additions{Note: strings.Join(notes, "\n"), HistoryNote: strings.Join(kept, "\n"), Files: files, Content: content}
 }
 
 // one handles m.Media[i]: its label (`[file "name"`), its status (such as

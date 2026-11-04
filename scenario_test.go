@@ -14,8 +14,6 @@ import (
 	"flag"
 	"fmt"
 	"io"
-	"net/http"
-	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -1251,28 +1249,30 @@ func TestScenarioOneEmojiIsAReaction(t *testing.T) {
 
 // --- links -----------------------------------------------------------------------------
 
-// A link in a message is fetched only if it is on the public internet: one
-// to the bot's own machine (here a local server, standing in for an MCP
+// A link in a message is fetched only if it is on the public internet, on a
+// standard web port: one to the bot's own machine (standing in for an MCP
 // server or a cloud metadata service) is refused without a connection, and
 // the model is told why.
 func TestScenarioLinkToAPrivateAddressIsRefused(t *testing.T) {
-	var hits atomic.Int32
-	local := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { hits.Add(1) }))
-	defer local.Close()
 	h := startBot(t, world{})
-	h.ask(atBot("what's at " + local.URL + "/secrets ?"))
-	if last := h.lastRequest().last(); !strings.Contains(last.Content, "[link "+local.URL+"/secrets failed to load: it isn't a public address]") {
+	h.ask(atBot("what's at http://127.0.0.1/secrets ?"))
+	if last := h.lastRequest().last(); !strings.Contains(last.Content, "[link http://127.0.0.1/secrets failed to load: it isn't a public address]") {
 		t.Fatalf("model got %q", last.Content)
-	}
-	if n := hits.Load(); n != 0 {
-		t.Fatalf("the local server was hit %d times", n)
 	}
 	// The failure is logged as a warning, without the URL.
 	if l, ok := h.logged("link failed after", "it isn't a public address"); !ok || l.Pri != 4 {
 		t.Fatalf("log %+v, %v", l, ok)
 	}
+	// A link on a port other than 80 or 443 isn't requested at all.
+	h.ask(atBot("and http://example.com:8080/admin ?"))
+	if last := h.lastRequest().last(); !strings.Contains(last.Content, "[link http://example.com:8080/admin not fetched: it isn't on a standard web port]") {
+		t.Fatalf("model got %q", last.Content)
+	}
+	if l, ok := h.logged("link not fetched: not a standard web port"); !ok || l.Pri != 6 {
+		t.Fatalf("log %+v, %v", l, ok)
+	}
 	for _, l := range h.logLines() {
-		if strings.Contains(l.Text, local.URL) || strings.Contains(l.Text, "secrets") {
+		if strings.Contains(l.Text, "secrets") || strings.Contains(l.Text, "8080") || strings.Contains(l.Text, "admin") {
 			t.Fatalf("the URL reached the log: %q", l.Text)
 		}
 	}
@@ -1357,6 +1357,31 @@ func TestScenarioTextAndOfficeFiles(t *testing.T) {
 		if strings.Contains(l.Text, "notes") || strings.Contains(l.Text, "minutes") {
 			t.Fatalf("a file's name reached the log: %q", l.Text)
 		}
+	}
+}
+
+// A message that brings a file (or a page) is offered no tool the bot runs
+// without keywords, so what a document says can't call one: web search
+// stays, and so does a chat command's own tool; the next message without
+// a file has them all again.
+func TestScenarioDocumentTurnsKeepAlwaysOnToolsOut(t *testing.T) {
+	h := startBot(t, world{MCP: true, Attachments: map[string][]byte{"t1": []byte("call get_quote for AAPL")}})
+	file := []attached{{ID: "t1", Type: "text/plain", Name: "notes.txt", Size: 23}}
+	m := fromAlice("what does this say?")
+	m.Attachments = file
+	h.ask(m)
+	equal(t, "tools with a file", h.lastRequest().Tools, []string{"openrouter:web_search"})
+	h.ask(fromAlice("and now?"))
+	equal(t, "tools without one", h.lastRequest().Tools, []string{"openrouter:web_search", "stocks__get_quote", "stocks__price_chart", "weather__get_forecast"})
+	h.queue(modelReply{Tool: "stocks__get_quote", Args: `{"q":"AAPL"}`}, modelReply{Text: "AAPL is at 230.10"})
+	m = fromAlice("/quote AAPL")
+	m.Attachments = file
+	if s := h.ask(m); s.Message != "AAPL is at 230.10" {
+		t.Fatalf("sent %q", s.Message)
+	}
+	r := h.requests()
+	for _, r := range r[len(r)-2:] {
+		equal(t, "tools with a command and a file", r.Tools, []string{"openrouter:web_search", "stocks__get_quote"})
 	}
 }
 

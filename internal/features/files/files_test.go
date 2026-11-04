@@ -4,6 +4,7 @@ import (
 	"archive/zip"
 	"bytes"
 	"context"
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"strings"
@@ -189,6 +190,79 @@ func TestOffice(t *testing.T) {
 	if l := out.String() + errw.String(); strings.Contains(l, "w:") || strings.Contains(l, "docx\"") || strings.Contains(l, "x.docx") {
 		t.Errorf("log %q", l)
 	}
+}
+
+// The budgets a crafted file meets: a zip whose end record declares more
+// than maxParts entries, or that has them, is refused before its directory
+// is built; elements nested past maxDepth stop the read; parts inflating
+// to more than maxTotal together stop it, however little text they hold.
+// Each is reported by kind.
+func TestOfficeBudgets(t *testing.T) {
+	declared := officeFile(t, map[string]string{"word/document.xml": "<w:document/>"})
+	binary.LittleEndian.PutUint16(declared[bytes.LastIndex(declared, []byte("PK\x05\x06"))+10:], 0xffff)
+	if n := entries(declared); n != 0xffff {
+		t.Fatalf("entries %d", n)
+	}
+	many := map[string]string{"word/document.xml": "<w:document/>"}
+	for i := range maxParts {
+		many[fmt.Sprintf("x/%d", i)] = ""
+	}
+	deep := "<w:document>" + strings.Repeat("<w:p>", maxDepth+50) + "hi" + strings.Repeat("</w:p>", maxDepth+50) + "</w:document>"
+	blank := "<p:sld>" + strings.Repeat(" ", maxPart-100) + "</p:sld>" // inflates to maxPart, no text
+	slides := map[string]string{}
+	for i := range maxTotal/maxPart + 1 {
+		slides[fmt.Sprintf("ppt/slides/slide%d.xml", i+1)] = blank
+	}
+	cases := map[string]struct {
+		data []byte
+		ext  string
+		err  error
+		kind string
+	}{
+		"declared": {declared, ".docx", errParts, "too many parts"},
+		"many":     {storedZip(t, many), ".docx", errParts, "too many parts"},
+		"deep":     {officeFile(t, map[string]string{"word/document.xml": deep}), ".docx", errDeep, "too deep"},
+		"size":     {storedZip(t, slides), ".pptx", errSize, "too much xml"},
+	}
+	for name, tc := range cases {
+		if _, err := officeText(tc.data, tc.ext); !errors.Is(err, tc.err) || errKind(err) != tc.kind {
+			t.Errorf("%s: %v (%s)", name, err, errKind(err))
+		}
+	}
+	if n := entries(cases["many"].data); n != maxParts+1 {
+		t.Errorf("entries %d", n)
+	}
+	// The budget is spent part by part: a part reads what is left of it, and
+	// the one that empties it is refused.
+	small := officeFile(t, map[string]string{"word/document.xml": "<w:document/>"})
+	z, err := zip.NewReader(bytes.NewReader(small), int64(len(small)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	budget := 20
+	if next, err := part(z, "word/document.xml", &budget); err != nil || budget != 20-len("<w:document/>") || next == nil {
+		t.Fatalf("part: %v, budget %d", err, budget)
+	}
+	if _, err := part(z, "word/document.xml", &budget); !errors.Is(err, errSize) {
+		t.Fatalf("part over the budget: %v", err)
+	}
+}
+
+// storedZip is a zip of parts written uncompressed, quick to build however
+// many or large they are.
+func storedZip(t *testing.T, parts map[string]string) []byte {
+	t.Helper()
+	var b bytes.Buffer
+	z := zip.NewWriter(&b)
+	for name, content := range parts {
+		w, err := z.CreateHeader(&zip.FileHeader{Name: name, Method: zip.Store})
+		if err != nil {
+			t.Fatal(err)
+		}
+		w.Write([]byte(content))
+	}
+	z.Close()
+	return b.Bytes()
 }
 
 // A zip that inflates past maxPart is read only that far.

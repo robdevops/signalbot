@@ -376,8 +376,11 @@ func toolNames(r map[string]any) []string {
 	var out []string
 	ts, _ := r["tools"].([]any)
 	for _, t := range ts {
-		f, _ := t.(map[string]any)["function"].(map[string]any)
-		out = append(out, fmt.Sprint(f["name"]))
+		if f, ok := t.(map[string]any)["function"].(map[string]any); ok {
+			out = append(out, fmt.Sprint(f["name"]))
+		} else { // a server tool is its type, e.g. "openrouter:served"
+			out = append(out, fmt.Sprint(t.(map[string]any)["type"]))
+		}
 	}
 	return out
 }

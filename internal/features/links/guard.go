@@ -6,6 +6,7 @@ import (
 	"net"
 	"net/http"
 	"net/netip"
+	"net/url"
 	"syscall"
 	"time"
 )
@@ -15,6 +16,7 @@ import (
 var (
 	errBlocked         = errors.New("not a public address")
 	errPrivateRedirect = errors.New("redirected to a private or one-time link")
+	errPortRedirect    = errors.New("redirected to a non-standard port")
 )
 
 // allowLoopback lets this package's own tests reach their local server.
@@ -23,12 +25,13 @@ var allowLoopback bool
 // blocked are the addresses no link may reach, beyond those that aren't
 // global unicast: private, shared, loopback, link-local (GCP's metadata
 // server among them), documentation, benchmarking and reserved ranges, and
-// IPv6 ranges that can carry an IPv4 address (NAT64, 6to4, Teredo).
+// IPv6 ranges that can carry an IPv4 address (IPv4-compatible and
+// -translated, NAT64, 6to4, Teredo).
 var blocked = func() []netip.Prefix {
 	var out []netip.Prefix
 	for _, p := range []string{"0.0.0.0/8", "10.0.0.0/8", "100.64.0.0/10", "127.0.0.0/8", "169.254.0.0/16",
 		"172.16.0.0/12", "192.0.0.0/24", "192.0.2.0/24", "192.168.0.0/16", "198.18.0.0/15", "198.51.100.0/24",
-		"203.0.113.0/24", "224.0.0.0/4", "240.0.0.0/4", "::/128", "::1/128", "64:ff9b::/96", "64:ff9b:1::/48",
+		"203.0.113.0/24", "224.0.0.0/4", "240.0.0.0/4", "::/96", "::ffff:0:0:0/96", "64:ff9b::/96", "64:ff9b:1::/48",
 		"100::/64", "2001::/32", "2001:db8::/32", "2002::/16", "fc00::/7", "fe80::/10", "fec0::/10", "ff00::/8"} {
 		out = append(out, netip.MustParsePrefix(p))
 	}
@@ -47,6 +50,17 @@ func public(ip netip.Addr) bool {
 		}
 	}
 	return true
+}
+
+// webPort reports whether u is on a standard web port, the only ones a link
+// may reach, so the bot can't be pointed at another service on a host; the
+// package's tests reach their loopback servers on any port.
+func webPort(u *url.URL) bool {
+	if ip, err := netip.ParseAddr(u.Hostname()); allowLoopback && (err == nil && ip.IsLoopback() || u.Hostname() == "localhost") {
+		return true
+	}
+	p := u.Port()
+	return p == "" || p == "80" || p == "443"
 }
 
 // guard refuses a connection to an address that isn't public. It runs on
@@ -73,8 +87,8 @@ func guard(_, address string, _ syscall.RawConn) error {
 
 // newClient is the HTTP client links are fetched with: no proxy, so the
 // address guarded is the one reached; TLS 1.2 or later, since many sites
-// have no 1.3; at most maxRedirects redirects, each to http or https and
-// none to a link that looks private or one-time.
+// have no 1.3; at most maxRedirects redirects, each to http or https on a
+// standard web port, and none to a link that looks private or one-time.
 func newClient() *http.Client {
 	dialer := &net.Dialer{Timeout: 10 * time.Second, Control: guard}
 	return &http.Client{
@@ -94,6 +108,9 @@ func newClient() *http.Client {
 			}
 			if req.URL.Scheme != "http" && req.URL.Scheme != "https" {
 				return errors.New("redirected away from the web")
+			}
+			if !webPort(req.URL) {
+				return errPortRedirect
 			}
 			if private(req.URL) { // a short link to someone's reset link, say
 				return errPrivateRedirect

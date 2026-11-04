@@ -31,7 +31,7 @@ The model can call tools from [MCP](https://modelcontextprotocol.io) servers, re
 | `command`, `args`, `env` | a local server, run with only `PATH`, `HOME` and its `env` |
 | `allowed_tools` / `blocked_tools` | offer only these tools, or every tool but these |
 | `instructions` | a line added to the system prompt while the server's tools are offered (see below) |
-| `keywords` | offer the server's tools only when a message has one of these words (see below) |
+| `keywords` | offer the server's tools only when a message has one of these words (see below). A server without them is offered with every message, except one bringing a page or a file, so what a document says can't call its tools |
 | `chat_commands` | optional slash-command shortcuts to a tool (you can always just ask): `tool` names it, `require_arg` makes a bare command get a usage reply |
 | `disabled` | leave the server out without deleting it |
 

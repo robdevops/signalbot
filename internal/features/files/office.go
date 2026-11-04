@@ -3,6 +3,7 @@ package files
 import (
 	"archive/zip"
 	"bytes"
+	"encoding/binary"
 	"encoding/xml"
 	"errors"
 	"fmt"
@@ -14,9 +15,24 @@ import (
 	"strings"
 )
 
-// maxPart caps the bytes read from one part of an Office file, so a small
-// zip can't inflate into a huge one.
-const maxPart = 10 << 20
+// maxPart caps the bytes read from one part of an Office file and maxTotal
+// those read from all its parts, so a small zip can't inflate into a huge
+// one; maxDepth caps how deep elements nest, since the decoder keeps a
+// stack of the open ones; maxParts caps a zip's entries, checked before its
+// directory is built (a 1,000-slide deck has about 10,000).
+const (
+	maxPart  = 10 << 20
+	maxTotal = 32 << 20
+	maxDepth = 256
+	maxParts = 20_000
+)
+
+// The budgets' errors, which the log names by kind.
+var (
+	errParts = errors.New("too many parts")
+	errDeep  = errors.New("nested too deep")
+	errSize  = errors.New("too much xml")
+)
 
 var officeExts = map[string]bool{".docx": true, ".xlsx": true, ".pptx": true}
 
@@ -29,26 +45,30 @@ var (
 // rows, cells separated by tabs) or pptx (each slide's paragraphs), cut a
 // little past maxText.
 func officeText(data []byte, ext string) (string, error) {
+	if entries(data) > maxParts {
+		return "", errParts
+	}
 	z, err := zip.NewReader(bytes.NewReader(data), int64(len(data)))
 	if err != nil {
 		return "", err
 	}
 	var out strings.Builder
+	budget := maxTotal
 	switch ext {
 	case ".docx":
-		err = paragraphs(z, "word/document.xml", "p", "t", &out)
+		err = paragraphs(z, "word/document.xml", "p", "t", &budget, &out)
 	case ".pptx":
 		for i, name := range numbered(z, slidePart) {
 			if out.Len() > maxText {
 				break
 			}
 			fmt.Fprintf(&out, "Slide %d:\n", i+1)
-			if err = paragraphs(z, name, "p", "t", &out); err != nil {
+			if err = paragraphs(z, name, "p", "t", &budget, &out); err != nil {
 				break
 			}
 		}
 	case ".xlsx":
-		err = sheets(z, &out)
+		err = sheets(z, &budget, &out)
 	default:
 		err = errors.New("not an Office file")
 	}
@@ -69,22 +89,59 @@ func errKind(err error) string {
 		return "missing part"
 	case errors.As(err, &syntax):
 		return "bad xml"
+	case errors.Is(err, errParts):
+		return "too many parts"
+	case errors.Is(err, errDeep):
+		return "too deep"
+	case errors.Is(err, errSize):
+		return "too much xml"
 	}
 	return "unreadable"
 }
 
-// part opens the zip's file called name, reading at most maxPart bytes.
-func part(z *zip.Reader, name string) (*xml.Decoder, error) {
+// entries is the number of files a zip's end record declares: the last
+// end-of-central-directory signature in the final 65,557 bytes, the record
+// archive/zip reads too, or -1 without one (archive/zip then says it isn't
+// a zip). A zip64 count (0xffff) is over any cap, so a tiny file declaring
+// a million entries is refused before its directory is built.
+func entries(data []byte) int {
+	tail := data[max(0, len(data)-(22+65535)):]
+	i := bytes.LastIndex(tail, []byte("PK\x05\x06"))
+	if i < 0 || i+12 > len(tail) {
+		return -1
+	}
+	return int(binary.LittleEndian.Uint16(tail[i+10:]))
+}
+
+// part is the tokens of the zip's file called name, read to at most maxPart
+// bytes and what is left of the file's budget (errSize once that is spent),
+// refusing elements nested past maxDepth (errDeep).
+func part(z *zip.Reader, name string, budget *int) (next func() (xml.Token, error), err error) {
 	f, err := z.Open(name)
 	if err != nil {
 		return nil, err
 	}
-	data, err := io.ReadAll(io.LimitReader(f, maxPart))
+	data, err := io.ReadAll(io.LimitReader(f, int64(min(maxPart, *budget))))
 	f.Close()
 	if err != nil {
 		return nil, err
 	}
-	return xml.NewDecoder(bytes.NewReader(data)), nil
+	if *budget -= len(data); *budget <= 0 {
+		return nil, errSize
+	}
+	d, depth := xml.NewDecoder(bytes.NewReader(data)), 0
+	return func() (xml.Token, error) {
+		tok, err := d.Token()
+		switch tok.(type) {
+		case xml.StartElement:
+			if depth++; depth > maxDepth {
+				return nil, errDeep
+			}
+		case xml.EndElement:
+			depth--
+		}
+		return tok, err
+	}, nil
 }
 
 // numbered is the zip's files whose names match re, in the order of the
@@ -111,14 +168,14 @@ func numbered(z *zip.Reader, re *regexp.Regexp) []string {
 
 // paragraphs writes the text of each element named para in the part, a line
 // each, from the text elements named text in it, stopping past maxText.
-func paragraphs(z *zip.Reader, name, para, text string, out *strings.Builder) error {
-	d, err := part(z, name)
+func paragraphs(z *zip.Reader, name, para, text string, budget *int, out *strings.Builder) error {
+	next, err := part(z, name, budget)
 	if err != nil {
 		return err
 	}
 	inText := false
 	for out.Len() <= maxText {
-		tok, err := d.Token()
+		tok, err := next()
 		if err == io.EOF {
 			return nil
 		}
@@ -148,13 +205,13 @@ func paragraphs(z *zip.Reader, name, para, text string, out *strings.Builder) er
 // sheets writes each worksheet of an xlsx as "Sheet N:" and its rows, cells
 // separated by tabs in their columns, from the shared strings and the
 // cells' own values.
-func sheets(z *zip.Reader, out *strings.Builder) error {
+func sheets(z *zip.Reader, budget *int, out *strings.Builder) error {
 	var shared []string
-	if d, err := part(z, "xl/sharedStrings.xml"); err == nil {
+	if next, err := part(z, "xl/sharedStrings.xml", budget); err == nil {
 		var cur strings.Builder
 		inT := false
 		for {
-			tok, err := d.Token()
+			tok, err := next()
 			if err != nil {
 				break
 			}
@@ -178,7 +235,7 @@ func sheets(z *zip.Reader, out *strings.Builder) error {
 	}
 	for i, name := range numbered(z, sheetPart) {
 		fmt.Fprintf(out, "Sheet %d:\n", i+1)
-		if err := rows(z, name, shared, out); err != nil {
+		if err := rows(z, name, shared, budget, out); err != nil {
 			return err
 		}
 		if out.Len() > maxText {
@@ -189,8 +246,8 @@ func sheets(z *zip.Reader, out *strings.Builder) error {
 }
 
 // rows writes a worksheet's rows, a line each.
-func rows(z *zip.Reader, name string, shared []string, out *strings.Builder) error {
-	d, err := part(z, name)
+func rows(z *zip.Reader, name string, shared []string, budget *int, out *strings.Builder) error {
+	next, err := part(z, name, budget)
 	if err != nil {
 		return err
 	}
@@ -198,7 +255,7 @@ func rows(z *zip.Reader, name string, shared []string, out *strings.Builder) err
 	var row strings.Builder
 	col, inValue := 0, false
 	for out.Len() <= maxText {
-		tok, err := d.Token()
+		tok, err := next()
 		if err == io.EOF {
 			return nil
 		}

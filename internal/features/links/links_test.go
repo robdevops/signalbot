@@ -49,6 +49,7 @@ func TestURLs(t *testing.T) {
 		{"https://1.com https://2.com https://1.com", "", []string{"https://1.com", "https://2.com"}, 0},
 		{"https://1.com https://2.com https://3.com https://3.com https://3.com#x", "", []string{"https://1.com", "https://2.com"}, 1},
 		{"ftp://x.com mailto:a@b.c https://user:pw@c.com/ http://", "", nil, 0},
+		{"see https://a.com/x\u00a0and https://b.com/y\u3000too", "", []string{"https://a.com/x", "https://b.com/y"}, 0}, // Unicode spaces end a URL
 	} {
 		if got, dropped := urls(msg(tc.text, tc.quote)); !slices.Equal(got, tc.want) || dropped != tc.dropped {
 			t.Errorf("%q: %q, %d dropped, want %q, %d", tc.text, got, dropped, tc.want, tc.dropped)
@@ -64,7 +65,7 @@ func TestPublic(t *testing.T) {
 		"100.64.0.1": false, "198.18.0.1": false, "0.0.0.0": false, "224.0.0.1": false, "255.255.255.255": false,
 		"192.0.2.1": false, "::1": false, "::": false, "fe80::1": false, "fc00::1": false, "fd12::1": false,
 		"::ffff:127.0.0.1": false, "::ffff:10.0.0.1": false, "64:ff9b::a00:1": false, "2002:a00:1::": false,
-		"2001:0:4136:e378::": false, "ff02::1": false,
+		"2001:0:4136:e378::": false, "ff02::1": false, "::1.2.3.4": false, "::ffff:0:1.2.3.4": false,
 	} {
 		if got := public(netip.MustParseAddr(addr)); got != want {
 			t.Errorf("public(%s) = %v", addr, got)
@@ -144,6 +145,7 @@ func TestFetch(t *testing.T) {
 		w.Header().Set("Content-Type", "text/html")
 		w.Write([]byte("<html><body><p>Short page.</p></body></html>"))
 	})
+	mux.HandleFunc("/moved", func(w http.ResponseWriter, r *http.Request) { http.Redirect(w, r, "/page", http.StatusFound) })
 	mux.HandleFunc("/blank", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/plain")
 		w.Write([]byte(" \n\t "))
@@ -212,6 +214,11 @@ func TestFetch(t *testing.T) {
 	if a := additions(context.Background(), c, newLimiter(), all, msg(srv.URL+"/short", "")); a.Note != "[page "+srv.URL+"/short]\n```\nShort page.\n```" {
 		t.Fatalf("short %q", a.Note)
 	}
+	// A redirect's note says where the link ended up; history keeps the link.
+	a = additions(context.Background(), c, newLimiter(), all, msg(srv.URL+"/moved", ""))
+	if !strings.HasPrefix(a.Note, "[page "+srv.URL+"/moved, redirected to "+srv.URL+`/page: "Gold news"]`+"\n```\nGold") || a.HistoryNote != "[page "+srv.URL+"/moved was shown to you; it isn't kept]" {
+		t.Fatalf("moved %.120q / %q", a.Note, a.HistoryNote)
+	}
 	logged(`<6>link \d+\.\ds, \d+ bytes html, 11 chars of text \(whole page\)\n`)
 	for path, want := range map[string]string{
 		"/bin":     ", which isn't a page you can read]",
@@ -241,8 +248,8 @@ func TestFetch(t *testing.T) {
 			t.Errorf("%q reached the log: %q", s, logs.String())
 		}
 	}
-	if n := strings.Count(logs.String(), "\n"); n != 13 {
-		t.Fatalf("%d log lines for 13 links:\n%s", n, logs.String())
+	if n := strings.Count(logs.String(), "\n"); n != 14 {
+		t.Fatalf("%d log lines for 14 links:\n%s", n, logs.String())
 	}
 }
 
@@ -264,19 +271,24 @@ func TestExtraLinksAreLogged(t *testing.T) {
 }
 
 // A huge page is read as a stream: memory stays small and the text stops
-// near the cap.
+// near the cap, whether the page is a million small tokens or one text
+// node (and title) of megabytes.
 func TestPageTextIsStreamed(t *testing.T) {
-	page := []byte("<html><head><title>Big</title></head><body>" + strings.Repeat("<p>a", 1_300_000) + "</body></html>")
-	var before, after runtime.MemStats
-	runtime.GC()
-	runtime.ReadMemStats(&before)
-	title, text, _ := pageText(page, "text/html")
-	runtime.ReadMemStats(&after)
-	if title != "Big" || len(text) > maxText*2+10 {
-		t.Fatalf("title %q, %d bytes", title, len(text))
-	}
-	if n := after.TotalAlloc - before.TotalAlloc; n > 30<<20 {
-		t.Fatalf("allocated %d MB", n>>20)
+	for name, page := range map[string][]byte{
+		"many tokens": []byte("<html><head><title>Big</title></head><body>" + strings.Repeat("<p>a", 1_300_000) + "</body></html>"),
+		"one token":   []byte("<html><head><title>Big" + strings.Repeat(" title", 500_000) + "</title></head><body><p>" + strings.Repeat("a ", 1_500_000) + "</p></body></html>"),
+	} {
+		var before, after runtime.MemStats
+		runtime.GC()
+		runtime.ReadMemStats(&before)
+		title, text, _ := pageText(page, "text/html")
+		runtime.ReadMemStats(&after)
+		if !strings.HasPrefix(title, "Big") || len(title) > 1000 || len(text) > maxText*2+10 {
+			t.Fatalf("%s: title %d bytes, text %d bytes", name, len(title), len(text))
+		}
+		if n := after.TotalAlloc - before.TotalAlloc; n > 30<<20 {
+			t.Fatalf("%s: allocated %d MB", name, n>>20)
+		}
 	}
 }
 
@@ -354,10 +366,22 @@ func TestPrivateLinksAreNotFetched(t *testing.T) {
 		hit(r)
 		http.Redirect(w, r, "/reset?token=x", http.StatusFound)
 	})
+	mux.HandleFunc("/port", func(w http.ResponseWriter, r *http.Request) {
+		hit(r)
+		http.Redirect(w, r, "http://example.com:8080/", http.StatusFound)
+	})
 	srv := httptest.NewServer(mux)
 	defer srv.Close()
 	c := newClient()
-	a := additions(context.Background(), c, newLimiter(), feature.Info{}, msg("is this legit? "+srv.URL+"/login?token=abc", ""))
+	// A link on another port isn't fetched, nor a redirect to one.
+	a := additions(context.Background(), c, newLimiter(), feature.Info{}, msg("http://example.com:8080/admin", ""))
+	if a.Note != "[link http://example.com:8080/admin not fetched: it isn't on a standard web port]" || logs.String() != "<6>link not fetched: not a standard web port\n" {
+		t.Fatalf("port note %q, log %q", a.Note, logs.String())
+	}
+	if a := additions(context.Background(), c, newLimiter(), feature.Info{}, msg(srv.URL+"/port", "")); a.Note != "[link "+srv.URL+"/port failed to load: redirected to a non-standard port]" {
+		t.Fatalf("port redirect note %q", a.Note)
+	}
+	a = additions(context.Background(), c, newLimiter(), feature.Info{}, msg("is this legit? "+srv.URL+"/login?token=abc", ""))
 	if a.Note != "[link "+srv.URL+"/login?token=abc not fetched: it looks like a private or one-time link]" || a.HistoryNote != a.Note {
 		t.Fatalf("note %q", a.Note)
 	}
@@ -367,12 +391,12 @@ func TestPrivateLinksAreNotFetched(t *testing.T) {
 	}
 	if l := logs.String(); !strings.Contains(l, "<6>link not fetched: looks private or one-time\n") ||
 		!regexp.MustCompile(`<4>link failed after \d+\.\ds: redirected to a private or one-time link\n`).MatchString(l) ||
-		strings.Contains(l, srv.URL) || strings.Contains(l, "token") {
+		strings.Contains(l, srv.URL) || strings.Contains(l, "token") || strings.Contains(l, "8080") {
 		t.Fatalf("log %q", l)
 	}
 	mu.Lock()
 	defer mu.Unlock()
-	if !slices.Equal(hits, []string{"/short"}) {
+	if !slices.Equal(hits, []string{"/port", "/short"}) {
 		t.Fatalf("server saw %v", hits)
 	}
 }

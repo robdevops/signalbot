@@ -107,8 +107,9 @@ func (l *limiter) allow(chat string) bool {
 	return true
 }
 
-// urlPattern finds URLs in text; trailing punctuation is trimmed after.
-var urlPattern = regexp.MustCompile("https?://[^\\s<>\"'`]+")
+// urlPattern finds URLs in text, ending at white space or a Unicode
+// separator; trailing punctuation is trimmed after.
+var urlPattern = regexp.MustCompile("https?://[^\\s\\p{Z}<>\"'`]+")
 
 // Register adds the pages a message links to to the model's request on h.
 func Register(h feature.Host) error {
@@ -163,6 +164,7 @@ func trim(u string) string {
 func additions(ctx context.Context, c *http.Client, l *limiter, info feature.Info, m feature.Message) feature.Additions {
 	var notes, kept []string
 	var files []feature.File
+	content := false // the model gets what a page says
 	found, dropped := urls(m)
 	switch {
 	case dropped == 1:
@@ -174,6 +176,9 @@ func additions(ctx context.Context, c *http.Client, l *limiter, info feature.Inf
 		var note, text string
 		var file *feature.File
 		switch parsed, _ := url.Parse(u); {
+		case !webPort(parsed):
+			logx.Infof("link not fetched: not a standard web port")
+			note = "[link " + u + " not fetched: it isn't on a standard web port"
 		case private(parsed):
 			logx.Infof("link not fetched: looks private or one-time")
 			note = "[link " + u + " not fetched: it looks like a private or one-time link"
@@ -185,7 +190,7 @@ func additions(ctx context.Context, c *http.Client, l *limiter, info feature.Inf
 		}
 		kept = append(kept, note+"]")
 		if text != "" || file != nil {
-			kept[len(kept)-1] = "[page " + u + " was shown to you; it isn't kept]"
+			kept[len(kept)-1], content = "[page "+u+" was shown to you; it isn't kept]", true
 		}
 		if text != "" {
 			note += "]\n" + txt.Fence(strings.TrimSpace(text), maxText)
@@ -200,7 +205,7 @@ func additions(ctx context.Context, c *http.Client, l *limiter, info feature.Inf
 	if len(notes) == 0 {
 		return feature.Additions{}
 	}
-	return feature.Additions{Note: strings.Join(notes, "\n"), HistoryNote: strings.Join(kept, "\n"), Files: files}
+	return feature.Additions{Note: strings.Join(notes, "\n"), HistoryNote: strings.Join(kept, "\n"), Files: files, Content: content}
 }
 
 // fetch gets u: its note, open for the caller to close with "]", and its
@@ -228,6 +233,10 @@ func fetch(ctx context.Context, c *http.Client, info feature.Info, u string) (no
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		return failed(time.Since(start).Seconds(), "status "+strconv.Itoa(resp.StatusCode))
+	}
+	shown := u // the link as the note names it: with where it ended up, if redirected
+	if f := resp.Request.URL.String(); f != u {
+		shown = u + ", redirected to " + f
 	}
 	mediaType, _, _ := mime.ParseMediaType(resp.Header.Get("Content-Type"))
 	limit := int64(maxBody)
@@ -263,18 +272,18 @@ func fetch(ctx context.Context, c *http.Client, info feature.Info, u string) (no
 	case bytes.HasPrefix(body, []byte("%PDF-")):
 		if !info.Files {
 			done(false, "pdf", "not sent: this model can't read files")
-			return "[link " + u + ", a PDF, which you can't read with this model", "", nil
+			return "[link " + shown + ", a PDF, which you can't read with this model", "", nil
 		}
 		done(false, "pdf", "attached")
-		return "[page " + u + ", a PDF, attached", "", &feature.File{Name: cmp.Or(txt.SafeName(path.Base(resp.Request.URL.Path)), "page.pdf"), MIME: "application/pdf", Data: body}
+		return "[page " + shown + ", a PDF, attached", "", &feature.File{Name: cmp.Or(txt.SafeName(path.Base(resp.Request.URL.Path)), "page.pdf"), MIME: "application/pdf", Data: body}
 	case mediaType == "text/html" || mediaType == "application/xhtml+xml":
 		title, text, from := pageText(body, resp.Header.Get("Content-Type"))
 		if text = strings.TrimSpace(text); text == "" {
 			done(true, "html", "no readable text")
-			return "[link " + u + ", a page with no text you can read", "", nil
+			return "[link " + shown + ", a page with no text you can read", "", nil
 		}
 		done(false, "html", txt.Chars(utf8.RuneCountInString(text), maxText)+" ("+from+")")
-		return "[page " + u + titled(title), text, nil
+		return "[page " + shown + titled(title), text, nil
 	case strings.HasPrefix(mediaType, "text/") || mediaType == "application/json":
 		r, err := charset.NewReader(bytes.NewReader(body), resp.Header.Get("Content-Type"))
 		if err == nil {
@@ -283,15 +292,15 @@ func fetch(ctx context.Context, c *http.Client, info feature.Info, u string) (no
 		text := strings.TrimSpace(string(body))
 		if text == "" {
 			done(true, typ, "no readable text")
-			return "[link " + u + ", a page with no text you can read", "", nil
+			return "[link " + shown + ", a page with no text you can read", "", nil
 		}
 		if utf8.ValidString(text) && !strings.ContainsRune(text, 0) {
 			done(false, typ, txt.Chars(utf8.RuneCountInString(text), maxText))
-			return "[page " + u, text, nil
+			return "[page " + shown, text, nil
 		}
 	}
 	done(false, typ, "not a page the bot reads")
-	return "[link " + u + ", which isn't a page you can read", "", nil
+	return "[link " + shown + ", which isn't a page you can read", "", nil
 }
 
 // reason is why a request failed, for the model and the log: never the
@@ -304,6 +313,8 @@ func reason(err error) string {
 		return "timed out"
 	case errors.Is(err, errPrivateRedirect):
 		return "redirected to a private or one-time link"
+	case errors.Is(err, errPortRedirect):
+		return "redirected to a non-standard port"
 	case strings.Contains(err.Error(), "redirect"):
 		return "too many or bad redirects"
 	}
@@ -392,12 +403,16 @@ func pageText(body []byte, contentType string) (title, text, from string) {
 				}
 			}
 		case html.TextToken:
-			t := strings.Join(strings.Fields(string(z.Text())), " ")
+			// One text node can be the whole 5 MB page: only as much as
+			// the cap can use is split into words, kept as a title or
+			// written, so the page's text is never copied whole.
+			raw := z.Text()
+			t := strings.Join(strings.Fields(string(raw[:min(len(raw), maxText*4)])), " ")
 			switch {
 			case t == "":
 			case inTitle:
 				if title == "" {
-					title = t
+					title = t[:min(len(t), 1000)]
 				}
 			case skip == 0:
 				for _, w := range []*strings.Builder{&b, &art} {
@@ -407,7 +422,7 @@ func pageText(body []byte, contentType string) (title, text, from string) {
 					if w.Len() > 0 && !strings.HasSuffix(w.String(), "\n") {
 						w.WriteByte(' ')
 					}
-					w.WriteString(t)
+					w.WriteString(t[:min(len(t), max(0, maxText*2+1-w.Len()))])
 				}
 			}
 		}

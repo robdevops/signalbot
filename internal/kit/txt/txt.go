@@ -45,14 +45,27 @@ func Bool(s string, def bool) bool {
 // "[…truncated]", its fence longer than any run of backticks in it so the
 // text can't close it early.
 func Fence(text string, max int) string {
-	if r := []rune(text); len(r) > max {
-		text = string(r[:max]) + "\n[…truncated]"
+	if i := cutAt(text, max); i >= 0 {
+		text = text[:i] + "\n[…truncated]"
 	}
 	fence := "```"
 	for strings.Contains(text, fence) {
 		fence += "`"
 	}
 	return fence + "\n" + strings.Trim(text, "\n") + "\n" + fence
+}
+
+// cutAt is the byte offset of the max-th rune of s, or -1 if s has no more
+// than max runes: where to cut it, found without copying it into runes.
+func cutAt(s string, max int) int {
+	n := 0
+	for i := range s {
+		if n == max {
+			return i
+		}
+		n++
+	}
+	return -1
 }
 
 // Chars says how much of n characters of text a cap of max shows, for a

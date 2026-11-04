@@ -93,6 +93,7 @@ type Additions struct {
 	HistoryNote string   // the line history keeps in Note's place; "" keeps Note
 	Images      []string // data: URLs shown to the model with the message
 	Files       []File   // files shown to the model with the message
+	Content     bool     // Note or Files carry what a page or document says, written by whoever made it, not by the sender
 }
 
 // Picture is an image sent with a reply.

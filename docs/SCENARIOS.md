@@ -157,7 +157,7 @@ Daily budget: TestScenarioDailyBudget and TestScenarioDailyBudgetNeedsCosts, new
 
 Reactions and links: TestScenarioOneEmojiIsAReaction, TestScenarioLinkToAPrivateAddressIsRefused and TestScenarioPrivateLookingLinkIsNotFetched, new with those features.
 
-Files: TestScenarioPDFInADM, TestScenarioTextAndOfficeFiles, TestScenarioVoiceNote, TestScenarioOtherProviderRejectsFiles and TestScenarioReplyToSomeonesPDF pin forwarding files to the model, new with the files feature.
+Files: TestScenarioPDFInADM, TestScenarioTextAndOfficeFiles, TestScenarioVoiceNote, TestScenarioOtherProviderRejectsFiles and TestScenarioReplyToSomeonesPDF pin forwarding files to the model, new with the files feature; TestScenarioDocumentTurnsKeepAlwaysOnToolsOut pins that a message with a file is offered no tool without keywords.
 
 ## Not pinned, or pinned with care
 
