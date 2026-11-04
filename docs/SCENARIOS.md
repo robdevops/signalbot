@@ -153,6 +153,8 @@ The table maps every `Test*` function in the 19 old test files to what covers it
 
 TestScenarioHistoryAcrossTurns, TestScenarioHistoryIsPerChat, TestScenarioHistoryMax, TestScenarioLongReplyIsSplit, TestScenarioModelRetry, TestScenarioUnknownCommandIsAMessage, TestScenarioBotWithoutProfileNameIsSignalbot, TestScenarioAtMostFourImages, TestScenarioGroupSenderWithoutName and TestScenarioErasedHistoryEndsChartFollowUps pin behaviour that had no direct test before.
 
+Reactions and links: TestScenarioOneEmojiIsAReaction and TestScenarioLinkToAPrivateAddressIsRefused, new with those features.
+
 Files: TestScenarioPDFInADM, TestScenarioTextAndOfficeFiles, TestScenarioVoiceNote, TestScenarioOtherProviderRejectsFiles and TestScenarioReplyToSomeonesPDF pin forwarding files to the model, new with the files feature.
 
 ## Not pinned, or pinned with care

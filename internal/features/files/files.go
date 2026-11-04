@@ -9,7 +9,6 @@ import (
 	"cmp"
 	"context"
 	"errors"
-	"fmt"
 	"net/http"
 	"path"
 	"strconv"
@@ -67,7 +66,7 @@ func additions(ctx context.Context, h feature.Host, m feature.Message) feature.A
 			keep = label + status + notKept + "]"
 		}
 		if text != "" {
-			note += "\n" + fenced(text)
+			note += "\n" + txt.Fence(text, maxText)
 		}
 		notes, kept = append(notes, note), append(kept, keep)
 		if file != nil {
@@ -138,17 +137,4 @@ func kindOf(mime, ext, sniffed string, data []byte) string {
 		return "text"
 	}
 	return ""
-}
-
-// fenced is text in a Markdown code block, capped at maxText, its fence
-// longer than any run of backticks in it so it can't close early.
-func fenced(text string) string {
-	if r := []rune(text); len(r) > maxText {
-		text = string(r[:maxText]) + "\n[…truncated]"
-	}
-	fence := "```"
-	for strings.Contains(text, fence) {
-		fence += "`"
-	}
-	return fmt.Sprintf("%s\n%s\n%s", fence, strings.TrimRight(text, "\n"), fence)
 }

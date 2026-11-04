@@ -52,3 +52,12 @@ func TestSingleEmoji(t *testing.T) {
 		}
 	}
 }
+
+func TestFence(t *testing.T) {
+	if got := Fence("a ``` b\n", 10); got != "````\na ``` b\n````" {
+		t.Errorf("got %q", got)
+	}
+	if got := Fence("abcdef", 3); got != "```\nabc\n[…truncated]\n```" {
+		t.Errorf("got %q", got)
+	}
+}

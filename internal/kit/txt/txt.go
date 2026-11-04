@@ -37,3 +37,17 @@ func Bool(s string, def bool) bool {
 	}
 	return def
 }
+
+// Fence is text in a Markdown code block, cut at max runes with
+// "[…truncated]", its fence longer than any run of backticks in it so the
+// text can't close it early.
+func Fence(text string, max int) string {
+	if r := []rune(text); len(r) > max {
+		text = string(r[:max]) + "\n[…truncated]"
+	}
+	fence := "```"
+	for strings.Contains(text, fence) {
+		fence += "`"
+	}
+	return fence + "\n" + strings.Trim(text, "\n") + "\n" + fence
+}

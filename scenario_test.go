@@ -14,6 +14,8 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -1176,6 +1178,26 @@ func TestScenarioOneEmojiIsAReaction(t *testing.T) {
 	h.noMoreSends()
 	if s := h.ask(fromAlice("ok?")); s.Message != "👍 sure" {
 		t.Fatalf("sent %q", s.Message)
+	}
+}
+
+// --- links -----------------------------------------------------------------------------
+
+// A link in a message is fetched only if it is on the public internet: one
+// to the bot's own machine (here a local server, standing in for an MCP
+// server or a cloud metadata service) is refused without a connection, and
+// the model is told why.
+func TestScenarioLinkToAPrivateAddressIsRefused(t *testing.T) {
+	var hits atomic.Int32
+	local := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { hits.Add(1) }))
+	defer local.Close()
+	h := startBot(t, world{})
+	h.ask(atBot("what's at " + local.URL + "/secrets ?"))
+	if last := h.lastRequest().last(); !strings.Contains(last.Content, "[link "+local.URL+"/secrets failed to load: it isn't a public address]") {
+		t.Fatalf("model got %q", last.Content)
+	}
+	if n := hits.Load(); n != 0 {
+		t.Fatalf("the local server was hit %d times", n)
 	}
 }
 

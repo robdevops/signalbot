@@ -20,6 +20,7 @@ A small, [privacy-conscious](PRIVACY.md) chat bot that connects to a running [si
 
 - Responds to @mentions, replies to its messages, and DMs from senders in `SIGNAL_DM_USER_IDS`
 - Tools: web search, built-in line and pie charts, and your own [MCP](#mcp-tools) tools
+- Reads the pages you link to: a URL in a message, or in the message you reply to, is fetched and its text shown to the model (public sites only)
 - [`/schedule`](#scheduling) a message or command, once or repeating, in a DM or a group
 - Understands images and stickers (if the configured model supports vision), and [files](#files): PDFs, voice notes and other audio, text and code, Word, Excel and PowerPoint
 - Typing indicators, and a reaction (👍) instead of a message when an emoji is all it would say
@@ -173,6 +174,10 @@ Send the bot a file in a DM, attach one when you @mention it or reply to it, or 
 | Anything else | A note that it was attached and can't be read |
 
 Up to 4 files a message, 12 MB each. **OCR costs money:** OpenRouter charges about $2 per 1,000 pages, so a 150-page filing is about $0.30 each time it's sent, on top of the reply, and shows in the reply's logged cost. The bot never keeps a file, so asking about it again means replying to it again, and it's read again. To fetch the original of a file someone else posted, the bot remembers recent attachments' IDs and names in memory for a day; see [PRIVACY.md](PRIVACY.md).
+
+### Links
+
+A message that addresses the bot and has a URL, or replies to a message with one, gets the page read for the model: up to 2 links, the page's main text up to 15,000 characters, a PDF link as a PDF (see [Files](#files)). Only links a person sent are fetched, never ones the model or a page suggests. A link to a private or local address (the bot's own machine, your network, a cloud metadata service) is refused, however its name resolves, and the model is told it couldn't load it.
 
 ### Other providers
 
