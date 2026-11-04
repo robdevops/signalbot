@@ -23,7 +23,7 @@ A small, [privacy-conscious](PRIVACY.md) chat bot that connects to a running [si
 - [`/schedule`](#scheduling) a message or command, once or repeating, in a DM or a group
 - Understands images and stickers (if the configured model supports vision), [files](#files) (PDFs, voice notes and other audio if the model supports audio, text and code, Word, Excel and PowerPoint), and the [pages you link to](#links)
 - Supports various Signal features: typing indicators, reactions, stickers, contacts, @mentions, quoted replies
-- Short per-conversation memory, for context. Keeps at most 10 messages (HISTORY_MAX), dropping the older half when full, and frees them after 24 hours, or when Signal's _disappearing messages_ timer expires, whichever comes first. Names and message bodies are never logged to disk.
+- Short per-conversation memory, for context. Keeps at most 10 messages (HISTORY_MAX), and frees them after 24 hours, or when Signal's _disappearing messages_ timer expires, whichever comes first. Names and message bodies are never logged to disk.
 
 ## Use cases
 
