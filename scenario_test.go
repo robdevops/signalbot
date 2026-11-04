@@ -1154,6 +1154,53 @@ func TestScenarioFailedSendIsLogged(t *testing.T) {
 	}
 }
 
+// --- daily budget ----------------------------------------------------------------------
+
+// Each chat may spend DAILY_BUDGET a day: once a group is over it, the bot
+// says so once, then answers nothing there but commands that need no model,
+// until midnight; a DM has its own budget. Spending is saved in
+// STATE_DIRECTORY, under no one's ID.
+func TestScenarioDailyBudget(t *testing.T) {
+	h := startBot(t, world{Env: map[string]string{"DAILY_BUDGET": "0.003"}}) // each reply costs $0.002
+	h.ask(atBot("one"))
+	h.ask(atBot("two")) // $0.004: over
+	s := h.ask(atBot("three"))
+	if !strings.HasPrefix(s.Message, "I've reached today's spending limit for this chat; I'll be back in ") || s.GroupID != idGroup {
+		t.Fatalf("sent %q", s.Message)
+	}
+	if n := len(h.requests()); n != 2 {
+		t.Fatalf("the model was asked %d times", n)
+	}
+	h.ignored(atBot("four"))
+	if s := h.ask(atBot("/intro")); !strings.HasPrefix(s.Message, "hi, I'm") {
+		t.Fatalf("/intro sent %q", s.Message)
+	}
+	if s := h.ask(fromAlice("in a DM")); s.Message != "ok" {
+		t.Fatalf("DM sent %q", s.Message)
+	}
+	if n := h.warnings("reached its daily budget"); n != 1 {
+		t.Fatalf("%d warnings: %v", n, h.logLines())
+	}
+	data, err := os.ReadFile(filepath.Join(h.w.StateDir, "budget.json"))
+	if err != nil || strings.Contains(string(data), idGroup) || strings.Contains(string(data), idAlice) || !strings.Contains(string(data), `"told":true`) {
+		t.Fatalf("budget.json %s, %v", data, err)
+	}
+}
+
+// Another API reports no cost, so the budget isn't applied, and the
+// startup log says so.
+func TestScenarioDailyBudgetNeedsCosts(t *testing.T) {
+	h := startBot(t, world{OtherProvider: true, Env: map[string]string{"DAILY_BUDGET": "0.001"}})
+	for i := range 3 {
+		if s := h.ask(fromAlice(fmt.Sprint("hi ", i))); s.Message != "ok" {
+			t.Fatalf("sent %q", s.Message)
+		}
+	}
+	if _, ok := h.logged("DAILY_BUDGET isn't applied: only OpenRouter reports what a reply costs"); !ok {
+		t.Fatalf("no notice: %v", h.logLines())
+	}
+}
+
 // --- reactions -------------------------------------------------------------------------
 
 // A reply that is one emoji goes out as a reaction to the message, in a DM

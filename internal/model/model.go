@@ -115,7 +115,13 @@ type Reply struct {
 	Text      string
 	Pictures  []feature.Picture
 	ToolsUsed []string // the tools the model ran, as the tool loop reports them
+	Cost      float64  // what the API reported the reply cost, every request summed, in US dollars
+	Costed    bool     // the API reported a cost
 }
+
+// ReportsCost reports whether the API says what a reply costs: only
+// OpenRouter's does.
+func (c *Client) ReportsCost() bool { return c.openRouter }
 
 // message is a chat message as the API takes it.
 type message struct {
@@ -257,6 +263,7 @@ func (c *Client) Ask(ctx context.Context, r Request) (Reply, error) {
 			}
 			logx.Infof("reply %.1fs, tokens in/out: %d/%d (%d%% cached)%s",
 				time.Since(start).Seconds(), total.input, total.output, cached, cost)
+			reply.Cost, reply.Costed = total.cost, total.costed
 			return reply, nil
 		}
 		msgs = append(msgs, message{Role: "assistant", Content: a.text, ToolCalls: a.calls, Annotations: a.annotations})

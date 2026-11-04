@@ -56,6 +56,15 @@ func (b *Bot) respond(msg feature.Message, act feature.Action, text string) {
 	case msg.Text == "" && len(b.turns) == 0:
 		return // nothing to answer
 	}
+	if b.budget != nil {
+		if over, tell, left := b.budget.over(msg.Chat.Key()); over {
+			if tell { // once a day; then the chat is ignored until midnight
+				logx.Warnf("a chat reached its daily budget; it is answered again at midnight")
+				b.net.Send(msg.Chat, limitNotice(left), nil, b.chats.Names(msg.Chat.Key()))
+			}
+			return
+		}
+	}
 	stop := b.net.Typing(msg.Chat)
 	defer stop() // also if something below panics
 	key := msg.Chat.Key()
@@ -112,6 +121,9 @@ func (b *Bot) respond(msg feature.Message, act feature.Action, text string) {
 		logx.Errorf("model error after %.1fs: %v", time.Since(start).Seconds(), err)
 		b.net.Send(msg.Chat, sorry, nil, b.chats.Names(key))
 		return
+	}
+	if b.budget != nil && reply.Costed {
+		b.budget.add(key, reply.Cost)
 	}
 	b.followUp(key, offered, msg.Text, reply.ToolsUsed)
 	// History notes the pictures sent, which the model would otherwise not

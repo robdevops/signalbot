@@ -87,6 +87,7 @@ type Bot struct {
 	// the run when the API rejects a request carrying it; audio goes with
 	// files.
 	images, audio, files, callsTools atomic.Bool
+	budget                           *budget // nil with no cap
 
 	// The hooks and tool groups, in feature order. Features register them
 	// before Run.
@@ -117,6 +118,17 @@ func New(ctx context.Context, cfg *config.Config, net Network) *Bot {
 	logx.Noticef("model %s, reasoning %s, images %v, audio %v, files %v, tools %v", cfg.Model, cfg.Reasoning, caps.Images, caps.Audio, caps.Files, caps.Tools)
 	if !caps.Tools {
 		logx.Warnf("model %s can't call tools, so tools are off", cfg.Model)
+	}
+	switch now := time.Now; {
+	case cfg.DailyBudget <= 0:
+	case !b.ai.ReportsCost():
+		logx.Noticef("DAILY_BUDGET isn't applied: only OpenRouter reports what a reply costs")
+	default:
+		if cfg.Test != nil && cfg.Test.Now != nil {
+			now = cfg.Test.Now
+		}
+		b.budget = newBudget(cfg.StateDir, cfg.DailyBudget, now)
+		logx.Noticef("daily budget $%.2f a chat", cfg.DailyBudget)
 	}
 	return b
 }

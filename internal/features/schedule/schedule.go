@@ -22,6 +22,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/robdevops/signalbot/internal/feature"
+	"github.com/robdevops/signalbot/internal/kit/fsx"
 	"github.com/robdevops/signalbot/internal/kit/logx"
 	"github.com/robdevops/signalbot/internal/kit/txt"
 )
@@ -209,22 +210,7 @@ func (s *store) save() error {
 	if err != nil {
 		return err
 	}
-	f, err := os.CreateTemp(filepath.Dir(s.path), ".schedules-*.tmp")
-	if err != nil {
-		return err
-	}
-	defer os.Remove(f.Name()) // does nothing once renamed
-	_, err = f.Write(append(data, '\n'))
-	if err == nil {
-		err = f.Sync()
-	}
-	if cerr := f.Close(); err == nil {
-		err = cerr
-	}
-	if err == nil {
-		err = os.Rename(f.Name(), s.path)
-	}
-	return err
+	return fsx.WriteAtomic(s.path, append(data, '\n'))
 }
 
 // arm sets e's timer for t. s.mu is held.
