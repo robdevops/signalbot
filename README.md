@@ -23,7 +23,7 @@ A small, [privacy-conscious](PRIVACY.md) chat bot that connects to a running [si
 - [`/schedule`](#scheduling) a message or command, once or repeating
 - Understands [files](#files) (PDFs, text and code, Word, Excel and PowerPoint) and the [pages you link to](#links), and if the model supports it, images, stickers, voice notes and other audio
 - Typing indicators, reactions, stickers, @mentions and replies
-- Short in-memory conversation context. Never logged to disk, forgotten after 24 hours, or sooner if _disappearing messages_ requires.
+- In-memory conversation context (10 messages max by default). Never logged to disk, forgotten after 24 hours, or sooner if _disappearing messages_ requires.
 
 ## Use cases
 
