@@ -47,6 +47,7 @@ func TestURLs(t *testing.T) {
 		{"thanks", "bot: see https://attacker.example/x?d=secret", nil, 0}, // a quote of the bot: see msg
 		{"https://1.com https://2.com https://3.com", "", []string{"https://1.com", "https://2.com"}, 1},
 		{"https://1.com https://2.com https://1.com", "", []string{"https://1.com", "https://2.com"}, 0},
+		{"https://1.com https://2.com https://3.com https://3.com https://3.com#x", "", []string{"https://1.com", "https://2.com"}, 1},
 		{"ftp://x.com mailto:a@b.c https://user:pw@c.com/ http://", "", nil, 0},
 	} {
 		if got, dropped := urls(msg(tc.text, tc.quote)); !slices.Equal(got, tc.want) || dropped != tc.dropped {
@@ -96,8 +97,12 @@ func TestClientRefusesPrivate(t *testing.T) {
 	if note != "[link "+srv.URL+" failed to load: it isn't a public address" || text != "" || file != nil {
 		t.Fatalf("note %q", note)
 	}
-	if strings.Contains(logs.String(), srv.URL) {
-		t.Fatalf("logged the URL: %q", logs.String())
+	note, text, file = fetch(context.Background(), c, feature.Info{}, "http://bad host/")
+	if note != "[link http://bad host/ failed to load: not a web address" || text != "" || file != nil {
+		t.Fatalf("note %q", note)
+	}
+	if l := logs.String(); strings.Contains(l, srv.URL) || strings.Contains(l, "bad host") || !strings.Contains(l, "<4>link failed: not a web address\n") {
+		t.Fatalf("log %q", l)
 	}
 }
 
@@ -112,12 +117,13 @@ func capture(t *testing.T) *logx.Buffer {
 // A page's article text and title are shown, without its navigation or
 // scripts; history keeps a note. Plain text is shown as it is, a PDF as a
 // file, and anything else, an error status or too many redirects as a note.
-// Each link gets one log line, its outcome without its URL or title.
+// Each link gets one log line, its outcome without its URL, title or the
+// server's own media type.
 func TestFetch(t *testing.T) {
 	logs := capture(t)
 	logged := func(pattern string) {
 		t.Helper()
-		if !regexp.MustCompile(pattern).MatchString(logs.String()) {
+		if !regexp.MustCompile("(?m)^" + pattern).MatchString(logs.String()) {
 			t.Errorf("no log line matching %q in %q", pattern, logs.String())
 		}
 	}
@@ -133,6 +139,22 @@ func TestFetch(t *testing.T) {
 	mux.HandleFunc("/long", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/html")
 		w.Write([]byte("<html><body><div>menu</div><main><p>" + long + "</p></main></body></html>"))
+	})
+	mux.HandleFunc("/short", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		w.Write([]byte("<html><body><p>Short page.</p></body></html>"))
+	})
+	mux.HandleFunc("/blank", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/plain")
+		w.Write([]byte(" \n\t "))
+	})
+	mux.HandleFunc("/notype", func(w http.ResponseWriter, r *http.Request) {
+		w.Header()["Content-Type"] = nil // no sniffing either
+		w.Write([]byte("PK"))
+	})
+	mux.HandleFunc("/hostile", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "x/evil.example.com") // a token, which the server chooses
+		w.Write([]byte("hello"))
 	})
 	mux.HandleFunc("/page", func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get("User-Agent") != userAgent {
@@ -172,7 +194,7 @@ func TestFetch(t *testing.T) {
 	if a := additions(context.Background(), c, newLimiter(), all, msg(srv.URL+"/latin1", "")); a.Note != "[page "+srv.URL+"/latin1]\n```\ncafé\n```" {
 		t.Fatalf("latin-1 %q", a.Note)
 	}
-	logged(`<6>link \d+\.\ds, 4 bytes text/plain, 4 chars of text\n`)
+	logged(`<6>link \d+\.\ds, 4 bytes text, 4 chars of text\n`)
 	a = additions(context.Background(), c, newLimiter(), all, msg("", "read "+srv.URL+"/report.pdf"))
 	if a.Note != "[page "+srv.URL+"/report.pdf, a PDF, attached]" || len(a.Files) != 1 || a.Files[0].Name != "report.pdf" || a.Files[0].MIME != "application/pdf" {
 		t.Fatalf("pdf %+v", a)
@@ -187,9 +209,16 @@ func TestFetch(t *testing.T) {
 		t.Fatalf("long %.80q", a.Note)
 	}
 	logged(`<6>link \d+\.\ds, \d+ bytes html, 15000 of 20000 chars of text \(<main>\)\n`)
+	if a := additions(context.Background(), c, newLimiter(), all, msg(srv.URL+"/short", "")); a.Note != "[page "+srv.URL+"/short]\n```\nShort page.\n```" {
+		t.Fatalf("short %q", a.Note)
+	}
+	logged(`<6>link \d+\.\ds, \d+ bytes html, 11 chars of text \(whole page\)\n`)
 	for path, want := range map[string]string{
 		"/bin":     ", which isn't a page you can read]",
+		"/notype":  ", which isn't a page you can read]",
+		"/hostile": ", which isn't a page you can read]",
 		"/empty":   ", a page with no text you can read]",
+		"/blank":   ", a page with no text you can read]",
 		"/missing": " failed to load: status 404]",
 		"/loop":    " failed to load: too many or bad redirects]",
 	} {
@@ -197,17 +226,40 @@ func TestFetch(t *testing.T) {
 			t.Errorf("%s: %q / %q", path, a.Note, a.HistoryNote)
 		}
 	}
-	logged(`<6>link \d+\.\ds, 2 bytes application/zip, not a page the bot reads\n`)
+	logged(`<6>link \d+\.\ds, 2 bytes other, not a page the bot reads\n`)
+	logged(`<6>link \d+\.\ds, 2 bytes unknown type, not a page the bot reads\n`)
+	logged(`<6>link \d+\.\ds, 5 bytes other, not a page the bot reads\n`)
 	logged(`<4>link \d+\.\ds, \d+ bytes html, no readable text\n`)
+	logged(`<4>link \d+\.\ds, 4 bytes text, no readable text\n`)
 	logged(`<4>link failed after \d+\.\ds: status 404\n`)
 	logged(`<4>link failed after \d+\.\ds: too many or bad redirects\n`)
 	if a := additions(context.Background(), c, newLimiter(), all, msg("no links here", "")); a.Note != "" {
 		t.Fatalf("no links: %+v", a)
 	}
-	for _, s := range []string{srv.URL, "127.0.0.1", "Gold", "evil", "xxx"} {
+	for _, s := range []string{srv.URL, "127.0.0.1", "Gold", "evil", "xxx", "Short", "example", "zip"} {
 		if strings.Contains(logs.String(), s) {
 			t.Errorf("%q reached the log: %q", s, logs.String())
 		}
+	}
+	if n := strings.Count(logs.String(), "\n"); n != 13 {
+		t.Fatalf("%d log lines for 13 links:\n%s", n, logs.String())
+	}
+}
+
+// Links past the second in a message are counted in one line, distinct
+// ones only, with no URL.
+func TestExtraLinksAreLogged(t *testing.T) {
+	logs := capture(t)
+	three := "https://a.example/reset?token=1 https://b.example/reset?token=2 https://c.example/reset?token=3"
+	skipped := "<6>link not fetched: looks private or one-time\n"
+	additions(context.Background(), newClient(), newLimiter(), feature.Info{}, msg(three, ""))
+	if logs.String() != "<6>link ignored: more than 2 in a message\n"+skipped+skipped {
+		t.Fatalf("log %q", logs.String())
+	}
+	before := logs.String()
+	additions(context.Background(), newClient(), newLimiter(), feature.Info{}, msg(three+" https://d.example/reset?token=4 https://d.example/reset?token=4", ""))
+	if l := strings.TrimPrefix(logs.String(), before); l != "<6>2 links ignored: more than 2 in a message\n"+skipped+skipped || strings.Contains(logs.String(), "example") {
+		t.Fatalf("log %q", logs.String())
 	}
 }
 

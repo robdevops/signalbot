@@ -145,7 +145,8 @@ func TestStickerShownToModel(t *testing.T) {
 	if !reflect.DeepEqual(a, feature.Additions{Note: want, HistoryNote: want}) || len(fetched) != 0 {
 		t.Fatalf("got %+v, fetched %v", a, fetched)
 	}
-	if l := out.String(); !strings.HasSuffix(l, "<6>sticker not sent: this model can't see images\n") || strings.Contains(l, "Daily") || errw.String() != "" {
+	notSent := "<6>sticker not sent: this model can't see images\n"
+	if l := out.String(); strings.Count(l, notSent) != 1 || strings.Count(l, "\n") != 2 || strings.Contains(l, "Daily") || errw.String() != "" {
 		t.Fatalf("log %q / %q", l, errw.String())
 	}
 
@@ -154,6 +155,9 @@ func TestStickerShownToModel(t *testing.T) {
 	unknown.Label = ""
 	if a := additionsOf(t, h, turn("", unknown)); a.Note != "[sticker attached, which you can't see]" {
 		t.Fatalf("got %q", a.Note)
+	}
+	if l := out.String(); strings.Count(l, notSent) != 2 || strings.Count(l, "\n") != 3 {
+		t.Fatalf("log %q", l)
 	}
 }
 

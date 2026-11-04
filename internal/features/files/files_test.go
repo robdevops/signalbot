@@ -82,7 +82,8 @@ func TestPDFAndAudio(t *testing.T) {
 	if len(a.Files) != 2 || a.Files[0].Name != "report.pdf" || a.Files[0].MIME != "application/pdf" || !bytes.Equal(a.Files[0].Data, pdf) || a.Files[1].MIME != "audio/aac" || a.Images != nil {
 		t.Fatalf("files %+v", a.Files)
 	}
-	if out.String() != "<6>file pdf 12 bytes, attached\n<6>file audio 12 bytes, attached\n" || errw.String() != "" {
+	first := "<6>file pdf 12 bytes, attached\n<6>file audio 12 bytes, attached\n"
+	if out.String() != first || errw.String() != "" {
 		t.Fatalf("log %q / %q", out.String(), errw.String())
 	}
 	// A model that takes neither is told so; nothing is sent.
@@ -92,7 +93,7 @@ func TestPDFAndAudio(t *testing.T) {
 		`[file "note.m4a", audio such as a voice note, which you can't hear with this model]` || a.Files != nil || a.HistoryNote != a.Note {
 		t.Fatalf("got %+v", a)
 	}
-	if l := out.String(); !strings.HasSuffix(l, "<6>file pdf 12 bytes, not sent: this model can't read files\n<6>file audio 12 bytes, not sent: this model can't hear audio\n") ||
+	if l := out.String(); l != first+"<6>file pdf 12 bytes, not sent: this model can't read files\n<6>file audio 12 bytes, not sent: this model can't hear audio\n" ||
 		strings.Contains(l, "report") || strings.Contains(l, "m4a") || strings.Contains(l, "application/pdf") {
 		t.Fatalf("log %q", l)
 	}
@@ -101,7 +102,8 @@ func TestPDFAndAudio(t *testing.T) {
 // Text is shown inline, capped, in a fence its own backticks can't close;
 // history keeps only the note. Text that isn't valid UTF-8, or binary, is
 // a file the model can't read. The log has each file's size and how much
-// text was shown, or the kind of content it couldn't read.
+// text was shown (without the newlines the fence trims), or the kind of
+// content it couldn't read.
 func TestText(t *testing.T) {
 	var out, errw logx.Buffer
 	defer logx.SetOutput(&out, &errw, true)()
@@ -120,7 +122,7 @@ func TestText(t *testing.T) {
 			t.Errorf("%s: %q", id, a.Note)
 		}
 	}
-	want := "<6>file text 8 bytes, 8 chars of text\n<6>file text 50010 bytes, 50000 of 50010 chars of text\n" +
+	want := "<6>file text 8 bytes, 7 chars of text\n<6>file text 50010 bytes, 50000 of 50010 chars of text\n" +
 		"<6>file 3 bytes text/plain; charset=utf-8, not a kind the bot reads\n<6>file 3 bytes application/octet-stream, not a kind the bot reads\n"
 	if out.String() != want || errw.String() != "" {
 		t.Fatalf("log %q / %q", out.String(), errw.String())
@@ -152,17 +154,24 @@ func TestOffice(t *testing.T) {
 			t.Errorf("%s: %q, %v", name, got, err)
 		}
 	}
-	// A file is logged by kind and size with how much text it gave, or the
-	// kind of error, never the error's text, which can quote the document.
+	// A file is logged by kind and size with how much text it gave (what
+	// the fence shows; past the cap, "first 50000", since the document's
+	// length is unknown), or the kind of error, never the error's text,
+	// which can quote the document.
 	var out, errw logx.Buffer
 	defer logx.SetOutput(&out, &errw, true)()
 	broken := []byte("PK\x03\x04 not really")
-	h := host(t, all, map[string][]byte{"d": docx, "broken": broken, "empty": officeFile(t, map[string]string{"word/document.xml": "<w:document/>"}),
-		"missing": officeFile(t, map[string]string{"xl/foo.xml": "<x/>"}), "badxml": officeFile(t, map[string]string{"word/document.xml": "<w:document><w:p>"})})
+	big := officeFile(t, map[string]string{"word/document.xml": "<w:document><w:body><w:p><w:r><w:t>" + strings.Repeat("a", maxText+10) + "</w:t></w:r></w:p></w:body></w:document>"})
+	files := map[string][]byte{"d": docx, "big": big, "broken": broken, "empty": officeFile(t, map[string]string{"word/document.xml": "<w:document/>"}),
+		"missing": officeFile(t, map[string]string{"xl/foo.xml": "<x/>"}), "badxml": officeFile(t, map[string]string{"word/document.xml": "<w:document><w:p>"})}
+	h := host(t, all, files)
 	if a := additionsOf(t, h, turn(feature.Media{ID: "d", File: true, Name: "letter.docx"})); a.Note != `[file "letter.docx" attached, its text]`+"\n```\nHello\tworld\nSecond\n```" {
 		t.Fatalf("note %q", a.Note)
 	}
-	if want := fmt.Sprintf("<6>file docx %d bytes, 19 chars of text\n", len(docx)); out.String() != want {
+	if a := additionsOf(t, h, turn(feature.Media{ID: "big", File: true, Name: "big.docx"})); !strings.HasSuffix(a.Note, "\n[…truncated]\n```") {
+		t.Fatalf("big note %.60q", a.Note)
+	}
+	if want := fmt.Sprintf("<6>file docx %d bytes, 18 chars of text\n<6>file docx %d bytes, first %d chars of text\n", len(docx), len(big), maxText); out.String() != want {
 		t.Fatalf("log %q", out.String())
 	}
 	for id, kind := range map[string]string{"broken": "not a zip", "empty": "no text", "missing": "missing part", "badxml": "bad xml"} {
@@ -170,9 +179,12 @@ func TestOffice(t *testing.T) {
 		if a := additionsOf(t, h, turn(feature.Media{ID: id, File: true, Name: "x.docx"})); a.Note != `[file "x.docx", which couldn't be read]` {
 			t.Errorf("%s: %q", id, a.Note)
 		}
-		if l := strings.TrimPrefix(errw.String(), before); !strings.HasPrefix(l, "<4>could not read an Office file (docx, ") || !strings.HasSuffix(l, " bytes): "+kind+"\n") {
+		if l := strings.TrimPrefix(errw.String(), before); l != fmt.Sprintf("<4>could not read an Office file (docx, %d bytes): %s\n", len(files[id]), kind) {
 			t.Errorf("%s: log %q", id, l)
 		}
+	}
+	if k := errKind(errors.New("x")); k != "unreadable" {
+		t.Errorf("errKind of an unknown error: %q", k)
 	}
 	if l := out.String() + errw.String(); strings.Contains(l, "w:") || strings.Contains(l, "docx\"") || strings.Contains(l, "x.docx") {
 		t.Errorf("log %q", l)

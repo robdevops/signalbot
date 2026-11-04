@@ -1215,7 +1215,7 @@ func TestScenarioOneEmojiIsAReaction(t *testing.T) {
 		json.Unmarshal([]byte(frame), &f)
 		h.receive(frame)
 		h.waitFor("the reaction", func() bool { return len(h.callsTo("sendReaction")) == i+1 })
-		h.waitLog("reacted instead of replying")
+		h.waitLog("reacting instead of replying")
 		p := h.callsTo("sendReaction")[i]
 		if p["emoji"] != []string{"🙏", "👍"}[i] || p["targetAuthor"] != idAlice || p["targetTimestamp"] != float64(f.Envelope.Timestamp) {
 			t.Fatalf("sendReaction %v", p)
@@ -1237,7 +1237,7 @@ func TestScenarioOneEmojiIsAReaction(t *testing.T) {
 	// Each reaction was logged, without its emoji; the message wasn't.
 	n := 0
 	for _, l := range h.logLines() {
-		if l.Text == "reacted instead of replying" && l.Pri == 6 {
+		if l.Text == "reacting instead of replying" && l.Pri == 6 {
 			n++
 		}
 		if strings.Contains(l.Text, "🙏") || strings.Contains(l.Text, "👍") {
@@ -1348,7 +1348,7 @@ func TestScenarioTextAndOfficeFiles(t *testing.T) {
 	}
 	// Each file is logged by kind and size, with how much text it gave,
 	// never its name.
-	for _, want := range []string{"file text 17 bytes, 17 chars of text", fmt.Sprintf("file docx %d bytes, 23 chars of text", docx.Len())} {
+	for _, want := range []string{"file text 17 bytes, 17 chars of text", fmt.Sprintf("file docx %d bytes, 22 chars of text", docx.Len())} {
 		if l, ok := h.logged(want); !ok || l.Pri != 6 {
 			t.Fatalf("no log line %q; %v", want, h.logLines())
 		}

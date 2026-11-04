@@ -151,8 +151,8 @@ func (b *Bot) respond(msg feature.Message, act feature.Action, text string) {
 		emoji := strings.TrimSpace(reply.Text)
 		b.chats.Add(key, start, msg.Expires, chats.Entry{Role: "user", Content: strings.TrimSpace(kept)},
 			chats.Entry{Role: "assistant", Content: "[reacted " + emoji + "]"})
+		logx.Infof("reacting instead of replying")
 		b.net.React(msg.Chat, msg, emoji)
-		logx.Infof("reacted instead of replying")
 		return
 	}
 	sent := reply.Text

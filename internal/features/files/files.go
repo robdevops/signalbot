@@ -128,10 +128,19 @@ func one(ctx context.Context, h feature.Host, info feature.Info, m feature.Messa
 			logx.Warnf("could not read an Office file (%s, %d bytes): %s", what, len(data), errKind(cmp.Or(err, errEmpty)))
 			return label, ", which couldn't be read", "", nil
 		}
-		logx.Infof("%s, %s", head, txt.Chars(utf8.RuneCountInString(text), maxText))
+		// The count is what the fence shows, without the newlines it trims.
+		// officeText stops a little past the cap, so past it the document's
+		// length is unknown.
+		n, shown := utf8.RuneCountInString(strings.Trim(text, "\n")), ""
+		if len(text) > maxText {
+			shown = "first " + strconv.Itoa(min(n, maxText)) + " chars of text"
+		} else {
+			shown = txt.Chars(n, maxText)
+		}
+		logx.Infof("%s, %s", head, shown)
 		return label, " attached, its text", text, nil
 	case "text":
-		logx.Infof("%s, %s", head, txt.Chars(utf8.RuneCount(data), maxText))
+		logx.Infof("%s, %s", head, txt.Chars(utf8.RuneCount(bytes.Trim(data, "\n")), maxText))
 		return label, " attached, its text", string(data), nil
 	}
 	logx.Infof("file %d bytes %s, not a kind the bot reads", len(data), txt.Clamp(sniffed, 40))

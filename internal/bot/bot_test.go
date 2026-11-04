@@ -557,7 +557,7 @@ func TestOneEmojiIsAReaction(t *testing.T) {
 	if _, s := h.ask(m); s.text != "react 🙏 to "+aliceID+"@1700" || s.chat.User != aliceID {
 		t.Fatalf("sent %+v", s)
 	}
-	reacted := func() int { return strings.Count(h.logs.String(), "<6>reacted instead of replying\n") }
+	reacted := func() int { return strings.Count(h.logs.String(), "<6>reacting instead of replying\n") }
 	h.eventually("the reaction's log line", func() bool { return reacted() == 1 })
 	m.Text, m.Timestamp = "great", 1701
 	if _, s := h.ask(m); s.text != "👍 sure" {

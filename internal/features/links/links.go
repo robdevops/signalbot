@@ -120,8 +120,8 @@ func Register(h feature.Host) error {
 }
 
 // urls is the distinct http and https URLs in m's text, then its quote's,
-// at most maxLinks, and how many more there were. A quote of the bot's own
-// message is the model's words, so its URLs are not fetched.
+// at most maxLinks, and how many more distinct ones there were. A quote of
+// the bot's own message is the model's words, so its URLs are not fetched.
 func urls(m feature.Message) (out []string, dropped int) {
 	text := m.Text
 	if m.Quote != nil && !m.Quote.Bot {
@@ -134,15 +134,11 @@ func urls(m feature.Message) (out []string, dropped int) {
 			continue
 		}
 		u.Fragment = ""
-		switch s := u.String(); {
-		case slices.Contains(out, s):
-		case len(out) == maxLinks:
-			dropped++
-		default:
+		if s := u.String(); !slices.Contains(out, s) {
 			out = append(out, s)
 		}
 	}
-	return out, dropped
+	return out[:min(len(out), maxLinks)], max(0, len(out)-maxLinks)
 }
 
 // trim drops punctuation that ends a sentence rather than the URL: a
@@ -242,9 +238,20 @@ func fetch(ctx context.Context, c *http.Client, info feature.Info, u string) (no
 	if err != nil {
 		return failed(time.Since(start).Seconds(), reason(err))
 	}
-	// done logs the link's time, size, kind (the server's media type, a
-	// type/subtype token, unless the content says better) and outcome.
-	took, size, typ := time.Since(start).Seconds(), len(body), cmp.Or(txt.Clamp(mediaType, 40), "unknown type")
+	// done logs the link's time, size, kind and outcome. The kind is one of
+	// a fixed set: the server's own media type is its to choose, so it is
+	// never written as it came.
+	took, size, typ := time.Since(start).Seconds(), len(body), "other"
+	switch top, _, _ := strings.Cut(mediaType, "/"); {
+	case mediaType == "":
+		typ = "unknown type"
+	case mediaType == "application/json":
+		typ = "json"
+	case top == "text":
+		typ = "text"
+	case top == "image", top == "audio", top == "video":
+		typ = top
+	}
 	done := func(warn bool, kind, outcome string) {
 		f := logx.Infof
 		if warn {
@@ -273,7 +280,12 @@ func fetch(ctx context.Context, c *http.Client, info feature.Info, u string) (no
 		if err == nil {
 			body, _ = io.ReadAll(r)
 		}
-		if text := strings.TrimSpace(string(body)); utf8.ValidString(text) && !strings.ContainsRune(text, 0) {
+		text := strings.TrimSpace(string(body))
+		if text == "" {
+			done(true, typ, "no readable text")
+			return "[link " + u + ", a page with no text you can read", "", nil
+		}
+		if utf8.ValidString(text) && !strings.ContainsRune(text, 0) {
 			done(false, typ, txt.Chars(utf8.RuneCountInString(text), maxText))
 			return "[page " + u, text, nil
 		}
