@@ -201,8 +201,6 @@ func TestReceiveAndReconnect(t *testing.T) {
 // connects again; the reader keeps handing on messages meanwhile.
 func TestStalledWriteReconnects(t *testing.T) {
 	captureLogs(t)
-	defer func(d time.Duration) { writeTimeout = d }(writeTimeout)
-	writeTimeout = time.Second
 	sock := filepath.Join(t.TempDir(), "s.sock")
 	ln, err := net.Listen("unix", sock)
 	if err != nil {
@@ -220,6 +218,7 @@ func TestStalledWriteReconnects(t *testing.T) {
 		}
 	}()
 	c := newClient(sock, allowAll(), nil)
+	c.writeTimeout = time.Second
 	got := make(chan bot.Received, 4)
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
