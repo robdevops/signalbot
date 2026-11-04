@@ -22,7 +22,7 @@ A small, [privacy-conscious](PRIVACY.md) chat bot that connects to a running [si
 - Tools: web search, line and pie charts, and your own [MCP](#mcp-tools) tools
 - [`/schedule`](#scheduling) a message or command, once or repeating
 - Understands [files](#files) (PDFs, text and code, Word, Excel and PowerPoint) and the [pages you link to](#links), and if the model supports it, images, stickers, voice notes and other audio
-- Supports Signal typing indicators, reactions, stickers and @mentions
+- Supports Signal typing indicators, reactions, stickers, @mentions and replies
 - In-memory conversation context. Never logged to disk, forgotten after 24 hours, or sooner if Signal's _disappearing messages_ timer calls for it.
 
 ## Use cases
