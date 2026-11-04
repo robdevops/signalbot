@@ -283,6 +283,19 @@ func TestSendAndTyping(t *testing.T) {
 	if m := len(f.calls("sendTyping")); m != n {
 		t.Errorf("typing went on after stop: %d then %d", n, m)
 	}
+	// Stopping says so, once, last; the repeats before don't.
+	calls := f.calls("sendTyping")
+	for i, p := range calls {
+		if (p["stop"] == true) != (i == len(calls)-1) || fmt.Sprint(p["recipient"]) != "["+aliceID+"]" {
+			t.Errorf("typing call %d of %d: %v", i+1, len(calls), p)
+		}
+	}
+	c.Typing(feature.Chat{GroupID: groupID})()
+	eventually(t, "the group's stop", func() bool {
+		calls := f.calls("sendTyping")
+		last := calls[len(calls)-1]
+		return last["stop"] == true && last["groupId"] == groupID
+	})
 }
 
 func TestUnmatchedAndBadFramesAreLogged(t *testing.T) {

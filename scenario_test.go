@@ -1222,6 +1222,12 @@ func TestScenarioOneEmojiIsAReaction(t *testing.T) {
 		if i == 0 && fmt.Sprint(p["recipient"]) != "["+idAlice+"]" || i == 1 && p["groupId"] != idGroup {
 			t.Fatalf("sendReaction to %v", p)
 		}
+		// No message follows to clear "typing…", so the bot says it stopped.
+		h.waitFor("the typing stop", func() bool {
+			return slices.ContainsFunc(h.callsTo("sendTyping"), func(p map[string]any) bool {
+				return p["stop"] == true && (i == 0 && p["groupId"] == nil || i == 1 && p["groupId"] == idGroup)
+			})
+		})
 	}
 	h.noMoreSends()
 	if s := h.ask(fromAlice("ok?")); s.Message != "👍 sure" {
