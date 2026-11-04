@@ -35,6 +35,7 @@ const (
 	maxLinks     = 2       // URLs fetched a turn
 	maxBody      = 5 << 20 // bytes read of a page
 	maxText      = 15_000  // characters of a page's text shown
+	minArticle   = 200     // characters an article or main element needs to stand for its page
 	maxRedirects = 3
 	timeout      = 15 * time.Second
 	userAgent    = "signalbot (+https://github.com/robdevops/signalbot)"
@@ -206,25 +207,37 @@ var block = map[string]bool{"p": true, "div": true, "br": true, "li": true, "h1"
 	"pre": true, "table": true, "ul": true, "ol": true, "dd": true, "dt": true, "main": true, "hr": true}
 
 // pageText is an HTML page's title and its text, a line per block, with
-// navigation, scripts and forms left out. It reads the page as a stream of
-// tokens, never building the whole tree, and stops once it has enough text.
+// navigation, scripts and forms left out: the text of its first article or
+// main element if that has minArticle characters or more, else the whole
+// page's, so menus and sidebars built of plain divs don't crowd out the
+// content. It reads the page as a stream of tokens, never building the
+// whole tree, and stops once it has enough text.
 func pageText(body []byte, contentType string) (title, text string) {
 	r, err := charset.NewReader(bytes.NewReader(body), contentType)
 	if err != nil {
 		r = bytes.NewReader(body)
 	}
 	z := html.NewTokenizer(r)
-	var b strings.Builder
-	skip, inTitle := 0, false // skip: depth inside elements left out
+	var b, art strings.Builder // the page's text, and its article's
+	skip, inTitle := 0, false  // skip: depth inside elements left out
+	artTag, artDepth, artDone := "", 0, false
 	newline := func() {
-		if b.Len() > 0 && !strings.HasSuffix(b.String(), "\n") {
-			b.WriteByte('\n')
+		for _, w := range []*strings.Builder{&b, &art} {
+			if (w == &b || artDepth > 0) && w.Len() > 0 && !strings.HasSuffix(w.String(), "\n") {
+				w.WriteByte('\n')
+			}
 		}
+	}
+	result := func() (string, string) {
+		if a := squeeze(art.String()); len(a) >= minArticle {
+			return title, a
+		}
+		return title, squeeze(b.String())
 	}
 	for b.Len() <= maxText*2 {
 		switch tt := z.Next(); tt {
 		case html.ErrorToken:
-			return title, squeeze(b.String())
+			return result()
 		case html.StartTagToken, html.SelfClosingTagToken:
 			name, _ := z.TagName()
 			tag := string(name)
@@ -238,6 +251,9 @@ func pageText(body []byte, contentType string) (title, text string) {
 			case block[tag]:
 				newline()
 			}
+			if tt == html.StartTagToken && skip == 0 && !artDone && (tag == artTag || artTag == "" && (tag == "article" || tag == "main")) {
+				artTag, artDepth = tag, artDepth+1
+			}
 		case html.EndTagToken:
 			name, _ := z.TagName()
 			tag := string(name)
@@ -249,6 +265,11 @@ func pageText(body []byte, contentType string) (title, text string) {
 			case block[tag]:
 				newline()
 			}
+			if tag == artTag && artDepth > 0 {
+				if artDepth--; artDepth == 0 {
+					artDone = true
+				}
+			}
 		case html.TextToken:
 			t := strings.Join(strings.Fields(string(z.Text())), " ")
 			switch {
@@ -258,14 +279,19 @@ func pageText(body []byte, contentType string) (title, text string) {
 					title = t
 				}
 			case skip == 0:
-				if b.Len() > 0 && !strings.HasSuffix(b.String(), "\n") {
-					b.WriteByte(' ')
+				for _, w := range []*strings.Builder{&b, &art} {
+					if w == &art && artDepth == 0 {
+						continue
+					}
+					if w.Len() > 0 && !strings.HasSuffix(w.String(), "\n") {
+						w.WriteByte(' ')
+					}
+					w.WriteString(t)
 				}
-				b.WriteString(t)
 			}
 		}
 	}
-	return title, squeeze(b.String())
+	return result()
 }
 
 // squeeze drops blank lines and the spaces around lines.

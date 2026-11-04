@@ -181,3 +181,24 @@ func TestPageTextIsStreamed(t *testing.T) {
 		t.Fatalf("allocated %d MB", n>>20)
 	}
 }
+
+// A page's first article or main element stands for it when it has
+// minArticle characters, so a menu of plain divs is left out; a short one,
+// or none, gives the whole page. A nested article stays in its outer one.
+func TestArticleText(t *testing.T) {
+	menu := "<div class=menu>" + strings.Repeat("Menu item ", 30) + "</div>"
+	story := strings.Repeat("The story goes on. ", 22)
+	for _, tc := range []struct {
+		page, want string
+	}{
+		{menu + "<article><p>" + story + "</p></article>", strings.TrimSpace(story)},
+		{menu + "<main><p>Short.</p></main>", strings.TrimSpace(strings.Repeat("Menu item ", 30)) + "\nShort."},
+		{menu + "<article><p>" + story + "</p><article><p>Inner.</p></article><p>Tail.</p></article><article>Second</article>",
+			strings.TrimSpace(story) + "\nInner.\nTail."},
+		{"<p>No article here.</p>", "No article here."},
+	} {
+		if _, got := pageText([]byte("<html><body>"+tc.page+"</body></html>"), "text/html"); got != tc.want {
+			t.Errorf("got %q\nwant %q", got, tc.want)
+		}
+	}
+}
