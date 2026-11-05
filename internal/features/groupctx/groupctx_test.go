@@ -58,6 +58,9 @@ func TestGroupChatterNotes(t *testing.T) {
 		{chatterFrom("Bob", "", sticker), "Bob: [sticker]"},
 		{chatterFrom("Bob", "ha", photo, sticker), "Bob: ha [image] [sticker]"},
 		{chatterFrom("Bob", "", quoted), ""},
+		{chatterFrom("Bob", "menu", feature.Media{ID: "f1", File: true, Name: "menu.pdf"}), `Bob: menu [file "menu.pdf"]`},
+		{chatterFrom("Bob", "", feature.Media{ID: "f2", File: true}, photo), `Bob: [image] [file "untitled"]`},
+		{chatterFrom("Bob", "", feature.Media{ID: "f3", File: true, Quoted: true}), ""},
 		{chatterFrom("Alice", ""), ""},
 	} {
 		if a := h.Message(ctx, c.m); a.Context != c.want {

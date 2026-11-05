@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/robdevops/signalbot/internal/feature"
 	"github.com/robdevops/signalbot/internal/kit/img"
@@ -35,13 +36,16 @@ func additions(ctx context.Context, h feature.Host, m feature.Message) feature.A
 	note := func(n string) { notes, kept = append(notes, n), append(kept, n) }
 	images, sticker := 0, -1
 	for i, md := range m.Media {
+		if md.File {
+			continue // another feature's
+		}
 		if md.Sticker {
 			sticker = i
 			continue
 		}
 		images++
 		if see {
-			if url := fetch(ctx, h, m, i, "an image"); url != "" {
+			if url := fetch(ctx, h, m, i, "image"); url != "" {
 				seen = append(seen, url)
 			}
 		}
@@ -52,6 +56,7 @@ func additions(ctx context.Context, h feature.Host, m feature.Message) feature.A
 	}
 	switch failed := images - len(seen); {
 	case !see && images > 0:
+		logx.Infof("%s not sent: this model can't see images", plural(images))
 		note(imageNote(images, "attached, which you can't see with this model"))
 	case failed == 1:
 		note("[1 image attached, which failed to load; you can see images, just not this one]")
@@ -61,10 +66,11 @@ func additions(ctx context.Context, h feature.Host, m feature.Message) feature.A
 	if sticker >= 0 {
 		label, url := m.Media[sticker].Label, ""
 		if see {
-			url = fetch(ctx, h, m, sticker, "a sticker")
+			url = fetch(ctx, h, m, sticker, "sticker")
 		}
 		switch {
 		case !see:
+			logx.Infof("sticker not sent: this model can't see images")
 			note("[sticker attached" + label + ", which you can't see]")
 		case url == "":
 			note("[sticker attached" + label + ", which failed to load]")
@@ -78,23 +84,39 @@ func additions(ctx context.Context, h feature.Host, m feature.Message) feature.A
 }
 
 // imageNote marks images in a prompt, e.g. "[1 image attached]".
-func imageNote(n int, what string) string {
+func imageNote(n int, what string) string { return "[" + plural(n) + " " + what + "]" }
+
+// plural counts images: "1 image", "2 images".
+func plural(n int) string {
 	if n == 1 {
-		return "[1 image " + what + "]"
+		return "1 image"
 	}
-	return fmt.Sprintf("[%d images %s]", n, what)
+	return fmt.Sprintf("%d images", n)
 }
 
 // fetch is m.Media[i] as a data: URL for the model, shrunk if too big, or
-// "" if it can't be fetched or isn't an image the model takes.
+// "" if it can't be fetched or isn't an image the model takes. what is
+// "image" or "sticker", for the log line each gets: its size, the size
+// sent if shrunk, and the time taken.
 func fetch(ctx context.Context, h feature.Host, m feature.Message, i int, what string) string {
+	start := time.Now()
 	data, err := h.Media(ctx, m, i)
+	size := len(data)
 	if err == nil {
 		data, err = img.Fit(data)
 	}
 	if err != nil {
-		logx.Warnf("could not fetch %s: %v", what, err)
+		a := "an "
+		if what == "sticker" {
+			a = "a "
+		}
+		logx.Warnf("could not fetch %s%s: %v", a, what, err)
 		return ""
+	}
+	if len(data) != size {
+		logx.Infof("%s %d bytes, sent as %d bytes, %.1fs", what, size, len(data), time.Since(start).Seconds())
+	} else {
+		logx.Infof("%s %d bytes, %.1fs", what, size, time.Since(start).Seconds())
 	}
 	return "data:" + http.DetectContentType(data) + ";base64," + base64.StdEncoding.EncodeToString(data)
 }

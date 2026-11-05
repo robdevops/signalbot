@@ -22,6 +22,7 @@ type envelope struct {
 	SourceNumber string       `json:"sourceNumber"`
 	SourceUUID   string       `json:"sourceUuid"`
 	SourceName   string       `json:"sourceName"`
+	Timestamp    int64        `json:"timestamp"`
 	DataMessage  *dataMessage `json:"dataMessage"`
 }
 
@@ -47,6 +48,7 @@ type mention struct {
 // quote is the message one replies to. Its attachments carry only a small
 // thumbnail of the original.
 type quote struct {
+	ID          int64        `json:"id"` // the quoted message's timestamp
 	Author      string       `json:"author"`
 	AuthorUUID  string       `json:"authorUuid"`
 	Text        string       `json:"text"`
@@ -55,6 +57,7 @@ type quote struct {
 
 type attachment struct {
 	ContentType string      `json:"contentType"`
+	Filename    string      `json:"filename"`
 	ID          string      `json:"id"`
 	Size        int         `json:"size"`
 	Thumbnail   *attachment `json:"thumbnail"`
@@ -88,6 +91,15 @@ func (a *attachment) image() *attachment {
 	return nil
 }
 
+// file is the attachment as a file that isn't an image, if it can be
+// fetched and isn't too big, else nil.
+func (a *attachment) file() *attachment {
+	if a.ID != "" && a.Size <= img.MaxReceived && a.image() == nil {
+		return a
+	}
+	return nil
+}
+
 // is reports whether id is one of ids, and not "".
 func is(id string, ids ...string) bool { return id != "" && slices.Contains(ids, id) }
 
@@ -112,14 +124,15 @@ func isAllowed(env *envelope, allowed map[string]bool) bool {
 
 // isAddressed reports whether env is for the bot: it mentions the bot,
 // replies to one of its messages, or is a DM from an allowed sender, and
-// has text, an image or a sticker. It never blocks, so the reader can use it.
+// has text, an attachment the bot can fetch or a sticker. It never blocks,
+// so the reader can use it.
 func isAddressed(env *envelope, self string, allowed map[string]bool) bool {
 	d := env.DataMessage
 	if d == nil || self == "" || fromSelf(env, self) {
 		return false
 	}
 	if strings.TrimSpace(d.Message) == "" && d.Sticker == nil &&
-		!slices.ContainsFunc(d.Attachments, func(a attachment) bool { return a.image() != nil }) {
+		!slices.ContainsFunc(d.Attachments, func(a attachment) bool { return a.image() != nil || a.file() != nil }) {
 		return false
 	}
 	if env.chat().GroupID == "" {
@@ -140,6 +153,9 @@ func (c *Client) event(env *envelope) (bot.Received, bool) {
 	if g := d.GroupInfo; g != nil && g.Type == "UPDATE" {
 		c.refreshSoon() // so new members are known and departed ones forgotten
 		return bot.Received{Chat: chat, GroupChange: true}, true
+	}
+	if chat.GroupID != "" || isAllowed(env, c.allowed) { // so a reply can fetch them
+		c.recent.add(chat.Key(), env.sender(), env.Timestamp, d.Attachments)
 	}
 	load := func(ctx context.Context, learn func(name, id string)) (feature.Message, bool) {
 		return c.load(ctx, env, learn)
@@ -208,20 +224,38 @@ func (c *Client) message(env *envelope, self string) feature.Message {
 		Name:      txt.SafeName(env.SourceName),
 		Text:      c.text(d.Message, d.Mentions, self),
 		Expires:   time.Duration(d.ExpiresInSeconds) * time.Second,
+		Timestamp: env.Timestamp,
 		Addressed: isAddressed(env, self, c.allowed),
 	}
-	images := func(as []attachment, quoted bool) {
+	var images, files []feature.Media
+	add := func(as []attachment, quoted bool) {
 		for i := range as {
-			if a := as[i].image(); a != nil && len(m.Media) < feature.MaxPictures {
-				m.Media = append(m.Media, feature.Media{ID: a.ID, Quoted: quoted})
+			if a := as[i].image(); a != nil && len(images) < feature.MaxPictures {
+				images = append(images, feature.Media{ID: a.ID, Quoted: quoted})
+			} else if a == nil && len(files) < feature.MaxFiles && (as[i].file() != nil || quoted && !img.Supported(as[i].ContentType)) {
+				f := as[i].file()
+				if f == nil { // a quoted file not remembered: noted, not fetched
+					f = &attachment{ContentType: as[i].ContentType, Filename: as[i].Filename}
+				}
+				files = append(files, feature.Media{ID: f.ID, Quoted: quoted, File: true, Name: f.Filename, MIME: f.ContentType, Size: f.Size})
 			}
 		}
 	}
-	images(d.Attachments, false)
+	add(d.Attachments, false)
 	if q := d.Quote; q != nil {
-		images(q.Attachments, true)
+		// The quote carries only thumbnails; the original attachments, if
+		// the message was received lately.
+		quoted := q.Attachments
+		for _, author := range []string{q.AuthorUUID, q.Author} {
+			if as, ok := c.recent.get(m.Chat.Key(), author, q.ID); ok && author != "" {
+				quoted = as
+				break
+			}
+		}
+		add(quoted, true)
 		m.Quote = &feature.Quote{Text: q.Text, Author: c.name(q.AuthorUUID, q.Author), Bot: is(self, q.AuthorUUID, q.Author)}
 	}
+	m.Media = slices.Concat(images, files)
 	if s := d.Sticker; s != nil {
 		m.Media = append(m.Media, feature.Media{ID: s.PackID + ":" + strconv.Itoa(s.StickerID), Sticker: true})
 	}

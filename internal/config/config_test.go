@@ -68,3 +68,20 @@ func TestModelSettings(t *testing.T) {
 		}
 	}
 }
+
+// DAILY_BUDGET is 1 by default, 0 turns it off, and anything else that
+// isn't 0 or more dollars is 1, with a warning; STATE_DIRECTORY gives its
+// first directory.
+func TestDailyBudget(t *testing.T) {
+	setRequired(t)
+	for v, want := range map[string]float64{"": 1, "0": 0, "1.50": 1.5, " 3 ": 3, "-1": 1, "lots": 1, "Inf": 1, "NaN": 1} {
+		t.Setenv("DAILY_BUDGET", v)
+		if got := Load().DailyBudget; got != want {
+			t.Errorf("DAILY_BUDGET=%q: %v, want %v", v, got, want)
+		}
+	}
+	t.Setenv("STATE_DIRECTORY", "/var/lib/a:/var/lib/b")
+	if got := Load().StateDir; got != "/var/lib/a" {
+		t.Errorf("state dir %q", got)
+	}
+}

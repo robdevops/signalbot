@@ -3,8 +3,10 @@ package main
 import (
 	"github.com/robdevops/signalbot/internal/feature"
 	"github.com/robdevops/signalbot/internal/features/charts"
+	"github.com/robdevops/signalbot/internal/features/files"
 	"github.com/robdevops/signalbot/internal/features/groupctx"
 	"github.com/robdevops/signalbot/internal/features/intro"
+	"github.com/robdevops/signalbot/internal/features/links"
 	"github.com/robdevops/signalbot/internal/features/mcp"
 	"github.com/robdevops/signalbot/internal/features/schedule"
 	"github.com/robdevops/signalbot/internal/features/vision"
@@ -18,6 +20,8 @@ var features = []func(feature.Host) error{
 	websearch.Register,
 	groupctx.Register,
 	vision.Register,
+	files.Register,
+	links.Register,
 	charts.Register, // after websearch, for the tools line
 	mcp.Register,    // after websearch and charts, for the tools line
 	schedule.Register,

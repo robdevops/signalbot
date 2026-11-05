@@ -2,7 +2,10 @@
 // line, and reads settings written as text.
 package txt
 
-import "strings"
+import (
+	"strconv"
+	"strings"
+)
 
 // maxName caps a display name, in runes.
 const maxName = 64
@@ -36,4 +39,40 @@ func Bool(s string, def bool) bool {
 		return false
 	}
 	return def
+}
+
+// Fence is text in a Markdown code block, cut at max runes with
+// "[…truncated]", its fence longer than any run of backticks in it so the
+// text can't close it early.
+func Fence(text string, max int) string {
+	if i := cutAt(text, max); i >= 0 {
+		text = text[:i] + "\n[…truncated]"
+	}
+	fence := "```"
+	for strings.Contains(text, fence) {
+		fence += "`"
+	}
+	return fence + "\n" + strings.Trim(text, "\n") + "\n" + fence
+}
+
+// cutAt is the byte offset of the max-th rune of s, or -1 if s has no more
+// than max runes: where to cut it, found without copying it into runes.
+func cutAt(s string, max int) int {
+	n := 0
+	for i := range s {
+		if n == max {
+			return i
+		}
+		n++
+	}
+	return -1
+}
+
+// Chars says how much of n characters of text a cap of max shows, for a
+// log line: "1532 chars of text", or "50000 of 83210 chars of text".
+func Chars(n, max int) string {
+	if n > max {
+		return strconv.Itoa(max) + " of " + strconv.Itoa(n) + " chars of text"
+	}
+	return strconv.Itoa(n) + " chars of text"
 }

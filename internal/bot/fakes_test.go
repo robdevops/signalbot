@@ -81,6 +81,11 @@ func (n *fakeNet) Send(chat feature.Chat, text string, images []feature.Picture,
 	n.sent <- sent{chat, text, images, known}
 }
 
+// React is sent as "react <emoji> to <sender>@<timestamp>".
+func (n *fakeNet) React(chat feature.Chat, msg feature.Message, emoji string) {
+	n.sent <- sent{chat: chat, text: fmt.Sprintf("react %s to %s@%d", emoji, msg.Sender, msg.Timestamp)}
+}
+
 func (n *fakeNet) Typing(feature.Chat) func() {
 	n.mu.Lock()
 	defer n.mu.Unlock()
@@ -371,8 +376,11 @@ func toolNames(r map[string]any) []string {
 	var out []string
 	ts, _ := r["tools"].([]any)
 	for _, t := range ts {
-		f, _ := t.(map[string]any)["function"].(map[string]any)
-		out = append(out, fmt.Sprint(f["name"]))
+		if f, ok := t.(map[string]any)["function"].(map[string]any); ok {
+			out = append(out, fmt.Sprint(f["name"]))
+		} else { // a server tool is its type, e.g. "openrouter:served"
+			out = append(out, fmt.Sprint(t.(map[string]any)["type"]))
+		}
 	}
 	return out
 }

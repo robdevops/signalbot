@@ -113,6 +113,15 @@ func (c *Client) send(chat feature.Chat, text string, mentions, styles, attachme
 	return c.write(c.nextID.Add(1), "send", p)
 }
 
+// React puts emoji on msg, as a reaction from the bot.
+func (c *Client) React(chat feature.Chat, msg feature.Message, emoji string) {
+	p := target(chat)
+	p["emoji"], p["targetAuthor"], p["targetTimestamp"] = emoji, msg.Sender, msg.Timestamp
+	if err := c.write(c.nextID.Add(1), "sendReaction", p); err != nil {
+		logx.Errorf("reaction failed: %v", err)
+	}
+}
+
 func target(chat feature.Chat) map[string]any {
 	if chat.GroupID != "" {
 		return map[string]any{"groupId": chat.GroupID}
@@ -120,7 +129,8 @@ func target(chat feature.Chat) map[string]any {
 	return map[string]any{"recipient": []string{chat.User}}
 }
 
-// Typing shows the bot typing in chat until stop is called.
+// Typing shows the bot typing in chat until stop is called, which says it
+// stopped.
 func (c *Client) Typing(chat feature.Chat) (stop func()) {
 	done := make(chan struct{})
 	send := func() { _ = c.write(c.nextID.Add(1), "sendTyping", target(chat)) }
@@ -137,7 +147,14 @@ func (c *Client) Typing(chat feature.Chat) (stop func()) {
 			}
 		}
 	}()
-	return sync.OnceFunc(func() { close(done) })
+	// Stopping tells Signal too, or "typing…" stays up after a reply that
+	// isn't a message, such as a reaction, or after none at all.
+	return sync.OnceFunc(func() {
+		close(done)
+		p := target(chat)
+		p["stop"] = true
+		_ = c.write(c.nextID.Add(1), "sendTyping", p)
+	})
 }
 
 // parts turns a reply into the messages to send: its Markdown converted,

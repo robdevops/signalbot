@@ -105,7 +105,7 @@ func TestBusyChatNotEvicted(t *testing.T) {
 }
 
 // Over its cap, history drops to half of it, not by one, so its start stays
-// the same for several messages; under 4 it slides by one.
+// the same for several messages; under 3 it slides by one.
 func TestHistoryCapped(t *testing.T) {
 	s := New[string](4, nil, nil) // messages, not exchanges
 	var lens []int
@@ -117,7 +117,7 @@ func TestHistoryCapped(t *testing.T) {
 	if !slices.Equal(lens, []int{2, 4, 2, 4, 2}) || h[0].Content != "4" {
 		t.Errorf("lengths %v, history %v", lens, h)
 	}
-	for n, want := range map[int]int{1: 1, 2: 2, 3: 3, 4: 2, 5: 3, 10: 5, 11: 6} {
+	for n, want := range map[int]int{1: 1, 2: 2, 3: 2, 4: 2, 5: 3, 10: 5, 11: 6} {
 		if got := keep(n); got != want {
 			t.Errorf("keep(%d) = %d, want %d", n, got, want)
 		}

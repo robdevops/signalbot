@@ -42,7 +42,9 @@ func TestAddressed(t *testing.T) {
 		{"DM from anyone else", `{"sourceUuid":"` + aliceID + `","dataMessage":{"message":"hi"}}`, false},
 		{"photo only DM", `{` + fromBob + `,"dataMessage":{"attachments":[{"contentType":"image/png","id":"a","size":10}]}}`, true},
 		{"sticker only DM", `{` + fromBob + `,"dataMessage":{"sticker":{"packId":"p","stickerId":1}}}`, true},
-		{"PDF only DM", `{` + fromBob + `,"dataMessage":{"attachments":[{"contentType":"application/pdf","id":"a","size":10}]}}`, false},
+		{"PDF only DM", `{` + fromBob + `,"dataMessage":{"attachments":[{"contentType":"application/pdf","id":"a","size":10}]}}`, true},
+		{"file without an ID", `{` + fromBob + `,"dataMessage":{"attachments":[{"contentType":"application/pdf","size":10}]}}`, false},
+		{"file too big", `{` + fromBob + `,"dataMessage":{"attachments":[{"contentType":"application/pdf","id":"a","size":99999999}]}}`, false},
 		{"empty DM", `{` + fromBob + `,"dataMessage":{"message":"  "}}`, false},
 		{"no data message", `{` + fromBob + `}`, false},
 		{"the bot's own", `{"sourceUuid":"` + botID + `","dataMessage":{"message":"hi"}}`, false},
@@ -76,7 +78,7 @@ func TestMessageInGroup(t *testing.T) {
 		Quote:   &feature.Quote{Text: "earlier", Bot: true},
 		Expires: time.Hour, Addressed: true,
 		Media: []feature.Media{{ID: "a1"}, {ID: "t1"},
-			{ID: "q1", Quoted: true}, {ID: "q2", Quoted: true}, {ID: "p:2", Sticker: true}},
+			{ID: "q1", Quoted: true}, {ID: "q2", Quoted: true}, {ID: "x", File: true, MIME: "text/plain", Size: 1}, {ID: "p:2", Sticker: true}},
 	}
 	if !reflect.DeepEqual(m, want) {
 		t.Fatalf("got  %+v\nwant %+v", m, want)
@@ -180,7 +182,7 @@ func TestEvents(t *testing.T) {
 	for _, env := range []string{
 		`{"sourceUuid":"` + botID + `","dataMessage":{"message":"hi",` + inGroup + `}}`,
 		`{` + fromBob + `,"dataMessage":{"message":"let me in"}}`,
-		`{"sourceUuid":"` + aliceID + `","dataMessage":{"attachments":[{"contentType":"application/pdf","id":"a","size":10}]}}`,
+		`{"sourceUuid":"` + aliceID + `","dataMessage":{"attachments":[{"contentType":"application/pdf","size":10}]}}`, // no ID to fetch
 		`{"sourceUuid":"` + aliceID + `"}`,
 	} {
 		if r, ok := event(env); ok {

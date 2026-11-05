@@ -201,8 +201,6 @@ func TestReceiveAndReconnect(t *testing.T) {
 // connects again; the reader keeps handing on messages meanwhile.
 func TestStalledWriteReconnects(t *testing.T) {
 	captureLogs(t)
-	defer func(d time.Duration) { writeTimeout = d }(writeTimeout)
-	writeTimeout = time.Second
 	sock := filepath.Join(t.TempDir(), "s.sock")
 	ln, err := net.Listen("unix", sock)
 	if err != nil {
@@ -220,6 +218,7 @@ func TestStalledWriteReconnects(t *testing.T) {
 		}
 	}()
 	c := newClient(sock, allowAll(), nil)
+	c.writeTimeout = time.Second
 	got := make(chan bot.Received, 4)
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
@@ -284,6 +283,19 @@ func TestSendAndTyping(t *testing.T) {
 	if m := len(f.calls("sendTyping")); m != n {
 		t.Errorf("typing went on after stop: %d then %d", n, m)
 	}
+	// Stopping says so, once, last; the repeats before don't.
+	calls := f.calls("sendTyping")
+	for i, p := range calls {
+		if (p["stop"] == true) != (i == len(calls)-1) || fmt.Sprint(p["recipient"]) != "["+aliceID+"]" {
+			t.Errorf("typing call %d of %d: %v", i+1, len(calls), p)
+		}
+	}
+	c.Typing(feature.Chat{GroupID: groupID})()
+	eventually(t, "the group's stop", func() bool {
+		calls := f.calls("sendTyping")
+		last := calls[len(calls)-1]
+		return last["stop"] == true && last["groupId"] == groupID
+	})
 }
 
 func TestUnmatchedAndBadFramesAreLogged(t *testing.T) {

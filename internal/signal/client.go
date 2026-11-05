@@ -42,7 +42,7 @@ var frameID = regexp.MustCompile(`"id"\s*:\s*(\d+)\s*}\s*$`)
 
 // writeTimeout bounds one request's write, so a stalled socket can't hold
 // up every sender.
-var writeTimeout = 10 * time.Second
+const writeTimeout = 10 * time.Second
 
 type rpcMsg struct {
 	ID     json.RawMessage `json:"id"`
@@ -59,20 +59,22 @@ type rpcMsg struct {
 
 // Client is a JSON-RPC client for a signal-cli daemon socket.
 type Client struct {
-	addr        string
-	allowed     map[string]bool // who may DM the bot, by ACI or number
-	typingEvery time.Duration
-	nextID      atomic.Int64
-	mu          sync.Mutex // guards conn and pending, never held over a write
-	wmu         sync.Mutex // serialises writes
-	conn        net.Conn
-	pending     map[string]chan *rpcMsg
-	id          atomic.Value  // string: the account's ACI, else its number
-	known       chan struct{} // closed once id is set
-	knownOnce   sync.Once
-	closed      atomic.Bool // Run has returned
-	names       names
-	test        *config.Test // nil in production
+	addr         string
+	allowed      map[string]bool // who may DM the bot, by ACI or number
+	typingEvery  time.Duration
+	writeTimeout time.Duration // writeTimeout; a test's shorter
+	nextID       atomic.Int64
+	mu           sync.Mutex // guards conn and pending, never held over a write
+	wmu          sync.Mutex // serialises writes
+	conn         net.Conn
+	pending      map[string]chan *rpcMsg
+	id           atomic.Value  // string: the account's ACI, else its number
+	known        chan struct{} // closed once id is set
+	knownOnce    sync.Once
+	closed       atomic.Bool // Run has returned
+	names        names
+	recent       recent       // attachments of recent messages, for replies to them
+	test         *config.Test // nil in production
 }
 
 // New makes the client its settings say: SIGNALCLI_SOCKET, a unix socket
@@ -95,7 +97,7 @@ func New(test *config.Test) (*Client, error) {
 
 // newClient is New with its settings given.
 func newClient(addr string, allowed map[string]bool, test *config.Test) *Client {
-	c := &Client{addr: addr, allowed: allowed, typingEvery: 10 * time.Second, pending: map[string]chan *rpcMsg{},
+	c := &Client{addr: addr, allowed: allowed, typingEvery: 10 * time.Second, writeTimeout: writeTimeout, pending: map[string]chan *rpcMsg{},
 		known: make(chan struct{}), test: test}
 	c.names.byID, c.names.numbers, c.names.minRefresh = map[string]rankedName{}, map[string]string{}, 15*time.Second
 	if test != nil && test.ReloadGap > 0 {
@@ -316,7 +318,7 @@ func (c *Client) write(id int64, method string, params any) error {
 	}
 	c.wmu.Lock()
 	defer c.wmu.Unlock()
-	conn.SetWriteDeadline(time.Now().Add(writeTimeout))
+	conn.SetWriteDeadline(time.Now().Add(c.writeTimeout))
 	_, err := conn.Write(append(b, '\n'))
 	if err != nil {
 		conn.Close()

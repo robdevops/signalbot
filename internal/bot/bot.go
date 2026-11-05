@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -29,6 +30,8 @@ type Network interface {
 	Run(ctx context.Context, handle func(Received))
 	WaitID(ctx context.Context) string
 	Send(chat feature.Chat, text string, pics []feature.Picture, known map[string]string)
+	// React puts emoji on msg in chat, as a reaction from the bot.
+	React(chat feature.Chat, msg feature.Message, emoji string)
 	Typing(chat feature.Chat) (stop func())
 	// Delivered readies a delivered message in its slot: its sender's name
 	// filled in, the bot's @name stripped (Mentioned if it was there), and
@@ -80,9 +83,11 @@ type Bot struct {
 	closing  atomic.Bool    // no new work starts
 	running  sync.WaitGroup // the timers, and what features run with Go
 
-	// What the model can do, read by New. Either turns off for the rest of
-	// the run when the API rejects a request carrying it.
-	images, callsTools atomic.Bool
+	// What the model can do, read by New. Each turns off for the rest of
+	// the run when the API rejects a request carrying it; audio goes with
+	// files.
+	images, audio, files, callsTools atomic.Bool
+	budget                           *budget // nil with no cap
 
 	// The hooks and tool groups, in feature order. Features register them
 	// before Run.
@@ -105,12 +110,25 @@ func New(ctx context.Context, cfg *config.Config, net Network) *Bot {
 		return b
 	}
 	b.ai = model.New(cfg)
-	images, tools := b.ai.Capabilities(ctx)
-	b.images.Store(images)
-	b.callsTools.Store(tools)
-	logx.Noticef("model %s, reasoning %s, images %v, tools %v", cfg.Model, cfg.Reasoning, images, tools)
-	if !tools {
+	caps := b.ai.Capabilities(ctx)
+	b.images.Store(caps.Images)
+	b.audio.Store(caps.Audio)
+	b.files.Store(caps.Files)
+	b.callsTools.Store(caps.Tools)
+	logx.Noticef("model %s, reasoning %s, images %v, audio %v, files %v, tools %v", cfg.Model, cfg.Reasoning, caps.Images, caps.Audio, caps.Files, caps.Tools)
+	if !caps.Tools {
 		logx.Warnf("model %s can't call tools, so tools are off", cfg.Model)
+	}
+	switch now := time.Now; {
+	case cfg.DailyBudget <= 0:
+	case !b.ai.ReportsCost():
+		logx.Noticef("DAILY_BUDGET isn't applied: only OpenRouter reports what a reply costs")
+	default:
+		if cfg.Test != nil && cfg.Test.Now != nil {
+			now = cfg.Test.Now
+		}
+		b.budget = newBudget(cfg.StateDir, cfg.DailyBudget, now)
+		logx.Noticef("daily budget $%.2f per chat", cfg.DailyBudget)
 	}
 	return b
 }
@@ -251,32 +269,35 @@ func safely(fn func()) {
 	fn()
 }
 
-// pictures counts a message's images and stickers.
-func pictures(m feature.Message) (images, stickers int) {
+// pictures counts a message's images, other files and stickers.
+func pictures(m feature.Message) (images, files, stickers int) {
 	for _, md := range m.Media {
-		if md.Sticker {
+		switch {
+		case md.Sticker:
 			stickers++
-		} else {
+		case md.File:
+			files++
+		default:
 			images++
 		}
 	}
-	return images, stickers
+	return images, files, stickers
 }
 
 // fits reports whether msg can join batch and the merged message still
-// carry what one message may: at most feature.MaxPictures images and one
-// sticker.
+// carry what one message may: at most feature.MaxPictures images,
+// feature.MaxFiles files and one sticker.
 func fits(batch []feature.Message, msg feature.Message) bool {
-	images, stickers := pictures(msg)
+	images, files, stickers := pictures(msg)
 	for _, x := range batch {
-		i, s := pictures(x)
-		images, stickers = images+i, stickers+s
+		i, f, s := pictures(x)
+		images, files, stickers = images+i, files+f, stickers+s
 	}
-	return images <= feature.MaxPictures && stickers <= 1
+	return images <= feature.MaxPictures && files <= feature.MaxFiles && stickers <= 1
 }
 
 // merge makes messages that arrived together one message, with their
-// images and then their sticker, and returns it with the text the model
+// images, then their files, then their sticker, and returns it with the text the model
 // sees: each message as it would see it (in a group with its sender's name
 // and any quote), a line each. The message's own Text is only what was
 // typed, a line each, so tool keywords never match a name or a quote. A
@@ -288,7 +309,7 @@ func merge(msgs []feature.Message) (feature.Message, string) {
 	}
 	m := msgs[len(msgs)-1]
 	var lines, typed []string
-	var images, stickers []feature.Media
+	var images, files, stickers []feature.Media
 	for _, x := range msgs {
 		if x.Text == "" && len(x.Media) == 0 {
 			continue
@@ -300,9 +321,12 @@ func merge(msgs []feature.Message) (feature.Message, string) {
 			typed = append(typed, x.Text)
 		}
 		for _, md := range x.Media {
-			if md.Sticker {
+			switch {
+			case md.Sticker:
 				stickers = append(stickers, md)
-			} else {
+			case md.File:
+				files = append(files, md)
+			default:
 				images = append(images, md)
 			}
 		}
@@ -310,7 +334,7 @@ func merge(msgs []feature.Message) (feature.Message, string) {
 			m.Expires = x.Expires
 		}
 	}
-	m.Text, m.Quote, m.Media = strings.Join(typed, "\n"), nil, append(images, stickers...)
+	m.Text, m.Quote, m.Media = strings.Join(typed, "\n"), nil, slices.Concat(images, files, stickers)
 	if m.Chat.GroupID != "" {
 		m.Name = "" // each line already names its sender
 	}

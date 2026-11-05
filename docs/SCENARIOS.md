@@ -88,7 +88,7 @@ The table maps every `Test*` function in the 19 old test files to what covers it
 | TestGroupContextOff | groupcontext_test.go | TestScenarioGroupContextOff |
 | TestOneEraserPerChat | groupcontext_test.go | Unit test, moves with its code (timers are not visible at the edges) |
 | TestGroupContextConfig | groupcontext_test.go | TestScenarioGroupChatterIsContext (default on), TestScenarioGroupContextOff |
-| TestPhotoTriggers | images_test.go | TestScenarioPhotoIsShownToModel, TestScenarioUnaddressedMessagesAreNeverLogged (voice note), TestScenarioMessageWithNothingUsableIsIgnored (too big), TestScenarioGroupChatterNotesImagesWithoutFetching (group photo) |
+| TestPhotoTriggers | images_test.go | TestScenarioPhotoIsShownToModel, TestScenarioUnaddressedMessagesAreNeverLogged (group voice note), TestScenarioMessageWithNothingUsableIsIgnored (too big), TestScenarioGroupChatterNotesImagesWithoutFetching (group photo) |
 | TestQuotedPhotoIsSeen | images_test.go | TestScenarioImagesAreFetchedFromTheirChat |
 | TestPhotoShownToModel | images_test.go | TestScenarioPhotoIsShownToModel |
 | TestQuotedPhotoFetchedByGroup | images_test.go | TestScenarioImagesAreFetchedFromTheirChat |
@@ -153,10 +153,17 @@ The table maps every `Test*` function in the 19 old test files to what covers it
 
 TestScenarioHistoryAcrossTurns, TestScenarioHistoryIsPerChat, TestScenarioHistoryMax, TestScenarioLongReplyIsSplit, TestScenarioModelRetry, TestScenarioUnknownCommandIsAMessage, TestScenarioBotWithoutProfileNameIsSignalbot, TestScenarioAtMostFourImages, TestScenarioGroupSenderWithoutName and TestScenarioErasedHistoryEndsChartFollowUps pin behaviour that had no direct test before.
 
+Daily budget: TestScenarioDailyBudget and TestScenarioDailyBudgetNeedsCosts, new with `DAILY_BUDGET`.
+
+Reactions and links: TestScenarioOneEmojiIsAReaction, TestScenarioLinkToAPrivateAddressIsRefused and TestScenarioPrivateLookingLinkIsNotFetched, new with those features.
+
+Files: TestScenarioPDFInADM, TestScenarioTextAndOfficeFiles, TestScenarioVoiceNote, TestScenarioOtherProviderRejectsFiles and TestScenarioReplyToSomeonesPDF pin forwarding files to the model, new with the files feature; TestScenarioDocumentTurnsKeepAlwaysOnToolsOut pins that a message with a file is offered no tool without keywords.
+
 ## Not pinned, or pinned with care
 
 - **The 15-second contact reload limit.** `startBot` lowers it to `contactReloadGap` (50ms) through `config.Test`, so a scenario can see a reload after a group change, or after an unknown mention once it has waited out the gap. A burst of group changes costing one reload depends on that timing, so it isn't asserted.
+- **A fetched page leaving always-on tools out.** No scenario fetches a page: only ports 80 and 443 are fetched, and a test server has another. The links feature's `Content` flag is pinned in its package tests, and the core's rule is pinned with a file.
 - **Typing every 10 seconds.** Only the first typing indicator, before the reply, and that none follows the reply, are asserted.
 - **Day-long limits** (contacts over a day old, the 24-hour history cap, the dedupe window ending) need the clock moved; they stay unit tests.
-- **Log wording.** Scenarios check only lines with no deliberate change: the stranger's id with "not in SIGNAL_DM_USER_IDS", "OpenRouter error" (now "model error", changed with `MODEL_API_URL`), "at capacity", "truncated", the cost, "tools are off", "images are off", "skipped" (an oversized frame), "could not fetch an image", signal-cli's error text, and each line's priority. "mention from Alice(id)" is not pinned, as it becomes "received group chat".
+- **Log wording.** Scenarios check only lines with no deliberate change: the stranger's id with "not in SIGNAL_DM_USER_IDS", "OpenRouter error" (now "model error", changed with `MODEL_API_URL`), "at capacity", "truncated", the cost, "tools are off", "images are off", "skipped" (an oversized frame), "could not fetch an image", signal-cli's error text, the lines for a reaction and for each link, file, image and sticker ("reacting instead of replying", "link failed after", "link not fetched", "file <kind> N bytes, …", "image N bytes, …" and their priorities), and each line's priority. "mention from Alice(id)" is not pinned, as it becomes "received group chat".
 - **At `e40dc5f` with `LOG_LEVEL=debug`,** an unaddressed group message that mentions someone whose name the bot doesn't know logs "unresolved mention of <id>" at debug. The spec says an unaddressed message is never logged, so TestScenarioUnaddressedMessagesAreNeverLogged uses a known name. The new core, which always writes debug, must not log it.

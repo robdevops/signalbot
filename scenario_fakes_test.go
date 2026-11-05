@@ -19,8 +19,10 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -56,6 +58,10 @@ type world struct {
 	Env map[string]string
 	// Vision says the model list shows the model accepting images.
 	Vision bool
+	// Audio says the model list shows the model accepting audio.
+	Audio bool
+	// Now is the bot's clock for its daily budget; nil for the real one.
+	Now func() time.Time
 	// Attachments is what signal-cli's getAttachment returns, by attachment
 	// ID; scenarioPNG for any other.
 	Attachments map[string][]byte
@@ -159,6 +165,7 @@ type modelRequest struct {
 type chatMessage struct {
 	Role, Content string
 	Images        []string // image URLs sent with Content
+	Files         []string // files sent with Content: "file:<name>" or "audio:<format>"
 	ToolCallID    string
 	ToolCalls     []string // function names
 }
@@ -174,6 +181,7 @@ func newHarness(t *testing.T, w world) *harness {
 		w.StateDir = t.TempDir()
 	}
 	h := &harness{t: t, w: w, contacts: map[string]string{}, handled: make(chan struct{}, 64)}
+	h.keepExact("My Daily Life", "❤️", "🕵️") // the sticker pack the fake signal-cli lists
 	if !w.NoBotName {
 		h.contacts[idBot] = "Botty"
 	}
@@ -341,17 +349,25 @@ func (h *harness) failSending() {
 	h.failSends = true
 }
 
+var urlPattern = regexp.MustCompile(`https?://\S+`)
+
 // receive delivers a message to the bot, as signal-cli does, and waits until
 // the bot has read it. The texts in it are remembered, to check that none is
-// logged.
+// logged, and so are its links and their hosts and its files' names and
+// declared types.
 func (h *harness) receive(frame string) {
 	h.t.Helper()
+	type attachment struct{ Filename, ContentType string }
 	var f struct {
 		Envelope struct {
 			Source, SourceUUID, SourceNumber, SourceName string
 			DataMessage                                  struct {
-				Message  string
-				Quote    struct{ Text, Author, AuthorUUID string }
+				Message     string
+				Attachments []attachment
+				Quote       struct {
+					Text, Author, AuthorUUID string
+					Attachments              []attachment
+				}
 				Mentions []struct{ UUID, Number string }
 			}
 		}
@@ -362,6 +378,15 @@ func (h *harness) receive(frame string) {
 	e := f.Envelope
 	h.keepSecret(e.DataMessage.Message)
 	h.keepSecret(e.DataMessage.Quote.Text)
+	for _, a := range append(e.DataMessage.Attachments, e.DataMessage.Quote.Attachments...) {
+		h.keepExact(a.Filename, a.ContentType)
+	}
+	for _, u := range urlPattern.FindAllString(e.DataMessage.Message+"\n"+e.DataMessage.Quote.Text, -1) {
+		h.keepExact(u)
+		if p, err := url.Parse(u); err == nil {
+			h.keepExact(p.Host)
+		}
+	}
 	h.person(e.Source, e.SourceUUID, e.SourceNumber, e.SourceName, e.DataMessage.Quote.Author, e.DataMessage.Quote.AuthorUUID)
 	for _, m := range e.DataMessage.Mentions {
 		h.person(m.UUID, m.Number)
@@ -400,6 +425,18 @@ func (h *harness) keepSecret(s string) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	h.secrets = append(h.secrets, secretForms(s)...)
+}
+
+// keepExact remembers texts that must never reach the log, however short:
+// a file's name or declared type, a link or its host.
+func (h *harness) keepExact(ss ...string) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	for _, s := range ss {
+		if s != "" && !slices.Contains(h.secrets, s) {
+			h.secrets = append(h.secrets, s)
+		}
+	}
 }
 
 // secretForms is what of s to look for in the log: s as a log line would
@@ -529,10 +566,14 @@ func (h *harness) startModel() {
 			return
 		}
 		if r.Method == http.MethodGet { // the model list
-			in, params := `["text"]`, `["reasoning","tools"]`
+			mods, params := []string{`"text"`}, `["reasoning","tools"]`
 			if h.w.Vision {
-				in = `["text","image"]`
+				mods = append(mods, `"image"`)
 			}
+			if h.w.Audio {
+				mods = append(mods, `"audio"`)
+			}
+			in := "[" + strings.Join(mods, ",") + "]"
 			if h.w.NoTools {
 				params = `["reasoning"]`
 			}
@@ -619,12 +660,23 @@ func parseModelRequest(body []byte) modelRequest {
 				ImageURL struct {
 					URL string `json:"url"`
 				} `json:"image_url"`
+				File struct {
+					Filename string `json:"filename"`
+				} `json:"file"`
+				InputAudio struct {
+					Format string `json:"format"`
+				} `json:"input_audio"`
 			}
 			json.Unmarshal(m.Content, &parts)
 			for _, p := range parts {
-				if p.Type == "text" {
+				switch p.Type {
+				case "text":
 					cm.Content += p.Text
-				} else {
+				case "file":
+					cm.Files = append(cm.Files, "file:"+p.File.Filename)
+				case "input_audio":
+					cm.Files = append(cm.Files, "audio:"+p.InputAudio.Format)
+				default:
 					cm.Images = append(cm.Images, p.ImageURL.URL)
 				}
 			}
