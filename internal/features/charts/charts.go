@@ -44,15 +44,14 @@ type darkHours struct{ from, to int }
 var (
 	never  = darkHours{}
 	allDay = darkHours{0, 24 * 60}
-	auto   = darkHours{21 * 60, 7 * 60}
 )
 
 // clockPattern is a time of day: 18, 18:30, 6pm, 6:30 am.
 var clockPattern = regexp.MustCompile(`^(\d{1,2})(?::(\d{2}))?\s*(am|pm)?$`)
 
-// darkMode reads DARKMODE: off (the default), on, auto (21:00 to 07:00) or
-// a range of times such as 18:00-6:00, 18-6 or 6pm-6am. Any other value
-// is taken as off, with a warning.
+// darkMode reads DARKMODE: off (the default), on, or the hours charts are
+// dark, such as 18:00-6:00, 18-6 or 6pm-6am. Any other value is taken as
+// off, with a warning.
 func darkMode(h feature.Host) darkHours {
 	v := h.Env("DARKMODE", "off")
 	switch m := strings.ToLower(strings.TrimSpace(v)); m {
@@ -60,8 +59,6 @@ func darkMode(h feature.Host) darkHours {
 		return never
 	case "on":
 		return allDay
-	case "auto":
-		return auto
 	default:
 		if from, to, ok := strings.Cut(m, "-"); ok {
 			if f, ok := clock(from); ok {
@@ -71,7 +68,7 @@ func darkMode(h feature.Host) darkHours {
 			}
 		}
 	}
-	logx.Warnf("DARKMODE=%q is not off, on, auto or a range of times such as 18:00-6:00; charts are light", txt.Clamp(v, 20))
+	logx.Warnf("DARKMODE=%q is not off, on or a range of times such as 18:00-6:00; charts are light", txt.Clamp(v, 20))
 	return never
 }
 

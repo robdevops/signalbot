@@ -135,7 +135,7 @@ Add the bot's account to a group and @mention it, reply to one of its messages, 
 | `MODEL_SEARCH` | `true` | Lets the model search the web (OpenRouter's web search tool) when it decides to, citing the sites it uses by url; searches are billed. Only on OpenRouter: on another API it is left out, with a warning. Accepts `true`/`false`, `yes`/`no`, `on`/`off`, `1`/`0` |
 | `MODEL_SYSTEM_PROMPT` | empty | Extra instructions, appended to the built-in prompt (which keeps answers short and Signal-sized and, when the model has tools, asks it to name its source) |
 | `DAILY_BUDGET` | `1` | US dollars each group and each DM may spend on the model a day, midnight to midnight in `TZ`; `0` for no cap. Once a chat reaches it, the bot says once "I've reached today's spending limit for this chat; I'll be back in 5 hours." and answers nothing else there until midnight, except commands that don't use the model. Today's spending is saved in `budget.json` in `STATE_DIRECTORY`, so a restart doesn't reset it. Only OpenRouter reports costs, so with another API it isn't applied |
-| `DARKMODE` | `off` | Chart colours: `off` for light charts, `on` for dark, `auto` for dark from 21:00 to 07:00 in `TZ`, or your own hours in `TZ`, such as `18:00-6:00`, `18-6` or `6pm-6am` |
+| `DARKMODE` | `off` | Chart colours: `off` for light charts, `on` for dark, or the hours charts are dark in `TZ`, such as `18:00-6:00`, `18-6` or `6pm-6am` |
 | `GROUP_CONTEXT` | `true` | Remember group messages not addressed to the bot as context, so "what do you think @bot" works without replying to the message; they are never logged |
 | `HISTORY_MAX` | `10` | Most messages remembered per chat, the bot's replies and, in groups, messages not addressed to it included. When full, the older half is dropped, so the start of the model's request stays the same for several messages and comes from the API's prompt cache (cheaper and faster); below 3, the oldest message is dropped |
 | `INTRO` | built-in sentence | Overrides the self-introduction; `{name}`, `{model}` (without any OpenRouter `provider/` prefix) and `{tools}` (the names of the tools, or `none`) are substituted |
@@ -143,7 +143,7 @@ Add the bot's account to a group and @mention it, reply to one of its messages, 
 | `MCP_CONFIG` | empty | Path of an MCP servers file; see [MCP tools](docs/MCP.md) |
 | `STATE_DIRECTORY` | working directory | Where `/schedule` saves `schedules.json`; the bot won't start if it can't list and write it. Set by systemd's `StateDirectory=signalbot` (`/var/lib/private/signalbot`) and by the Docker image (`/data`, which must be writable by user 65532) |
 | `TOOL_LINGER_ROUNDS` | `2` | Replies a keyword-gated tool group (charts, an MCP server with `keywords`) stays offered after the last one that matched its keywords or used its tools; `0` offers it only on a matching message. Any use or match starts the count again, so a run of follow-ups keeps it. Capped at `HISTORY_MAX`. See [How tools are offered](docs/TOOLS.md) |
-| `TZ` | `UTC` in Docker, the host's under systemd | Time zone for `/schedule` times without an offset and for `DARKMODE=auto`, e.g. `Australia/Sydney` |
+| `TZ` | `UTC` in Docker, the host's under systemd | Time zone for `/schedule` times without an offset and for `DARKMODE` hours, e.g. `Australia/Sydney` |
 
 `OPENROUTER_API_KEY` is now `MODEL_API_KEY`, and `REASONING` and `SYSTEM_PROMPT` are now `MODEL_REASONING` and `MODEL_SYSTEM_PROMPT`; the old names are ignored. `LOG_LEVEL` is gone: every level is always written (see [Logs](TECHNICAL.md#logs)).
 
