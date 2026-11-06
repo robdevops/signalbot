@@ -34,25 +34,80 @@ var wantsSecondAxis = regexp.MustCompile(`(?i)\b(second(ary)?|dual|double|two|2|
 // arguments, but never the user's message.
 var errArgs = errors.New("invalid arguments")
 
-// now is the clock DARKMODE=auto reads; tests replace it.
+// now is the clock DARKMODE reads; tests replace it.
 var now = time.Now
 
-// darkMode reads DARKMODE: "off" (the default), "on" or "auto". Any other
-// value is taken as off, with a warning.
-func darkMode(h feature.Host) string {
+// darkHours is when charts are dark: from one minute of the day up to
+// another, local time (TZ), wrapping midnight when the end is earlier.
+type darkHours struct{ from, to int }
+
+var (
+	never  = darkHours{}
+	allDay = darkHours{0, 24 * 60}
+	auto   = darkHours{21 * 60, 7 * 60}
+)
+
+// clockPattern is a time of day: 18, 18:30, 6pm, 6:30 am.
+var clockPattern = regexp.MustCompile(`^(\d{1,2})(?::(\d{2}))?\s*(am|pm)?$`)
+
+// darkMode reads DARKMODE: off (the default), on, auto (21:00 to 07:00) or
+// a range of times such as 18:00-6:00, 18-6 or 6pm-6am. Any other value
+// is taken as off, with a warning.
+func darkMode(h feature.Host) darkHours {
 	v := h.Env("DARKMODE", "off")
-	switch m := strings.ToLower(v); m {
-	case "off", "on", "auto":
-		return m
+	switch m := strings.ToLower(strings.TrimSpace(v)); m {
+	case "off":
+		return never
+	case "on":
+		return allDay
+	case "auto":
+		return auto
+	default:
+		if from, to, ok := strings.Cut(m, "-"); ok {
+			if f, ok := clock(from); ok {
+				if t, ok := clock(to); ok && f != t {
+					return darkHours{f, t}
+				}
+			}
+		}
 	}
-	logx.Warnf("DARKMODE=%q is not off, on or auto; charts are light", txt.Clamp(v, 20))
-	return "off"
+	logx.Warnf("DARKMODE=%q is not off, on, auto or a range of times such as 18:00-6:00; charts are light", txt.Clamp(v, 20))
+	return never
 }
 
-// themeFor is the theme a chart is drawn in now: dark when mode is "on", or
-// "auto" from 21:00 to 07:00 local time (TZ); otherwise light.
-func themeFor(mode string) *theme {
-	if hour := now().In(time.Local).Hour(); mode == "on" || mode == "auto" && (hour >= 21 || hour < 7) {
+// clock is a time of day as minutes since midnight: 18, 18:30, 6pm, 6:30am,
+// 12am (midnight) or 12pm (noon).
+func clock(s string) (int, bool) {
+	m := clockPattern.FindStringSubmatch(strings.TrimSpace(s))
+	if m == nil {
+		return 0, false
+	}
+	h, _ := strconv.Atoi(m[1])
+	min, _ := strconv.Atoi(m[2])
+	switch {
+	case min > 59, m[3] == "" && h > 23, m[3] != "" && (h < 1 || h > 12):
+		return 0, false
+	case m[3] == "am" && h == 12:
+		h = 0
+	case m[3] == "pm" && h < 12:
+		h += 12
+	}
+	return h*60 + min, true
+}
+
+// dark reports whether charts are dark at t, by the local time (TZ).
+func (d darkHours) dark(t time.Time) bool {
+	t = t.In(time.Local)
+	m := t.Hour()*60 + t.Minute()
+	if d.from <= d.to {
+		return m >= d.from && m < d.to
+	}
+	return m >= d.from || m < d.to
+}
+
+// themeFor is the theme a chart is drawn in now, decided as each is drawn.
+func themeFor(d darkHours) *theme {
+	if d.dark(now()) {
 		return darkTheme
 	}
 	return lightTheme
@@ -88,7 +143,7 @@ func Register(h feature.Host) error {
 }
 
 // lineChart runs a line chart tool, on two Y axes if dual.
-func lineChart(mode string, dual bool) func(context.Context, string) (string, []feature.Picture, error) {
+func lineChart(mode darkHours, dual bool) func(context.Context, string) (string, []feature.Picture, error) {
 	return func(_ context.Context, args string) (string, []feature.Picture, error) {
 		s, err := parseChart(args)
 		if err == nil && !dual && s.right.used {
