@@ -58,7 +58,7 @@ var dualAxisToolSchema = json.RawMessage(`{
   },
   "$defs": {"axis": {"type": "object", "properties": {
     "title": {"type": "string", "description": "Axis title, e.g. \"Price ($)\" or \"Rainfall (mm)\"; required on both axes when both are used"},
-    "mode": {"type": "string", "enum": ["value", "change"], "description": "value (default): plot the values as given, e.g. a population, a price or rainfall. change: plot each series as % change from its first point; use it whenever two or more series differ in scale, e.g. two stocks' prices, so they can be compared"},
+    "mode": {"type": "string", "enum": ["value", "change"], "description": "value (default): plot the values as given, e.g. a population, a price or rainfall. change: plot each series as % change from its first point; use it when the question is about performance, growth or return, for one series or several, and whenever series differ in scale"},
     "unit": {"type": "string", "description": "Prefix for values in value mode, e.g. \"$\""},
     "invert": {"type": "boolean", "description": "Draw this axis upside down: higher values lower"}
   }}}
@@ -92,8 +92,9 @@ const (
 	chartBody = "Use it when a chart would help, e.g. to show a trend or compare series. Pass the raw values: an axis shows them as given unless its mode is change, which computes the % change for you. " +
 		"The chart is sent alone with its title as the caption, so write no other text: it would be discarded."
 	chartToolDescription = "Draw a line chart of one or more series over time, on one Y axis, and attach it to your reply as an image. " +
-		"With two or more series whose values differ in scale, such as two stocks' prices or two companies' revenues, set the axis mode to change, " +
-		"so each is drawn as % change from its first point and they can be compared; keep value mode for one series, or for series on the same scale, such as two cities' rainfall. " + chartBody
+		"Choose the axis mode by what the chart is meant to show, for one series as much as several: change, which draws each series as % change from its first point, " +
+		"when the question is about performance, growth or return (how a stock did this year, NVDA vs AMD, a company's revenue growth) or the series differ in scale; " +
+		"value, the numbers as given, when the level itself matters (a price, a population, rainfall, temperatures). " + chartBody
 	dualAxisToolDescription = "Draw a line chart of one or more series over time on two Y axes, left and right, and attach it to your reply as an image. " +
 		"Use it only because the user asked for a second axis; otherwise use " + chartTool + ". " + chartBody
 )
