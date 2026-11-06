@@ -58,6 +58,10 @@ type chatCommand struct {
 
 var unsafeToolChars = regexp.MustCompile(`[^A-Za-z0-9_-]`)
 
+// envPattern finds ${NAME} in a server's settings, for the bot's environment
+// variable NAME.
+var envPattern = regexp.MustCompile(`\$\{([A-Za-z_][A-Za-z0-9_]*)\}`)
+
 // Register starts the servers in MCP_CONFIG, if set, and offers their tools
 // on h. They run as long as the bot: when it stops, local servers get
 // SIGTERM and the bot waits for them. With no model, none is started.
@@ -111,8 +115,41 @@ func load(path string) (map[string]server, error) {
 		if (s.URL == "") == (s.Command == "") {
 			return nil, fmt.Errorf("MCP server %q needs a url or a command, not both or neither", name)
 		}
+		if err := s.expand(); err != nil {
+			return nil, fmt.Errorf("MCP server %q: %v", name, err)
+		}
+		f.Servers[name] = s
 	}
 	return f.Servers, nil
+}
+
+// expand fills each ${NAME} in the server's url, headers, args and env with
+// the bot's environment variable NAME, so a token can stay out of the file.
+// One that isn't set is an error naming it: never an empty token sent.
+func (s *server) expand() (err error) {
+	fill := func(p *string) {
+		if err != nil {
+			return
+		}
+		*p = envPattern.ReplaceAllStringFunc(*p, func(m string) string {
+			v, ok := os.LookupEnv(m[2 : len(m)-1])
+			if !ok && err == nil {
+				err = fmt.Errorf("%s isn't set in the bot's environment", m)
+			}
+			return v
+		})
+	}
+	fill(&s.URL)
+	for i := range s.Args {
+		fill(&s.Args[i])
+	}
+	for _, m := range []map[string]string{s.Headers, s.Env} {
+		for k, v := range m {
+			fill(&v)
+			m[k] = v
+		}
+	}
+	return err
 }
 
 // maxInstructions caps a server's own instructions in the system prompt.

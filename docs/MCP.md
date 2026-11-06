@@ -6,7 +6,7 @@ The model can call tools from [MCP](https://modelcontextprotocol.io) servers, re
 {"mcpServers": {
   "weather": {
     "url": "https://example.com/mcp",
-    "headers": {"Authorization": "Bearer …"},
+    "headers": {"Authorization": "Bearer ${WEATHER_TOKEN}"},
     "allowed_tools": ["get_forecast", "get_alerts"],
     "instructions": "Use the weather tools for any forecast, and give temperatures in °C.",
     "keywords": ["weather", "forecast", "rain", "temperature"],
@@ -29,6 +29,7 @@ The model can call tools from [MCP](https://modelcontextprotocol.io) servers, re
 |---|---|
 | `url`, `headers` | a remote server (Streamable HTTP or SSE), with optional HTTP headers |
 | `command`, `args`, `env` | a local server, run with only `PATH`, `HOME` and its `env` |
+| `${NAME}` | in `url`, `headers`, `args` or `env`: replaced at startup by the bot's environment variable `NAME` (set it in the unit's `EnvironmentFile`), so a token stays out of this file; one that isn't set stops the bot with an error naming it |
 | `allowed_tools` / `blocked_tools` | offer only these tools, or every tool but these |
 | `instructions` | a line added to the system prompt while the server's tools are offered (see below) |
 | `keywords` | offer the server's tools only when a message has one of these words (see below). A server without them is offered with every message, except one whose page or file the model is shown, so what a document says can't call its tools |
