@@ -235,8 +235,12 @@ func start(ctx context.Context, h feature.Host, servers map[string]server) error
 					return call(ctx, c, t.Name, args)
 				}})
 		}
+		label := name
+		if !strings.Contains(strings.ToLower(name), "mcp") {
+			label += " MCP" // so the intro and the log show it is an MCP server
+		}
 		if len(g.Names) > 0 { // before its commands join them: one line per server
-			logx.Noticef("MCP tools of %s: %s", name, strings.Join(g.Names, ", "))
+			logx.Noticef("%s: %s", label, strings.Join(g.Names, ", "))
 		}
 		if !info.CallsTools {
 			cfg.ChatCommands = nil // a command would force a tool the model can't call
@@ -252,10 +256,6 @@ func start(ctx context.Context, h feature.Host, servers map[string]server) error
 		if len(g.Tools) > 0 {
 			all := strings.Join(append(g.Names, own...), ", ")
 			g.Listing = name + ": " + all
-			label := name
-			if !strings.Contains(strings.ToLower(name), "mcp") {
-				label += " MCP" // so the intro shows it is an MCP server
-			}
 			g.Names = []string{"**" + label + "**: " + all} // grouped by server in {tools}, in Markdown
 			h.Tools(g)
 		}

@@ -353,7 +353,7 @@ func TestStartupErrors(t *testing.T) {
 	if err != nil || len(h.ToolGroups()) != 0 {
 		t.Fatalf("unreachable server: %+v, %v", h.ToolGroups(), err)
 	}
-	if !strings.Contains(log.String(), "<3>MCP server gone unavailable, its tools are left out: ") || strings.Contains(log.String(), "MCP tools of") {
+	if !strings.Contains(log.String(), "<3>MCP server gone unavailable, its tools are left out: ") || strings.Contains(log.String(), " MCP: ") {
 		t.Fatalf("log %q", log.String())
 	}
 }
@@ -399,7 +399,7 @@ func TestToolGroups(t *testing.T) {
 			t.Errorf("keywords on %q: %v", text, got)
 		}
 	}
-	for _, want := range []string{"<5>MCP tools of plain_Mcp: echo\n", "<5>MCP tools of scout: fail\n", "<5>MCP tools of yahoo: echo, pic\n", "<5>chat commands: /scout\n"} {
+	for _, want := range []string{"<5>plain_Mcp: echo\n", "<5>scout MCP: fail\n", "<5>yahoo MCP: echo, pic\n", "<5>chat commands: /scout\n"} {
 		if !strings.Contains(log.String(), want) {
 			t.Errorf("log %q, want %q", log.String(), want)
 		}
