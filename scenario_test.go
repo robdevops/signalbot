@@ -1038,7 +1038,7 @@ func TestScenarioNoModel(t *testing.T) {
 	if calls := h.toolCalls(); len(calls) != 0 {
 		t.Fatalf("MCP calls %v", calls)
 	}
-	if _, ok := h.logged("MCP tools:"); ok {
+	if _, ok := h.logged("MCP tools of"); ok {
 		t.Fatalf("MCP connected: %v", h.logLines())
 	}
 }

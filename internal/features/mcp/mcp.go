@@ -161,7 +161,7 @@ func start(ctx context.Context, h feature.Host, servers map[string]server) error
 	info := h.Info()
 	version := cmp.Or(info.Version, "dev")
 	taken := map[string]bool{} // the model's names for tools
-	var tools, cmds []string   // for the startup lines
+	var cmds []string          // for the startup line
 	for _, name := range slices.Sorted(maps.Keys(servers)) {
 		cfg := servers[name]
 		var c conn = &httpConn{url: cfg.URL, headers: cfg.Headers, client: httpx.Client(2), version: version}
@@ -198,7 +198,9 @@ func start(ctx context.Context, h feature.Host, servers map[string]server) error
 					return call(ctx, c, t.Name, args)
 				}})
 		}
-		tools = append(tools, g.Names...) // before its commands join them
+		if len(g.Names) > 0 { // before its commands join them: one line per server
+			logx.Noticef("MCP tools of %s: %s", name, strings.Join(g.Names, ", "))
+		}
 		if !info.CallsTools {
 			cfg.ChatCommands = nil // a command would force a tool the model can't call
 		}
@@ -223,9 +225,6 @@ func start(ctx context.Context, h feature.Host, servers map[string]server) error
 		if s, ok := c.(*stdioConn); ok {
 			h.Go(func(context.Context) { s.supervise(ctx) })
 		}
-	}
-	if len(tools) > 0 {
-		logx.Noticef("MCP tools: %s", strings.Join(tools, ", "))
 	}
 	if len(cmds) > 0 {
 		logx.Noticef("chat commands: %s", strings.Join(cmds, ", "))
