@@ -227,6 +227,22 @@ func TestLoad(t *testing.T) {
 	if _, err := load(filepath.Join(t.TempDir(), "missing")); err == nil {
 		t.Error("a missing file must be an error")
 	}
+	// ${NAME} in a url, header, arg or env value is the bot's environment
+	// variable; one that isn't set is an error naming it, never its value,
+	// and never an empty token sent. $NAME alone is left as it is.
+	t.Setenv("MCP_TEST_TOKEN", "s3cret")
+	t.Setenv("MCP_TEST_HOST", "x")
+	tokens := `{"mcpServers":{"w":{"url":"https://${MCP_TEST_HOST}/mcp","headers":{"Authorization":"Bearer ${MCP_TEST_TOKEN}","X":"$MCP_TEST_TOKEN"}},` +
+		`"l":{"command":"x","args":["--key=${MCP_TEST_TOKEN}"],"env":{"KEY":"${MCP_TEST_TOKEN}${MCP_TEST_HOST}"}}}}`
+	s, err = load(writeConfig(t, tokens))
+	if err != nil || s["w"].URL != "https://x/mcp" || s["w"].Headers["Authorization"] != "Bearer s3cret" || s["w"].Headers["X"] != "$MCP_TEST_TOKEN" ||
+		s["l"].Args[0] != "--key=s3cret" || s["l"].Env["KEY"] != "s3cretx" {
+		t.Fatalf("expanded: %+v, %v", s, err)
+	}
+	if _, err := load(writeConfig(t, `{"mcpServers":{"w":{"url":"u","headers":{"A":"${MCP_TEST_UNSET}"}}}}`)); err == nil ||
+		err.Error() != `MCP server "w": ${MCP_TEST_UNSET} isn't set in the bot's environment` {
+		t.Fatalf("unset: %v", err)
+	}
 	// A bad config stops the bot from starting.
 	if _, _, err := register(t, `{"mcpServers":{"w":{"url":"u","command":"c"}}}`); err == nil {
 		t.Error("Register must refuse a bad config")
@@ -337,7 +353,7 @@ func TestStartupErrors(t *testing.T) {
 	if err != nil || len(h.ToolGroups()) != 0 {
 		t.Fatalf("unreachable server: %+v, %v", h.ToolGroups(), err)
 	}
-	if !strings.Contains(log.String(), "<3>MCP server gone unavailable, its tools are left out: ") || strings.Contains(log.String(), "MCP tools:") {
+	if !strings.Contains(log.String(), "<3>MCP server gone unavailable, its tools are left out: ") || strings.Contains(log.String(), " MCP: ") {
 		t.Fatalf("log %q", log.String())
 	}
 }
@@ -383,7 +399,7 @@ func TestToolGroups(t *testing.T) {
 			t.Errorf("keywords on %q: %v", text, got)
 		}
 	}
-	for _, want := range []string{"<5>MCP tools: echo, fail, echo, pic\n", "<5>chat commands: /scout\n"} {
+	for _, want := range []string{"<5>plain_Mcp: echo\n", "<5>scout MCP: fail\n", "<5>yahoo MCP: echo, pic\n", "<5>chat commands: /scout\n"} {
 		if !strings.Contains(log.String(), want) {
 			t.Errorf("log %q, want %q", log.String(), want)
 		}

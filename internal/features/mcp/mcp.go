@@ -58,6 +58,10 @@ type chatCommand struct {
 
 var unsafeToolChars = regexp.MustCompile(`[^A-Za-z0-9_-]`)
 
+// envPattern finds ${NAME} in a server's settings, for the bot's environment
+// variable NAME.
+var envPattern = regexp.MustCompile(`\$\{([A-Za-z_][A-Za-z0-9_]*)\}`)
+
 // Register starts the servers in MCP_CONFIG, if set, and offers their tools
 // on h. They run as long as the bot: when it stops, local servers get
 // SIGTERM and the bot waits for them. With no model, none is started.
@@ -111,8 +115,41 @@ func load(path string) (map[string]server, error) {
 		if (s.URL == "") == (s.Command == "") {
 			return nil, fmt.Errorf("MCP server %q needs a url or a command, not both or neither", name)
 		}
+		if err := s.expand(); err != nil {
+			return nil, fmt.Errorf("MCP server %q: %v", name, err)
+		}
+		f.Servers[name] = s
 	}
 	return f.Servers, nil
+}
+
+// expand fills each ${NAME} in the server's url, headers, args and env with
+// the bot's environment variable NAME, so a token can stay out of the file.
+// One that isn't set is an error naming it: never an empty token sent.
+func (s *server) expand() (err error) {
+	fill := func(p *string) {
+		if err != nil {
+			return
+		}
+		*p = envPattern.ReplaceAllStringFunc(*p, func(m string) string {
+			v, ok := os.LookupEnv(m[2 : len(m)-1])
+			if !ok && err == nil {
+				err = fmt.Errorf("%s isn't set in the bot's environment", m)
+			}
+			return v
+		})
+	}
+	fill(&s.URL)
+	for i := range s.Args {
+		fill(&s.Args[i])
+	}
+	for _, m := range []map[string]string{s.Headers, s.Env} {
+		for k, v := range m {
+			fill(&v)
+			m[k] = v
+		}
+	}
+	return err
 }
 
 // maxInstructions caps a server's own instructions in the system prompt.
@@ -161,7 +198,7 @@ func start(ctx context.Context, h feature.Host, servers map[string]server) error
 	info := h.Info()
 	version := cmp.Or(info.Version, "dev")
 	taken := map[string]bool{} // the model's names for tools
-	var tools, cmds []string   // for the startup lines
+	var cmds []string          // for the startup line
 	for _, name := range slices.Sorted(maps.Keys(servers)) {
 		cfg := servers[name]
 		var c conn = &httpConn{url: cfg.URL, headers: cfg.Headers, client: httpx.Client(2), version: version}
@@ -198,7 +235,13 @@ func start(ctx context.Context, h feature.Host, servers map[string]server) error
 					return call(ctx, c, t.Name, args)
 				}})
 		}
-		tools = append(tools, g.Names...) // before its commands join them
+		label := name
+		if !strings.Contains(strings.ToLower(name), "mcp") {
+			label += " MCP" // so the intro and the log show it is an MCP server
+		}
+		if len(g.Names) > 0 { // before its commands join them: one line per server
+			logx.Noticef("%s: %s", label, strings.Join(g.Names, ", "))
+		}
 		if !info.CallsTools {
 			cfg.ChatCommands = nil // a command would force a tool the model can't call
 		}
@@ -213,19 +256,12 @@ func start(ctx context.Context, h feature.Host, servers map[string]server) error
 		if len(g.Tools) > 0 {
 			all := strings.Join(append(g.Names, own...), ", ")
 			g.Listing = name + ": " + all
-			label := name
-			if !strings.Contains(strings.ToLower(name), "mcp") {
-				label += " MCP" // so the intro shows it is an MCP server
-			}
 			g.Names = []string{"**" + label + "**: " + all} // grouped by server in {tools}, in Markdown
 			h.Tools(g)
 		}
 		if s, ok := c.(*stdioConn); ok {
 			h.Go(func(context.Context) { s.supervise(ctx) })
 		}
-	}
-	if len(tools) > 0 {
-		logx.Noticef("MCP tools: %s", strings.Join(tools, ", "))
 	}
 	if len(cmds) > 0 {
 		logx.Noticef("chat commands: %s", strings.Join(cmds, ", "))
