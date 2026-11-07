@@ -110,6 +110,9 @@ Use one install per host, systemd or Docker: the unit's dynamic user and the con
 ```
 sudo docker build -t signalbot \
   --build-arg VERSION=$(git describe --tags --always --dirty) .
+```
+
+```
 sudo docker run -d --name signalbot --restart=always \
   --env-file /etc/signalbot.env \
   --network=host \
