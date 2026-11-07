@@ -110,7 +110,7 @@ Use one install per host, systemd or Docker: the unit's dynamic user and the con
 Build and start it, from the code's directory:
 
 ```
-sudo VERSION=$(git describe --tags --always --dirty) docker compose up -d --build
+sudo VERSION=$(git describe --tags --always --dirty) LOG_DRIVER=$(test -S /run/systemd/journal/socket && echo journald || echo local) docker compose up -d --build
 ```
 
 Read the logs:
@@ -119,7 +119,7 @@ Read the logs:
 docker logs -f signalbot
 ```
 
-Logs use Docker's rotating `local` driver. On a host with systemd, add `LOG_DRIVER=journald` before `docker compose` to send them to the journal, where `journalctl CONTAINER_NAME=signalbot -p err` shows warnings and errors.
+Logs go to journald where the host has it, otherwise to Docker's rotating `local` driver; `docker logs` reads both. Under journald, `journalctl CONTAINER_NAME=signalbot -p err` shows warnings and errors.
 
 ### Test
 
