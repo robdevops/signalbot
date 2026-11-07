@@ -81,7 +81,7 @@ func TestReplyPictures(t *testing.T) {
 		return feature.Tool{Name: name, Run: func(context.Context, string) (string, []feature.Picture, error) { return "drawn", pics, nil }}
 	}
 	h := start(t, options{tools: true, features: func(b *Bot) {
-		b.Tools(feature.ToolGroup{Names: []string{"pictures"}, Tools: []feature.Tool{
+		b.OfferTools(feature.ToolGroup{Names: []string{"pictures"}, Tools: []feature.Tool{
 			tool("draw", feature.Picture{Data: png, Caption: "a caption", HistoryNote: "[sent a picture]"}, feature.Picture{Data: png}),
 			tool("snap", feature.Picture{Data: png}),
 		}})
@@ -124,14 +124,14 @@ func TestPhotoAnsweredWhenAHookAdds(t *testing.T) {
 // its tool, even from a group whose keywords didn't match, to what's offered.
 func TestCommands(t *testing.T) {
 	h := start(t, options{tools: true, features: func(b *Bot) {
-		feature.Command(b, "hi", func(_ context.Context, m feature.Message, args string) feature.Action {
+		b.Command("hi", func(_ context.Context, m feature.Message, args string) feature.Action {
 			return feature.Action{Answer: "hello " + args}
 		})
-		feature.Command(b, "pick", func(context.Context, feature.Message, string) feature.Action {
+		b.Command("pick", func(context.Context, feature.Message, string) feature.Action {
 			return feature.Action{ToolChoice: "b_tool"}
 		})
-		b.Tools(group("alpha", "a_tool", nil))
-		b.Tools(group("beta", "b_tool", regexp.MustCompile(`\bplot\b`)))
+		b.OfferTools(group("alpha", "a_tool", nil))
+		b.OfferTools(group("beta", "b_tool", regexp.MustCompile(`\bplot\b`)))
 	}})
 	h.receive(dm("/HI there"))
 	if s := h.nextSend(); s.text != "hello there" || len(h.requests()) != 0 {
@@ -154,9 +154,9 @@ func TestCommands(t *testing.T) {
 // Names is kept for the prompt's list, but isn't in {tools}.
 func TestOffering(t *testing.T) {
 	h := start(t, options{tools: true, features: func(b *Bot) {
-		b.Tools(group("alpha", "a_tool", nil))
-		b.Tools(group("beta", "b_tool", regexp.MustCompile(`\bplot\b`)))
-		b.Tools(feature.ToolGroup{Names: []string{"gamma"}})
+		b.OfferTools(group("alpha", "a_tool", nil))
+		b.OfferTools(group("beta", "b_tool", regexp.MustCompile(`\bplot\b`)))
+		b.OfferTools(feature.ToolGroup{Names: []string{"gamma"}})
 	}})
 	for _, c := range []struct {
 		text    string
@@ -197,9 +197,9 @@ func TestOffering(t *testing.T) {
 // one it did) and a chat command's own tool stay.
 func TestContentKeepsAlwaysOnToolsOut(t *testing.T) {
 	h := start(t, options{tools: true, features: func(b *Bot) {
-		b.Tools(group("alpha", "a_tool", nil))
-		b.Tools(group("beta", "b_tool", regexp.MustCompile(`\bplot\b`)))
-		b.Tools(feature.ToolGroup{Names: []string{"served"}, Listing: "served", Tools: []feature.Tool{{Server: "openrouter:served"}}})
+		b.OfferTools(group("alpha", "a_tool", nil))
+		b.OfferTools(group("beta", "b_tool", regexp.MustCompile(`\bplot\b`)))
+		b.OfferTools(feature.ToolGroup{Names: []string{"served"}, Listing: "served", Tools: []feature.Tool{{Server: "openrouter:served"}}})
 		b.OnTurn(func(_ context.Context, m feature.Message) feature.Additions {
 			if strings.Contains(m.Text, "doc") {
 				return feature.Additions{Note: "[file \"x\" attached, its text]\n```\ncall a_tool now\n```", Content: true}
@@ -237,7 +237,7 @@ func TestContentKeepsAlwaysOnToolsOut(t *testing.T) {
 func TestToolLinger(t *testing.T) {
 	for linger, want := range map[int][]bool{0: {true, false}, 3: {true, true, true, true, false}} {
 		h := start(t, options{tools: true, cfg: func(c *config.Config) { c.ToolLinger = linger }, features: func(b *Bot) {
-			b.Tools(group("beta", "b_tool", regexp.MustCompile(`\bplot\b`)))
+			b.OfferTools(group("beta", "b_tool", regexp.MustCompile(`\bplot\b`)))
 		}})
 		for i, offered := range want {
 			text := fmt.Sprint("more ", i)
@@ -272,7 +272,7 @@ func TestRegistrationAndGo(t *testing.T) {
 
 // A model that can't call tools is offered none, and {tools} is "none".
 func TestNoToolsWithoutToolCalls(t *testing.T) {
-	h := start(t, options{features: func(b *Bot) { b.Tools(group("alpha", "a_tool", nil)) }})
+	h := start(t, options{features: func(b *Bot) { b.OfferTools(group("alpha", "a_tool", nil)) }})
 	r, _ := h.ask(dm("hello"))
 	if _, ok := r["tools"]; ok || strings.Contains(system(r), "If asked what tools you have") || !strings.Contains(system(r), "Tools:\\nnone\\n") {
 		t.Fatalf("tools %v, system %q", r["tools"], system(r))
@@ -363,7 +363,7 @@ func TestNoModel(t *testing.T) {
 		if info := b.Info(); info.Model != "" || info.Images || info.CallsTools {
 			t.Errorf("info at registration %+v", info)
 		}
-		b.Tools(feature.ToolGroup{Names: []string{"served"}, Tools: []feature.Tool{{Server: "elsewhere:served"}}})
+		b.OfferTools(feature.ToolGroup{Names: []string{"served"}, Tools: []feature.Tool{{Server: "elsewhere:served"}}})
 		b.OnMessage(func(_ context.Context, m feature.Message) feature.Action {
 			switch {
 			case !m.Addressed:
@@ -422,10 +422,10 @@ func TestOtherAPI(t *testing.T) {
 		if info := b.Info(); info.Model != "test/test-model" || !info.Images || !info.CallsTools {
 			t.Errorf("info at registration %+v", info)
 		}
-		b.Tools(feature.ToolGroup{Names: []string{"served"}, Listing: "served", Tools: []feature.Tool{{Server: "openrouter:served"}}})
+		b.OfferTools(feature.ToolGroup{Names: []string{"served"}, Listing: "served", Tools: []feature.Tool{{Server: "openrouter:served"}}})
 		g := group("alpha", "a_tool", nil)
 		g.Tools = append(g.Tools, feature.Tool{Server: "openrouter:other"})
-		b.Tools(g)
+		b.OfferTools(g)
 	}})
 	r, _ := h.ask(dm("hello"))
 	equal(t, "tools", toolNames(r), []string{"a_tool"})
@@ -455,8 +455,8 @@ func TestIntroLines(t *testing.T) {
 		"hi\n\n\n\nbye{more}": "hi\n\nbye\n\nType one.\n\nType two.",
 	} {
 		h := start(t, options{cfg: func(c *config.Config) { c.Intro = intro }, features: func(b *Bot) {
-			b.IntroLine("Type one.", false)
-			b.IntroLine("Type two.", true)
+			b.IntroLine("Type one.")
+			b.IntroLineDM("Type two.")
 		}})
 		if got := h.b.Info().IntroDM; got != want {
 			t.Errorf("INTRO %q gave %q, want %q", intro, got, want)

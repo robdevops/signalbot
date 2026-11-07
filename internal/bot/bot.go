@@ -55,17 +55,17 @@ type Member struct{ Name, ID string }
 
 // Bot is the core, and the Host features register on.
 type Bot struct {
-	cfg      *config.Config
-	net      Network
-	ai       *model.Client // nil with no model
-	chats    *chats.Store[Received]
-	timers   *timers.Timers
-	slots    chan struct{} // one per chat being worked on
-	ctx      context.Context
-	stop     context.CancelFunc // stops the timers
-	timerCtx context.Context
-	closing  atomic.Bool    // no new work starts
-	running  sync.WaitGroup // the timers, and what features run with Go
+	cfg        *config.Config
+	net        Network
+	ai         *model.Client // nil with no model
+	chats      *chats.Store[Received]
+	timers     *timers.Timers
+	slots      chan struct{} // one per chat being worked on
+	ctx        context.Context
+	stopTimers context.CancelFunc // stops the timers
+	timerCtx   context.Context
+	closing    atomic.Bool    // no new work starts
+	running    sync.WaitGroup // the timers, and what features run with Go
 
 	// What the model can do, read by New. Each turns off for the rest of
 	// the run when the API rejects a request carrying it; audio goes with
@@ -75,13 +75,14 @@ type Bot struct {
 
 	// The hooks and tool groups, in feature order. Features register them
 	// before Run.
-	messages []func(context.Context, feature.Message) feature.Action
-	turns    []func(context.Context, feature.Message) feature.Additions
-	groups   []feature.ToolGroup
-	more     []introLine // features' lines for the introduction
-	stores   []string    // the names of the saved states features opened
-	events   []func(context.Context, feature.Event) string
-	now      func() time.Time // the clock history and the budget go by
+	messages   []func(context.Context, feature.Message) feature.Action
+	turns      []func(context.Context, feature.Message) feature.Additions
+	groups     []feature.ToolGroup
+	commands   feature.Commands // the command names taken
+	introLines []introLine      // features' lines for the introduction
+	stores     []string         // the names of the saved states features opened
+	events     []func(context.Context, feature.Event) string
+	now        func() time.Time // the clock history and the budget go by
 }
 
 // New makes the bot on net and reads what the model can do, so features
@@ -91,7 +92,7 @@ type Bot struct {
 func New(ctx context.Context, cfg *config.Config, net Network) *Bot {
 	b := &Bot{cfg: cfg, net: net, timers: timers.New(), slots: make(chan struct{}, cfg.MaxConcurrency), ctx: ctx, now: time.Now}
 	b.chats = chats.New(cfg.HistoryMax, b.work, b.spawn)
-	b.timerCtx, b.stop = context.WithCancel(ctx)
+	b.timerCtx, b.stopTimers = context.WithCancel(ctx)
 	if cfg.NoModel {
 		logx.Warnf("no model: set MODEL_API_KEY (or MODEL_API_URL for a provider that needs no key); until then only commands are answered")
 		return b
@@ -135,7 +136,7 @@ func (b *Bot) Run() {
 	})
 	b.net.Watch(len(b.events) > 0)
 	b.net.Run(b.ctx, b.handle)
-	b.stop()
+	b.stopTimers()
 	b.running.Wait()
 }
 
@@ -143,7 +144,7 @@ func (b *Bot) Run() {
 // flight. Each piece of work holds a slot, so once Shutdown holds them all,
 // none is left.
 func (b *Bot) Shutdown(d time.Duration) {
-	b.stop()
+	b.stopTimers()
 	b.closing.Store(true)
 	timeout := time.After(d)
 	for range cap(b.slots) {
@@ -158,7 +159,7 @@ func (b *Bot) Shutdown(d time.Duration) {
 
 // handle runs on the network's reader goroutine for everything received (a
 // member change comes from another of its goroutines), so it never blocks
-// or calls the network. A Pending message and, with a hook for them, a
+// or calls the network. An Incoming message and, with a hook for them, a
 // Happened event go to their chat's mailbox; Chatter goes to the OnMessage
 // hooks here, and is never logged. (A Posted message comes from Deliver,
 // never from the network.)
@@ -170,19 +171,19 @@ func (b *Bot) handle(r Received) {
 	case GroupChanged:
 		b.chats.ForgetNames(r.Chat.Key())
 	case Chatter:
-		b.keep(r.Message)
+		b.overhear(r.Message)
 	case Happened:
 		if len(b.events) > 0 { // with no hook, nothing would read it
 			b.post(r)
 		}
-	case Pending:
+	case Incoming:
 		b.post(r)
 	}
 }
 
-// keep runs the OnMessage hooks for an unaddressed group message, and keeps
+// overhear runs the OnMessage hooks for an unaddressed group message, and keeps
 // the Context one returns in history.
-func (b *Bot) keep(msg feature.Message) {
+func (b *Bot) overhear(msg feature.Message) {
 	if a := b.onMessage(b.ctx, msg); a.Context != "" && b.ai != nil { // with no model, nothing would read it
 		b.chats.Add(msg.Chat.Key(), b.now(), msg.Expires, chats.Entry{Role: "user", Content: a.Context, Context: true})
 	}
@@ -237,7 +238,7 @@ func (b *Bot) work(rs []Received) {
 			return
 		}
 		safely(func() {
-			var p Pending
+			var p Incoming
 			switch r := r.(type) {
 			case Happened:
 				alone(func() { b.event(r.Event) })
@@ -248,7 +249,7 @@ func (b *Bot) work(rs []Received) {
 			case Told:
 				alone(func() { b.told(r) })
 				return
-			case Pending:
+			case Incoming:
 				p = r
 			default:
 				return
@@ -257,7 +258,7 @@ func (b *Bot) work(rs []Received) {
 			switch {
 			case !ok:
 			case !msg.Addressed:
-				alone(func() { b.keep(msg) })
+				alone(func() { b.overhear(msg) })
 			default:
 				if act := b.onMessage(b.ctx, msg); act != (feature.Action{}) {
 					alone(func() { b.respond(msg, act, prompt(msg)) })
@@ -354,7 +355,7 @@ func merge(msgs []feature.Message) (feature.Message, string) {
 
 // load completes a message in its chat's slot. An addressed one is logged
 // as it arrives, and reported false if it is a repeat.
-func (b *Bot) load(r Pending) (feature.Message, bool) {
+func (b *Bot) load(r Incoming) (feature.Message, bool) {
 	key := r.Chat.Key()
 	msg, ok := r.Load(b.ctx, func(name, id string) { b.chats.Learn(key, name, id) })
 	if !ok || !msg.Addressed {

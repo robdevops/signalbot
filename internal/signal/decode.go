@@ -178,11 +178,11 @@ func (c *Client) event(env *envelope) (bot.Received, bool) {
 	}
 	self := c.self()
 	if self == "" {
-		return bot.Pending{Chat: chat, Load: load}, true
+		return bot.Incoming{Chat: chat, Load: load}, true
 	}
 	switch addressed, other := c.judge(env, self); {
 	case addressed:
-		return bot.Pending{Chat: chat, Load: load}, true
+		return bot.Incoming{Chat: chat, Load: load}, true
 	case other:
 		return bot.Chatter{Message: c.message(env, self)}, true
 	}

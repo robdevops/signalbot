@@ -106,8 +106,8 @@ type Action struct {
 	Context    string // keep this text in the chat's history (unaddressed messages only)
 }
 
-// For is a with only what counts for m: Answer and ToolChoice on an
-// addressed message, Context on an unaddressed one.
+// For returns a copy of the action keeping only the fields that apply to
+// m: Answer and ToolChoice if m is addressed, Context if not.
 func (a Action) For(m Message) Action {
 	if m.Addressed {
 		a.Context = ""
@@ -142,7 +142,7 @@ type ToolGroup struct {
 	Listing  string   // its item in the system prompt's tools line
 	System   string   // a system-prompt line while it is offered
 	Tools    []Tool
-	Keywords *regexp.Regexp // if set, offered only when a message matches, and for 2 replies after
+	Keywords *regexp.Regexp // if set, offered only when a message matches, and for TOOL_LINGER_ROUNDS replies after (default 2)
 }
 
 // Tool is a function tool, run by the bot (Schema and Run), or a server tool
@@ -189,8 +189,7 @@ type Group struct {
 	ID, Name string
 }
 
-// Host is the core as features see it. Hooks run in feature order. A Host
-// must be a pointer, since the command helper keys its names by it.
+// Host is the core as features see it. Hooks run in feature order.
 type Host interface {
 	// OnMessage sees every message. For an unaddressed one it runs on the
 	// reader goroutine, so it must not block or call the network. The first
@@ -205,12 +204,23 @@ type Host interface {
 	// messages. The first non-empty reply returned is sent to the chat,
 	// without the model.
 	OnEvent(func(context.Context, Event) (reply string))
-	// Tools offers a group of tools to the model.
-	Tools(ToolGroup)
+	// Command registers /name: an addressed message whose text is "/name"
+	// or "/name args", the name in any case, gets fn's Action. A name is 1
+	// to 32 lowercase letters, digits, _ or -, and is refused if another
+	// feature has taken it.
+	Command(name string, fn func(ctx context.Context, m Message, args string) Action) error
+	// ListCommands names commands that use no model tool in the prompt's
+	// list of what the bot has, as "**label**: /a, /b", so the model can
+	// point a near-miss to them.
+	ListCommands(label string, names ...string)
+	// OfferTools offers a group of tools to the model, keeping only the
+	// tools the model's API can run; kept is false if it can run none.
+	OfferTools(ToolGroup) (kept bool)
 	// IntroLine adds a paragraph to the bot's introduction, where INTRO has
-	// {more}, such as a pointer to a command; with dmOnly, only to the
-	// introduction in a DM.
-	IntroLine(line string, dmOnly bool)
+	// {more}, such as a pointer to a command.
+	IntroLine(line string)
+	// IntroLineDM adds a paragraph to the bot's introduction in a DM only.
+	IntroLineDM(line string)
 	// At runs fn once at t, however late, passing the time it was due. It
 	// fails when too many timers are set.
 	At(name string, t time.Time, fn func(ctx context.Context, due time.Time)) (cancel func(), err error)

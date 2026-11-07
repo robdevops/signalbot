@@ -10,7 +10,7 @@ internal/chats/         per-chat state: history, dedupe, mention names, the mail
 internal/timers/        one-shot timers
 internal/config/        settings from the environment; config.Test, the test hooks
 internal/bot/           the decision, the prompt, the hooks; wires the core, and reaches Signal through Network
-internal/feature/       the ports and shared types, the command helper, featuretest
+internal/feature/       the ports and shared types, command parsing, featuretest
 internal/features/*     one package per feature
 internal/kit/*          code with two or more users and no bot knowledge
 ```
@@ -62,8 +62,8 @@ Before sending a change: `gofmt -l .`, `go vet ./...` and `go test -race ./...`,
 ## Adding a feature
 
 1. Make `internal/features/<name>` with a `Register(h feature.Host) error`. Read settings with `h.Env`, register hooks and tool groups, and return an error only for a config error, which stops the bot.
-2. For a command, use `feature.Command(h, "name", fn)`. A name another feature has taken is refused. If the model should know the command, name it in your tool group's `Names` and `Listing`; a command that uses no model tool can go in a group with only `Names`, which the prompt's tools list names but `{tools}` doesn't.
-3. For tools, call `h.Tools` with a `ToolGroup`: `Names` for the intro's `{tools}`, `Listing` for the tools line, `System` for a prompt line while offered, and `Keywords` to offer it only when a message matches.
+2. For a command, use `h.Command("name", fn)`. A name another feature has taken is refused. If the model should know the command, name it in your tool group's `Names` and `Listing`; a command that uses no model tool can be named with `h.ListCommands("label", "name")`, which the prompt's tools list names but `{tools}` doesn't.
+3. For tools, call `h.OfferTools` with a `ToolGroup` (it reports whether the group was kept): `Names` for the intro's `{tools}`, `Listing` for the tools line, `System` for a prompt line while offered, and `Keywords` to offer it only when a message matches.
 4. Test it on `featuretest`, without the core.
 5. Add one line to `features.go`. Order matters: it is the order hooks run in and of the tools line.
 6. Add its settings to the README's configuration table, and a row in TECHNICAL.md's features table and a paragraph under it.

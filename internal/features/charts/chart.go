@@ -185,11 +185,12 @@ func (s *chartSpec) axisOf(sr chartSeries) *chartAxis {
 	return s.left
 }
 
-// parseChart reads and checks the model's arguments. Errors are written for
-// the model, so it can fix its call.
-func parseChart(arguments string) (*chartSpec, error) {
+// parseChart reads and checks the arguments the model gave tool, which
+// draws on two Y axes if dual. Errors are written for the model, naming the
+// tool it called, so it can fix its call.
+func parseChart(tool string, dual bool, arguments string) (*chartSpec, error) {
 	var s chartSpec
-	if err := decodeArgs(chartTool, axisShorthand(arguments), &s); err != nil {
+	if err := decodeArgs(tool, axisShorthand(arguments), &s); err != nil {
 		return nil, err
 	}
 	if s.YAxis != nil {
@@ -243,6 +244,9 @@ func parseChart(arguments string) (*chartSpec, error) {
 		for i := range s.Series {
 			s.Series[i].Axis = "left"
 		}
+	}
+	if s.right.used && !dual { // said first, as what the model got wrong
+		return nil, errors.New(tool + " has one Y axis: put every series on it, using change mode to compare series on different scales")
 	}
 	if s.right.used && (s.left.Title == "" || s.right.Title == "") {
 		return nil, errors.New("a chart that uses both axes needs a title on each: set axes.left.title and axes.right.title")
@@ -323,8 +327,10 @@ func (a *chartAxis) y(v float64) float64 {
 	return a.bottom - f*(a.bottom-a.top)
 }
 
-// summary is what the model is told after the chart is drawn: the final
-// value of each series, so its text can quote the same numbers.
+// summary is the tool's result, what the model reads within the current
+// reply once the chart is drawn: which series were drawn and the final
+// value of each, so its text can quote the same numbers. History keeps
+// only the picture's note, [sent the chart "…"], not this.
 func (s *chartSpec) summary() string {
 	var parts []string
 	for _, sr := range s.Series {

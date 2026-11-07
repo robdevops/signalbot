@@ -452,7 +452,7 @@ func TestWaitingPhotosSplit(t *testing.T) {
 // batch: only what was typed counts.
 func TestKeywordsIgnoreNames(t *testing.T) {
 	h := start(t, options{tools: true, features: func(b *Bot) {
-		b.Tools(feature.ToolGroup{Names: []string{"lookups"}, Listing: "lookups", Keywords: regexp.MustCompile(`(?i)\blookup\b`),
+		b.OfferTools(feature.ToolGroup{Names: []string{"lookups"}, Listing: "lookups", Keywords: regexp.MustCompile(`(?i)\blookup\b`),
 			Tools: []feature.Tool{{Name: "do_lookup", Schema: json.RawMessage(`{"type":"object"}`),
 				Run: func(context.Context, string) (string, []feature.Picture, error) { return "", nil, nil }}}})
 	}})

@@ -11,12 +11,12 @@ import (
 // and features never see them.
 type Received interface{ chat() feature.Chat }
 
-// Pending is a message completed in its slot: an addressed one, or one that
+// Incoming is a message completed in its slot: an addressed one, or one that
 // arrived before the bot knew its own ID, which Load then decides. Load may
 // call the network, and calls learn with each name it shows the model and
 // that person's ID. It reports false for a message the core has nothing to
 // do with.
-type Pending struct {
+type Incoming struct {
 	Chat feature.Chat
 	Load func(ctx context.Context, learn func(name, id string)) (feature.Message, bool)
 }
@@ -38,7 +38,7 @@ type Posted struct{ Message feature.Message }
 // chat's mailbox.
 type Told struct{ User, Text string }
 
-func (r Pending) chat() feature.Chat      { return r.Chat }
+func (r Incoming) chat() feature.Chat     { return r.Chat }
 func (r Told) chat() feature.Chat         { return feature.Chat{User: r.User} }
 func (r Chatter) chat() feature.Chat      { return r.Message.Chat }
 func (r GroupChanged) chat() feature.Chat { return r.Chat }

@@ -3,15 +3,12 @@
 package websearch
 
 import (
-	"slices"
-
 	"github.com/robdevops/signalbot/internal/feature"
 	"github.com/robdevops/signalbot/internal/kit/logx"
 	"github.com/robdevops/signalbot/internal/kit/txt"
 )
 
-// label is the group's name in the intro's {tools}, in Markdown; the host
-// lists it in Info.Tools only if it kept the tool.
+// label is the group's name in the intro's {tools}, in Markdown.
 const label = "**web search**"
 
 // system is the group's system-prompt line while it is offered.
@@ -26,15 +23,13 @@ func Register(h feature.Host) error {
 	}
 	// A server tool the model calls only when it decides to search, unlike
 	// the deprecated "web" plugin, which searched on every request.
-	h.Tools(feature.ToolGroup{
+	if h.OfferTools(feature.ToolGroup{
 		Names:   []string{label},
 		Listing: "web search",
 		System:  system,
 		Tools:   []feature.Tool{{Server: "openrouter:web_search"}},
-	})
-	if info := h.Info(); info.CallsTools && !slices.Contains(info.Tools, label) {
-		return nil
+	}) {
+		logx.Noticef("web search on")
 	}
-	logx.Noticef("web search on")
 	return nil
 }

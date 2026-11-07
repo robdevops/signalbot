@@ -41,7 +41,7 @@ func sampleChart() string {
 
 func TestRenderChart(t *testing.T) {
 	t.Parallel()
-	s, err := parseChart(sampleChart())
+	s, err := parseChart(dualAxisTool, true, sampleChart())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -68,7 +68,7 @@ func TestRenderChart(t *testing.T) {
 // billions is not turned into % change.
 func TestParseChartValueByDefault(t *testing.T) {
 	t.Parallel()
-	s, err := parseChart(`{"title":"T","axes":{"left":{"title":"Population (billions)"}},"series":[{"name":"India","points":[{"date":"2026-07-01","value":1.46},{"date":"2100-07-01","value":1.5}]}]}`)
+	s, err := parseChart(dualAxisTool, true, `{"title":"T","axes":{"left":{"title":"Population (billions)"}},"series":[{"name":"India","points":[{"date":"2026-07-01","value":1.46},{"date":"2100-07-01","value":1.5}]}]}`)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -76,14 +76,14 @@ func TestParseChartValueByDefault(t *testing.T) {
 		t.Fatalf("points %+v, mode %q", p, s.left.Mode)
 	}
 	// A series that starts at 0 is fine in value mode.
-	if _, err := parseChart(`{"title":"T","series":[{"name":"A","points":[{"date":"2026-01-01","value":0},{"date":"2026-01-02","value":2}]}]}`); err != nil {
+	if _, err := parseChart(dualAxisTool, true, `{"title":"T","series":[{"name":"A","points":[{"date":"2026-01-01","value":0},{"date":"2026-01-02","value":2}]}]}`); err != nil {
 		t.Fatal(err)
 	}
 }
 
 func TestParseChartChangeMode(t *testing.T) {
 	t.Parallel()
-	s, err := parseChart(`{"title":"T","axes":{"left":{"mode":"change"}},"series":[{"name":"A","points":[{"date":"2026-01-02","value":120},{"date":"2026-01-01","value":100}]}]}`)
+	s, err := parseChart(dualAxisTool, true, `{"title":"T","axes":{"left":{"mode":"change"}},"series":[{"name":"A","points":[{"date":"2026-01-02","value":120},{"date":"2026-01-01","value":100}]}]}`)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -94,7 +94,7 @@ func TestParseChartChangeMode(t *testing.T) {
 	if got := s.summary(); got != chartNote+"Final values: A 20.0%." {
 		t.Fatalf("summary %q", got)
 	}
-	v, _ := parseChart(`{"title":"T","axes":{"left":{"mode":"value","unit":"$"}},"series":[{"name":"A","points":[{"date":"2026-01-01","value":-1.5},{"date":"2026-01-02","value":2}]}]}`)
+	v, _ := parseChart(dualAxisTool, true, `{"title":"T","axes":{"left":{"mode":"value","unit":"$"}},"series":[{"name":"A","points":[{"date":"2026-01-01","value":-1.5},{"date":"2026-01-02","value":2}]}]}`)
 	if v.left.format(-1.5, 2) != "-$1.50" || v.left.format(2, 0) != "$2" {
 		t.Fatalf("value format: %q %q", v.left.format(-1.5, 2), v.left.format(2, 0))
 	}
@@ -117,12 +117,12 @@ func TestParseChartErrors(t *testing.T) {
 		"bad date":            `{"title":"T","series":[{"name":"A","points":[{"date":"1 Jan","value":1},{"date":"2026-01-02","value":2}]}]}`,
 		"starts at 0":         `{"title":"T","axes":{"left":{"mode":"change"}},"series":[{"name":"A","points":[{"date":"2026-01-01","value":0},{"date":"2026-01-02","value":2}]}]}`,
 	} {
-		if _, err := parseChart(args); err == nil {
+		if _, err := parseChart(dualAxisTool, true, args); err == nil {
 			t.Errorf("%s: want an error", name)
 		}
 	}
 	seven := `{"title":"T","series":[` + strings.Repeat(`{"name":"A","points":`+pts+`},`, 6) + `{"name":"A","points":` + pts + `}]}`
-	if _, err := parseChart(seven); err == nil {
+	if _, err := parseChart(dualAxisTool, true, seven); err == nil {
 		t.Error("7 series: want an error")
 	}
 }
@@ -177,8 +177,8 @@ func TestSpreadLabels(t *testing.T) {
 // Each axis has its own mode: % change is computed only for its own series.
 func TestChartTwoAxes(t *testing.T) {
 	t.Parallel()
-	s, err := parseChart(`{"title":"T","axes":{"left":{"title":"Price","mode":"value","unit":"$"},"right":{"title":"Change","mode":"change"}},"series":[` +
-		`{"name":"A","points":[{"date":"2026-01-01","value":100},{"date":"2026-01-02","value":120}]},` +
+	s, err := parseChart(dualAxisTool, true, `{"title":"T","axes":{"left":{"title":"Price","mode":"value","unit":"$"},"right":{"title":"Change","mode":"change"}},"series":[`+
+		`{"name":"A","points":[{"date":"2026-01-01","value":100},{"date":"2026-01-02","value":120}]},`+
 		`{"name":"B","axis":"right","points":[{"date":"2026-01-01","value":50},{"date":"2026-01-02","value":25}]}]}`)
 	if err != nil {
 		t.Fatal(err)
@@ -193,16 +193,16 @@ func TestChartTwoAxes(t *testing.T) {
 		t.Fatal(err)
 	}
 	// One axis needs no title.
-	if _, err := parseChart(`{"title":"T","series":[{"name":"A","points":[{"date":"2026-01-01","value":1},{"date":"2026-01-02","value":2}]}]}`); err != nil {
+	if _, err := parseChart(dualAxisTool, true, `{"title":"T","series":[{"name":"A","points":[{"date":"2026-01-01","value":1},{"date":"2026-01-02","value":2}]}]}`); err != nil {
 		t.Fatalf("single axis without a title: %v", err)
 	}
 	// Series only on the right are drawn on a single axis, so no titles are needed.
-	r, err := parseChart(`{"title":"T","axes":{"right":{"mode":"value","unit":"$"}},"series":[{"name":"A","axis":"right","points":[{"date":"2026-01-01","value":1},{"date":"2026-01-02","value":2}]}]}`)
+	r, err := parseChart(dualAxisTool, true, `{"title":"T","axes":{"right":{"mode":"value","unit":"$"}},"series":[{"name":"A","axis":"right","points":[{"date":"2026-01-01","value":1},{"date":"2026-01-02","value":2}]}]}`)
 	if err != nil || r.right.used || r.left.Unit != "$" || r.Series[0].Axis != "left" {
 		t.Fatalf("right-only chart: %+v, %v", r, err)
 	}
 	// A right axis with no series on it is ignored.
-	o, err := parseChart(`{"title":"T","axes":{"right":{"title":"unused"}},"series":[{"name":"A","points":[{"date":"2026-01-01","value":1},{"date":"2026-01-02","value":2}]}]}`)
+	o, err := parseChart(dualAxisTool, true, `{"title":"T","axes":{"right":{"title":"unused"}},"series":[{"name":"A","points":[{"date":"2026-01-01","value":1},{"date":"2026-01-02","value":2}]}]}`)
 	if err != nil || o.right.used {
 		t.Fatalf("unused right axis: %v, %v", o.right.used, err)
 	}
@@ -244,7 +244,7 @@ func TestRenderTwoAxisSample(t *testing.T) {
 		"series": []any{map[string]any{"name": "NVDA", "points": a}, map[string]any{"name": "AMD", "points": b},
 			map[string]any{"name": "10Y", "axis": "right", "points": y}},
 	})
-	s, err := parseChart(string(args))
+	s, err := parseChart(dualAxisTool, true, string(args))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -298,7 +298,7 @@ func TestAreaStyle(t *testing.T) {
 	}{{true, 250, "CHART_UP", "up"}, {false, 22, "CHART_DOWN", "down"}} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			s, err := parseChart(areaSample(tc.n, tc.rising))
+			s, err := parseChart(dualAxisTool, true, areaSample(tc.n, tc.rising))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -352,7 +352,7 @@ func TestChartArgErrors(t *testing.T) {
 		``:                        "title is required",
 		`  `:                      "title is required",
 	} {
-		if _, err := parseChart(args); err == nil || !strings.Contains(err.Error(), want) {
+		if _, err := parseChart(dualAxisTool, true, args); err == nil || !strings.Contains(err.Error(), want) {
 			t.Errorf("%s: got %v, want %q", args, err, want)
 		}
 	}
@@ -369,7 +369,7 @@ func TestChartArgsWithStringifiedParts(t *testing.T) {
 	args := `{"title":"[draft] NVDA vs MSFT","axes":"{\"left\": {\"mode\": \"change\"}}","series":[` +
 		`{"name":"NVDA","points":"[{\"date\":\"2026-10-01\",\"value\":100},{\"date\":\"2026-10-02\",\"value\":110}]"},` +
 		`{"name":"[1]","points":[{"date":"2026-10-01","value":50},{"date":"2026-10-02","value":45}]}]}`
-	s, err := parseChart(args)
+	s, err := parseChart(dualAxisTool, true, args)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -382,11 +382,11 @@ func TestChartArgsWithStringifiedParts(t *testing.T) {
 	// An element of an array, too.
 	one := `{"name":"A","points":[{"date":"2026-10-01","value":1},{"date":"2026-10-02","value":2}]}`
 	q, _ := json.Marshal(one)
-	if s, err := parseChart(`{"title":"T","series":[` + string(q) + `]}`); err != nil || s.Series[0].Name != "A" {
+	if s, err := parseChart(dualAxisTool, true, `{"title":"T","series":[`+string(q)+`]}`); err != nil || s.Series[0].Name != "A" {
 		t.Fatalf("element: %v", err)
 	}
 	// A string that isn't JSON still gets the error, with how to fix it.
-	if _, err := parseChart(`{"title":"T","axes":"left","series":[` + one + `]}`); err == nil || !strings.Contains(err.Error(), "axes must be an object, got a string: pass it as JSON itself") {
+	if _, err := parseChart(dualAxisTool, true, `{"title":"T","axes":"left","series":[`+one+`]}`); err == nil || !strings.Contains(err.Error(), "axes must be an object, got a string: pass it as JSON itself") {
 		t.Fatalf("not JSON: %v", err)
 	}
 }
@@ -396,7 +396,7 @@ func TestChartArgsDoubleEncoded(t *testing.T) {
 	t.Parallel()
 	inner := `{"title":"T","series":[{"name":"a","points":[{"date":"2026-10-01","value":1},{"date":"2026-10-02","value":2}]}]}`
 	b, _ := json.Marshal(inner)
-	if s, err := parseChart(string(b)); err != nil || s.Title != "T" {
+	if s, err := parseChart(dualAxisTool, true, string(b)); err != nil || s.Title != "T" {
 		t.Fatalf("got %v", err)
 	}
 }
@@ -492,7 +492,7 @@ func canvasOf(t *testing.T, tool, args string) *canvas {
 		}
 		return drawPie(s, lightTheme)
 	}
-	s, err := parseChart(args)
+	s, err := parseChart(dualAxisTool, true, args)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -504,7 +504,7 @@ func canvasOf(t *testing.T, tool, args string) *canvas {
 // exact and every pixel close to how it was drawn.
 func TestEncode(t *testing.T) {
 	t.Parallel()
-	line, err := parseChart(sixSeries())
+	line, err := parseChart(dualAxisTool, true, sixSeries())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -512,11 +512,11 @@ func TestEncode(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	up, err := parseChart(`{"source":"Yahoo Finance",` + areaSample(250, true)[1:])
+	up, err := parseChart(dualAxisTool, true, `{"source":"Yahoo Finance",`+areaSample(250, true)[1:])
 	if err != nil {
 		t.Fatal(err)
 	}
-	down, err := parseChart(areaSample(22, false))
+	down, err := parseChart(dualAxisTool, true, areaSample(22, false))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -585,7 +585,7 @@ func absDiff(a, b uint8) int { return max(int(a)-int(b), int(b)-int(a)) }
 func TestChartSourceClamp(t *testing.T) {
 	t.Parallel()
 	long := strings.Repeat("é", 100)
-	c, err := parseChart(`{"source":"  ` + long + `  ",` + sampleChart()[1:])
+	c, err := parseChart(dualAxisTool, true, `{"source":"  `+long+`  ",`+sampleChart()[1:])
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -597,7 +597,7 @@ func TestChartSourceClamp(t *testing.T) {
 	if c.Source != want || p.Source != want {
 		t.Fatalf("source %q, %q", c.Source, p.Source)
 	}
-	if c, _ := parseChart(`{"source":"  Yahoo Finance ",` + sampleChart()[1:]); c.Source != "Yahoo Finance" {
+	if c, _ := parseChart(dualAxisTool, true, `{"source":"  Yahoo Finance ",`+sampleChart()[1:]); c.Source != "Yahoo Finance" {
 		t.Fatalf("source %q", c.Source)
 	}
 }

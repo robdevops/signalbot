@@ -26,7 +26,7 @@ func Register(h feature.Host) error {
 		return feature.Action{Answer: intro}
 	}
 	for _, name := range []string{"intro", "help"} {
-		if err := feature.Command(h, name, answer); err != nil {
+		if err := h.Command(name, answer); err != nil {
 			return err
 		}
 	}

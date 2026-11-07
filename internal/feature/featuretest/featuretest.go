@@ -24,6 +24,7 @@ type Host struct {
 	TimerErr error                                          // if set, At fails with it, as the core does at its cap
 	Redactor func(string) string                            // what Redact does; nil leaves text as it is
 	StoreErr error                                          // if set, Store fails with it, as the core does with no usable state directory
+	Unusable bool                                           // if set, OfferTools drops a group with tools, as the core does when the API can run none
 
 	mu        sync.Mutex
 	read      []string
@@ -36,6 +37,7 @@ type Host struct {
 	delivered []feature.Message
 	told      []Told
 	stores    []string
+	commands  feature.Commands
 	life      context.Context // what Go passes; ended by Stop
 	end       context.CancelFunc
 	running   sync.WaitGroup
@@ -87,13 +89,28 @@ func (h *Host) Event(ctx context.Context, e feature.Event) string {
 	return ""
 }
 
-func (h *Host) IntroLine(line string, dmOnly bool) {
+// IntroLine records line; IntroLineDM records it marked " (DM only)".
+func (h *Host) IntroLine(line string) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	if dmOnly {
-		line += " (DM only)"
-	}
 	h.more = append(h.more, line)
+}
+
+func (h *Host) IntroLineDM(line string) { h.IntroLine(line + " (DM only)") }
+
+func (h *Host) Command(name string, fn func(context.Context, feature.Message, string) feature.Action) error {
+	if err := h.commands.Take(name); err != nil {
+		return err
+	}
+	h.OnMessage(feature.CommandHook(name, fn))
+	return nil
+}
+
+// ListCommands records a group with only its name, as the core keeps it.
+func (h *Host) ListCommands(label string, names ...string) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.groups = append(h.groups, feature.ToolGroup{Names: []string{"**" + label + "**: /" + strings.Join(names, ", /")}})
 }
 
 func (h *Host) IntroLines() []string {
@@ -102,10 +119,14 @@ func (h *Host) IntroLines() []string {
 	return slices.Clone(h.more)
 }
 
-func (h *Host) Tools(g feature.ToolGroup) {
+func (h *Host) OfferTools(g feature.ToolGroup) bool {
 	h.mu.Lock()
 	defer h.mu.Unlock()
+	if h.Unusable && len(g.Tools) > 0 {
+		return false
+	}
 	h.groups = append(h.groups, g)
+	return true
 }
 
 func (h *Host) At(name string, t time.Time, fn func(context.Context, time.Time)) (func(), error) {

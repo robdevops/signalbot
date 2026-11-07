@@ -258,12 +258,12 @@ func (h *harness) receive(m feature.Message) {
 	case <-h.net.id:
 		switch {
 		case m.Addressed:
-			r = Pending{Chat: m.Chat, Load: load}
+			r = Incoming{Chat: m.Chat, Load: load}
 		case m.Chat.GroupID == "":
 			return
 		}
 	default:
-		r = Pending{Chat: m.Chat, Load: load}
+		r = Incoming{Chat: m.Chat, Load: load}
 	}
 	h.net.handle(r)
 }

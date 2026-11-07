@@ -169,7 +169,7 @@ func TestEvents(t *testing.T) {
 
 	if r, ok := event(`{` + fromBob + `,"dataMessage":{"message":"￼ hi",` + atBot + `,` + inGroup + `}}`); !ok {
 		t.Errorf("mention dropped")
-	} else if p, isP := r.(bot.Pending); !isP || p.Chat != (feature.Chat{GroupID: groupID}) || p.Load == nil {
+	} else if p, isP := r.(bot.Incoming); !isP || p.Chat != (feature.Chat{GroupID: groupID}) || p.Load == nil {
 		t.Errorf("mention %+v", r)
 	}
 	if r, ok := event(`{` + fromBob + `,"dataMessage":{"message":"the moon",` + inGroup + `}}`); !ok {
@@ -204,14 +204,14 @@ func TestEventsBeforeTheIDIsKnown(t *testing.T) {
 	logs := captureLogs(t)
 	c := newClient("x", map[string]bool{aliceID: true}, nil)
 	c.names.refreshedAt = time.Now() // so loading names doesn't try the socket
-	var rs []bot.Pending
+	var rs []bot.Incoming
 	for _, env := range []string{
 		`{"sourceUuid":"` + aliceID + `","sourceName":"Alice","dataMessage":{"message":"hi"}}`,
 		`{` + fromBob + `,"dataMessage":{"message":"the moon",` + inGroup + `}}`,
 		`{` + fromBob + `,"dataMessage":{"message":"let me in"}}`,
 	} {
 		r, ok := c.event(parse(t, env))
-		p, isP := r.(bot.Pending)
+		p, isP := r.(bot.Incoming)
 		if !ok || !isP || p.Load == nil {
 			t.Fatalf("%s: %+v", env, r)
 		}
@@ -247,7 +247,7 @@ func TestLoad(t *testing.T) {
 	got, conn := run(t, c, f)
 	receive(conn, `{`+fromBob+`,"dataMessage":{"message":"￼ ask ￼","sticker":{"packId":"p","stickerId":2},`+
 		`"mentions":[{"uuid":"`+botID+`","start":0,"length":1},{"uuid":"`+aliceID+`","start":6,"length":1}],`+inGroup+`}}`)
-	r, ok := next(t, got).(bot.Pending)
+	r, ok := next(t, got).(bot.Incoming)
 	if !ok {
 		t.Fatalf("got %+v", r)
 	}

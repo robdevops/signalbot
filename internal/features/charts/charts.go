@@ -115,12 +115,12 @@ func themeFor(d darkHours) *theme {
 // caption.
 func Register(h feature.Host) error {
 	mode := darkMode(h)
-	h.Tools(feature.ToolGroup{
+	h.OfferTools(feature.ToolGroup{
 		Names:    []string{"**charts**: line, pie"},
 		Listing:  "charts (" + chartTool + ", " + pieTool + ")",
 		Keywords: wantsChart,
 		Tools: []feature.Tool{
-			{Name: chartTool, Description: chartToolDescription, Schema: chartToolSchema, Run: lineChart(mode, false)},
+			{Name: chartTool, Description: chartToolDescription, Schema: chartToolSchema, Run: lineChart(mode, chartTool, false)},
 			{Name: pieTool, Description: pieToolDescription, Schema: pieToolSchema, Run: func(_ context.Context, args string) (string, []feature.Picture, error) {
 				s, err := parsePie(args)
 				if err != nil {
@@ -132,21 +132,18 @@ func Register(h feature.Host) error {
 		},
 	})
 	// No Names: it is part of the charts the intro lists.
-	h.Tools(feature.ToolGroup{
+	h.OfferTools(feature.ToolGroup{
 		Listing:  "dual-axis chart (" + dualAxisTool + ")",
 		Keywords: wantsSecondAxis,
-		Tools:    []feature.Tool{{Name: dualAxisTool, Description: dualAxisToolDescription, Schema: dualAxisToolSchema, Run: lineChart(mode, true)}},
+		Tools:    []feature.Tool{{Name: dualAxisTool, Description: dualAxisToolDescription, Schema: dualAxisToolSchema, Run: lineChart(mode, dualAxisTool, true)}},
 	})
 	return nil
 }
 
-// lineChart runs a line chart tool, on two Y axes if dual.
-func lineChart(mode darkHours, dual bool) func(context.Context, string) (string, []feature.Picture, error) {
+// lineChart runs line chart tool, on two Y axes if dual.
+func lineChart(mode darkHours, tool string, dual bool) func(context.Context, string) (string, []feature.Picture, error) {
 	return func(_ context.Context, args string) (string, []feature.Picture, error) {
-		s, err := parseChart(args)
-		if err == nil && !dual && s.right.used {
-			err = errors.New(chartTool + " has one Y axis: put every series on it, using change mode to compare series on different scales")
-		}
+		s, err := parseChart(tool, dual, args)
 		if err != nil {
 			return "error: " + err.Error(), nil, fmt.Errorf("%w: %v", errArgs, err)
 		}

@@ -402,7 +402,7 @@ func (b *Bot) intro(dm bool) string {
 		model = "no model"
 	}
 	var lines []string
-	for _, l := range b.more {
+	for _, l := range b.introLines {
 		if dm || !l.dmOnly {
 			lines = append(lines, l.text)
 		}

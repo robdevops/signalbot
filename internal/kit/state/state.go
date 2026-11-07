@@ -14,6 +14,7 @@ import (
 	"sync"
 
 	"github.com/robdevops/signalbot/internal/kit/fsx"
+	"github.com/robdevops/signalbot/internal/kit/txt"
 )
 
 // MaxBytes caps one saved document, its final newline included, so a
@@ -32,19 +33,11 @@ var namePattern = regexp.MustCompile(`^[a-z0-9_-]{1,32}$`)
 func CheckName(name string) error {
 	switch {
 	case !namePattern.MatchString(name):
-		return fmt.Errorf("a saved state can't be called %q: use lowercase letters, digits, - and _, up to 32", clamp(name))
+		return fmt.Errorf("a saved state can't be called %q: use lowercase letters, digits, - and _, up to 32", txt.Clamp(name, 40))
 	case name == Reserved:
 		return fmt.Errorf("a saved state can't be called %q: it is the core's", name)
 	}
 	return nil
-}
-
-// clamp keeps a bad name short in an error.
-func clamp(s string) string {
-	if r := []rune(s); len(r) > 40 {
-		return string(r[:40]) + "…"
-	}
-	return s
 }
 
 // DockerDir is the Docker image's STATE_DIRECTORY, a bind mount whose owner

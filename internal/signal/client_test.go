@@ -199,13 +199,13 @@ func TestReceiveAndReconnect(t *testing.T) {
 	c.backoff = 10 * time.Millisecond
 	got, conn := run(t, c, f)
 	receive(conn, `{"sourceUuid":"`+aliceID+`","dataMessage":{"message":"hi"}}`)
-	if r, ok := next(t, got).(bot.Pending); !ok || r.Chat.User != aliceID {
+	if r, ok := next(t, got).(bot.Incoming); !ok || r.Chat.User != aliceID {
 		t.Fatalf("got %+v", r)
 	}
 	conn.Close()
 	conn2 := <-f.conns
 	receive(conn2, `{"sourceUuid":"`+bobID+`","dataMessage":{"message":"again"}}`)
-	if r, ok := next(t, got).(bot.Pending); !ok || r.Chat.User != bobID {
+	if r, ok := next(t, got).(bot.Incoming); !ok || r.Chat.User != bobID {
 		t.Fatalf("after reconnecting got %+v", r)
 	}
 }

@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/robdevops/signalbot/internal/chats"
@@ -27,20 +28,35 @@ func (b *Bot) OnEvent(fn func(context.Context, feature.Event) string) {
 	b.events = append(b.events, fn)
 }
 
-func (b *Bot) IntroLine(line string, dmOnly bool) {
-	b.more = append(b.more, introLine{line, dmOnly})
+func (b *Bot) Command(name string, fn func(context.Context, feature.Message, string) feature.Action) error {
+	if err := b.commands.Take(name); err != nil {
+		return err
+	}
+	b.OnMessage(feature.CommandHook(name, fn))
+	return nil
 }
 
-// Tools keeps g with only the tools the model's API can run, and drops a
-// group whose tools it can run none of. A group with no tools at all, only
-// Names, is kept for the prompt's list of what the bot has.
-func (b *Bot) Tools(g feature.ToolGroup) {
+// ListCommands adds a group with no tools, only its name, which is kept for
+// the prompt's list of what the bot has and left out of {tools}.
+func (b *Bot) ListCommands(label string, names ...string) {
+	if len(names) > 0 {
+		b.groups = append(b.groups, feature.ToolGroup{Names: []string{"**" + label + "**: /" + strings.Join(names, ", /")}})
+	}
+}
+
+func (b *Bot) IntroLine(line string)   { b.introLines = append(b.introLines, introLine{line, false}) }
+func (b *Bot) IntroLineDM(line string) { b.introLines = append(b.introLines, introLine{line, true}) }
+
+// OfferTools keeps g with only the tools the model's API can run, and drops
+// a group whose tools it can run none of.
+func (b *Bot) OfferTools(g feature.ToolGroup) (kept bool) {
 	if b.ai != nil && len(g.Tools) > 0 {
 		if g.Tools = b.ai.Usable(g.Tools); len(g.Tools) == 0 {
-			return
+			return false
 		}
 	}
 	b.groups = append(b.groups, g)
+	return true
 }
 
 func (b *Bot) At(name string, t time.Time, fn func(context.Context, time.Time)) (func(), error) {

@@ -309,7 +309,7 @@ func start(ctx context.Context, h feature.Host, path string, servers map[string]
 			all := strings.Join(append(g.Names, own...), ", ")
 			g.Listing = name + ": " + all
 			g.Names = []string{"**" + label + "**: " + all} // grouped by server in {tools}, in Markdown
-			h.Tools(g)
+			h.OfferTools(g)
 		}
 		if s, ok := c.(*stdioConn); ok {
 			h.Go(func(context.Context) { s.supervise(ctx) })
@@ -372,7 +372,7 @@ func command(h feature.Host, server, n string, c chatCommand, models map[string]
 		bare += " Try: " + ex + "."
 	}
 	bare += " Or just ask me in plain words."
-	err := feature.Command(h, name, func(_ context.Context, m feature.Message, args string) feature.Action {
+	err := h.Command(name, func(_ context.Context, m feature.Message, args string) feature.Action {
 		if c.RequireArg && args == "" {
 			return feature.Action{Answer: bare}
 		}

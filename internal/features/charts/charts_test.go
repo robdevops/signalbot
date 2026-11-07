@@ -136,6 +136,15 @@ func TestSecondAxisOnlyWhenAsked(t *testing.T) {
 	if _, pics, err := tool(t, h, "make_dual_axis_chart").Run(context.Background(), args); err != nil || len(pics) != 1 {
 		t.Fatalf("dual-axis: %d pictures, %v", len(pics), err)
 	}
+	// Even with no axis titles, make_chart is told first that it has one
+	// axis, and an error names the tool called.
+	untitled := strings.Replace(strings.Replace(args, `"title":"Price"`, `"mode":"value"`, 1), `"title":"Yield"`, `"mode":"value"`, 1)
+	if out, _, _ := tool(t, h, "make_chart").Run(context.Background(), untitled); !strings.Contains(out, "make_chart has one Y axis") {
+		t.Fatalf("make_chart without titles: %q", out)
+	}
+	if out, _, _ := tool(t, h, "make_dual_axis_chart").Run(context.Background(), `[1]`); !strings.Contains(out, "the arguments for make_dual_axis_chart must be a JSON object") {
+		t.Fatalf("dual-axis error: %q", out)
+	}
 }
 
 // make_chart's axis is "y_axis"; an axis given as just its title, as
@@ -150,7 +159,7 @@ func TestChartYAxis(t *testing.T) {
 		`{"title":"T","axes":{"title":"Population (bn)"},` + pts + `}`,
 		`{"title":"T","axes":{"left":{"title":"Population (bn)"}},` + pts + `}`,
 	} {
-		s, err := parseChart(args)
+		s, err := parseChart(chartTool, false, args)
 		if err != nil || s.left.Title != "Population (bn)" || s.left.Mode != "value" || s.right.used {
 			t.Errorf("%s: %+v, %v", args, s, err)
 			continue
@@ -163,7 +172,7 @@ func TestChartYAxis(t *testing.T) {
 		}
 	}
 	// A key that is neither still says what to fix.
-	if _, err := parseChart(`{"title":"T","axes":{"colour":"red"},` + pts + `}`); err == nil || !strings.Contains(err.Error(), "axes.colour") {
+	if _, err := parseChart(chartTool, false, `{"title":"T","axes":{"colour":"red"},`+pts+`}`); err == nil || !strings.Contains(err.Error(), "axes.colour") {
 		t.Errorf("got %v", err)
 	}
 }

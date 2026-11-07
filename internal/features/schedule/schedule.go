@@ -86,14 +86,14 @@ func register(h feature.Host, loc *time.Location, now func() time.Time) error {
 		return err
 	}
 	for _, name := range commands {
-		if err := feature.Command(h, name, s.command); err != nil {
+		if err := h.Command(name, s.command); err != nil {
 			return err
 		}
 	}
-	h.IntroLine(`Type "/schedule" for schedules and reminders.`, true) // made only in a DM
-	// No model tools, so this names the commands only in the prompt's list
-	// of what the bot has, for a near-miss such as "/time" to be pointed here.
-	h.Tools(feature.ToolGroup{Names: []string{"**schedules and reminders**: /" + strings.Join(commands, ", /")}})
+	h.IntroLineDM(`Type "/schedule" for schedules and reminders.`) // made only in a DM
+	// In the prompt's list of what the bot has, for a near-miss such as
+	// "/time" to be pointed here.
+	h.ListCommands("schedules and reminders", commands...)
 	return nil
 }
 

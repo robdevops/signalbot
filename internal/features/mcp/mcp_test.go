@@ -448,7 +448,7 @@ func TestChatCommands(t *testing.T) {
 			"bad name":{"tool":"echo"},
 			"fail":{"tool":"fail"}}}}}`,
 		func(h *featuretest.Host) {
-			feature.Command(h, "example", func(context.Context, feature.Message, string) feature.Action { return feature.Action{} })
+			h.Command("example", func(context.Context, feature.Message, string) feature.Action { return feature.Action{} })
 		})
 	if err != nil {
 		t.Fatal(err)

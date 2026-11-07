@@ -29,7 +29,7 @@ func TestParseCommand(t *testing.T) {
 
 func TestCommand(t *testing.T) {
 	h := featuretest.New()
-	err := feature.Command(h, "ping", func(_ context.Context, m feature.Message, args string) feature.Action {
+	err := h.Command("ping", func(_ context.Context, m feature.Message, args string) feature.Action {
 		return feature.Action{Answer: "pong " + args}
 	})
 	if err != nil {
@@ -52,21 +52,21 @@ func TestCommand(t *testing.T) {
 func TestCommandNamesRefused(t *testing.T) {
 	h := featuretest.New()
 	nop := func(context.Context, feature.Message, string) feature.Action { return feature.Action{} }
-	if err := feature.Command(h, "ping", nop); err != nil {
+	if err := h.Command("ping", nop); err != nil {
 		t.Fatal(err)
 	}
-	if err := feature.Command(h, "ping", nop); err == nil {
+	if err := h.Command("ping", nop); err == nil {
 		t.Error("a taken name was accepted")
 	}
-	if err := feature.Command(h, strings.Repeat("a", 32), nop); err != nil {
+	if err := h.Command(strings.Repeat("a", 32), nop); err != nil {
 		t.Errorf("32 letters were refused: %v", err)
 	}
 	for _, name := range []string{"", "Ping", "pi ng", "/ping", strings.Repeat("a", 33)} {
-		if err := feature.Command(h, name, nop); err == nil {
+		if err := h.Command(name, nop); err == nil {
 			t.Errorf("%q was accepted", name)
 		}
 	}
-	if err := feature.Command(featuretest.New(), "ping", nop); err != nil {
+	if err := featuretest.New().Command("ping", nop); err != nil {
 		t.Errorf("a name taken on another host was refused: %v", err)
 	}
 }
