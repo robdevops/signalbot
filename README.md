@@ -23,10 +23,10 @@ A small, [privacy-conscious](PRIVACY.md) chat bot that connects to a running [si
 
 ## Use cases
 
-- Your group's brain trust: ask it to explain things, check facts or settle debates
+- Your group's brain trust: ask it to explain things, check facts or settle debates, or just the fun of a sassy LLM in your Signal groups
 - Explain or translate any message, photo, document, or website by replying to it and @mentioning the bot
 - Connect MCP tools, data, and charting to your group chat
-- A private assistant in your DMs, or just the fun of a sassy LLM in your Signal groups
+- A private assistant in your DMs
 - Use this project as the basis of your own bot project
 
 The messages the bot answers, and the names in them, are sent to the model's API (OpenRouter, unless you [choose another](docs/MODELS.md)). See [TECHNICAL.md](TECHNICAL.md) and [PRIVACY.md](PRIVACY.md) for details on how it works.
