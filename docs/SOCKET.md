@@ -1,6 +1,6 @@
 # Unix socket
 
-By default the bot reaches signal-cli over TCP on `127.0.0.1:7583`. That is the simplest setup, but **anyone with a login or a process on the host can connect to that port and read or send messages as your bot's Signal account** (PRIVACY RISK). signal-cli's Unix socket closes that hole: its file permissions let only a Unix group, which only the bot joins, connect. Use it on any host you share, or wherever the account should be the bot's alone.
+By default the bot reaches signal-cli over TCP on `127.0.0.1:7583`. That is the simplest setup, and may be adequate for your needs, but **anyone with a login or a process on the host can connect to that port and read or send messages as your bot's Signal account** (PRIVACY RISK). signal-cli's Unix socket closes that hole: its file permissions let only a Unix group, which only the bot joins, connect. Use it on any host you share, or wherever the account should be the bot's alone.
 
 ## Set it up
 
