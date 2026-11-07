@@ -24,14 +24,14 @@ By default the bot reaches signal-cli over TCP on `127.0.0.1:7583`. That is the 
 4. Set `SIGNALCLI_SOCKET=/run/signal-cli/socket` in `/etc/signalbot.env`.
 5. Let the bot join the group:
    - **systemd:** uncomment `SupplementaryGroups=signal-cli` in `signalbot.service` (or add it in a drop-in, `sudo systemctl edit signalbot`), then `sudo systemctl daemon-reload` and `sudo systemctl restart signalbot`.
-   - **Docker:** in the `docker run` command, replace `--network=host` with `-v /run/signal-cli:/run/signal-cli --group-add "$(getent group signal-cli | cut -d: -f3)"`. The container then mounts only the socket's directory, so the data directory isn't there to read, and keeps its own network.
+   - **Docker:** in `compose.yaml`, remove `network_mode: host`, add `- /run/signal-cli:/run/signal-cli` under `volumes:`, and add `group_add: ["<GID>"]` with the group's number from `getent group signal-cli | cut -d: -f3` (the image has no `signal-cli` group to look the name up in). Then `sudo docker compose up -d`. The container mounts only the socket's directory, so the data directory isn't there to read, and keeps its own network.
 
 ## How access works
 
 The socket's permissions decide who may connect, and the bot is let in through a Unix group, not a user id, so a transient `DynamicUser` works:
 
 - `signalbot.service` runs with `DynamicUser=yes` and `SupplementaryGroups=signal-cli`, so its throwaway user is in the group.
-- Docker's `--group-add` puts the container's user in the same group.
+- Docker's `group_add` puts the container's user in the same group.
 - signal-cli creates the socket group-writable (`0770`, from `UMask=0007`) in a directory the group can search (`0750`).
 
 Everyone outside the group gets "Permission denied". The group is the only access control: anyone in it can drive the Signal account, so keep it to the bot.

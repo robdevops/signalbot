@@ -96,9 +96,9 @@ The bot runs as a dynamic user (`DynamicUser=yes`). Its schedules and budget are
 
 ### Install as a Docker container
 
-`--network=host` lets the container reach signal-cli on the host's `127.0.0.1`. Run it with `sudo`, because Docker reads `--env-file` as the calling user and the file is root-only.
+[`compose.yaml`](compose.yaml) runs the bot with Docker Compose, hardened (read-only, no capabilities, memory and process limits) and on the host's network, so it reaches signal-cli on `127.0.0.1`. Run it with `sudo`, because Compose reads `/etc/signalbot.env` as the calling user and the file is root-only.
 
-Schedules are saved in `/data` in the container (`STATE_DIRECTORY=/data`), bind-mounted from the same host directory systemd would use. The container runs as user 65532, which must own it, or the bot exits asking for this:
+Schedules are saved in `/data` in the container, bind-mounted from the same host directory systemd would use. The container runs as user 65532, which must own it, or the bot exits asking for this:
 
 ```
 sudo mkdir -p /var/lib/private/signalbot
@@ -107,20 +107,19 @@ sudo chown 65532 /var/lib/private/signalbot
 
 Use one install per host, systemd or Docker: the unit's dynamic user and the container's user 65532 can't share the directory.
 
-```
-sudo docker build -t signalbot --build-arg VERSION=$(git describe --tags --always --dirty) .
-```
+Build and start it, from the code's directory:
 
 ```
-sudo docker run -d --name signalbot --restart=always --env-file /etc/signalbot.env --network=host -v /var/lib/private/signalbot:/data $(test -S /run/systemd/journal/socket && echo --log-driver=journald || echo --log-driver=local) --read-only --cap-drop=ALL --security-opt=no-new-privileges --pids-limit=64 --memory=300m --memory-swap=300m --ulimit core=0 signalbot
+sudo VERSION=$(git describe --tags --always --dirty) docker compose up -d --build
 ```
 
 Read the logs:
 
 ```
 docker logs -f signalbot
-journalctl CONTAINER_NAME=signalbot -p err   # warnings and errors only, where Docker logs to journald
 ```
+
+Logs use Docker's rotating `local` driver. On a host with systemd, add `LOG_DRIVER=journald` before `docker compose` to send them to the journal, where `journalctl CONTAINER_NAME=signalbot -p err` shows warnings and errors.
 
 ### Test
 

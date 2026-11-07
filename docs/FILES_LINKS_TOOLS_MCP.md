@@ -79,7 +79,7 @@ Two optional fields shape how a server's tools are offered:
 A server that can't be reached at startup is logged and left out. A config error stops the bot with the file's path and the server's name: a setting it doesn't know (such as `allowedTools` for `allowed_tools`), with the settings it could be; both `allowed_tools` and `blocked_tools`; or a tool named in either list that the server doesn't have, with the list it was in and the server's tools, so a typo can't leave a blocked tool offered. Keys other MCP clients write and the bot has no use for (`type`, `transport`, `timeout`, `alwaysAllow`, `autoApprove`, `description`) are ignored, so an entry pasted from another client starts. A tool call that takes over 30 seconds tells the model it didn't answer in time, so it can try a narrower request. Local servers get only `PATH`, `HOME` and their `env`, never the bot's own environment.
 
 - **systemd:** keep the file root-only, uncomment the `LoadCredential=` and `Environment=MCP_CONFIG=` lines in `signalbot.service`, and restart. systemd hands the file to the service alone.
-- **Docker:** add `-v /etc/signalbot-mcp.json:/etc/signalbot-mcp.json:ro -e MCP_CONFIG=/etc/signalbot-mcp.json`. The image has no shell or runtimes, so only remote servers (`url`) work.
+- **Docker:** uncomment the MCP volume and the `environment:` lines in `compose.yaml`, then `sudo docker compose up -d`. The image has no shell or runtimes, so only remote servers (`url`) work.
 - **Local servers under systemd** usually need the hardening loosened with a drop-in (`sudo systemctl edit signalbot`), for example `MemoryDenyWriteExecute=no` for Node, and `CacheDirectory=signalbot` with `Environment=HOME=/var/cache/signalbot` for npx or uvx caches.
 
 ---
