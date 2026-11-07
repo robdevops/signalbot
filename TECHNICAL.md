@@ -270,6 +270,8 @@ Only a connection to `signal-cli daemon`: TCP on `127.0.0.1:7583` by default, or
 
 On TCP anyone with a login or a process on the host can connect and control or spy on the Signal account (PRIVACY RISK); the systemd unit needs nothing more, and Docker runs with `--network=host` to reach the host's `127.0.0.1`. The Unix socket limits it to a Unix group only the bot joins (`SupplementaryGroups=signal-cli`, or Docker's `--group-add`), with signal-cli's data directory kept at `0700` so the bot, in signal-cli's group, can't read the keys: the setup, and why each part matters, is in [docs/SOCKET.md](docs/SOCKET.md).
 
+Either way the bot's keys stay out of reach: it runs as a different user from signal-cli, the data directory is mode `0700`, and `ProtectHome=yes` hides `/home`, where signal-cli keeps its data by default (`~/.local/share/signal-cli`). Data kept elsewhere, such as `/var/lib/signal-cli`, relies on the directory mode alone; add it to `InaccessiblePaths=` in the unit to hide it outright.
+
 ---
 
 [Back to README.md](README.md)

@@ -8,7 +8,8 @@ Wants=network-online.target
 
 [Service]
 # The user that owns signal-cli's data (your account keys), by default in
-# ~/.local/share/signal-cli. Keep that directory at mode 0700.
+# ~/.local/share/signal-cli. Keep that directory at mode 0700: its own mode is
+# what keeps the bot and other users from the keys.
 User=YOUR_USER
 # --tcp listens on this host only. Any local user can connect to it, and so
 # control the Signal account: on a shared host use the Unix socket instead.
