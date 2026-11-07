@@ -250,7 +250,7 @@ Enforced by tests in `internal/arch`:
 
 - **Imports:** only the main package, at the module root, imports features and `internal/signal`; a feature imports only `internal/feature`, `internal/kit` and its own packages; `internal/signal` imports only `internal/feature`, kit, `internal/config` (for `config.Test`) and `internal/bot` (for `Received`), so no core package imports it and no feature imports bot; `internal/feature` imports only kit; `internal/config` and kit import no other internal package, so neither imports the core.
 - **No feature names in the core:** the core's source mentions no feature name or feature-only word (chart, pie, MCP, group context, web search, vision, `/intro`, `/schedule`).
-- **Docs:** every setting read, the core's or a feature's (`h.Env("NAME", …)`), is in the README's configuration table.
+- **Docs:** every setting read, the core's or a feature's (`h.Env("NAME", …)`), is in the table in [docs/CONFIGURATION.md](docs/CONFIGURATION.md).
 - **Saving:** no feature writes a file itself (`os.WriteFile`, `os.Create`, `os.Rename`, `os.Remove` and the like, `kit/fsx`, `kit/state`): it saves through `Host.Store`, so every file the bot writes is a named document in the state directory.
 
 By convention:

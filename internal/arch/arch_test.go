@@ -108,7 +108,7 @@ func TestNoFeatureWordsInTheCore(t *testing.T) {
 	}
 }
 
-// Every setting the bot reads is in the README's configuration table: each
+// Every setting the bot reads is in docs/CONFIGURATION.md's table: each
 // one its code names to Env, the core's (and number's, in config) and each
 // feature's.
 func TestSettingsAreDocumented(t *testing.T) {
@@ -126,7 +126,7 @@ func TestSettingsAreDocumented(t *testing.T) {
 			settings = append(settings, m[1])
 		}
 	}
-	readme, err := os.ReadFile(root + "/README.md")
+	readme, err := os.ReadFile(root + "/docs/CONFIGURATION.md")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -137,7 +137,7 @@ func TestSettingsAreDocumented(t *testing.T) {
 	}
 	for _, s := range settings {
 		if !strings.Contains(string(readme), "\n| `"+s+"` |") {
-			t.Errorf("%s is not in the README's configuration table", s)
+			t.Errorf("%s is not in docs/CONFIGURATION.md's table", s)
 		}
 	}
 }

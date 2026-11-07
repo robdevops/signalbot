@@ -43,7 +43,7 @@ Tests in `internal/arch` enforce these:
 
 - **Imports:** only the main package, at the module root, imports features and `internal/signal`; a feature imports only `internal/feature`, `internal/kit` and its own packages; `internal/signal` imports only `internal/feature`, kit, `internal/config` and `internal/bot` (network to core, never the reverse); `internal/config` and kit import no other internal package.
 - **No feature names in the core:** the core's source mentions no feature name or feature-only word (chart, MCP, group context, `/intro`, `/schedule`, …).
-- **Docs:** every setting read, the core's or a feature's (`h.Env("NAME", …)`), is in the README's configuration table.
+- **Docs:** every setting read, the core's or a feature's (`h.Env("NAME", …)`), is in the table in [docs/CONFIGURATION.md](docs/CONFIGURATION.md).
 
 And by convention:
 
@@ -66,6 +66,6 @@ Before sending a change: `gofmt -l .`, `go vet ./...` and `go test -race ./...`,
 3. For tools, call `h.OfferTools` with a `ToolGroup` (it reports whether the group was kept): `Names` for the intro's `{tools}`, `Listing` for the tools line, `System` for a prompt line while offered, and `Keywords` to offer it only when a message matches.
 4. Test it on `featuretest`, without the core.
 5. Add one line to `features.go`. Order matters: it is the order hooks run in and of the tools line.
-6. Add its settings to the README's configuration table, and a row in TECHNICAL.md's features table and a paragraph under it.
+6. Add its settings to the table in `docs/CONFIGURATION.md`, and a row in TECHNICAL.md's features table and a paragraph under it.
 
 `internal/features/intro` is the smallest feature to copy.

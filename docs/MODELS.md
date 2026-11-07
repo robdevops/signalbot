@@ -1,4 +1,11 @@
-# Other providers
+# Models
+
+- [Other providers](#other-providers)
+- [No model](#no-model)
+
+The bot uses [OpenRouter](https://openrouter.ai) by default: set `MODEL_API_KEY` to your OpenRouter key and `MODEL` to the model's `provider/model` name.
+
+## Other providers
 
 The bot speaks OpenAI's chat completions format, which most providers and local servers offer: OpenAI, Ollama, LM Studio, vLLM, llama.cpp, Groq, Together, Mistral, DeepSeek, and the compatible endpoints of Gemini and Anthropic. Set `MODEL_API_URL` to the API's base URL (the part before `/chat/completions`), `MODEL` to the model's name there, and `MODEL_API_KEY` if it needs one. For example, a local [Ollama](https://ollama.com), which needs no key:
 
@@ -16,3 +23,7 @@ What differs from OpenRouter:
 - OpenRouter's web search runs only on OpenRouter; elsewhere it is left out, with a warning at startup.
 - An `https://` API must offer TLS 1.3. A local one can be plain `http://`.
 - Under Docker, `localhost` is the container itself: reach a server on the host with `--add-host=host.docker.internal:host-gateway` and `MODEL_API_URL=http://host.docker.internal:11434/v1`, with the server listening on the Docker bridge address as well as 127.0.0.1 (for Ollama, `OLLAMA_HOST=172.17.0.1:11434`, which the host and its containers can both reach), or with its port firewalled. Ollama has no authentication, so `OLLAMA_HOST=0.0.0.0` lets anyone who can reach the port use it (PRIVACY RISK).
+
+## No model
+
+With neither `MODEL_API_KEY` nor `MODEL_API_URL` set, the bot runs without a model, and its startup log warns "no model: set MODEL_API_KEY (or MODEL_API_URL for a provider that needs no key); until then only commands are answered". Commands still work: `/intro`, `/schedule` and its aliases, and scheduled plain text is posted as written; `/intro` then says it runs no model. Anything else addressed to it, a mention, a reply or a DM, gets no reply, no typing indicator and no model request. Nothing is kept in history, not even group context, and MCP servers aren't started.
