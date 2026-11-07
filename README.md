@@ -61,7 +61,7 @@ To get the bot working with Signal and a model on OpenRouter, set these:
 
 | Variable | Default | Description |
 |---|---|---|
-| `SIGNALCLI_SOCKET` | required | signal-cli's Unix socket path (`.env.example` has `/run/signal-cli/socket`), or `host:port` for TCP |
+| `SIGNALCLI_SOCKET` | `/run/signal-cli/socket` | signal-cli's Unix socket path, or `host:port` for TCP |
 | `MODEL_API_KEY` | empty | Your [OpenRouter](https://openrouter.ai) API key ([other providers](docs/MODELS.md)) |
 | `MODEL` | `deepseek/deepseek-v4.1-flash-1017` | The model, as OpenRouter's `provider/model` |
 | `SIGNAL_DM_USER_IDS` | empty | UUIDs or numbers allowed to DM the bot, separated by commas or whitespace; empty turns DMs off |

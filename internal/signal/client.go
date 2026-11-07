@@ -80,12 +80,10 @@ type Client struct {
 }
 
 // New makes the client its settings say: SIGNALCLI_SOCKET, a unix socket
-// path or host:port, and SIGNAL_DM_USER_IDS, who may DM the bot.
-func New(test *config.Test) (*Client, error) {
-	addr := config.Env("SIGNALCLI_SOCKET", "")
-	if addr == "" {
-		return nil, errors.New("SIGNALCLI_SOCKET is required")
-	}
+// path or host:port (signal-cli's usual socket by default), and
+// SIGNAL_DM_USER_IDS, who may DM the bot.
+func New(test *config.Test) *Client {
+	addr := config.Env("SIGNALCLI_SOCKET", "/run/signal-cli/socket")
 	allowed := map[string]bool{}
 	// Commas, semicolons or any white space, so a CRLF env file or a tab
 	// can't leave an unmatchable ID.
@@ -97,9 +95,13 @@ func New(test *config.Test) (*Client, error) {
 	if len(allowed) == 0 {
 		logx.Warnf("DMs are off: SIGNAL_DM_USER_IDS is empty; the bot answers only in groups")
 	} else {
-		logx.Noticef("DMs: allowed from %d IDs (SIGNAL_DM_USER_IDS)", len(allowed))
+		ids := fmt.Sprintf("%d IDs", len(allowed))
+		if len(allowed) == 1 {
+			ids = "1 ID"
+		}
+		logx.Noticef("DMs: allowed from %s (SIGNAL_DM_USER_IDS)", ids)
 	}
-	return newClient(addr, allowed, test), nil
+	return newClient(addr, allowed, test)
 }
 
 // newClient is New with its settings given.

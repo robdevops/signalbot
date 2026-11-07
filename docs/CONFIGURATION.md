@@ -1,10 +1,10 @@
 # Configuration
 
-Every setting, read from the environment (`/etc/signalbot.env` in the install). Only `SIGNALCLI_SOCKET`, `MODEL_API_KEY` and `SIGNAL_DM_USER_IDS` are needed to get started; see the [README](../README.md#configuration).
+Every setting, read from the environment (`/etc/signalbot.env` in the install). Only `MODEL_API_KEY` and `SIGNAL_DM_USER_IDS` are needed to get started, and `SIGNALCLI_SOCKET` if signal-cli's socket isn't at `/run/signal-cli/socket`; see the [README](../README.md#configuration).
 
 | Variable | Default | Description |
 |---|---|---|
-| `SIGNALCLI_SOCKET` | required | Unix socket path, or `host:port` for TCP |
+| `SIGNALCLI_SOCKET` | `/run/signal-cli/socket` | Unix socket path, or `host:port` for TCP |
 | `SIGNAL_DM_USER_IDS` | empty | UUIDs/numbers allowed to DM the bot, separated by commas or whitespace; empty turns DMs off, and the startup log says which |
 | `MODEL` | `deepseek/deepseek-v4.1-flash-1017` | The model's name at the API: on OpenRouter as `provider/model` |
 | `MODEL_API_KEY` | empty | API key for the model's API, such as your [OpenRouter](https://openrouter.ai) key; none is sent when empty. With neither this nor `MODEL_API_URL` the bot has [no model](MODELS.md#no-model) |

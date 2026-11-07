@@ -59,10 +59,7 @@ func startBot(t *testing.T, w world) *harness {
 	// What main does.
 	cfg := config.Load()
 	cfg.Test = test
-	net, err := signal.New(cfg.Test)
-	if err != nil {
-		t.Fatal(err)
-	}
+	net := signal.New(cfg.Test)
 	ctx, closeConn := context.WithCancel(context.Background())
 	t.Cleanup(closeConn)
 	b := bot.New(ctx, cfg, net)
