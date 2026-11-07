@@ -117,16 +117,13 @@ func TestFit(t *testing.T) {
 // ignore what follows an image.
 func pad(data []byte) []byte { return append(slices.Clone(data), make([]byte, sendLimit)...) }
 
-// A photo is shrunk within a small fraction of the bot's memory (a 12 MP
-// one at the real limits; here a sixteenth of each).
+// A photo is shrunk within a small fraction of the bot's memory: here a
+// sixteenth of a 12 MP one at a sixteenth of the limits, for the race
+// detector's runs; TestFitMemoryAtRealSize checks the real thing.
 func TestFitMemory(t *testing.T) {
 	smallLimits(t)
-	m := image.NewGray(image.Rect(0, 0, 1000, 750))
-	for i := range m.Pix {
-		m.Pix[i] = byte(i % 251)
-	}
 	var b bytes.Buffer
-	if err := jpeg.Encode(&b, image.NewYCbCr(m.Rect, image.YCbCrSubsampleRatio420), nil); err != nil {
+	if err := jpeg.Encode(&b, image.NewYCbCr(image.Rect(0, 0, 1000, 750), image.YCbCrSubsampleRatio420), nil); err != nil {
 		t.Fatal(err)
 	}
 	data := pad(b.Bytes())
@@ -137,8 +134,33 @@ func TestFitMemory(t *testing.T) {
 	if err != nil || !Sendable(got) {
 		t.Fatal(err)
 	}
-	if n := after.TotalAlloc - before.TotalAlloc; n > 60<<20/16 { // as 60 MB at the real limits
+	if n := after.TotalAlloc - before.TotalAlloc; n > 60<<20/16 {
 		t.Fatalf("allocated %d KB", n>>10)
+	}
+}
+
+// A 12 MP photo is shrunk, at the real limits, within a small fraction of
+// the bot's memory. (Its pixels are blank, so it is quick to make.) The race
+// detector makes it take seconds, so it runs without it: CI runs this
+// package's tests again without -race.
+func TestFitMemoryAtRealSize(t *testing.T) {
+	if raceEnabled {
+		t.Skip("run without -race")
+	}
+	var b bytes.Buffer
+	if err := jpeg.Encode(&b, image.NewYCbCr(image.Rect(0, 0, 4000, 3000), image.YCbCrSubsampleRatio420), nil); err != nil {
+		t.Fatal(err)
+	}
+	data := pad(b.Bytes())
+	var before, after runtime.MemStats
+	runtime.ReadMemStats(&before)
+	got, err := Fit(data)
+	runtime.ReadMemStats(&after)
+	if err != nil || !Sendable(got) {
+		t.Fatal(err)
+	}
+	if n := after.TotalAlloc - before.TotalAlloc; n > 60<<20 {
+		t.Fatalf("allocated %d MB", n>>20)
 	}
 }
 

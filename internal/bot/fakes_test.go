@@ -62,6 +62,8 @@ type sent struct {
 	known  map[string]string
 }
 
+func (n *fakeNet) Watch(bool) {}
+
 func (n *fakeNet) Run(ctx context.Context, handle func(Received)) {
 	n.handle = handle
 	close(n.running)

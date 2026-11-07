@@ -517,9 +517,10 @@ type canvas struct {
 }
 
 // fill paints polygons, each given as x,y pairs, in c. It rasterizes only
-// the whole pixels the polygons cover, shifted by a whole number of pixels,
-// so the result is the same as over the whole canvas at a fraction of the
-// work.
+// the rows and columns the polygons cover, shifted by a whole number of
+// pixels, at a fraction of the work of the whole canvas. The box is at
+// least floatWidth wide, since the rasterizer turns to fixed-point maths
+// for a small one, which shades edges visibly worse.
 func (cv *canvas) fill(c color.Color, polys ...[]float64) {
 	minX, minY, maxX, maxY := math.Inf(1), math.Inf(1), math.Inf(-1), math.Inf(-1)
 	for _, p := range polys {
@@ -531,6 +532,10 @@ func (cv *canvas) fill(c color.Color, polys ...[]float64) {
 	b := image.Rect(int(math.Floor(minX)), int(math.Floor(minY)), int(math.Ceil(maxX))+1, int(math.Ceil(maxY))+1).Intersect(cv.img.Bounds())
 	if b.Empty() {
 		return
+	}
+	if b.Dx() < floatWidth {
+		b.Max.X = min(b.Min.X+floatWidth, width)
+		b.Min.X = b.Max.X - floatWidth
 	}
 	ox, oy := float64(b.Min.X), float64(b.Min.Y)
 	r := vector.NewRasterizer(b.Dx(), b.Dy())
@@ -557,6 +562,11 @@ func (cv *canvas) fill(c color.Color, polys ...[]float64) {
 	}
 	r.Draw(cv.img, b, image.NewUniform(c), image.Point{})
 }
+
+// floatWidth is the least width vector.Rasterizer draws with floating-point
+// maths, as it always did over the whole canvas (golang.org/x/image/vector
+// switches below 513 pixels in both directions).
+const floatWidth = 513
 
 func circle(x, y, rad float64) []float64 {
 	var p []float64

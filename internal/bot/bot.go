@@ -28,6 +28,9 @@ type Network interface {
 	// Run calls handle for each message received until ctx ends. handle
 	// must not block.
 	Run(ctx context.Context, handle func(Received))
+	// Watch says whether any feature has an event hook, before Run, so the
+	// network can skip work for events nothing would read.
+	Watch(events bool)
 	WaitID(ctx context.Context) string
 	Send(chat feature.Chat, text string, pics []feature.Picture, known map[string]string)
 	// React puts emoji on msg in chat, as a reaction from the bot.
@@ -148,6 +151,7 @@ func (b *Bot) Run() {
 			b.timers.Run(b.timerCtx)
 		}
 	})
+	b.net.Watch(len(b.events) > 0)
 	b.net.Run(b.ctx, b.handle)
 	b.stop()
 	b.running.Wait()

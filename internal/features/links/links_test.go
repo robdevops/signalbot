@@ -288,14 +288,21 @@ func TestExtraLinksAreLogged(t *testing.T) {
 }
 
 // A huge page is read as a stream: memory stays small and the text stops
-// near the cap, whether the page is a million small tokens or one text
-// node (and title) of megabytes.
+// near the cap, and a cut falls between runes. A page of a million small
+// tokens shows the memory; one text node and title past the caps show the
+// cap per token, in the lengths kept (what it allocates is the tokenizer's
+// own buffer for the token, the same with the cap or without).
 func TestPageTextIsStreamed(t *testing.T) {
-	for name, page := range map[string][]byte{
-		"many tokens": []byte("<html><head><title>Big</title></head><body>" + strings.Repeat("<p>a", 1_300_000) + "</body></html>"),
-		"one token":   []byte("<html><head><title>Big" + strings.Repeat(" title", 50_000) + "</title></head><body><p>" + strings.Repeat("a ", maxText*4) + "</p></body></html>"),
-		"multibyte":   []byte("<html><head><title>Big</title></head><body><p>" + strings.Repeat("日", maxText*3) + "</p></body></html>"),
+	for _, tc := range []struct {
+		name  string
+		page  []byte
+		bound uint64
+	}{
+		{"many tokens", []byte("<html><head><title>Big</title></head><body>" + strings.Repeat("<p>a", 1_300_000) + "</body></html>"), 30 << 20},
+		{"one token", []byte("<html><head><title>Big" + strings.Repeat(" title", 50_000) + "</title></head><body><p>" + strings.Repeat("a ", maxText*4) + "</p></body></html>"), 30 << 20},
+		{"multibyte", []byte("<html><head><title>Big</title></head><body><p>" + strings.Repeat("日", maxText*3) + "</p></body></html>"), 30 << 20},
 	} {
+		name, page := tc.name, tc.page
 		var before, after runtime.MemStats
 		runtime.GC()
 		runtime.ReadMemStats(&before)
@@ -304,7 +311,7 @@ func TestPageTextIsStreamed(t *testing.T) {
 		if !strings.HasPrefix(title, "Big") || len(title) > 1000 || len(text) > maxText*2+10 || !utf8.ValidString(text) { // cut between runes, never inside one
 			t.Fatalf("%s: title %d bytes, text %d bytes, valid %v", name, len(title), len(text), utf8.ValidString(text))
 		}
-		if n := after.TotalAlloc - before.TotalAlloc; n > 30<<20 {
+		if n := after.TotalAlloc - before.TotalAlloc; n > tc.bound {
 			t.Fatalf("%s: allocated %d MB", name, n>>20)
 		}
 	}

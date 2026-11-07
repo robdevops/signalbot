@@ -512,35 +512,56 @@ func TestEncode(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	up, err := parseChart(`{"source":"Yahoo Finance",` + areaSample(250, true)[1:])
+	if err != nil {
+		t.Fatal(err)
+	}
+	down, err := parseChart(areaSample(22, false))
+	if err != nil {
+		t.Fatal(err)
+	}
 	for _, tc := range []struct {
 		name string
 		cv   *canvas
 		th   *theme
+		also []color.RGBA // colours that must come through exactly too
 	}{
-		{"light line", drawChart(line, lightTheme), lightTheme},
-		{"dark line", drawChart(line, darkTheme), darkTheme},
-		{"light pie", drawPie(pie, lightTheme), lightTheme},
-		{"dark pie", drawPie(pie, darkTheme), darkTheme},
+		{"light line", drawChart(line, lightTheme), lightTheme, nil},
+		{"dark line", drawChart(line, darkTheme), darkTheme, nil},
+		{"light pie", drawPie(pie, lightTheme), lightTheme, nil},
+		{"dark pie", drawPie(pie, darkTheme), darkTheme, nil},
+		{"light area up, with a source", drawChart(up, lightTheme), lightTheme, []color.RGBA{lightTheme.up, lightTheme.muted}},
+		{"dark area down", drawChart(down, darkTheme), darkTheme, []color.RGBA{darkTheme.down}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			var full bytes.Buffer
-			if err := png.Encode(&full, tc.cv.img); err != nil {
-				t.Fatal(err)
-			}
 			data, err := tc.cv.encode()
 			if err != nil {
 				t.Fatal(err)
 			}
-			if len(data) > full.Len()/2 {
-				t.Errorf("%s: %d bytes, against %d in full colour", tc.name, len(data), full.Len())
+			if tc.also == nil { // the size against full colour, once per kind of chart
+				var full bytes.Buffer
+				if err := png.Encode(&full, tc.cv.img); err != nil {
+					t.Fatal(err)
+				}
+				if len(data) > full.Len()/2 {
+					t.Errorf("%s: %d bytes, against %d in full colour", tc.name, len(data), full.Len())
+				}
 			}
 			img := decode(t, data)
 			if img.Bounds() != image.Rect(0, 0, width, height) {
 				t.Fatalf("%s: %v", tc.name, img.Bounds())
 			}
-			if countColour(img, image.Rect(5, 5, 6, 6), tc.th.bg) != 1 || countColour(img, img.Bounds(), tc.th.palette[0]) == 0 {
+			if countColour(img, image.Rect(5, 5, 6, 6), tc.th.bg) != 1 || tc.also == nil && countColour(img, img.Bounds(), tc.th.palette[0]) == 0 {
 				t.Errorf("%s: the background or the first series colour changed", tc.name)
+			}
+			for _, c := range tc.also {
+				if countColour(img, img.Bounds(), c) == 0 {
+					t.Errorf("%s: %v changed in the PNG", tc.name, c)
+				}
+			}
+			if tc.th == darkTheme && countColour(img, img.Bounds(), white) > 0 {
+				t.Errorf("%s: white in the dark theme's PNG", tc.name)
 			}
 			m, ok := img.(*image.Paletted)
 			if !ok {

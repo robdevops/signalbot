@@ -596,3 +596,10 @@ func TestInstructions(t *testing.T) {
 		t.Errorf("capped to %d runes", len(got))
 	}
 }
+
+// A local server that exits is restarted after a second at first.
+func TestRestartDelay(t *testing.T) {
+	if restartDelay != time.Second {
+		t.Fatalf("restart delay %v", restartDelay)
+	}
+}

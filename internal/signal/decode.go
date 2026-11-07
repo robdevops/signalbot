@@ -163,7 +163,8 @@ func (c *Client) event(env *envelope) (bot.Received, bool) {
 	chat := env.chat()
 	if g := d.GroupInfo; g != nil && g.Type == "UPDATE" {
 		c.refreshSoon() // so new members are known and departed ones forgotten
-		c.members.changed(chat.GroupID, c.person(env.SourceUUID, env.Source, env.SourceNumber, env.SourceName))
+		self := c.self()
+		c.members.changed(chat.GroupID, c.person(env.SourceUUID, env.Source, env.SourceNumber, env.SourceName), self != "" && fromSelf(env, self))
 		return bot.Received{Message: feature.Message{Chat: chat}, GroupChange: true}, true
 	}
 	if r := d.Reaction; r != nil {

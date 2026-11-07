@@ -9,14 +9,43 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"sync"
 
 	"github.com/robdevops/signalbot/internal/kit/fsx"
 )
 
-// MaxBytes caps one saved document, so a feature can't fill the disk.
+// MaxBytes caps one saved document, its final newline included, so a
+// feature can't fill the disk: 4 MiB.
 const MaxBytes = 4 << 20
+
+// Reserved is the core's own saved state, the daily budget, which no
+// feature may open.
+const Reserved = "budget"
+
+// namePattern is what a saved state may be called: it names a file.
+var namePattern = regexp.MustCompile(`^[a-z0-9_-]{1,32}$`)
+
+// CheckName fails unless name is a feature's to open: lowercase letters,
+// digits, - and _, up to 32, and not Reserved.
+func CheckName(name string) error {
+	switch {
+	case !namePattern.MatchString(name):
+		return fmt.Errorf("a saved state can't be called %q: use lowercase letters, digits, - and _, up to 32", clamp(name))
+	case name == Reserved:
+		return fmt.Errorf("a saved state can't be called %q: it is the core's", name)
+	}
+	return nil
+}
+
+// clamp keeps a bad name short in an error.
+func clamp(s string) string {
+	if r := []rune(s); len(r) > 40 {
+		return string(r[:40]) + "…"
+	}
+	return s
+}
 
 // DockerDir is the Docker image's STATE_DIRECTORY, a bind mount whose owner
 // the bot can't fix itself, so its message says how to fix the host's.
@@ -104,7 +133,7 @@ func (d *Doc) Save(v any) error {
 	if err != nil {
 		return err
 	}
-	if len(data) > MaxBytes {
+	if len(data)+1 > MaxBytes { // with its newline
 		return fmt.Errorf("%s would be %d bytes, over the %d a saved state may have", d.path, len(data), MaxBytes)
 	}
 	d.mu.Lock()

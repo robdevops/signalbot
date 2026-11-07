@@ -137,14 +137,17 @@ func (h *Host) Env(key, def string) string {
 func (h *Host) Info() feature.Info { return h.Bot }
 
 // Store opens a saved state as the core does, in the directory
-// Settings["STATE_DIRECTORY"] names (the working directory if unset), each
-// name once, failing with StoreErr if set.
+// Settings["STATE_DIRECTORY"] names (the working directory if unset): each
+// name once, refusing the names the core refuses, and failing with StoreErr
+// if set, which stands for a state directory the core can't use.
 func (h *Host) Store(name string) (feature.Store, error) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	switch {
 	case h.StoreErr != nil:
 		return nil, h.StoreErr
+	case state.CheckName(name) != nil:
+		return nil, state.CheckName(name)
 	case slices.Contains(h.stores, name):
 		return nil, errors.New("a saved state called " + name + " is already open")
 	}

@@ -495,10 +495,13 @@ func TestMemberChanges(t *testing.T) {
 	f.set("listContacts", `[{"uuid":"`+bobID+`","profile":{"givenName":"Bob"}},{"uuid":"`+aliceID+`","profile":{"givenName":"Alice"}}]`)
 	listed(botID, aliceID)
 	c := newClient(f.sock, allowAll(), &config.Test{ReloadGap: time.Millisecond})
+	c.Watch(true)
 	got, conn := run(t, c, f)
 	eventually(t, "the first listGroups", func() bool { return len(f.calls("listGroups")) == 1 })
-	update := func(group string) {
+	update := func(group string) { // and wait for its comparison, so the next answer is the next update's
+		n := len(f.calls("listGroups"))
 		receive(conn, `{"sourceUuid":"`+aliceID+`","sourceName":"Alice","dataMessage":{"groupInfo":{"groupId":"`+group+`","type":"UPDATE"}}}`)
+		eventually(t, "the comparison", func() bool { return len(f.calls("listGroups")) > n })
 	}
 	members := func() *feature.Members {
 		t.Helper()
@@ -534,5 +537,107 @@ func TestMemberChanges(t *testing.T) {
 	}
 	if strings.Contains(logs.String(), "Bob") || strings.Contains(logs.String(), bobID) {
 		t.Errorf("logged %q", logs.String())
+	}
+}
+
+// The bot's own group update refreshes the members it compares with but
+// reaches no feature, so a later update by someone else isn't credited with
+// it; updates folded together from several people say no one; and with no
+// event hook (Watch false) members are neither loaded nor compared.
+func TestMemberChangeRules(t *testing.T) {
+	captureLogs(t)
+	f := newFake(t)
+	listed := func(ms ...string) {
+		var js []string
+		for _, m := range ms {
+			js = append(js, `{"uuid":"`+m+`"}`)
+		}
+		f.set("listGroups", `[{"id":"`+groupID+`","name":"Family","isMember":true,"members":[`+strings.Join(js, ",")+`]}]`)
+	}
+	listed(botID, aliceID)
+	test := &config.Test{ReloadGap: time.Millisecond}
+	c := newClient(f.sock, allowAll(), test)
+	c.Watch(true)
+	got, conn := run(t, c, f)
+	eventually(t, "the first listGroups", func() bool { return len(f.calls("listGroups")) == 1 })
+	frame := func(from string) string {
+		return `{"sourceUuid":"` + from + `","dataMessage":{"groupInfo":{"groupId":"` + groupID + `","type":"UPDATE"}}}`
+	}
+	compared := func(n int) { // the nth listGroups made and its events handed over
+		t.Helper()
+		eventually(t, "the comparison", func() bool { return len(f.calls("listGroups")) >= n && test.Idle() })
+	}
+	drain := func() (events []feature.Event) {
+		for {
+			select {
+			case r := <-got:
+				if r.Event != nil {
+					events = append(events, *r.Event)
+				}
+			default: // compared waited until they were handed over
+				return events
+			}
+		}
+	}
+
+	listed(botID, aliceID, bobID) // the bot added Bob, from its linked phone
+	receive(conn, frame(botID))
+	compared(2)
+	if e := drain(); len(e) != 0 {
+		t.Fatalf("the bot's own change reached features: %+v", e)
+	}
+	receive(conn, frame(aliceID)) // a change of name: Bob is no newcomer by now
+	compared(3)
+	if e := drain(); len(e) != 0 {
+		t.Fatalf("an old change was credited to Alice: %+v", e)
+	}
+
+	// Two people's updates folded into one comparison: who did it is unknown.
+	c.members.mu.Lock()
+	c.members.busy = true // hold the comparison until both are in
+	c.members.mu.Unlock()
+	listed(botID, bobID)
+	receive(conn, frame(aliceID))
+	receive(conn, frame(bobID))
+	eventually(t, "both updates", func() bool {
+		c.members.mu.Lock()
+		defer c.members.mu.Unlock()
+		return c.members.by[groupID] != nil && c.members.by[groupID].updates == 2
+	})
+	c.members.mu.Lock()
+	c.members.busy = false
+	c.members.schedule()
+	c.members.mu.Unlock()
+	compared(4)
+	e := drain()
+	if len(e) != 1 || e[0].By != (feature.Person{}) || !reflect.DeepEqual(e[0].Members.Left, []feature.Person{{ID: aliceID}}) {
+		t.Fatalf("folded %+v", e)
+	}
+
+	// No event hook: no listGroups at all.
+	f2 := newFake(t)
+	c2 := newClient(f2.sock, allowAll(), &config.Test{ReloadGap: time.Millisecond})
+	_, conn2 := run(t, c2, f2)
+	receive(conn2, frame(aliceID))
+	time.Sleep(20 * time.Millisecond)
+	if n := len(f2.calls("listGroups")); n != 0 {
+		t.Fatalf("%d listGroups calls with no event hook", n)
+	}
+}
+
+// Members are never loaded before the bot's ID is known, so the bot is
+// never taken for one of them.
+func TestMembersWaitForTheBotsID(t *testing.T) {
+	c := newClient("x", nil, nil)
+	c.Watch(true)
+	if gs, ok := c.members.load(context.Background(), func(string, ...any) {}); ok || gs != nil {
+		t.Fatalf("loaded %v before the ID was known", gs)
+	}
+}
+
+// The first wait before reconnecting is a second, and the write timeout ten.
+func TestReconnectWait(t *testing.T) {
+	if c := newClient("x", nil, nil); c.backoff != time.Second || c.writeTimeout != 10*time.Second {
+		t.Fatalf("backoff %v, write timeout %v", c.backoff, c.writeTimeout)
 	}
 }

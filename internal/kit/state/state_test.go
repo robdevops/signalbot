@@ -23,9 +23,16 @@ func TestDoc(t *testing.T) {
 	if found, err := d.Load(&got); !found || err != nil || got["a"] != 1 || d.Path() != filepath.Join(dir, "notes.json") {
 		t.Fatalf("loaded %v, %v, %v", got, found, err)
 	}
-	if err := d.Save(strings.Repeat("x", MaxBytes)); err == nil {
+	if err := d.Save(strings.Repeat("x", MaxBytes-2)); err == nil { // two quotes and a newline: one byte over
 		t.Fatal("saved over the cap")
 	}
+	if err := d.Save(strings.Repeat("x", MaxBytes-3)); err != nil {
+		t.Fatalf("at the cap: %v", err)
+	}
+	if fi, _ := os.Stat(d.Path()); fi.Size() != MaxBytes {
+		t.Fatalf("%d bytes at the cap", fi.Size())
+	}
+	d.Save(map[string]int{"a": 1})
 	if found, _ := d.Load(&got); !found || got["a"] != 1 {
 		t.Fatal("the cap overwrote the file")
 	}
@@ -76,5 +83,14 @@ func TestCheck(t *testing.T) {
 	}
 	if entries, _ := os.ReadDir(dir); len(entries) != 0 {
 		t.Fatalf("left %v", entries)
+	}
+}
+
+// A name is a safe file name, and the core's is refused.
+func TestCheckName(t *testing.T) {
+	for name, ok := range map[string]bool{"notes": true, "a-b_c9": true, "budget": false, "../x": false, "Notes": false, "": false, strings.Repeat("a", 33): false} {
+		if err := CheckName(name); (err == nil) != ok {
+			t.Errorf("%q: %v", name, err)
+		}
 	}
 }

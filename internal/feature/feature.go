@@ -67,7 +67,7 @@ type Media struct {
 // one of its kinds is set.
 type Event struct {
 	Chat     Chat
-	By       Person    // who reacted, or who changed the group; ID "" if unknown
+	By       Person    // who reacted, or who changed the group; ID "" if unknown, or if several did
 	Reaction *Reaction // a reaction to a message
 	Members  *Members  // a change in a group's members
 }
@@ -179,7 +179,7 @@ type Store interface {
 	// Load reads the saved document into v; found is false, with no error,
 	// when nothing is saved yet. A file that can't be read is an error.
 	Load(v any) (found bool, err error)
-	// Save replaces the document with v. Over 4 MB it fails and nothing is
+	// Save replaces the document with v. Over 4 MiB it fails and nothing is
 	// written.
 	Save(v any) error
 }
@@ -199,9 +199,11 @@ type Host interface {
 	// OnTurn adds to the model's request for the addressed message being
 	// answered.
 	OnTurn(func(context.Context, Message) Additions)
-	// OnEvent sees each event, in order with its chat's messages, on a
-	// slot of its own, so it may block or call the network. The first
-	// non-empty reply returned is sent to the chat, without the model.
+	// OnEvent sees each event on a slot of its own, so it may block or call
+	// the network: a reaction in order with its chat's messages, a member
+	// change once the network has worked it out, which can be after later
+	// messages. The first non-empty reply returned is sent to the chat,
+	// without the model.
 	OnEvent(func(context.Context, Event) (reply string))
 	// Tools offers a group of tools to the model.
 	Tools(ToolGroup)

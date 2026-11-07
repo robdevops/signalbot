@@ -151,7 +151,7 @@ func TestChartYAxis(t *testing.T) {
 		`{"title":"T","axes":{"left":{"title":"Population (bn)"}},` + pts + `}`,
 	} {
 		s, err := parseChart(args)
-		if err != nil || s.left.Title != "Population (bn)" || s.left.Mode != "value" {
+		if err != nil || s.left.Title != "Population (bn)" || s.left.Mode != "value" || s.right.used {
 			t.Errorf("%s: %+v, %v", args, s, err)
 			continue
 		}

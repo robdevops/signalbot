@@ -525,7 +525,9 @@ func TestEvents(t *testing.T) {
 	h.noSend()
 
 	var seen []string
+	messages := 0 // OnMessage never sees an event
 	h = start(t, options{features: func(b *Bot) {
+		b.OnMessage(func(context.Context, feature.Message) feature.Action { messages++; return feature.Action{} })
 		b.OnEvent(func(_ context.Context, e feature.Event) string { seen = append(seen, "first"); return "" })
 		b.OnEvent(func(_ context.Context, e feature.Event) string {
 			seen = append(seen, "second")
@@ -564,6 +566,9 @@ func TestEvents(t *testing.T) {
 	}
 	h.settle()
 	h.noSend()
+	if messages != 1 { // the one message, "first"
+		t.Fatalf("OnMessage saw %d messages", messages)
+	}
 	if strings.Contains(h.logs.String(), "👍") || strings.Contains(h.logs.String(), "Welcome") {
 		t.Fatalf("logged %q", h.logs.String())
 	}

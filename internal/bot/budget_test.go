@@ -98,8 +98,8 @@ func TestFitFiles(t *testing.T) {
 func TestFilesOverTheCapAreLogged(t *testing.T) {
 	h := start(t, options{features: func(b *Bot) {
 		b.OnTurn(func(context.Context, feature.Message) feature.Additions {
-			return feature.Additions{Files: []feature.File{{Name: "big.pdf", MIME: "application/pdf", Data: make([]byte, 9<<20)},
-				{Name: "bigger.pdf", MIME: "application/pdf", Data: make([]byte, 8<<20)}}}
+			return feature.Additions{Files: []feature.File{{Name: "small.pdf", MIME: "application/pdf", Data: make([]byte, 1<<10)},
+				{Name: "big.pdf", MIME: "application/pdf", Data: make([]byte, maxFileBytes)}}} // only the one left out is big
 		})
 	}})
 	h.b.files.Store(true)

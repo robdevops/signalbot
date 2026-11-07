@@ -95,7 +95,9 @@ func startAt(t *testing.T, openRouter bool, answers ...served) (*Client, *model,
 	t.Helper()
 	var logs logx.Buffer
 	t.Cleanup(logx.SetOutput(&logs, &logs, false))
+	old := retryDelay
 	retryDelay = time.Millisecond
+	t.Cleanup(func() { retryDelay = old })
 	m := &model{answers: answers}
 	srv := httptest.NewServer(m)
 	t.Cleanup(srv.Close)
@@ -599,5 +601,15 @@ func TestCostOnError(t *testing.T) {
 	r, err := c.Ask(context.Background(), Request{Text: "hi", Tools: []feature.Tool{echo}})
 	if err == nil || !r.Costed || r.Cost != 0.001 {
 		t.Fatalf("cost %v (%v), %v", r.Cost, r.Costed, err)
+	}
+}
+
+// The retry wait is a second, unless a test hook sets one.
+func TestRetryDelay(t *testing.T) {
+	if retryDelay != time.Second {
+		t.Fatalf("retry delay %v", retryDelay)
+	}
+	if c := New(&config.Config{Test: &config.Test{RetryDelay: time.Millisecond}}); c.retry != time.Millisecond {
+		t.Fatalf("hook ignored: %v", c.retry)
 	}
 }

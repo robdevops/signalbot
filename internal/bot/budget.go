@@ -37,7 +37,7 @@ type budgetFile struct {
 
 // budgetName is the budget's saved state, budget.json, which no feature
 // may open.
-const budgetName = "budget"
+const budgetName = state.Reserved
 
 // newBudget loads today's spend from dir's budget.json, if it has one for
 // today; a file it can't read starts the day afresh, with a warning.
