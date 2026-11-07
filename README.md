@@ -46,7 +46,7 @@ chmod 700 ~/.local/share/signal-cli
 ```
 
 > [!WARNING]
-> **On TCP, anyone with a login or a process on the host can connect to `127.0.0.1:7583` and read or send messages as your bot's Signal account.** That is fine on a host only you use. To harden security, use signal-cli's Unix socket instead: see [Unix socket](docs/SOCKET.md).
+> **On TCP, anyone with a login or a process on the host can connect to `127.0.0.1:7583` and read or send messages as your bot's Signal account.** To harden your security, use signal-cli's Unix socket instead: see [Unix socket](docs/SOCKET.md).
 
 ### Configuration
 
