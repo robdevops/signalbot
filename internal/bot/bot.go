@@ -156,9 +156,10 @@ func (b *Bot) Shutdown(d time.Duration) {
 
 // handle runs on the network's reader goroutine for everything received (a
 // member change comes from another of its goroutines), so it never blocks
-// or calls the network. A Pending message, a Posted one and, with a hook
-// for them, a Happened event go to their chat's mailbox; Chatter goes to the
-// OnMessage hooks here, and is never logged.
+// or calls the network. A Pending message and, with a hook for them, a
+// Happened event go to their chat's mailbox; Chatter goes to the OnMessage
+// hooks here, and is never logged. (A Posted message comes from Deliver,
+// never from the network.)
 func (b *Bot) handle(r Received) {
 	if b.closing.Load() {
 		return
@@ -172,7 +173,7 @@ func (b *Bot) handle(r Received) {
 		if len(b.events) > 0 { // with no hook, nothing would read it
 			b.post(r)
 		}
-	case Pending, Posted:
+	case Pending:
 		b.post(r)
 	}
 }

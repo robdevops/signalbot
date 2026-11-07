@@ -575,26 +575,37 @@ func TestEvents(t *testing.T) {
 }
 
 // Each kind of Received reaches its handler, and the mailbox keeps their
-// order: an event between two addressed messages splits them into two
-// turns, answered before and after it.
+// order: an event between two addressed messages waiting together splits
+// them into two turns, answered before and after it.
 func TestReceivedKinds(t *testing.T) {
+	var heard []string
 	h := start(t, options{features: func(b *Bot) {
 		b.OnEvent(func(context.Context, feature.Event) string { return "event" })
+		b.OnMessage(func(_ context.Context, m feature.Message) feature.Action {
+			if !m.Addressed {
+				heard = append(heard, m.Text)
+			}
+			return feature.Action{}
+		})
 	}})
 	group := feature.Chat{GroupID: groupID}
 	h.holdModel()
+	h.receive(atBot("zero")) // holds the chat's worker in the model, so the rest wait together
+	h.eventually("the first request", func() bool { return len(h.requests()) == 1 })
 	h.receive(atBot("one"))
 	h.net.handle(Happened{Event: feature.Event{Chat: group, Reaction: &feature.Reaction{Emoji: "👍"}}})
 	h.receive(atBot("two"))
 	h.release()
-	for _, want := range []string{"ok", "event", "ok"} {
+	for _, want := range []string{"ok", "ok", "event", "ok"} {
 		if s := h.nextSend(); s.text != want {
 			t.Fatalf("sent %q, want %q", s.text, want)
 		}
 	}
-	if n := len(h.requests()); n != 2 {
+	if n := len(h.requests()); n != 3 {
 		t.Fatalf("%d model requests: the event didn't split the turn", n)
 	}
+	h.receive(chatter("the moon"))
+	h.eventually("the chatter", func() bool { return len(heard) == 1 })
 	h.net.handle(GroupChanged{Chat: group}) // forgets names; nothing to send
 	h.b.Deliver(feature.Message{Chat: group, Sender: aliceID, Text: "posted"})
 	if s := h.nextSend(); s.text != "posted" {
