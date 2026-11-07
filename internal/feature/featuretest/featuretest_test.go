@@ -91,3 +91,17 @@ func TestGoUntilStop(t *testing.T) {
 	}
 	New().Stop() // with nothing running
 }
+
+// The fake refuses the store names the core refuses, and a name twice.
+func TestStoreNames(t *testing.T) {
+	h := New()
+	h.Settings["STATE_DIRECTORY"] = t.TempDir()
+	if _, err := h.Store("notes"); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"notes", "budget", "../x", "Notes"} {
+		if _, err := h.Store(name); err == nil {
+			t.Errorf("%q opened", name)
+		}
+	}
+}

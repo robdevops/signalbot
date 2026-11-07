@@ -40,7 +40,8 @@ func sampleChart() string {
 }
 
 func TestRenderChart(t *testing.T) {
-	s, err := parseChart(sampleChart())
+	t.Parallel()
+	s, err := parseChart(dualAxisTool, true, sampleChart())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -66,7 +67,8 @@ func TestRenderChart(t *testing.T) {
 // Without a mode, an axis shows the values as given: a population in
 // billions is not turned into % change.
 func TestParseChartValueByDefault(t *testing.T) {
-	s, err := parseChart(`{"title":"T","axes":{"left":{"title":"Population (billions)"}},"series":[{"name":"India","points":[{"date":"2026-07-01","value":1.46},{"date":"2100-07-01","value":1.5}]}]}`)
+	t.Parallel()
+	s, err := parseChart(dualAxisTool, true, `{"title":"T","axes":{"left":{"title":"Population (billions)"}},"series":[{"name":"India","points":[{"date":"2026-07-01","value":1.46},{"date":"2100-07-01","value":1.5}]}]}`)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -74,13 +76,14 @@ func TestParseChartValueByDefault(t *testing.T) {
 		t.Fatalf("points %+v, mode %q", p, s.left.Mode)
 	}
 	// A series that starts at 0 is fine in value mode.
-	if _, err := parseChart(`{"title":"T","series":[{"name":"A","points":[{"date":"2026-01-01","value":0},{"date":"2026-01-02","value":2}]}]}`); err != nil {
+	if _, err := parseChart(dualAxisTool, true, `{"title":"T","series":[{"name":"A","points":[{"date":"2026-01-01","value":0},{"date":"2026-01-02","value":2}]}]}`); err != nil {
 		t.Fatal(err)
 	}
 }
 
 func TestParseChartChangeMode(t *testing.T) {
-	s, err := parseChart(`{"title":"T","axes":{"left":{"mode":"change"}},"series":[{"name":"A","points":[{"date":"2026-01-02","value":120},{"date":"2026-01-01","value":100}]}]}`)
+	t.Parallel()
+	s, err := parseChart(dualAxisTool, true, `{"title":"T","axes":{"left":{"mode":"change"}},"series":[{"name":"A","points":[{"date":"2026-01-02","value":120},{"date":"2026-01-01","value":100}]}]}`)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -91,13 +94,14 @@ func TestParseChartChangeMode(t *testing.T) {
 	if got := s.summary(); got != chartNote+"Final values: A 20.0%." {
 		t.Fatalf("summary %q", got)
 	}
-	v, _ := parseChart(`{"title":"T","axes":{"left":{"mode":"value","unit":"$"}},"series":[{"name":"A","points":[{"date":"2026-01-01","value":-1.5},{"date":"2026-01-02","value":2}]}]}`)
+	v, _ := parseChart(dualAxisTool, true, `{"title":"T","axes":{"left":{"mode":"value","unit":"$"}},"series":[{"name":"A","points":[{"date":"2026-01-01","value":-1.5},{"date":"2026-01-02","value":2}]}]}`)
 	if v.left.format(-1.5, 2) != "-$1.50" || v.left.format(2, 0) != "$2" {
 		t.Fatalf("value format: %q %q", v.left.format(-1.5, 2), v.left.format(2, 0))
 	}
 }
 
 func TestParseChartErrors(t *testing.T) {
+	t.Parallel()
 	pts := `[{"date":"2026-01-01","value":1},{"date":"2026-01-02","value":2}]`
 	for name, args := range map[string]string{
 		"not json":            `{`,
@@ -113,17 +117,18 @@ func TestParseChartErrors(t *testing.T) {
 		"bad date":            `{"title":"T","series":[{"name":"A","points":[{"date":"1 Jan","value":1},{"date":"2026-01-02","value":2}]}]}`,
 		"starts at 0":         `{"title":"T","axes":{"left":{"mode":"change"}},"series":[{"name":"A","points":[{"date":"2026-01-01","value":0},{"date":"2026-01-02","value":2}]}]}`,
 	} {
-		if _, err := parseChart(args); err == nil {
+		if _, err := parseChart(dualAxisTool, true, args); err == nil {
 			t.Errorf("%s: want an error", name)
 		}
 	}
 	seven := `{"title":"T","series":[` + strings.Repeat(`{"name":"A","points":`+pts+`},`, 6) + `{"name":"A","points":` + pts + `}]}`
-	if _, err := parseChart(seven); err == nil {
+	if _, err := parseChart(dualAxisTool, true, seven); err == nil {
 		t.Error("7 series: want an error")
 	}
 }
 
 func TestNiceTicks(t *testing.T) {
+	t.Parallel()
 	ticks, dec := niceTicks(-41.2, 6.1, 5)
 	if ticks[0] != -50 || ticks[len(ticks)-1] != 10 || dec != 0 {
 		t.Fatalf("ticks %v decimals %d", ticks, dec)
@@ -134,6 +139,7 @@ func TestNiceTicks(t *testing.T) {
 }
 
 func TestDateTicks(t *testing.T) {
+	t.Parallel()
 	d := func(s string) time.Time { t, _ := time.Parse("2006-01-02", s); return t }
 	labels := func(ts []dateTick) string {
 		var out []string
@@ -158,6 +164,7 @@ func TestDateTicks(t *testing.T) {
 }
 
 func TestSpreadLabels(t *testing.T) {
+	t.Parallel()
 	got := spreadLabels([]float64{100, 105, 300}, 28, 0, 1000)
 	if got[1]-got[0] < 28 || got[2] != 300 {
 		t.Fatalf("got %v", got)
@@ -169,8 +176,9 @@ func TestSpreadLabels(t *testing.T) {
 
 // Each axis has its own mode: % change is computed only for its own series.
 func TestChartTwoAxes(t *testing.T) {
-	s, err := parseChart(`{"title":"T","axes":{"left":{"title":"Price","mode":"value","unit":"$"},"right":{"title":"Change","mode":"change"}},"series":[` +
-		`{"name":"A","points":[{"date":"2026-01-01","value":100},{"date":"2026-01-02","value":120}]},` +
+	t.Parallel()
+	s, err := parseChart(dualAxisTool, true, `{"title":"T","axes":{"left":{"title":"Price","mode":"value","unit":"$"},"right":{"title":"Change","mode":"change"}},"series":[`+
+		`{"name":"A","points":[{"date":"2026-01-01","value":100},{"date":"2026-01-02","value":120}]},`+
 		`{"name":"B","axis":"right","points":[{"date":"2026-01-01","value":50},{"date":"2026-01-02","value":25}]}]}`)
 	if err != nil {
 		t.Fatal(err)
@@ -185,16 +193,16 @@ func TestChartTwoAxes(t *testing.T) {
 		t.Fatal(err)
 	}
 	// One axis needs no title.
-	if _, err := parseChart(`{"title":"T","series":[{"name":"A","points":[{"date":"2026-01-01","value":1},{"date":"2026-01-02","value":2}]}]}`); err != nil {
+	if _, err := parseChart(dualAxisTool, true, `{"title":"T","series":[{"name":"A","points":[{"date":"2026-01-01","value":1},{"date":"2026-01-02","value":2}]}]}`); err != nil {
 		t.Fatalf("single axis without a title: %v", err)
 	}
 	// Series only on the right are drawn on a single axis, so no titles are needed.
-	r, err := parseChart(`{"title":"T","axes":{"right":{"mode":"value","unit":"$"}},"series":[{"name":"A","axis":"right","points":[{"date":"2026-01-01","value":1},{"date":"2026-01-02","value":2}]}]}`)
+	r, err := parseChart(dualAxisTool, true, `{"title":"T","axes":{"right":{"mode":"value","unit":"$"}},"series":[{"name":"A","axis":"right","points":[{"date":"2026-01-01","value":1},{"date":"2026-01-02","value":2}]}]}`)
 	if err != nil || r.right.used || r.left.Unit != "$" || r.Series[0].Axis != "left" {
 		t.Fatalf("right-only chart: %+v, %v", r, err)
 	}
 	// A right axis with no series on it is ignored.
-	o, err := parseChart(`{"title":"T","axes":{"right":{"title":"unused"}},"series":[{"name":"A","points":[{"date":"2026-01-01","value":1},{"date":"2026-01-02","value":2}]}]}`)
+	o, err := parseChart(dualAxisTool, true, `{"title":"T","axes":{"right":{"title":"unused"}},"series":[{"name":"A","points":[{"date":"2026-01-01","value":1},{"date":"2026-01-02","value":2}]}]}`)
 	if err != nil || o.right.used {
 		t.Fatalf("unused right axis: %v, %v", o.right.used, err)
 	}
@@ -202,6 +210,7 @@ func TestChartTwoAxes(t *testing.T) {
 
 // An inverted axis puts its highest value at the bottom, and zero follows.
 func TestChartInvertedAxis(t *testing.T) {
+	t.Parallel()
 	for _, invert := range []bool{false, true} {
 		a := &chartAxis{Mode: "value", Invert: invert}
 		a.layout([]float64{0, 10}, 100, 500)
@@ -216,6 +225,7 @@ func TestChartInvertedAxis(t *testing.T) {
 }
 
 func TestRenderTwoAxisSample(t *testing.T) {
+	t.Parallel()
 	type pt struct {
 		Date  string  `json:"date"`
 		Value float64 `json:"value"`
@@ -234,7 +244,7 @@ func TestRenderTwoAxisSample(t *testing.T) {
 		"series": []any{map[string]any{"name": "NVDA", "points": a}, map[string]any{"name": "AMD", "points": b},
 			map[string]any{"name": "10Y", "axis": "right", "points": y}},
 	})
-	s, err := parseChart(string(args))
+	s, err := parseChart(dualAxisTool, true, string(args))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -279,58 +289,61 @@ func areaSample(n int, rising bool) string {
 // each theme's colours, with its high and low found. The dark theme draws no
 // pure white; set CHART_THEMES to a directory to write its samples.
 func TestAreaStyle(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		rising bool
 		n      int
 		env    string
 		name   string
 	}{{true, 250, "CHART_UP", "up"}, {false, 22, "CHART_DOWN", "down"}} {
-		s, err := parseChart(areaSample(tc.n, tc.rising))
-		if err != nil {
-			t.Fatal(err)
-		}
-		pts := s.Series[0].Points
-		if up := pts[len(pts)-1].Value >= pts[0].Value; up != tc.rising {
-			t.Fatalf("sample rising=%v but ends %v from %v", tc.rising, pts[len(pts)-1].Value, pts[0].Value)
-		}
-		hi, lo := highLow(pts)
-		for _, p := range pts {
-			if p.Value > pts[hi].Value || p.Value < pts[lo].Value {
-				t.Fatalf("high %v / low %v missed %v", pts[hi].Value, pts[lo].Value, p.Value)
-			}
-		}
-		for _, th := range []*theme{lightTheme, darkTheme} {
-			out, err := renderChart(s, th)
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			s, err := parseChart(dualAxisTool, true, areaSample(tc.n, tc.rising))
 			if err != nil {
 				t.Fatal(err)
 			}
-			img := decode(t, out)
-			// Somewhere in the plot is the line's colour: up when rising, down when falling.
-			want := th.up
-			if !tc.rising {
-				want = th.down
+			pts := s.Series[0].Points
+			if up := pts[len(pts)-1].Value >= pts[0].Value; up != tc.rising {
+				t.Fatalf("sample rising=%v but ends %v from %v", tc.rising, pts[len(pts)-1].Value, pts[0].Value)
 			}
-			if countColour(img, image.Rect(100, 125, 1220, 700), want) == 0 {
-				t.Errorf("rising=%v dark=%v: no line in %v", tc.rising, th == darkTheme, want)
-			}
-			if th == lightTheme {
-				if p := os.Getenv(tc.env); p != "" {
-					os.WriteFile(p, out, 0o644)
+			hi, lo := highLow(pts)
+			for _, p := range pts {
+				if p.Value > pts[hi].Value || p.Value < pts[lo].Value {
+					t.Fatalf("high %v / low %v missed %v", pts[hi].Value, pts[lo].Value, p.Value)
 				}
-				continue
 			}
-			if n := countColour(img, img.Bounds(), white); n > 0 {
-				t.Errorf("rising=%v: %d white pixels in the dark theme", tc.rising, n)
+			for _, th := range []*theme{lightTheme, darkTheme} {
+				cv := drawChart(s, th) // checked as drawn: the theme's colours are exact there
+				img := cv.img
+				out := func() []byte { data, _ := cv.encode(); return data }
+				// Somewhere in the plot is the line's colour: up when rising, down when falling.
+				want := th.up
+				if !tc.rising {
+					want = th.down
+				}
+				if countColour(img, image.Rect(100, 125, 1220, 700), want) == 0 {
+					t.Errorf("rising=%v dark=%v: no line in %v", tc.rising, th == darkTheme, want)
+				}
+				if th == lightTheme {
+					if p := os.Getenv(tc.env); p != "" {
+						os.WriteFile(p, out(), 0o644)
+					}
+					continue
+				}
+				if n := countColour(img, img.Bounds(), white); n > 0 {
+					t.Errorf("rising=%v: %d white pixels in the dark theme", tc.rising, n)
+				}
+				if dir := os.Getenv("CHART_THEMES"); dir != "" {
+					os.WriteFile(filepath.Join(dir, "dark-line-single-"+tc.name+".png"), out(), 0o644)
+				}
 			}
-			if dir := os.Getenv("CHART_THEMES"); dir != "" {
-				os.WriteFile(filepath.Join(dir, "dark-line-single-"+tc.name+".png"), out, 0o644)
-			}
-		}
+		})
 	}
 }
 
 // Argument errors say what to fix, so the model can correct its next call.
 func TestChartArgErrors(t *testing.T) {
+	t.Parallel()
 	for args, want := range map[string]string{
 		`{"title":"T","series":[{"name":"a","points":[{"date":"2026-10-01","value":"12.3"}]}]}`: "series.0.points.0.value must be a number, got a string: pass it as JSON itself",
 		`{"title":"T","axes":{"left":{"invert":"true"}},"series":[]}`:                           "axes.left.invert must be true or false, got a string",
@@ -339,7 +352,7 @@ func TestChartArgErrors(t *testing.T) {
 		``:                        "title is required",
 		`  `:                      "title is required",
 	} {
-		if _, err := parseChart(args); err == nil || !strings.Contains(err.Error(), want) {
+		if _, err := parseChart(dualAxisTool, true, args); err == nil || !strings.Contains(err.Error(), want) {
 			t.Errorf("%s: got %v, want %q", args, err, want)
 		}
 	}
@@ -352,10 +365,11 @@ func TestChartArgErrors(t *testing.T) {
 // holding its JSON: it is taken as meant, at any depth, while a string
 // field that merely looks like JSON stays a string.
 func TestChartArgsWithStringifiedParts(t *testing.T) {
+	t.Parallel()
 	args := `{"title":"[draft] NVDA vs MSFT","axes":"{\"left\": {\"mode\": \"change\"}}","series":[` +
 		`{"name":"NVDA","points":"[{\"date\":\"2026-10-01\",\"value\":100},{\"date\":\"2026-10-02\",\"value\":110}]"},` +
 		`{"name":"[1]","points":[{"date":"2026-10-01","value":50},{"date":"2026-10-02","value":45}]}]}`
-	s, err := parseChart(args)
+	s, err := parseChart(dualAxisTool, true, args)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -368,26 +382,28 @@ func TestChartArgsWithStringifiedParts(t *testing.T) {
 	// An element of an array, too.
 	one := `{"name":"A","points":[{"date":"2026-10-01","value":1},{"date":"2026-10-02","value":2}]}`
 	q, _ := json.Marshal(one)
-	if s, err := parseChart(`{"title":"T","series":[` + string(q) + `]}`); err != nil || s.Series[0].Name != "A" {
+	if s, err := parseChart(dualAxisTool, true, `{"title":"T","series":[`+string(q)+`]}`); err != nil || s.Series[0].Name != "A" {
 		t.Fatalf("element: %v", err)
 	}
 	// A string that isn't JSON still gets the error, with how to fix it.
-	if _, err := parseChart(`{"title":"T","axes":"left","series":[` + one + `]}`); err == nil || !strings.Contains(err.Error(), "axes must be an object, got a string: pass it as JSON itself") {
+	if _, err := parseChart(dualAxisTool, true, `{"title":"T","axes":"left","series":[`+one+`]}`); err == nil || !strings.Contains(err.Error(), "axes must be an object, got a string: pass it as JSON itself") {
 		t.Fatalf("not JSON: %v", err)
 	}
 }
 
 // Some models send the arguments as a JSON string holding the JSON.
 func TestChartArgsDoubleEncoded(t *testing.T) {
+	t.Parallel()
 	inner := `{"title":"T","series":[{"name":"a","points":[{"date":"2026-10-01","value":1},{"date":"2026-10-02","value":2}]}]}`
 	b, _ := json.Marshal(inner)
-	if s, err := parseChart(string(b)); err != nil || s.Title != "T" {
+	if s, err := parseChart(dualAxisTool, true, string(b)); err != nil || s.Title != "T" {
 		t.Fatalf("got %v", err)
 	}
 }
 
 // The caption keeps to one line: the subtitle only if it fits.
 func TestChartCaption(t *testing.T) {
+	t.Parallel()
 	for _, c := range []struct{ title, sub, want string }{
 		{"NVDA vs AMD", "", "NVDA vs AMD"},
 		{"NVDA vs AMD", "Past month", "NVDA vs AMD — Past month"},
@@ -417,6 +433,7 @@ func twelvePie(wrapEvery int) string {
 // reaches, for both chart kinds; without one the band is empty, and the rest
 // of the chart is the same either way.
 func TestChartSource(t *testing.T) {
+	t.Parallel()
 	dir := os.Getenv("CHART_THEMES")
 	band := image.Rect(0, sourceTop, width, height)
 	source := `"source":"Yahoo Finance, finance.yahoo.com/quote/NVDA/history, retrieved 28 Oct 2026",`
@@ -430,40 +447,37 @@ func TestChartSource(t *testing.T) {
 		{"line-wide", chartTool, wide, sampleChart()},
 		{"pie-wide", pieTool, wide, alphabetPie},
 	} {
-		drawnWith, drawnWithout := canvasOf(t, tc.tool, "{"+tc.source+tc.args[1:]), canvasOf(t, tc.tool, tc.args)
-		with, err := drawnWith.encode()
-		if err != nil {
-			t.Fatal(err)
-		}
-		data, err := drawnWithout.encode()
-		if err != nil {
-			t.Fatal(err)
-		}
-		img, without := decode(t, with), decode(t, data)
-		inBand := func(m image.Image, r image.Rectangle) int {
-			return r.Dx()*r.Dy() - countColour(m, r, lightTheme.bg)
-		}
-		if n := inBand(without, band); n != 0 {
-			t.Errorf("%s: %d pixels drawn in the source's band without a source", tc.name, n)
-		}
-		if inBand(img, image.Rect(38, sourceTop, 300, height)) == 0 || countColour(img, band, lightTheme.muted) == 0 {
-			t.Errorf("%s: no source drawn", tc.name)
-		}
-		if inBand(img, image.Rect(width-37, sourceTop, width, height)) != 0 ||
-			(tc.source == source && inBand(img, image.Rect(width-200, sourceTop, width, height)) != 0) {
-			t.Errorf("%s: source runs to the right edge", tc.name)
-		}
-		if strings.HasPrefix(tc.name, "pie-twelve") && inBand(without, image.Rect(width/2, 0, width, 100)) != 0 {
-			t.Errorf("%s: the legend reaches the title", tc.name)
-		}
-		// Compared as drawn, since the PNG's palette depends on the whole image.
-		a, b := drawnWith.img, drawnWithout.img
-		if off := a.PixOffset(0, sourceTop); !bytes.Equal(a.Pix[:off], b.Pix[:off]) {
-			t.Errorf("%s: the source changed the chart above it", tc.name)
-		}
-		if dir != "" {
-			os.WriteFile(filepath.Join(dir, "source-"+tc.name+".png"), with, 0o644)
-		}
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			// Checked as drawn: the theme's colours are exact on the canvas,
+			// and the PNG's palette depends on the whole image.
+			drawnWith, drawnWithout := canvasOf(t, tc.tool, "{"+tc.source+tc.args[1:]), canvasOf(t, tc.tool, tc.args)
+			img, without := drawnWith.img, drawnWithout.img
+			inBand := func(m image.Image, r image.Rectangle) int {
+				return r.Dx()*r.Dy() - countColour(m, r, lightTheme.bg)
+			}
+			if n := inBand(without, band); n != 0 {
+				t.Errorf("%s: %d pixels drawn in the source's band without a source", tc.name, n)
+			}
+			if inBand(img, image.Rect(38, sourceTop, 300, height)) == 0 || countColour(img, band, lightTheme.muted) == 0 {
+				t.Errorf("%s: no source drawn", tc.name)
+			}
+			if inBand(img, image.Rect(width-37, sourceTop, width, height)) != 0 ||
+				(tc.source == source && inBand(img, image.Rect(width-200, sourceTop, width, height)) != 0) {
+				t.Errorf("%s: source runs to the right edge", tc.name)
+			}
+			if strings.HasPrefix(tc.name, "pie-twelve") && inBand(without, image.Rect(width/2, 0, width, 100)) != 0 {
+				t.Errorf("%s: the legend reaches the title", tc.name)
+			}
+			if off := img.PixOffset(0, sourceTop); !bytes.Equal(img.Pix[:off], without.Pix[:off]) {
+				t.Errorf("%s: the source changed the chart above it", tc.name)
+			}
+			if dir != "" {
+				if with, err := drawnWith.encode(); err == nil {
+					os.WriteFile(filepath.Join(dir, "source-"+tc.name+".png"), with, 0o644)
+				}
+			}
+		})
 	}
 }
 
@@ -478,7 +492,7 @@ func canvasOf(t *testing.T, tool, args string) *canvas {
 		}
 		return drawPie(s, lightTheme)
 	}
-	s, err := parseChart(args)
+	s, err := parseChart(dualAxisTool, true, args)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -489,7 +503,8 @@ func canvasOf(t *testing.T, tool, args string) *canvas {
 // half as big as full colour, with the background and the theme's colours
 // exact and every pixel close to how it was drawn.
 func TestEncode(t *testing.T) {
-	line, err := parseChart(sixSeries())
+	t.Parallel()
+	line, err := parseChart(dualAxisTool, true, sixSeries())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -497,46 +512,70 @@ func TestEncode(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	up, err := parseChart(dualAxisTool, true, `{"source":"Yahoo Finance",`+areaSample(250, true)[1:])
+	if err != nil {
+		t.Fatal(err)
+	}
+	down, err := parseChart(dualAxisTool, true, areaSample(22, false))
+	if err != nil {
+		t.Fatal(err)
+	}
 	for _, tc := range []struct {
 		name string
 		cv   *canvas
 		th   *theme
+		also []color.RGBA // colours that must come through exactly too
 	}{
-		{"light line", drawChart(line, lightTheme), lightTheme},
-		{"dark line", drawChart(line, darkTheme), darkTheme},
-		{"light pie", drawPie(pie, lightTheme), lightTheme},
-		{"dark pie", drawPie(pie, darkTheme), darkTheme},
+		{"light line", drawChart(line, lightTheme), lightTheme, nil},
+		{"dark line", drawChart(line, darkTheme), darkTheme, nil},
+		{"light pie", drawPie(pie, lightTheme), lightTheme, nil},
+		{"dark pie", drawPie(pie, darkTheme), darkTheme, nil},
+		{"light area up, with a source", drawChart(up, lightTheme), lightTheme, []color.RGBA{lightTheme.up, lightTheme.muted}},
+		{"dark area down", drawChart(down, darkTheme), darkTheme, []color.RGBA{darkTheme.down}},
 	} {
-		var full bytes.Buffer
-		if err := png.Encode(&full, tc.cv.img); err != nil {
-			t.Fatal(err)
-		}
-		data, err := tc.cv.encode()
-		if err != nil {
-			t.Fatal(err)
-		}
-		if len(data) > full.Len()/2 {
-			t.Errorf("%s: %d bytes, against %d in full colour", tc.name, len(data), full.Len())
-		}
-		img := decode(t, data)
-		if img.Bounds() != image.Rect(0, 0, width, height) {
-			t.Fatalf("%s: %v", tc.name, img.Bounds())
-		}
-		if countColour(img, image.Rect(5, 5, 6, 6), tc.th.bg) != 1 || countColour(img, img.Bounds(), tc.th.palette[0]) == 0 {
-			t.Errorf("%s: the background or the first series colour changed", tc.name)
-		}
-		m, ok := img.(*image.Paletted)
-		if !ok {
-			t.Fatalf("%s: decoded as %T", tc.name, img)
-		}
-		worst := 0
-		for i, pi := range m.Pix { // the canvas and the PNG are both rows of width pixels
-			a, b := tc.cv.img.Pix[4*i:4*i+3], color.RGBAModel.Convert(m.Palette[pi]).(color.RGBA)
-			worst = max(worst, absDiff(a[0], b.R), absDiff(a[1], b.G), absDiff(a[2], b.B))
-		}
-		if worst > 48 {
-			t.Errorf("%s: a pixel is %d off", tc.name, worst)
-		}
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			data, err := tc.cv.encode()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if tc.also == nil { // the size against full colour, once per kind of chart
+				var full bytes.Buffer
+				if err := png.Encode(&full, tc.cv.img); err != nil {
+					t.Fatal(err)
+				}
+				if len(data) > full.Len()/2 {
+					t.Errorf("%s: %d bytes, against %d in full colour", tc.name, len(data), full.Len())
+				}
+			}
+			img := decode(t, data)
+			if img.Bounds() != image.Rect(0, 0, width, height) {
+				t.Fatalf("%s: %v", tc.name, img.Bounds())
+			}
+			if countColour(img, image.Rect(5, 5, 6, 6), tc.th.bg) != 1 || tc.also == nil && countColour(img, img.Bounds(), tc.th.palette[0]) == 0 {
+				t.Errorf("%s: the background or the first series colour changed", tc.name)
+			}
+			for _, c := range tc.also {
+				if countColour(img, img.Bounds(), c) == 0 {
+					t.Errorf("%s: %v changed in the PNG", tc.name, c)
+				}
+			}
+			if tc.th == darkTheme && countColour(img, img.Bounds(), white) > 0 {
+				t.Errorf("%s: white in the dark theme's PNG", tc.name)
+			}
+			m, ok := img.(*image.Paletted)
+			if !ok {
+				t.Fatalf("%s: decoded as %T", tc.name, img)
+			}
+			worst := 0
+			for i, pi := range m.Pix { // the canvas and the PNG are both rows of width pixels
+				a, b := tc.cv.img.Pix[4*i:4*i+3], color.RGBAModel.Convert(m.Palette[pi]).(color.RGBA)
+				worst = max(worst, absDiff(a[0], b.R), absDiff(a[1], b.G), absDiff(a[2], b.B))
+			}
+			if worst > 48 {
+				t.Errorf("%s: a pixel is %d off", tc.name, worst)
+			}
+		})
 	}
 }
 
@@ -544,8 +583,9 @@ func absDiff(a, b uint8) int { return max(int(a)-int(b), int(b)-int(a)) }
 
 // The source is trimmed and clamped to 80 runes.
 func TestChartSourceClamp(t *testing.T) {
+	t.Parallel()
 	long := strings.Repeat("é", 100)
-	c, err := parseChart(`{"source":"  ` + long + `  ",` + sampleChart()[1:])
+	c, err := parseChart(dualAxisTool, true, `{"source":"  `+long+`  ",`+sampleChart()[1:])
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -557,7 +597,7 @@ func TestChartSourceClamp(t *testing.T) {
 	if c.Source != want || p.Source != want {
 		t.Fatalf("source %q, %q", c.Source, p.Source)
 	}
-	if c, _ := parseChart(`{"source":"  Yahoo Finance ",` + sampleChart()[1:]); c.Source != "Yahoo Finance" {
+	if c, _ := parseChart(dualAxisTool, true, `{"source":"  Yahoo Finance ",`+sampleChart()[1:]); c.Source != "Yahoo Finance" {
 		t.Fatalf("source %q", c.Source)
 	}
 }

@@ -7,12 +7,7 @@ package schedule
 import (
 	"cmp"
 	"context"
-	"encoding/json"
-	"errors"
 	"fmt"
-	"io/fs"
-	"os"
-	"path/filepath"
 	"slices"
 	"strconv"
 	"strings"
@@ -22,14 +17,14 @@ import (
 	"unicode/utf8"
 
 	"github.com/robdevops/signalbot/internal/feature"
-	"github.com/robdevops/signalbot/internal/kit/fsx"
 	"github.com/robdevops/signalbot/internal/kit/logx"
 	"github.com/robdevops/signalbot/internal/kit/txt"
 )
 
 const (
-	// fileName is the schedules file, in the state directory.
-	fileName = "schedules.json"
+	// storeName is the schedules' saved state, schedules.json in the state
+	// directory.
+	storeName = "schedules"
 	// grace is how late a one-off may run, after the bot was down or asleep;
 	// later than that it is dropped.
 	grace = time.Hour
@@ -41,10 +36,6 @@ const (
 	// whenLayout is how a time is shown to the user.
 	whenLayout = "Mon 2 Jan 2006 15:04 MST"
 )
-
-// dockerDir is the Docker image's STATE_DIRECTORY, a bind mount whose owner
-// the bot can't fix itself, so its message says how to fix the host's.
-var dockerDir = "/data"
 
 const usage = `/schedule "<message or /command>" <time> [every hour|day|week|month|quarter|year] [group name]`
 
@@ -62,18 +53,18 @@ type entry struct {
 	cancel func() // its timer's; nil if none is set
 }
 
-// file is the schedules file.
-type file struct {
+// savedFile is the schedules file.
+type savedFile struct {
 	Schedules []*entry       `json:"schedules"`
 	Last      map[string]int `json:"last_id,omitempty"` // the last ID each user was given
 }
 
-// store is every user's schedules, in the order they were made.
-type store struct {
-	h    feature.Host
-	path string
-	loc  *time.Location
-	now  func() time.Time
+// scheduler is every user's schedules, in the order they were made.
+type scheduler struct {
+	h   feature.Host
+	db  feature.Store
+	loc *time.Location
+	now func() time.Time
 
 	mu   sync.Mutex
 	all  []*entry
@@ -86,70 +77,42 @@ type store struct {
 func Register(h feature.Host) error { return register(h, time.Local, time.Now) }
 
 func register(h feature.Host, loc *time.Location, now func() time.Time) error {
-	// systemd may list several directories; the first is ours. Run by hand,
-	// the working directory.
-	dir, _, _ := strings.Cut(h.Env("STATE_DIRECTORY", ""), ":")
-	if dir == "" {
-		dir = "."
+	db, err := h.Store(storeName)
+	if err != nil {
+		return fmt.Errorf("/schedule: %w", err)
 	}
-	if err := usable(dir); err != nil {
-		if filepath.Clean(dir) == dockerDir {
-			return fmt.Errorf("%s must be readable and writable by the bot's user (65532); "+
-				"on the host, run: chown 65532 /var/lib/private/signalbot (%v)", dir, err)
-		}
-		where := "its state directory " + dir
-		if dir == "." {
-			where = "the working directory, as STATE_DIRECTORY isn't set"
-		}
-		return fmt.Errorf("/schedule can't list and write %s (%v); "+
-			"under systemd, add StateDirectory=signalbot to the unit's [Service] section, "+
-			"or set STATE_DIRECTORY to a directory the bot can write", where, err)
-	}
-	s := &store{h: h, path: filepath.Join(dir, fileName), loc: loc, now: now, last: map[string]int{}}
+	s := &scheduler{h: h, db: db, loc: loc, now: now, last: map[string]int{}}
 	if err := s.load(); err != nil {
 		return err
 	}
 	for _, name := range commands {
-		if err := feature.Command(h, name, s.command); err != nil {
+		if err := h.Command(name, s.command); err != nil {
 			return err
 		}
 	}
-	h.IntroLine(`Type "/schedule" for schedules and reminders.`, true) // made only in a DM
-	// No model tools, so this names the commands only in the prompt's list
-	// of what the bot has, for a near-miss such as "/time" to be pointed here.
-	h.Tools(feature.ToolGroup{Names: []string{"**schedules and reminders**: /" + strings.Join(commands, ", /")}})
+	h.IntroLineDM(`Type "/schedule" for schedules and reminders.`) // made only in a DM
+	// In the prompt's list of what the bot has, for a near-miss such as
+	// "/time" to be pointed here.
+	h.ListCommands("schedules and reminders", commands...)
 	return nil
 }
 
 // commands are the command and its aliases, all the same command.
-var commands = []string{"schedule", "timer", "reminder", "job"}
+var commands = []string{"schedule", "timer", "reminder"}
 
-// usable checks that dir can be listed and written to.
-func usable(dir string) error {
-	if _, err := os.ReadDir(dir); err != nil {
-		return err
-	}
-	f, err := os.CreateTemp(dir, ".check-*")
-	if err != nil {
-		return err
-	}
-	f.Close()
-	return os.Remove(f.Name())
+// verbs are the subcommands, by every word that names one.
+var verbs = map[string]string{
+	"help": "help",
+	"list": "list", "ls": "list",
+	"del": "del", "delete": "del", "remove": "del", "cancel": "del", "rm": "del",
 }
 
 // load reads the saved schedules and sets their timers. A file that can't
 // be read stops the bot, rather than being overwritten by the next save.
-func (s *store) load() error {
-	data, err := os.ReadFile(s.path)
-	if errors.Is(err, fs.ErrNotExist) {
-		return nil
-	}
-	var f file
-	if err == nil {
-		err = json.Unmarshal(data, &f)
-	}
-	if err != nil {
-		return fmt.Errorf("schedules in %s can't be read: %v", s.path, err)
+func (s *scheduler) load() error {
+	var f savedFile
+	if _, err := s.db.Load(&f); err != nil {
+		return fmt.Errorf("schedules: %v", err)
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -161,16 +124,9 @@ func (s *store) load() error {
 		id   int
 	}
 	taken := map[userID]bool{}
-	for _, e := range f.Schedules {
-		ok := e != nil && e.User != "" && e.Text != ""
-		if ok {
-			e.start, _, ok = parseTime(e.Start, s.loc)
-		}
-		if ok && e.Every != "" {
-			ok = units[e.Every] != 0
-		}
-		if !ok {
-			logx.Errorf("a saved schedule is malformed and was skipped")
+	for i, e := range f.Schedules {
+		if bad := e.malformed(s.loc); bad != "" {
+			logx.Errorf("%s.json: entry %d skipped: %s; it will be removed at the next save", storeName, i+1, bad)
 			continue
 		}
 		if k := (userID{e.User, e.ID}); e.ID > 0 && !taken[k] {
@@ -194,6 +150,26 @@ func (s *store) load() error {
 	return nil
 }
 
+// malformed says what is wrong with a saved entry, naming the field and
+// never its value, and sets its start; "" if nothing is.
+func (e *entry) malformed(loc *time.Location) string {
+	var ok bool
+	switch {
+	case e == nil:
+		return "empty"
+	case e.User == "":
+		return "no user"
+	case e.Text == "":
+		return "no text"
+	case e.Every != "" && units[e.Every] == 0:
+		return "bad every"
+	}
+	if e.start, _, ok = parseTime(e.Start, loc); !ok {
+		return "bad start"
+	}
+	return ""
+}
+
 // first is e's first run from now: a one-off's own time, past or not, so
 // that a late one is judged when it runs; a repeat's next time to come.
 func (e *entry) first(now time.Time) time.Time {
@@ -203,47 +179,40 @@ func (e *entry) first(now time.Time) time.Time {
 	return next(e.start, e.Every, now)
 }
 
-// save writes every schedule to a temporary file and renames it over the
-// old one, so a crash never leaves half a file. s.mu is held.
-func (s *store) save() error {
-	data, err := json.MarshalIndent(file{Schedules: s.all, Last: s.last}, "", "  ")
-	if err != nil {
-		return err
-	}
-	return fsx.WriteAtomic(s.path, append(data, '\n'))
-}
+// save writes every schedule, whole. s.mu is held.
+func (s *scheduler) save() error { return s.db.Save(savedFile{Schedules: s.all, Last: s.last}) }
 
 // arm sets e's timer for t. s.mu is held.
-func (s *store) arm(e *entry, t time.Time) error {
+func (s *scheduler) arm(e *entry, t time.Time) error {
 	cancel, err := s.h.At(timerName, t, func(_ context.Context, due time.Time) { s.run(e, due) })
 	e.cancel = cancel
 	return err
 }
 
-// run is e's timer: it delivers e's text unless the run is too late, and
-// sets a repeat's next run, worked out from the clock.
-func (s *store) run(e *entry, due time.Time) {
-	if s.due(e, due) {
+// run is e's timer, due at dueAt: it delivers e's text if settle says to.
+func (s *scheduler) run(e *entry, dueAt time.Time) {
+	if s.settle(e, dueAt) {
 		s.h.Deliver(feature.Message{Chat: e.chat(), Sender: e.User, Text: e.Text})
 	}
 }
 
-// due settles e's run that was due at due, and reports whether to deliver
-// it: a one-off is deleted, and dropped if it is an hour late; a repeat is
-// set again, and skips a run it missed.
-func (s *store) due(e *entry, due time.Time) bool {
+// settle settles e's run that was due at dueAt, and reports whether to
+// deliver it: a one-off is deleted, and dropped if it is an hour late, its
+// owner told by DM; a repeat is set again, worked out from the clock, and
+// skips a run it missed.
+func (s *scheduler) settle(e *entry, dueAt time.Time) (deliver bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if !slices.Contains(s.all, e) {
 		return false // deleted as it came due
 	}
 	now := s.now()
-	late := now.Sub(due)
+	late := now.Sub(dueAt)
 	e.cancel = nil
 	if e.Every != "" {
 		after := now
-		if due.After(now) { // the clock went back
-			after = due
+		if dueAt.After(now) { // the clock went back
+			after = dueAt
 		}
 		if err := s.arm(e, next(e.start, e.Every, after)); err != nil {
 			logx.Errorf("a repeating schedule can't be set again: %v", err)
@@ -260,6 +229,8 @@ func (s *store) due(e *entry, due time.Time) bool {
 	}
 	if late >= grace {
 		logx.Warnf("a one-off schedule was dropped: it was due %s ago", late.Round(time.Minute))
+		s.h.Tell(e.User, "I was offline at "+dueAt.In(s.loc).Format(whenLayout)+", so your reminder \""+
+			txt.Clamp(strings.Join(strings.Fields(e.Text), " "), 80)+"\" didn't post.")
 		return false
 	}
 	return true
@@ -274,42 +245,66 @@ func (e *entry) chat() feature.Chat {
 
 // command answers /schedule, in a DM only: the core only passes on a DM
 // from a sender in SIGNAL_DM_USER_IDS.
-func (s *store) command(ctx context.Context, m feature.Message, args string) feature.Action {
+func (s *scheduler) command(ctx context.Context, m feature.Message, args string) feature.Action {
 	if m.Chat.GroupID != "" {
 		return answer("Schedules are made in a DM with me. /schedule help there says how.")
 	}
-	verb, rest := cutField(args)
-	switch verb = strings.ToLower(verb); {
-	case args == "", verb == "help" && rest == "":
+	word, rest := cutField(args)
+	switch verbs[strings.ToLower(word)] {
+	case "help":
 		return answer(s.help())
-	case verb == "list" && rest == "":
+	case "list":
 		return answer(s.list(ctx, m.Sender))
-	case verb == "del":
+	case "del":
 		return answer(s.del(m.Sender, rest))
+	}
+	q, _ := utf8.DecodeRuneInString(args)
+	switch {
+	case args == "":
+		return answer(s.help())
+	case !strings.ContainsRune(quotes, q) && !s.looksLikeASchedule(args):
+		name, _, _ := feature.ParseCommand(m.Text)
+		return answer("I don't know \"/" + cmp.Or(name, "schedule") + " " + txt.Clamp(word, 30) + "\". " +
+			"Try /schedule list, /schedule del <number>, or /schedule help.")
 	}
 	return answer(s.add(ctx, m, args))
 }
 
+// looksLikeASchedule reports whether args, which don't start with a quote,
+// hold a time, so that they are a new schedule missing its quotes rather
+// than an unknown subcommand.
+func (s *scheduler) looksLikeASchedule(args string) bool {
+	for w := range strings.FieldsSeq(args) {
+		if _, _, ok := parseTime(w, s.loc); ok || isDate(w) {
+			return true
+		}
+	}
+	return false
+}
+
+// example is the current time, as the help and the errors show a time.
+func (s *scheduler) example() string { return s.now().In(s.loc).Format(exampleLayout) }
+
 func answer(text string) feature.Action { return feature.Action{Answer: text} }
 
-func (s *store) help() string {
-	now := s.now().In(s.loc)
+func (s *scheduler) help() string {
+	example := s.example()
 	return strings.Join([]string{
 		"Schedule a message, or a /command, to post as if you'd sent it:\n\n" + usage,
-		"- The time is ISO 8601, like " + exampleTime + " in my time zone (" + now.Format("MST") +
-			"), or with an offset, like " + exampleTime + "+10:00.",
+		"Copy and edit this one, which has the time now:\n/schedule \"hello\" " + example,
+		"- The time is a date and time in my time zone (" + s.now().In(s.loc).Format("MST") +
+			"), or with an offset, like " + example + "+10:00.",
 		"- Without a group name it's posted here. A message that @mentions me gets my answer.",
 		"- A monthly schedule from the 31st runs on the last day of shorter months.",
 		"/schedule list: your schedules, numbered",
 		"/schedule del <number>: delete one",
-		"/timer, /reminder and /job work the same as /schedule.",
-		"The current time is " + now.Format("2006-01-02T15:04Z07:00"),
+		"/timer and /reminder work the same as /schedule.",
 	}, "\n\n")
 }
 
 // add makes a schedule from args.
-func (s *store) add(ctx context.Context, m feature.Message, args string) string {
-	r, problem := parse(args, s.loc)
+func (s *scheduler) add(ctx context.Context, m feature.Message, args string) string {
+	r, problem := parse(args, s.loc, s.example())
 	if problem != "" {
 		return problem
 	}
@@ -357,7 +352,7 @@ func (s *store) add(ctx context.Context, m feature.Message, args string) string 
 // schedulesItself reports whether text is /schedule, even after @mentions
 // of the bot, which the core strips when the text is delivered. It matches
 // them as the core does: the longest name first, on a word boundary.
-func (s *store) schedulesItself(chat feature.Chat, text string) bool {
+func (s *scheduler) schedulesItself(chat feature.Chat, text string) bool {
 	names := []string{"@" + s.h.Info().Name, "@signalbot"}
 	slices.SortFunc(names, func(a, b string) int { return utf8.RuneCountInString(b) - utf8.RuneCountInString(a) })
 	for t := strings.TrimSpace(text); ; {
@@ -391,7 +386,7 @@ func cutAt(t, name string) (string, bool) {
 // findGroup is the group the user shares with the bot called name, ignoring
 // capitals: an exact match, else one ignoring emoji, symbols and extra
 // spaces. It returns what is wrong, for the user, if there isn't just one.
-func (s *store) findGroup(ctx context.Context, user, name string) (feature.Group, string) {
+func (s *scheduler) findGroup(ctx context.Context, user, name string) (feature.Group, string) {
 	gs, err := s.h.Groups(ctx, user)
 	if err != nil {
 		logx.Warnf("listing groups failed: %v", err)
@@ -430,7 +425,7 @@ func names(gs []feature.Group) string {
 }
 
 // mine is the user's schedules, in order. s.mu is held.
-func (s *store) mine(user string) []*entry {
+func (s *scheduler) mine(user string) []*entry {
 	var out []*entry
 	for _, e := range s.all {
 		if e.User == user {
@@ -441,7 +436,7 @@ func (s *store) mine(user string) []*entry {
 }
 
 // list shows the user's schedules, each with its ID and next run.
-func (s *store) list(ctx context.Context, user string) string {
+func (s *scheduler) list(ctx context.Context, user string) string {
 	s.mu.Lock()
 	mine := s.mine(user)
 	s.mu.Unlock()
@@ -484,7 +479,7 @@ func (s *store) list(ctx context.Context, user string) string {
 // del deletes the user's schedule with the number their list shows. The
 // numbers never change or come back, so one that has run since the list
 // can't name another.
-func (s *store) del(user, arg string) string {
+func (s *scheduler) del(user, arg string) string {
 	n, err := strconv.Atoi(arg)
 	if err != nil {
 		return "Say which one: /schedule del <number>, from /schedule list."

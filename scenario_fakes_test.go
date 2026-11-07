@@ -31,6 +31,8 @@ import (
 	"time"
 	"unicode"
 	"unicode/utf8"
+
+	"github.com/robdevops/signalbot/internal/feature"
 )
 
 // The placeholder ids the scenarios use.
@@ -93,6 +95,12 @@ type world struct {
 	// saves what must survive a restart; a fresh one if "". Two bots given
 	// the same one are the same bot before and after a restart.
 	StateDir string
+	// Extra features register after the bot's own, for a scenario that
+	// needs a port no feature uses yet.
+	Extra []func(feature.Host) error
+	// Members are who listGroups lists in the test group at first: Alice,
+	// Bob and the bot if unset.
+	Members []string
 }
 
 // harness is a running bot and its fakes.
@@ -103,6 +111,7 @@ type harness struct {
 	writeMu   sync.Mutex // serialises writes to the bot's connection
 	mu        sync.Mutex
 	conn      net.Conn          // the bot's current signal-cli connection
+	members   []string          // who listGroups lists in the test group; nil for Alice, Bob and the bot
 	conns     int               // connections accepted
 	calls     []rpcCall         // every request the bot made to signal-cli
 	contacts  map[string]string // the contact list, by id
@@ -272,7 +281,11 @@ func (h *harness) serveSignal(c net.Conn) {
 			result = `[{"packId":"0000aaaa","title":"Dogs","stickers":[]},` +
 				`{"packId":"00aabbccddeeff00","title":"My Daily Life","stickers":[{"id":1,"emoji":"❤️"},{"id":2,"emoji":"🕵️"}]}]`
 		case "listGroups":
-			result = `[{"id":"` + idGroup + `","name":"Test group","isMember":true,"members":[{"uuid":"` + idAlice + `"},{"uuid":"` + idBob + `"},{"uuid":"` + idBot + `"}]}]`
+			var ms []string
+			for _, id := range h.groupMembers() {
+				ms = append(ms, `{"uuid":"`+id+`"}`)
+			}
+			result = `[{"id":"` + idGroup + `","name":"Test group","isMember":true,"members":[` + strings.Join(ms, ",") + `]}]`
 		case "send":
 			if fail {
 				h.write(c, fmt.Sprintf(`{"jsonrpc":"2.0","error":{"code":-1,"message":"Failed to send message"},"id":%s}`, req.ID))
@@ -397,6 +410,27 @@ func (h *harness) receive(frame string) {
 	case <-time.After(waitLimit):
 		h.t.Fatal("the bot did not read the message")
 	}
+}
+
+// groupMembers is who the fake signal-cli lists in the test group: Alice,
+// Bob and the bot unless a scenario set them.
+func (h *harness) groupMembers() []string {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	switch {
+	case h.members != nil:
+		return h.members
+	case h.w.Members != nil:
+		return h.w.Members
+	}
+	return []string{idAlice, idBob, idBot}
+}
+
+// setMembers sets who the fake signal-cli lists in the test group.
+func (h *harness) setMembers(ids ...string) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.members = ids
 }
 
 // receiveRaw writes one line to the bot's connection.
@@ -989,8 +1023,8 @@ func noisyPNG(t *testing.T, w, h int) []byte {
 		x = x*1664525 + 1013904223
 		m.Pix[i] = byte(x >> 24)
 	}
-	var b bytes.Buffer
-	if err := png.Encode(&b, m); err != nil {
+	var b bytes.Buffer // noise doesn't compress, so it isn't tried: about 4 bytes a pixel
+	if err := (&png.Encoder{CompressionLevel: png.NoCompression}).Encode(&b, m); err != nil {
 		t.Fatal(err)
 	}
 	return b.Bytes()

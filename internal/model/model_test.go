@@ -95,7 +95,9 @@ func startAt(t *testing.T, openRouter bool, answers ...served) (*Client, *model,
 	t.Helper()
 	var logs logx.Buffer
 	t.Cleanup(logx.SetOutput(&logs, &logs, false))
+	old := retryDelay
 	retryDelay = time.Millisecond
+	t.Cleanup(func() { retryDelay = old })
 	m := &model{answers: answers}
 	srv := httptest.NewServer(m)
 	t.Cleanup(srv.Close)
@@ -282,7 +284,7 @@ func TestRoundCap(t *testing.T) {
 	c, m, logs := start(t, calls("echo"))
 	echo := feature.Tool{Name: "echo", Run: func(context.Context, string) (string, []feature.Picture, error) { return "x", nil, nil }}
 	r, err := c.Ask(context.Background(), Request{Tools: []feature.Tool{echo}})
-	if err != nil || r.Text != "Sorry, I couldn't finish that." || len(r.ToolsUsed) != maxRounds-1 {
+	if !errors.Is(err, ErrTooManyRounds) || r.Text != "" || len(r.ToolsUsed) != maxRounds-1 || !r.Costed {
 		t.Fatalf("got %+v, %v", r, err)
 	}
 	if n := len(m.requests()); n != maxRounds {
@@ -354,7 +356,8 @@ func TestCapabilities(t *testing.T) {
 	}{
 		{"listed", "x/model", served{body: list}, true, true, ""},
 		{"listed without", "x/plain", served{body: list}, false, false, ""},
-		{"not listed", "x/other", served{body: list}, false, true, "not in OpenRouter's model list"},
+		{"not listed", "x/other", served{body: list}, false, true, `MODEL is "x/other", but OpenRouter has no model with that ID`},
+		{"unreadable", "x/model", served{body: "{"}, false, true, "the model list couldn't be read"},
 		{"failed", "x/model", served{status: 500, body: "x"}, false, true, "status 500"},
 		{"unreachable", "x/model", served{body: "hangup"}, false, true, "images and audio are off"},
 	} {
@@ -362,7 +365,7 @@ func TestCapabilities(t *testing.T) {
 			c, m, logs := start(t, tc.answer)
 			c.model = tc.model
 			caps := c.Capabilities(context.Background())
-			if caps.Images != tc.images || caps.Tools != tc.tools || !caps.Files {
+			if caps.Images != tc.images || caps.CallsTools != tc.tools || !caps.PDFs {
 				t.Errorf("caps %+v", caps)
 			}
 			if l := logs.String(); tc.warn == "" && l != "" || !strings.Contains(l, tc.warn) {
@@ -450,7 +453,7 @@ func TestUsable(t *testing.T) {
 // with one startup line and no request.
 func TestOtherAPICapabilities(t *testing.T) {
 	c, m, logs := startAt(t, false, served{status: 500})
-	if caps := c.Capabilities(context.Background()); caps != (Caps{Images: true, Audio: true, Files: true, Tools: true}) {
+	if caps := c.Capabilities(context.Background()); caps != (Caps{Images: true, Audio: true, PDFs: true, CallsTools: true}) {
 		t.Errorf("caps %+v", caps)
 	}
 	if n := len(m.requests()); n != 0 {
@@ -582,11 +585,11 @@ func TestAnnotationsSentBack(t *testing.T) {
 // The model list says whether the model takes audio and reads files itself.
 func TestCapabilitiesAudioAndFiles(t *testing.T) {
 	c, _, _ := start(t, served{body: `{"data":[{"id":"x/model","architecture":{"input_modalities":["text","image","audio","file"]},"supported_parameters":["tools"]}]}`})
-	if caps := c.Capabilities(context.Background()); caps != (Caps{Images: true, Audio: true, Files: true, Tools: true}) || !c.nativeFiles {
+	if caps := c.Capabilities(context.Background()); caps != (Caps{Images: true, Audio: true, PDFs: true, CallsTools: true}) || !c.nativeFiles {
 		t.Fatalf("caps %+v, native %v", caps, c.nativeFiles)
 	}
 	c, _, _ = start(t, served{body: `{"data":[{"id":"x/model","architecture":{"input_modalities":["text"]},"supported_parameters":[]}]}`})
-	if caps := c.Capabilities(context.Background()); caps != (Caps{Files: true}) || c.nativeFiles {
+	if caps := c.Capabilities(context.Background()); caps != (Caps{PDFs: true}) || c.nativeFiles {
 		t.Fatalf("caps %+v, native %v", caps, c.nativeFiles)
 	}
 }
@@ -599,5 +602,15 @@ func TestCostOnError(t *testing.T) {
 	r, err := c.Ask(context.Background(), Request{Text: "hi", Tools: []feature.Tool{echo}})
 	if err == nil || !r.Costed || r.Cost != 0.001 {
 		t.Fatalf("cost %v (%v), %v", r.Cost, r.Costed, err)
+	}
+}
+
+// The retry wait is a second, unless a test hook sets one.
+func TestRetryDelay(t *testing.T) {
+	if retryDelay != time.Second {
+		t.Fatalf("retry delay %v", retryDelay)
+	}
+	if c := New(&config.Config{Test: &config.Test{RetryDelay: time.Millisecond}}); c.retry != time.Millisecond {
+		t.Fatalf("hook ignored: %v", c.retry)
 	}
 }

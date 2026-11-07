@@ -1,0 +1,35 @@
+# The bot as a Docker container. Run from this directory, with sudo, since
+# Compose reads the root-only /etc/signalbot.env as the calling user:
+#   sudo VERSION=$(git describe --tags --always --dirty) LOG_DRIVER=$(test -S /run/systemd/journal/socket && echo journald || echo local) docker compose up -d --build
+# For signal-cli's Unix socket instead of TCP, see docs/SOCKET.md.
+services:
+  signalbot:
+    build:
+      context: .
+      args:
+        VERSION: ${VERSION:-dev}
+    image: signalbot
+    container_name: signalbot
+    restart: always
+    env_file: /etc/signalbot.env
+    # Reaches signal-cli on the host's 127.0.0.1:7583.
+    network_mode: host
+    volumes:
+      # The bot's state, from the same host directory systemd would use; it
+      # must be owned by user 65532.
+      - /var/lib/private/signalbot:/data
+      # MCP connectors: uncomment both lines (docs/FILES_LINKS_TOOLS_MCP.md).
+      # - /etc/signalbot-mcp.json:/etc/signalbot-mcp.json:ro
+    # environment:
+    #   MCP_CONFIG: /etc/signalbot-mcp.json
+    logging:
+      # journald where the host has it (the command above checks), else local.
+      driver: ${LOG_DRIVER:-local}
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges]
+    pids_limit: 64
+    mem_limit: 300m
+    memswap_limit: 300m
+    ulimits:
+      core: 0

@@ -38,6 +38,8 @@ const (
 	pdfEngine = "mistral-ocr"
 )
 
+// retryDelay is the wait before trying a failed request again, unless the
+// client's test hook sets its own.
 var retryDelay = time.Second
 
 // ErrImages, ErrFiles and ErrTools mean an API other than OpenRouter's
@@ -48,11 +50,15 @@ var (
 	ErrImages = errors.New("images rejected")
 	ErrFiles  = errors.New("files rejected")
 	ErrTools  = errors.New("tools rejected")
+	// ErrTooManyRounds means the model was still calling tools when its
+	// rounds ran out, with nothing to say yet.
+	ErrTooManyRounds = errors.New("the model was still calling tools when its rounds ran out")
 )
 
-// Caps is what the model can take: images, audio, PDF files and tools.
+// Caps is what the model can take: images, audio and PDFs, and whether
+// it can call tools.
 type Caps struct {
-	Images, Audio, Files, Tools bool
+	Images, Audio, PDFs, CallsTools bool
 }
 
 // statusError is an error response, reduced to its status and message.
@@ -69,6 +75,7 @@ type Client struct {
 	openRouter                  bool // the API is OpenRouter's
 	nativeFiles                 bool // OpenRouter's list says the model reads files itself
 	http                        *http.Client
+	retry                       time.Duration // the wait before trying a failed request again
 }
 
 // New makes the client of cfg.APIURL, keeping one idle connection per reply
@@ -79,9 +86,13 @@ func New(cfg *config.Config) *Client {
 	if cfg.Test != nil && cfg.Test.OpenRouter != "" {
 		host = cfg.Test.OpenRouter
 	}
+	retry := retryDelay
+	if cfg.Test != nil && cfg.Test.RetryDelay > 0 {
+		retry = cfg.Test.RetryDelay
+	}
 	u, err := url.Parse(cfg.APIURL)
 	return &Client{key: cfg.APIKey, model: cfg.Model, reasoning: cfg.Reasoning, base: cfg.APIURL,
-		openRouter: err == nil && strings.EqualFold(u.Hostname(), host), http: httpx.Client(cfg.MaxConcurrency)}
+		openRouter: err == nil && strings.EqualFold(u.Hostname(), host), http: httpx.Client(cfg.MaxConcurrency), retry: retry}
 }
 
 // Usable is the tools the API can run: every function tool, and a server
@@ -281,9 +292,11 @@ func (c *Client) Ask(ctx context.Context, r Request) (Reply, error) {
 		if len(a.calls) == 0 || round == maxRounds {
 			if len(a.calls) > 0 {
 				logx.Warnf("model still calling tools after %d requests; stopping", round)
-				a.text = cmp.Or(a.text, "Sorry, I couldn't finish that.")
 			}
 			if reply.Text = a.text; reply.Text == "" && len(reply.Pictures) == 0 {
+				if len(a.calls) > 0 {
+					return reply, ErrTooManyRounds
+				}
 				return reply, errors.New("empty response") // not the body: it can hold the conversation
 			}
 			cached := 100 * min(total.cached, total.input) / max(total.input, 1)
@@ -450,7 +463,7 @@ func (c *Client) post(ctx context.Context, payload []byte) ([]byte, error) {
 		}
 		select {
 		case <-ctx.Done():
-		case <-time.After(retryDelay):
+		case <-time.After(c.retry):
 		}
 	}
 }
@@ -486,9 +499,9 @@ func errorText(data []byte) string {
 func (c *Client) Capabilities(ctx context.Context) Caps {
 	if !c.openRouter {
 		logx.Noticef("only OpenRouter's model list says what a model supports, so images, files and tools are on until the API rejects them")
-		return Caps{Images: true, Audio: true, Files: true, Tools: true}
+		return Caps{Images: true, Audio: true, PDFs: true, CallsTools: true}
 	}
-	unknown := Caps{Files: true, Tools: true}
+	unknown := Caps{PDFs: true, CallsTools: true}
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, c.base+"/models", nil)
@@ -508,18 +521,22 @@ func (c *Client) Capabilities(ctx context.Context) Caps {
 			SupportedParameters []string `json:"supported_parameters"`
 		} `json:"data"`
 	}
-	if resp.StatusCode != http.StatusOK || json.NewDecoder(io.LimitReader(resp.Body, 32<<20)).Decode(&r) != nil {
+	if resp.StatusCode != http.StatusOK {
 		logx.Warnf("could not check what %s supports, so images and audio are off: status %d", c.model, resp.StatusCode)
+		return unknown
+	}
+	if json.NewDecoder(io.LimitReader(resp.Body, 32<<20)).Decode(&r) != nil {
+		logx.Warnf("could not check what %s supports, so images and audio are off: the model list couldn't be read", c.model)
 		return unknown
 	}
 	for _, m := range r.Data {
 		if m.ID == c.model {
 			in := m.Architecture.InputModalities
 			c.nativeFiles = slices.Contains(in, "file")
-			return Caps{Images: slices.Contains(in, "image"), Audio: slices.Contains(in, "audio"), Files: true,
-				Tools: slices.Contains(m.SupportedParameters, "tools")}
+			return Caps{Images: slices.Contains(in, "image"), Audio: slices.Contains(in, "audio"), PDFs: true,
+				CallsTools: slices.Contains(m.SupportedParameters, "tools")}
 		}
 	}
-	logx.Warnf("model %s is not in OpenRouter's model list, so images and audio are off", c.model)
+	logx.Warnf("MODEL is %q, but OpenRouter has no model with that ID; if it's a typo, replies will fail. Images and audio are off.", c.model)
 	return unknown
 }

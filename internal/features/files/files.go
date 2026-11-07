@@ -21,14 +21,8 @@ import (
 	"github.com/robdevops/signalbot/internal/kit/txt"
 )
 
-const (
-	// maxText caps a file's text shown to the model, in characters.
-	maxText = 50_000
-	// maxName caps a file's name in a note.
-	maxName = 80
-	// notKept ends the history's note for a file: history never keeps it.
-	notKept = "; you see files only in the latest message, so to look again they must reply to it and mention you"
-)
+// maxText caps a file's text shown to the model, in characters.
+const maxText = 50_000
 
 var errEmpty = errors.New("no text")
 
@@ -62,17 +56,11 @@ func additions(ctx context.Context, h feature.Host, m feature.Message) feature.A
 		if !md.File {
 			continue
 		}
-		label, status, text, file := one(ctx, h, info, m, i)
-		note, keep := label+status+"]", label+status+"]"
-		if text != "" || file != nil {
-			keep, content = label+status+notKept+"]", true
-		}
-		if text != "" {
-			note += "\n" + txt.Fence(text, maxText)
-		}
-		notes, kept = append(notes, note), append(kept, keep)
-		if file != nil {
-			files = append(files, *file)
+		o := one(ctx, h, info, m, i)
+		notes, kept = append(notes, o.note()), append(kept, o.kept())
+		content = content || o.shown()
+		if o.file != nil {
+			files = append(files, *o.file)
 		}
 	}
 	if len(notes) == 0 {
@@ -81,23 +69,51 @@ func additions(ctx context.Context, h feature.Host, m feature.Message) feature.A
 	return feature.Additions{Note: strings.Join(notes, "\n"), HistoryNote: strings.Join(kept, "\n"), Files: files, Content: content}
 }
 
-// one handles m.Media[i]: its label (`[file "name"`), its status (such as
-// " attached" or ", which failed to load"), and the text or file the model
-// is shown, if any. It logs one line, what the file came to, by kind and
-// size: never its name or declared type, which the sender chose.
-func one(ctx context.Context, h feature.Host, info feature.Info, m feature.Message, i int) (label, status, text string, file *feature.File) {
+// outcome is what a file came to: the note's subject (`file "name"`) and
+// its status after that (such as " attached" or ", which can't be read"),
+// and the text or file the model is shown, if any.
+type outcome struct {
+	subject, status string
+	text            string
+	file            *feature.File
+}
+
+// shown reports whether the model is shown what the file says.
+func (o outcome) shown() bool { return o.text != "" || o.file != nil }
+
+// note is the whole note the model gets, with the file's text under it.
+func (o outcome) note() string {
+	n := "[" + o.subject + o.status + "]"
+	if o.text != "" {
+		n += "\n" + txt.Fence(o.text, maxText)
+	}
+	return n
+}
+
+// kept is the note history keeps: never what the file said.
+func (o outcome) kept() string {
+	if o.shown() {
+		return "[" + o.subject + " was shown to you" + feature.NotKept(1) + "]"
+	}
+	return "[" + o.subject + o.status + "]"
+}
+
+// one handles m.Media[i]. It logs one line, what the file came to, by kind
+// and size: never its name or declared type, which the sender chose.
+func one(ctx context.Context, h feature.Host, info feature.Info, m feature.Message, i int) outcome {
 	md := m.Media[i]
-	name := cmp.Or(txt.Clamp(txt.SafeName(md.Name), maxName), "untitled")
-	label = "[file " + strconv.Quote(name)
+	o := outcome{subject: "file " + strconv.Quote(cmp.Or(txt.SafeName(md.Name), "untitled"))}
+	with := func(status string) outcome { o.status = status; return o }
 	if md.ID == "" {
 		logx.Warnf("file no longer available")
-		return label, ", which is no longer available", "", nil
+		return with(", which is no longer available")
 	}
 	data, err := h.Media(ctx, m, i)
 	if err != nil {
 		logx.Warnf("could not fetch a file: %v", err)
-		return label, ", which failed to load", "", nil
+		return with(", which couldn't be fetched")
 	}
+	name := cmp.Or(txt.SafeName(md.Name), "untitled")
 	ext, sniffed := strings.ToLower(path.Ext(md.Name)), http.DetectContentType(data)
 	kind := kindOf(md.MIME, ext, sniffed, data)
 	what := kind
@@ -107,28 +123,30 @@ func one(ctx context.Context, h feature.Host, info feature.Info, m feature.Messa
 	head := fmt.Sprintf("file %s %d bytes", what, len(data))
 	switch kind {
 	case "pdf":
-		if !info.Files {
-			logx.Infof("%s, not sent: this model can't read files", head)
-			return label, ", a PDF, which you can't read with this model", "", nil
+		if !info.PDFs {
+			logx.Infof("%s, not sent: this model can't read PDFs", head)
+			return with(", a PDF, which you can't read with this model")
 		}
 		logx.Infof("%s, attached", head)
-		return label, " attached", "", &feature.File{Name: name, MIME: "application/pdf", Data: data}
+		o.file = &feature.File{Name: name, MIME: "application/pdf", Data: data}
+		return with(" attached")
 	case "audio":
 		if !info.Audio {
 			logx.Infof("%s, not sent: this model can't hear audio", head)
-			return label, ", audio such as a voice note, which you can't hear with this model", "", nil
+			return with(", audio such as a voice note, which you can't hear with this model")
 		}
 		mime := md.MIME
 		if !strings.HasPrefix(strings.ToLower(mime), "audio/") {
 			mime = cmp.Or(audioExts[ext], "audio/aac")
 		}
 		logx.Infof("%s, attached", head)
-		return label, " attached", "", &feature.File{Name: name, MIME: mime, Data: data}
+		o.file = &feature.File{Name: name, MIME: mime, Data: data}
+		return with(" attached")
 	case "office":
-		var cut bool
-		if text, cut, err = officeText(data, ext); err != nil || strings.TrimSpace(text) == "" {
+		text, cut, err := officeText(data, ext)
+		if err != nil || strings.TrimSpace(text) == "" {
 			logx.Warnf("could not read an Office file (%s, %d bytes): %s", what, len(data), errKind(cmp.Or(err, errEmpty)))
-			return label, ", which couldn't be read", "", nil
+			return with(", which can't be read")
 		}
 		// The count is what the fence shows, without the newlines it trims.
 		// officeText stops a little past the cap, or where the file's budget
@@ -140,13 +158,18 @@ func one(ctx context.Context, h feature.Host, info feature.Info, m feature.Messa
 			shown = txt.Chars(n, maxText)
 		}
 		logx.Infof("%s, %s", head, shown)
-		return label, " attached, its text", text, nil
+		o.text = text
+		if cut {
+			return with(" attached; only the first part of its text is shown, as the file is too big to read whole")
+		}
+		return with(" attached; its text follows")
 	case "text":
 		logx.Infof("%s, %s", head, txt.Chars(utf8.RuneCount(bytes.Trim(data, "\n")), maxText))
-		return label, " attached, its text", string(data), nil
+		o.text = string(data)
+		return with(" attached; its text follows")
 	}
 	logx.Infof("file %d bytes %s, not a kind the bot reads", len(data), txt.Clamp(sniffed, 40))
-	return label, ", which you can't read", "", nil
+	return with(", which can't be read")
 }
 
 // kindOf is what a file is, by its declared type, extension and content:

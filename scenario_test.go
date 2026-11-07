@@ -10,6 +10,7 @@ package main
 import (
 	"archive/zip"
 	"bytes"
+	"context"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -20,10 +21,13 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 	"unicode/utf8"
+
+	"github.com/robdevops/signalbot/internal/feature"
 )
 
 // --- messages as signal-cli delivers them ---------------------------------------
@@ -37,8 +41,16 @@ type incoming struct {
 	Quote       *quoteOf
 	Attachments []attached
 	Sticker     *stickerOf
-	Expires     int  // the chat's disappearing-messages timer, in seconds
-	Update      bool // a group update: its members, name or description changed
+	Expires     int       // the chat's disappearing-messages timer, in seconds
+	Update      bool      // a group update: its members, name or description changed
+	Reaction    *reaction // a reaction to a message, instead of text
+}
+
+// reaction is an emoji put on the message its author sent at Sent.
+type reaction struct {
+	Emoji, Author string
+	Sent          int64
+	Remove        bool
 }
 
 type atMention struct {
@@ -117,6 +129,10 @@ func (m incoming) frame() string {
 	}
 	if s := m.Sticker; s != nil {
 		data["sticker"] = map[string]any{"packId": s.Pack, "stickerId": s.ID}
+	}
+	if r := m.Reaction; r != nil {
+		data["reaction"] = map[string]any{"emoji": r.Emoji, "targetAuthor": r.Author, "targetAuthorNumber": nil, "targetAuthorUuid": r.Author,
+			"targetSentTimestamp": r.Sent, "isRemove": r.Remove}
 	}
 	b, _ := json.Marshal(map[string]any{"account": idBot, "envelope": map[string]any{
 		"source": m.From, "sourceNumber": nil, "sourceUuid": m.From, "sourceName": m.Name, "sourceDevice": 1,
@@ -271,6 +287,11 @@ func TestScenarioUnaddressedMessagesAreNeverLogged(t *testing.T) {
 		"message from the bot itself": dmFrom(idBot, "Botty", "note to self, ignore").frame(),
 		"DM with no text":             fromAlice("").frame(),
 		"group voice note to nobody":  voice.frame(),
+		"reaction, with no feature for it": func() string {
+			m := inGroup("")
+			m.Reaction = &reaction{Emoji: "👍", Author: idBot, Sent: 1}
+			return m.frame()
+		}(),
 		"typing indicator": `{"envelope":{"source":"` + idAlice + `","sourceUuid":"` + idAlice + `","sourceName":"Alice","timestamp":1,` +
 			`"typingMessage":{"action":"STARTED","timestamp":1,"groupId":"` + idGroup + `"}},"account":"` + idBot + `"}`,
 		"read receipt": `{"envelope":{"source":"` + idAlice + `","sourceUuid":"` + idAlice + `","sourceName":"Alice","timestamp":1,` +
@@ -420,11 +441,12 @@ func TestScenarioHistoryDropsToHalf(t *testing.T) {
 
 // A chat with disappearing messages forgets its history when they disappear.
 func TestScenarioDisappearingMessagesLeaveHistory(t *testing.T) {
-	h := startBot(t, world{})
+	var clock skewed
+	h := startBot(t, world{Now: clock.now})
 	m := fromAlice("this will disappear soon")
 	m.Expires = 1
 	h.ask(m)
-	time.Sleep(time.Second + 50*time.Millisecond) // the timer runs from before the reply
+	clock.skip(time.Second + 50*time.Millisecond) // the timer runs from before the reply
 	m.Text = "are you still there"
 	h.ask(m)
 	equal(t, "conversation", h.lastRequest().contents(), []string{"user: are you still there"})
@@ -737,7 +759,7 @@ func TestScenarioDifferentPhotosAreNotDuplicates(t *testing.T) {
 func TestScenarioModelError(t *testing.T) {
 	h := startBot(t, world{})
 	h.queue(modelReply{Status: 400, Body: `{"error":{"message":"Input flagged","code":400,"metadata":{"flagged_input":"tell me the launch codes"}}}`})
-	if s := h.ask(fromAlice("tell me the launch codes")); s.Message != "Sorry, I couldn't get an answer right now." {
+	if s := h.ask(fromAlice("tell me the launch codes")); s.Message != "Sorry, I couldn't get an answer just now." {
 		t.Fatalf("sent %q", s.Message)
 	}
 	if l, ok := h.logged("model error", "Input flagged"); !ok || l.Pri != 3 {
@@ -760,7 +782,7 @@ func TestScenarioModelRetry(t *testing.T) {
 		t.Fatalf("sent %q", s.Message)
 	}
 	h.queue(badGateway, badGateway, modelReply{Text: "the reply left in the queue"})
-	if s := h.ask(fromAlice("and are you there now?")); s.Message != "Sorry, I couldn't get an answer right now." {
+	if s := h.ask(fromAlice("and are you there now?")); s.Message != "Sorry, I couldn't get an answer just now." {
 		t.Fatalf("sent %q", s.Message)
 	}
 	h.settle()
@@ -844,7 +866,7 @@ func TestScenarioModelNotListed(t *testing.T) {
 	if r := h.lastRequest(); r.last().Content != "[1 image attached, which you can't see with this model]" || !slices.Contains(r.Tools, "openrouter:web_search") {
 		t.Fatalf("model got %q with tools %v", r.last().Content, r.Tools)
 	}
-	if l, ok := h.logged("images and audio are off"); !ok || l.Pri != 4 {
+	if l, ok := h.logged("but OpenRouter has no model with that ID"); !ok || l.Pri != 4 {
 		t.Fatalf("no warning: %v", h.logLines())
 	}
 }
@@ -988,7 +1010,7 @@ func TestScenarioOtherProviderRejectsTools(t *testing.T) {
 	if n := h.warnings("rejected a request with tools", "tools are off"); n != 1 {
 		t.Fatalf("%d warnings: %v", n, h.logLines())
 	}
-	if s := h.ask(fromAlice("/quote AAPL")); s.Message != "That command needs tools, which this model can't use." {
+	if s := h.ask(fromAlice("/quote AAPL")); s.Message != "I can't run that command with the model I'm using now. Whoever runs me would need a model that supports tools." {
 		t.Fatalf("sent %q", s.Message)
 	}
 	if n := len(h.requests()); n != 3 {
@@ -1001,10 +1023,10 @@ func TestScenarioOtherProviderRejectsTools(t *testing.T) {
 // connects to no server, and a scheduled plain text is still posted.
 func TestScenarioNoModel(t *testing.T) {
 	h := startBot(t, world{NoModel: true, MCP: true, Contacts: map[string]string{idAlice: "Alice", idBob: "Bob"}})
-	if l, ok := h.logged("no model: only commands are answered"); !ok || l.Pri != 5 {
+	if l, ok := h.logged("no model: set MODEL_API_KEY (or MODEL_API_URL for a provider that needs no key); until then only commands are answered"); !ok || l.Pri != 4 {
 		t.Fatalf("no notice: %v", h.logLines())
 	}
-	if _, ok := h.logged("MCP off: no model"); !ok {
+	if _, ok := h.logged("MCP_CONFIG is set but no model is configured, so MCP servers were not started"); !ok {
 		t.Fatalf("no MCP line: %v", h.logLines())
 	}
 	if _, ok := h.logged("web search on"); ok {
@@ -1022,7 +1044,7 @@ func TestScenarioNoModel(t *testing.T) {
 		t.Fatalf("typing %v", typing)
 	}
 
-	at := time.Now().Add(2 * time.Second).Truncate(time.Second)
+	at := soon()
 	if s := h.ask(fromAlice(`/schedule "lunch is ready @Bob" ` + at.Format("2006-01-02T15:04:05") + ` test group`)); !strings.HasPrefix(s.Message, "Scheduled for ") {
 		t.Fatalf("sent %q", s.Message)
 	}
@@ -1071,7 +1093,7 @@ func TestScenarioAtCapacityDrops(t *testing.T) {
 	h.receive(atBot("the first question").frame())
 	h.waitRequests(1)
 	h.receive(fromAlice("a question from elsewhere").frame())
-	if l, ok := h.logged("at capacity"); !ok || l.Pri != 4 {
+	if l, ok := h.logged("dropped a message: all 1 worker slots are busy (raise MAX_CONCURRENCY)"); !ok || l.Pri != 4 {
 		t.Fatalf("no warning: %v", h.logLines())
 	}
 	release()
@@ -1121,7 +1143,7 @@ func TestScenarioShutdownDrainsReplies(t *testing.T) {
 // connection and carries on.
 func TestScenarioOversizedFrameIsSkipped(t *testing.T) {
 	h := startBot(t, world{})
-	h.receiveRaw(strings.Repeat("x", 40<<20))
+	h.receiveRaw(strings.Repeat("x", 18<<20)) // just over the cap, 17 MB
 	h.waitFor("the warning", func() bool { _, ok := h.logged("skipped"); return ok })
 	if s := h.ask(atBot("are you still there")); s.Message != "ok" {
 		t.Fatalf("sent %q", s.Message)
@@ -1156,7 +1178,7 @@ func TestScenarioFailedSendIsLogged(t *testing.T) {
 
 // Each chat may spend DAILY_BUDGET a day: once a group is over it, the bot
 // says so once, then answers nothing there but commands that need no model,
-// until midnight; a DM has its own budget. Spending is saved in
+// until midnight, reacting ⏳ to the rest; a DM has its own budget. Spending is saved in
 // STATE_DIRECTORY, under no one's ID.
 func TestScenarioDailyBudget(t *testing.T) {
 	noon := time.Date(2026, 11, 4, 12, 0, 0, 0, time.Local)                                                         // so the day can't end mid-test
@@ -1164,13 +1186,17 @@ func TestScenarioDailyBudget(t *testing.T) {
 	h.ask(atBot("one"))
 	h.ask(atBot("two")) // $0.004: over
 	s := h.ask(atBot("three"))
-	if s.Message != "I've reached today's spending limit for this chat; I'll be back in 12 hours." || s.GroupID != idGroup {
+	if s.Message != "I've reached today's spending limit for this chat, so I'll answer again in 12 hours. Commands that don't need me to think still work." || s.GroupID != idGroup {
 		t.Fatalf("sent %q", s.Message)
 	}
 	if n := len(h.requests()); n != 2 {
 		t.Fatalf("the model was asked %d times", n)
 	}
-	h.ignored(atBot("four"))
+	h.receive(atBot("four").frame()) // a ⏳, not a reply
+	h.waitFor("the ⏳", func() bool { return len(h.callsTo("sendReaction")) == 1 })
+	if p := h.callsTo("sendReaction")[0]; p["emoji"] != "⏳" || p["groupId"] != idGroup {
+		t.Fatalf("sendReaction %v", p)
+	}
 	if s := h.ask(atBot("/intro")); !strings.HasPrefix(s.Message, "hi, I'm") {
 		t.Fatalf("/intro sent %q", s.Message)
 	}
@@ -1181,13 +1207,13 @@ func TestScenarioDailyBudget(t *testing.T) {
 		t.Fatalf("%d warnings: %v", n, h.logLines())
 	}
 	data, err := os.ReadFile(filepath.Join(h.w.StateDir, "budget.json"))
-	if err != nil || strings.Contains(string(data), idGroup) || strings.Contains(string(data), idAlice) || !strings.Contains(string(data), `"told":true`) {
+	if err != nil || strings.Contains(string(data), idGroup) || strings.Contains(string(data), idAlice) || !strings.Contains(string(data), `"told": true`) {
 		t.Fatalf("budget.json %s, %v", data, err)
 	}
 }
 
 // Another API reports no cost, so the budget isn't applied, and the
-// startup log says so.
+// startup log warns, since DAILY_BUDGET was set.
 func TestScenarioDailyBudgetNeedsCosts(t *testing.T) {
 	h := startBot(t, world{OtherProvider: true, Env: map[string]string{"DAILY_BUDGET": "0.001"}})
 	for i := range 3 {
@@ -1195,7 +1221,7 @@ func TestScenarioDailyBudgetNeedsCosts(t *testing.T) {
 			t.Fatalf("sent %q", s.Message)
 		}
 	}
-	if _, ok := h.logged("DAILY_BUDGET isn't applied: only OpenRouter reports what a reply costs"); !ok {
+	if l, ok := h.logged("DAILY_BUDGET=0.001 is ignored: only OpenRouter reports what a reply costs, so spending is not capped"); !ok || l.Pri != 4 {
 		t.Fatalf("no notice: %v", h.logLines())
 	}
 }
@@ -1256,7 +1282,7 @@ func TestScenarioOneEmojiIsAReaction(t *testing.T) {
 func TestScenarioLinkToAPrivateAddressIsRefused(t *testing.T) {
 	h := startBot(t, world{})
 	h.ask(atBot("what's at http://127.0.0.1/secrets ?"))
-	if last := h.lastRequest().last(); !strings.Contains(last.Content, "[link http://127.0.0.1/secrets failed to load: it isn't a public address]") {
+	if last := h.lastRequest().last(); !strings.Contains(last.Content, "[link http://127.0.0.1/secrets couldn't be fetched: it isn't a public address]") {
 		t.Fatalf("model got %q", last.Content)
 	}
 	// The failure is logged as a warning, without the URL.
@@ -1324,7 +1350,7 @@ func TestScenarioPDFInADM(t *testing.T) {
 		}
 	}
 	h.ask(fromAlice("and the total?"))
-	if first := h.lastRequest().Messages[0]; !strings.HasPrefix(first.Content, `[file "q3.pdf" attached; you see files only in the latest message`) || first.Files != nil {
+	if first := h.lastRequest().Messages[0]; !strings.HasPrefix(first.Content, `[file "q3.pdf" was shown to you; it isn't kept, so to see it again they must reply`) || first.Files != nil {
 		t.Fatalf("history kept %q with %v", first.Content, first.Files)
 	}
 }
@@ -1341,8 +1367,8 @@ func TestScenarioTextAndOfficeFiles(t *testing.T) {
 	m := atBot("what's this?")
 	m.Attachments = []attached{{ID: "t1", Type: "text/plain", Name: "notes.txt", Size: 17}, {ID: "d1", Type: "application/vnd.openxmlformats-officedocument.wordprocessingml.document", Name: "minutes.docx", Size: docx.Len()}}
 	h.ask(m)
-	want := "Alice: what's this?\n[file \"notes.txt\" attached, its text]\n```\nline one\nline two\n```\n" +
-		"[file \"minutes.docx\" attached, its text]\n```\nMinutes of the meeting\n```"
+	want := "Alice: what's this?\n[file \"notes.txt\" attached; its text follows]\n```\nline one\nline two\n```\n" +
+		"[file \"minutes.docx\" attached; its text follows]\n```\nMinutes of the meeting\n```"
 	if last := h.lastRequest().last(); last.Content != want || last.Files != nil {
 		t.Fatalf("model got %q", last.Content)
 	}
@@ -1461,30 +1487,25 @@ func TestScenarioReplyToSomeonesPDF(t *testing.T) {
 
 // --- images and stickers -----------------------------------------------------------------
 
-// A photo of a few megabytes, too big for one old signal-cli frame, is shown
-// as it is; one over the model's 5 MB is shrunk to a JPEG first.
+// A photo over the model's 5 MB, far too big for one old signal-cli frame,
+// is fetched whole and shrunk to a JPEG; the connection is kept. (One under
+// 5 MB is sent as it is: img and vision's own tests.)
 func TestScenarioLargePhotosAreShown(t *testing.T) {
-	medium, large := noisyPNG(t, 800, 800), noisyPNG(t, 1400, 1400)
-	if len(medium) < 2<<20 || len(medium) > 5<<20 || len(large) < 6<<20 {
-		t.Fatalf("sizes %d, %d", len(medium), len(large))
+	large := noisyPNG(t, 1160, 1160)
+	if len(large) <= 5<<20 {
+		t.Fatalf("only %d bytes", len(large))
 	}
-	h := startBot(t, world{Vision: true, Attachments: map[string][]byte{"medium.png": medium, "large.png": large}})
-	for _, tc := range []struct {
-		id, mime string
-		data     []byte
-	}{{"medium.png", "image/png", medium}, {"large.png", "image/jpeg", large}} {
-		m := fromAlice("")
-		m.Attachments = []attached{{ID: tc.id, Type: "image/png", Size: len(large)}}
-		h.ask(m)
-		last := h.lastRequest().last()
-		if last.Content != "[1 image attached]" || len(last.Images) != 1 || !strings.HasPrefix(last.Images[0], "data:"+tc.mime+";base64,") || len(last.Images[0]) > 7<<20 {
-			t.Fatalf("%s: model got %q with %d images", tc.id, last.Content, len(last.Images))
-		}
-		// The image is logged by size, and the size sent when it was shrunk.
-		l, ok := h.logged(fmt.Sprintf("image %d bytes, ", len(tc.data)))
-		if !ok || l.Pri != 6 || strings.Contains(l.Text, "sent as") != (tc.mime == "image/jpeg") {
-			t.Fatalf("%s: log %+v, %v", tc.id, l, ok)
-		}
+	h := startBot(t, world{Vision: true, Attachments: map[string][]byte{"large.png": large}})
+	m := fromAlice("")
+	m.Attachments = []attached{{ID: "large.png", Type: "image/png", Size: len(large)}}
+	h.ask(m)
+	last := h.lastRequest().last()
+	if last.Content != "[1 image attached]" || len(last.Images) != 1 || !strings.HasPrefix(last.Images[0], "data:image/jpeg;base64,") || len(last.Images[0]) > 7<<20 {
+		t.Fatalf("model got %q with %d images", last.Content, len(last.Images))
+	}
+	// The image is logged by size, and the size sent once shrunk.
+	if l, ok := h.logged(fmt.Sprintf("image %d bytes, sent as ", len(large))); !ok || l.Pri != 6 {
+		t.Fatalf("log %+v, %v", l, ok)
 	}
 	if n := len(h.callsTo("listAccounts")); n != 1 {
 		t.Fatalf("reconnected: listAccounts called %d times", n)
@@ -1492,14 +1513,14 @@ func TestScenarioLargePhotosAreShown(t *testing.T) {
 }
 
 // A photo that can't be fetched, here because signal-cli's answer is too
-// big, is left out, and the model is told it failed to load rather than
+// big, is left out, and the model is told it couldn't be fetched rather than
 // that it can't see images. The connection is kept.
 func TestScenarioPhotoThatFailsToLoad(t *testing.T) {
-	h := startBot(t, world{Vision: true, Attachments: map[string][]byte{"huge.png": make([]byte, 30<<20)}})
+	h := startBot(t, world{Vision: true, Attachments: map[string][]byte{"huge.png": make([]byte, 13<<20)}})
 	m := fromAlice("what is this?")
 	m.Attachments = []attached{{ID: "huge.png", Type: "image/png", Size: 10000000}}
 	h.ask(m)
-	if last := h.lastRequest().last(); last.Content != "what is this?\n[1 image attached, which failed to load; you can see images, just not this one]" || last.Images != nil {
+	if last := h.lastRequest().last(); last.Content != "what is this?\n[1 image attached, which couldn't be fetched; you can see images, just not this one]" || last.Images != nil {
 		t.Fatalf("model got %q with %d images", last.Content, len(last.Images))
 	}
 	if _, ok := h.logged("could not fetch an image: getAttachment result too large"); !ok {
@@ -1526,7 +1547,7 @@ func TestScenarioPhotoIsShownToModel(t *testing.T) {
 	}
 	h.ask(fromAlice("what colour was it"))
 	first := h.lastRequest().Messages[0]
-	if first.Content != "[1 image attached; you see images only in the latest message, so to look again they must reply to it and mention you]" || first.Images != nil {
+	if first.Content != "[1 image attached; it isn't kept, so to see it again they must reply to the message with it and mention you]" || first.Images != nil {
 		t.Fatalf("history kept %q with %d images", first.Content, len(first.Images))
 	}
 }
@@ -1713,7 +1734,7 @@ func checkToolReplay(t *testing.T, r modelRequest, tool, result string) {
 // With require_arg, a bare command is answered by the bot, not the model.
 func TestScenarioChatCommandRequiresArg(t *testing.T) {
 	h := startBot(t, world{MCP: true})
-	if s := h.ask(fromAlice("/quote")); s.Message != "/quote needs something after it." {
+	if s := h.ask(fromAlice("/quote")); s.Message != "Put what you want after it, like /quote <your request>. Or just ask me in plain words." {
 		t.Fatalf("sent %q", s.Message)
 	}
 	if n := len(h.requests()); n != 0 {
@@ -1758,7 +1779,7 @@ func TestScenarioToolLoopIsCapped(t *testing.T) {
 	for range 6 {
 		h.queue(modelReply{Tool: "weather__get_forecast", Args: `{"q":"Sydney"}`})
 	}
-	if s := h.ask(fromAlice("what's the weather like")); s.Message != "Sorry, I couldn't finish that." {
+	if s := h.ask(fromAlice("what's the weather like")); s.Message != "That took more lookups than I can do for one reply. Try asking for one thing at a time." {
 		t.Fatalf("sent %q", s.Message)
 	}
 	if n := len(h.requests()); n != 5 {
@@ -1853,14 +1874,15 @@ func TestScenarioChartReply(t *testing.T) {
 
 // When a chat's history is erased, its chart follow-ups end with it.
 func TestScenarioErasedHistoryEndsChartFollowUps(t *testing.T) {
-	h := startBot(t, world{})
+	var clock skewed
+	h := startBot(t, world{Now: clock.now})
 	m := fromAlice("chart NVDA for 3 months")
 	m.Expires = 1
 	h.ask(m)
 	if !hasChartTool(h.lastRequest()) {
 		t.Fatal("the chart tool was not offered")
 	}
-	time.Sleep(time.Second + 50*time.Millisecond) // the timer runs from before the reply
+	clock.skip(time.Second + 50*time.Millisecond) // the timer runs from before the reply
 	m.Text = "what about AMD"
 	h.ask(m)
 	if hasChartTool(h.lastRequest()) {
@@ -1964,7 +1986,7 @@ func TestScenarioGoldenPromptNoFeatures(t *testing.T) {
 // group's history as hers. The text is never logged.
 func TestScenarioScheduleRunsInAGroup(t *testing.T) {
 	h := startBot(t, world{Contacts: map[string]string{idAlice: "Alice", idBob: "Bob"}})
-	at := time.Now().Add(2 * time.Second).Truncate(time.Second)
+	at := soon()
 	s := h.ask(fromAlice(`/schedule “lunch is ready @Bob” ` + at.Format("2006-01-02T15:04:05") + ` test GROUP`))
 	if want := "Scheduled for " + at.Format("Mon 2 Jan 2006 15:04 MST") + ", in Test group."; s.Recipient != idAlice || s.Message != want {
 		t.Fatalf("sent %+v, want %q", s, want)
@@ -2030,7 +2052,7 @@ func TestScenarioScheduleCannotLoop(t *testing.T) {
 		}
 	}
 	h.queue(modelReply{Text: "@Botty hello everyone"})
-	at := time.Now().Add(2 * time.Second).Truncate(time.Second)
+	at := soon()
 	if s := h.ask(fromAlice(`/timer "@Botty say hello" ` + at.Format("2006-01-02T15:04:05") + ` test group`)); !strings.HasPrefix(s.Message, "Scheduled for ") {
 		t.Fatalf("sent %q", s.Message)
 	}
@@ -2043,4 +2065,81 @@ func TestScenarioScheduleCannotLoop(t *testing.T) {
 	if n := len(h.requests()); n != 1 {
 		t.Fatalf("the model was asked %d times", n)
 	}
+}
+
+// --- events ---------------------------------------------------------------------------
+
+// A feature's OnEvent sees a reaction, with whether it was on the bot's
+// message, and who joined the group; its reply is sent, the newcomer
+// mentioned. Neither event is logged, kept or shown to the model.
+func TestScenarioEvents(t *testing.T) {
+	var mu sync.Mutex
+	var seen []feature.Event
+	welcome := func(h feature.Host) error {
+		h.OnEvent(func(_ context.Context, e feature.Event) string {
+			mu.Lock()
+			seen = append(seen, e)
+			mu.Unlock()
+			if e.Members != nil && len(e.Members.Joined) == 1 {
+				return "Welcome @" + e.Members.Joined[0].Name + "!"
+			}
+			return ""
+		})
+		return nil
+	}
+	events := func() []feature.Event {
+		mu.Lock()
+		defer mu.Unlock()
+		return slices.Clone(seen)
+	}
+	h := startBot(t, world{Contacts: map[string]string{idBob: "Bob"}, Extra: []func(feature.Host) error{welcome}, Members: []string{idAlice, idBot}})
+	h.waitFor("the first listGroups", func() bool { return len(h.callsTo("listGroups")) >= 1 })
+
+	thumbs := inGroup("")
+	thumbs.Reaction = &reaction{Emoji: "👍", Author: idBot, Sent: 1700}
+	h.receive(thumbs.frame())
+	h.waitFor("the reaction", func() bool { return len(events()) == 1 })
+	if r := events()[0]; r.Reaction == nil || r.Reaction.Emoji != "👍" || !r.Reaction.Bot || r.Reaction.Sent != 1700 || r.By.ID != idAlice || r.Chat.GroupID != idGroup {
+		t.Fatalf("reaction %+v", r)
+	}
+
+	h.setMembers(idAlice, idBob, idBot)
+	update := inGroup("")
+	update.Update = true
+	h.receive(update.frame())
+	h.waitFor("the welcome", func() bool { return len(h.callsTo("send")) == 1 })
+	p := h.callsTo("send")[0]
+	if !strings.Contains(fmt.Sprint(p["message"]), "Welcome") || !strings.Contains(fmt.Sprint(p["mention"]), idBob) || p["groupId"] != idGroup {
+		t.Fatalf("send %v", p)
+	}
+	if m := events()[1].Members; m == nil || len(m.Joined) != 1 || m.Joined[0] != (feature.Person{ID: idBob, Name: "Bob"}) {
+		t.Fatalf("members %+v", events()[1])
+	}
+	if n := len(h.requests()); n != 0 {
+		t.Fatalf("%d model requests", n)
+	}
+	for _, l := range h.logLines() {
+		if strings.Contains(l.Text, "👍") || strings.Contains(l.Text, "Welcome") || strings.Contains(l.Text, "Bob") {
+			t.Fatalf("an event reached the log: %q", l.Text)
+		}
+	}
+}
+
+// skewed is the real clock moved on by what a scenario skips, so history
+// can lapse without the scenario waiting for it.
+type skewed struct{ by atomic.Int64 }
+
+func (c *skewed) now() time.Time       { return time.Now().Add(time.Duration(c.by.Load())) }
+func (c *skewed) skip(d time.Duration) { c.by.Add(int64(d)) }
+
+// soon is the next whole second at least 400ms away: a time /schedule
+// takes, which isn't past by the time the command is read, and which a
+// scenario waits for as briefly as it can.
+func soon() time.Time {
+	now := time.Now()
+	at := now.Truncate(time.Second).Add(time.Second)
+	if at.Sub(now) < 400*time.Millisecond {
+		at = at.Add(time.Second)
+	}
+	return at
 }

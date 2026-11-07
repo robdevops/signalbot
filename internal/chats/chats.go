@@ -6,6 +6,7 @@ package chats
 
 import (
 	"errors"
+	"fmt"
 	"maps"
 	"slices"
 	"strings"
@@ -28,8 +29,8 @@ const (
 )
 
 var (
-	errFull      = errors.New("too many chats")
-	errQueueFull = errors.New("the chat's mailbox is full")
+	errFull      = fmt.Errorf("%d chats are already held in memory, none idle", maxChats)
+	errQueueFull = fmt.Errorf("%d messages are already waiting in this chat", maxQueue)
 	ErrNoSlot    = errors.New("no worker slot is free")
 )
 
@@ -49,6 +50,7 @@ type Store[M any] struct {
 	max      int                      // chats kept
 	handle   func([]M)                // a chat's worker hands it what waits
 	spawn    func(worker func()) bool // starts a chat's worker on a free slot
+	now      func() time.Time         // the clock entries expire by
 }
 
 type chat[M any] struct {
@@ -81,8 +83,12 @@ func keep(n int) int {
 // must start the worker on a free slot without blocking and return true, or
 // return false when no slot is free.
 func New[M any](messages int, handle func([]M), spawn func(worker func()) bool) *Store[M] {
-	return &Store[M]{chats: map[string]*chat[M]{}, messages: messages, max: maxChats, handle: handle, spawn: spawn}
+	return &Store[M]{chats: map[string]*chat[M]{}, messages: messages, max: maxChats, handle: handle, spawn: spawn, now: time.Now}
 }
+
+// SetClock makes entries and message keys lapse by now's time instead of
+// the real one, for tests that can't wait. Call it before the store is used.
+func (s *Store[M]) SetClock(now func() time.Time) { s.now = now }
 
 // get returns the chat, creating it if create is set. When the map is full,
 // an idle chat is dropped to make room; with none idle it returns nil.
@@ -120,7 +126,7 @@ func (s *Store[M]) drop(key string, c *chat[M]) {
 // message keys have lapsed. It sets the chat's timer for the next time
 // something lapses: one timer per chat. Caller holds s.mu.
 func (s *Store[M]) tidy(key string, c *chat[M]) {
-	now := time.Now()
+	now := s.now()
 	c.history = unexpired(c.history, now)
 	var next time.Time
 	soonest := func(t time.Time) {
@@ -150,7 +156,7 @@ func (s *Store[M]) tidy(key string, c *chat[M]) {
 		c.timer = nil
 	}
 	if !next.IsZero() {
-		c.timer = time.AfterFunc(time.Until(next), func() {
+		c.timer = time.AfterFunc(next.Sub(now), func() {
 			s.mu.Lock()
 			defer s.mu.Unlock()
 			if s.chats[key] == c { // not dropped meanwhile
@@ -206,7 +212,7 @@ func (s *Store[M]) Repeat(key, id string) bool {
 	if c == nil {
 		return false
 	}
-	now := time.Now()
+	now := s.now()
 	for k, t := range c.recent {
 		if now.Sub(t) >= window {
 			delete(c.recent, k)
@@ -229,7 +235,7 @@ func (s *Store[M]) History(key string) []Entry {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if c := s.get(key, false); c != nil {
-		return unexpired(c.history, time.Now())
+		return unexpired(c.history, s.now())
 	}
 	return nil
 }
@@ -248,7 +254,7 @@ func (s *Store[M]) Add(key string, start time.Time, disappearing time.Duration, 
 	if c == nil {
 		return
 	}
-	h := unexpired(c.history, time.Now())
+	h := unexpired(c.history, s.now())
 	for _, e := range entries {
 		e.Expires = expires
 		h = append(h, e)
@@ -319,6 +325,9 @@ func (s *Store[M]) FollowUp(key string, g int) int {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if c := s.get(key, false); c != nil {
+		if len(c.history) > 0 && len(unexpired(c.history, s.now())) == 0 {
+			s.tidy(key, c) // history that lapsed ends its follow-ups, whether or not its timer has fired
+		}
 		return c.followUps[g]
 	}
 	return 0

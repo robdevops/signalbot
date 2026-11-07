@@ -30,6 +30,14 @@ const maxDecoded = 64 << 20
 // maxSide is the most pixels Fit leaves on an image's longer side.
 const maxSide = 2048
 
+// The limits Sendable and Fit work to: the constants above, which this
+// package's tests lower so that their images can be small.
+var (
+	sendLimit   = MaxBytes
+	decodeLimit = int64(maxDecoded)
+	sideLimit   = maxSide
+)
+
 // fitting lets one Fit decode at a time, so chats can't add up their peaks.
 var fitting sync.Mutex
 
@@ -46,7 +54,7 @@ func Supported(mime string) bool {
 // Sendable reports whether data is an image chat apps show and models
 // take, small enough to send.
 func Sendable(data []byte) bool {
-	return len(data) <= MaxBytes && Supported(http.DetectContentType(data))
+	return len(data) <= sendLimit && Supported(http.DetectContentType(data))
 }
 
 // Fit is data if it is Sendable, else, for a supported image too big to
@@ -64,10 +72,10 @@ func Fit(data []byte) ([]byte, error) {
 	if err != nil {
 		return nil, errors.New("unreadable image")
 	}
-	if cfg.Width <= 0 || cfg.Height <= 0 || int64(cfg.Width)*int64(cfg.Height)*bytesPerPixel(cfg.ColorModel) > maxDecoded {
+	if cfg.Width <= 0 || cfg.Height <= 0 || int64(cfg.Width)*int64(cfg.Height)*bytesPerPixel(cfg.ColorModel) > decodeLimit {
 		return nil, errors.New("image too large to shrink")
 	}
-	if k := (max(cfg.Width, cfg.Height) + maxSide - 1) / maxSide; min(cfg.Width, cfg.Height) < k {
+	if k := (max(cfg.Width, cfg.Height) + sideLimit - 1) / sideLimit; min(cfg.Width, cfg.Height) < k {
 		return nil, errors.New("image too thin to shrink") // it would shrink to nothing
 	}
 	fitting.Lock()
@@ -82,7 +90,7 @@ func Fit(data []byte) ([]byte, error) {
 		if err := jpeg.Encode(&b, small, &jpeg.Options{Quality: q}); err != nil {
 			return nil, err
 		}
-		if b.Len() <= MaxBytes {
+		if b.Len() <= sendLimit {
 			return b.Bytes(), nil
 		}
 	}
@@ -118,7 +126,7 @@ func shrink(src image.Image, o int) *image.RGBA {
 	if o >= 5 {
 		w, h = h, w
 	}
-	k := (max(w, h) + maxSide - 1) / maxSide
+	k := (max(w, h) + sideLimit - 1) / sideLimit
 	dst := image.NewRGBA(image.Rect(0, 0, w/k, h/k))
 	at := func(x, y int) color.RGBA64 {
 		r, g, b, a := src.At(x, y).RGBA()

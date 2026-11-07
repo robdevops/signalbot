@@ -12,7 +12,7 @@ import (
 // model: a DM's in a DM, a group's in a group. Anything after carries on.
 func TestIntro(t *testing.T) {
 	h := featuretest.New()
-	h.Bot.Intro, h.Bot.IntroDM = "hi, I'm Botty (tools: **charts**).", "hi, I'm Botty. DM me."
+	h.Bot.Intro, h.Bot.IntroDM, h.Bot.Model = "hi, I'm Botty (tools: **charts**).", "hi, I'm Botty. DM me.", "x/model"
 	if err := Register(h); err != nil {
 		t.Fatal(err)
 	}
@@ -25,6 +25,11 @@ func TestIntro(t *testing.T) {
 				t.Fatalf("%s in %+v: got %+v", text, chat, a)
 			}
 		}
+	}
+	// With no model, the footer would say what goes without saying.
+	h.Bot.Model = ""
+	if a := h.Message(context.Background(), feature.Message{Chat: dm, Sender: "u-alice", Text: "/intro", Addressed: true}); a.Answer != "hi, I'm Botty. DM me." {
+		t.Fatalf("no model: got %q", a.Answer)
 	}
 	for _, text := range []string{"/intro yourself", "/help me"} {
 		m := feature.Message{Chat: dm, Sender: "u-alice", Text: text, Addressed: true}

@@ -7,6 +7,7 @@ package main
 import (
 	"context"
 	"net/url"
+	"slices"
 	"testing"
 	"time"
 
@@ -50,7 +51,7 @@ func startBot(t *testing.T, w world) *harness {
 	// provider's, let a scenario see contacts reload, and say when the bot
 	// has read a frame and when it is idle.
 	t.Cleanup(logx.SetOutput(h, h, true)) // runs last
-	test := &config.Test{ReloadGap: contactReloadGap, Handled: func() { h.handled <- struct{}{} }, Now: w.Now}
+	test := &config.Test{ReloadGap: contactReloadGap, RetryDelay: 10 * time.Millisecond, Handled: func() { h.handled <- struct{}{} }, Now: w.Now}
 	if u, _ := url.Parse(h.modelURL); !w.OtherProvider {
 		test.OpenRouter = u.Hostname()
 	}
@@ -58,14 +59,11 @@ func startBot(t *testing.T, w world) *harness {
 	// What main does.
 	cfg := config.Load()
 	cfg.Test = test
-	net, err := signal.New(cfg.Test)
-	if err != nil {
-		t.Fatal(err)
-	}
+	net := signal.New(cfg.Test)
 	ctx, closeConn := context.WithCancel(context.Background())
 	t.Cleanup(closeConn)
 	b := bot.New(ctx, cfg, net)
-	for _, register := range features {
+	for _, register := range append(slices.Clone(features), w.Extra...) {
 		if err := register(b); err != nil {
 			t.Fatal(err)
 		}

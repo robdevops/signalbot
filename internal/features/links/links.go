@@ -10,6 +10,7 @@ import (
 	"cmp"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"mime"
 	"net/http"
@@ -27,16 +28,16 @@ import (
 	"golang.org/x/net/html/charset"
 
 	"github.com/robdevops/signalbot/internal/feature"
-	"github.com/robdevops/signalbot/internal/kit/img"
 	"github.com/robdevops/signalbot/internal/kit/logx"
 	"github.com/robdevops/signalbot/internal/kit/txt"
 )
 
 const (
-	maxLinks     = 2       // URLs fetched a turn
-	maxBody      = 5 << 20 // bytes read of a page
-	maxText      = 15_000  // characters of a page's text shown
-	minArticle   = 200     // characters an article or main element needs to stand for its page
+	maxLinks     = 5        // URLs fetched a turn
+	maxBody      = 5 << 20  // bytes read of a page
+	maxPDF       = 12 << 20 // bytes read of a PDF
+	maxText      = 15_000   // characters of a page's text shown
+	minArticle   = 200      // characters an article or main element needs to stand for its page
 	maxRedirects = 3
 	timeout      = 15 * time.Second
 	userAgent    = "signalbot (+https://github.com/robdevops/signalbot)"
@@ -88,8 +89,8 @@ type limiter struct {
 }
 
 // allow reports whether the chat may have another link fetched, and if so
-// counts it.
-func (l *limiter) allow(chat string) bool {
+// counts it; if not, wait is how long until it may.
+func (l *limiter) allow(chat string) (ok bool, wait time.Duration) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	t := now()
@@ -101,10 +102,10 @@ func (l *limiter) allow(chat string) bool {
 	times := slices.DeleteFunc(l.recent[chat], func(at time.Time) bool { return t.Sub(at) >= time.Hour })
 	if len(times) >= maxPerHour {
 		l.recent[chat] = times
-		return false
+		return false, times[len(times)-maxPerHour].Add(time.Hour).Sub(t)
 	}
 	l.recent[chat] = append(times, t)
-	return true
+	return true, 0
 }
 
 // urlPattern finds URLs in text, ending at white space, a Unicode separator
@@ -160,48 +161,74 @@ func trim(u string) string {
 	return u
 }
 
+// outcome is what a link came to: the note's subject ("link <url>", or
+// "page <url>" for one the model is shown) and its status after that, and
+// what the model is shown of it, if anything.
+type outcome struct {
+	subject, status string
+	text            string
+	file            *feature.File
+}
+
+// shown reports whether the model is shown what the link says.
+func (o outcome) shown() bool { return o.text != "" || o.file != nil }
+
+// note is the whole note the model gets, with the page's text under it.
+func (o outcome) note() string {
+	n := "[" + o.subject + o.status + "]"
+	if o.text != "" {
+		n += "\n" + txt.Fence(strings.TrimSpace(o.text), maxText)
+	}
+	return n
+}
+
+// kept is the note history keeps: never what the page said.
+func (o outcome) kept(u string) string {
+	if o.shown() {
+		return "[page " + u + " was shown to you" + feature.NotKept(1) + "]"
+	}
+	return "[" + o.subject + o.status + "]"
+}
+
 // additions fetches each URL in m and notes it, with its text or as a PDF
-// file; history keeps a note only.
+// file; history keeps a note only. Links past maxLinks are only counted, in
+// a note to the model.
 func additions(ctx context.Context, c *http.Client, l *limiter, info feature.Info, m feature.Message) feature.Additions {
 	var notes, kept []string
 	var files []feature.File
 	content := false // the model gets what a page says
 	found, dropped := urls(m)
-	switch {
-	case dropped == 1:
-		logx.Infof("link ignored: more than %d in a message", maxLinks)
-	case dropped > 1:
-		logx.Infof("%d links ignored: more than %d in a message", dropped, maxLinks)
-	}
 	for _, u := range found {
-		var note, text string
-		var file *feature.File
+		var o outcome
 		switch parsed, _ := url.Parse(u); {
 		case !webPort(parsed):
 			logx.Infof("link not fetched: not a standard web port")
-			note = "[link " + u + " not fetched: it isn't on a standard web port"
+			o = outcome{subject: "link " + u, status: " not fetched: it isn't on a standard web port"}
 		case private(parsed):
 			logx.Infof("link not fetched: looks private or one-time")
-			note = "[link " + u + " not fetched: it looks like a private or one-time link"
-		case !l.allow(m.Chat.Key()):
-			logx.Warnf("link not fetched: %d an hour for this chat reached", maxPerHour)
-			note = "[link " + u + " not fetched: too many links this hour; try again later"
+			o = outcome{subject: "link " + u, status: " not fetched: it looks like a private or one-time link"}
 		default:
-			note, text, file = fetch(ctx, c, info, u)
+			if ok, wait := l.allow(m.Chat.Key()); !ok {
+				logx.Warnf("link not fetched: this chat reached its %d links an hour", maxPerHour)
+				o = outcome{subject: "link " + u, status: fmt.Sprintf(" not fetched: this chat has had its %d links for the hour; "+
+					"links can be read again in about %s", maxPerHour, minutes(wait))}
+			} else {
+				o = fetch(ctx, c, info, u)
+			}
 		}
-		kept = append(kept, note+"]")
-		if text != "" || file != nil {
-			kept[len(kept)-1], content = "[page "+u+" was shown to you; it isn't kept]", true
+		notes, kept = append(notes, o.note()), append(kept, o.kept(u))
+		content = content || o.shown()
+		if o.file != nil {
+			files = append(files, *o.file)
 		}
-		if text != "" {
-			note += "]\n" + txt.Fence(strings.TrimSpace(text), maxText)
-		} else {
-			note += "]"
+	}
+	if dropped > 0 {
+		logx.Infof("%d more links not opened: more than %d in a message", dropped, maxLinks)
+		more := fmt.Sprintf("[%d more links not opened: the bot reads at most %d a message; send them on their own to have them read]", dropped, maxLinks)
+		if dropped == 1 {
+			more = fmt.Sprintf("[1 more link not opened: the bot reads at most %d a message; send it on its own to have it read]", maxLinks)
 		}
-		notes = append(notes, note)
-		if file != nil {
-			files = append(files, *file)
-		}
+		notes = append(notes, more) // history keeps the message, which has the URL
 	}
 	if len(notes) == 0 {
 		return feature.Additions{}
@@ -209,20 +236,27 @@ func additions(ctx context.Context, c *http.Client, l *limiter, info feature.Inf
 	return feature.Additions{Note: strings.Join(notes, "\n"), HistoryNote: strings.Join(kept, "\n"), Files: files, Content: content}
 }
 
-// fetch gets u: its note, open for the caller to close with "]", and its
-// text or, for a PDF, the file. It logs one line, what the link came to,
-// never the URL or the page's title.
-func fetch(ctx context.Context, c *http.Client, info feature.Info, u string) (note, text string, file *feature.File) {
-	failed := func(secs float64, why string) (string, string, *feature.File) {
+// minutes is d in whole minutes, rounded up, at least 1.
+func minutes(d time.Duration) string {
+	if n := max(1, int((d+time.Minute-1)/time.Minute)); n > 1 {
+		return strconv.Itoa(n) + " minutes"
+	}
+	return "1 minute"
+}
+
+// fetch gets u, and what it came to. It logs one line, never the URL or
+// the page's title.
+func fetch(ctx context.Context, c *http.Client, info feature.Info, u string) outcome {
+	failed := func(secs float64, why string) outcome {
 		logx.Warnf("link failed after %.1fs: %s", secs, why)
-		return "[link " + u + " failed to load: " + why, "", nil
+		return outcome{subject: "link " + u, status: " couldn't be fetched: " + why}
 	}
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
 	if err != nil {
 		logx.Warnf("link failed: not a web address")
-		return "[link " + u + " failed to load: not a web address", "", nil
+		return outcome{subject: "link " + u, status: " couldn't be fetched: not a web address"}
 	}
 	req.Header.Set("User-Agent", userAgent)
 	req.Header.Set("Accept", "text/html,application/xhtml+xml,text/plain;q=0.9,application/json;q=0.9,application/pdf;q=0.8,*/*;q=0.5")
@@ -233,7 +267,7 @@ func fetch(ctx context.Context, c *http.Client, info feature.Info, u string) (no
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return failed(time.Since(start).Seconds(), "status "+strconv.Itoa(resp.StatusCode))
+		return failed(time.Since(start).Seconds(), statusReason(resp.StatusCode))
 	}
 	// shown is the link as the note names it: with where it ended up, if
 	// redirected. The redirecting server chose that, so it is cut short and
@@ -247,7 +281,7 @@ func fetch(ctx context.Context, c *http.Client, info feature.Info, u string) (no
 	mediaType, _, _ := mime.ParseMediaType(resp.Header.Get("Content-Type"))
 	limit := int64(maxBody)
 	if mediaType == "application/pdf" {
-		limit = img.MaxReceived
+		limit = maxPDF
 	}
 	body, err := io.ReadAll(io.LimitReader(resp.Body, limit))
 	if err != nil {
@@ -274,22 +308,24 @@ func fetch(ctx context.Context, c *http.Client, info feature.Info, u string) (no
 		}
 		f("link %.1fs, %d bytes %s, %s", took, size, kind, outcome)
 	}
+	link, page := "link "+shown, "page "+shown
 	switch {
 	case bytes.HasPrefix(body, []byte("%PDF-")):
-		if !info.Files {
-			done(false, "pdf", "not sent: this model can't read files")
-			return "[link " + shown + ", a PDF, which you can't read with this model", "", nil
+		if !info.PDFs {
+			done(false, "pdf", "not sent: this model can't read PDFs")
+			return outcome{subject: link, status: ", a PDF, which you can't read with this model"}
 		}
 		done(false, "pdf", "attached")
-		return "[page " + shown + ", a PDF, attached", "", &feature.File{Name: cmp.Or(txt.SafeName(path.Base(resp.Request.URL.Path)), "page.pdf"), MIME: "application/pdf", Data: body}
+		return outcome{subject: page, status: ", a PDF, attached",
+			file: &feature.File{Name: cmp.Or(txt.SafeName(path.Base(resp.Request.URL.Path)), "page.pdf"), MIME: "application/pdf", Data: body}}
 	case mediaType == "text/html" || mediaType == "application/xhtml+xml":
 		title, text, from := pageText(body, resp.Header.Get("Content-Type"))
 		if text = strings.TrimSpace(text); text == "" {
 			done(true, "html", "no readable text")
-			return "[link " + shown + ", a page with no text you can read", "", nil
+			return outcome{subject: link, status: ", a page with no readable text"}
 		}
 		done(false, "html", txt.Chars(utf8.RuneCountInString(text), maxText)+" ("+from+")")
-		return "[page " + shown + titled(title), text, nil
+		return outcome{subject: page, status: titled(title), text: text}
 	case strings.HasPrefix(mediaType, "text/") || mediaType == "application/json":
 		r, err := charset.NewReader(bytes.NewReader(body), resp.Header.Get("Content-Type"))
 		if err == nil {
@@ -298,15 +334,31 @@ func fetch(ctx context.Context, c *http.Client, info feature.Info, u string) (no
 		text := strings.TrimSpace(string(body))
 		if text == "" {
 			done(true, typ, "no readable text")
-			return "[link " + shown + ", a page with no text you can read", "", nil
+			return outcome{subject: link, status: ", a page with no readable text"}
 		}
 		if utf8.ValidString(text) && !strings.ContainsRune(text, 0) {
 			done(false, typ, txt.Chars(utf8.RuneCountInString(text), maxText))
-			return "[page " + shown, text, nil
+			return outcome{subject: page, text: text}
 		}
 	}
 	done(false, typ, "not a page the bot reads")
-	return "[link " + shown + ", which isn't a page you can read", "", nil
+	return outcome{subject: link, status: ", which can't be read"}
+}
+
+// statusReason is an error status in plain words, keeping its number.
+func statusReason(code int) string {
+	n := strconv.Itoa(code)
+	switch {
+	case code == http.StatusUnauthorized, code == http.StatusForbidden:
+		return "the site refused the request (" + n + "); it may need signing in or block bots"
+	case code == http.StatusNotFound, code == http.StatusGone:
+		return "the page wasn't found (" + n + ")"
+	case code == http.StatusTooManyRequests:
+		return "the site is limiting requests (" + n + "); try again later"
+	case code >= 500 && code <= 599:
+		return "the site had an error (" + n + ")"
+	}
+	return "the site answered with status " + n
 }
 
 // reason is why a request failed, for the model and the log: never the

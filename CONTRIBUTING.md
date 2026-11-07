@@ -10,7 +10,7 @@ internal/chats/         per-chat state: history, dedupe, mention names, the mail
 internal/timers/        one-shot timers
 internal/config/        settings from the environment; config.Test, the test hooks
 internal/bot/           the decision, the prompt, the hooks; wires the core, and reaches Signal through Network
-internal/feature/       the ports and shared types, the command helper, featuretest
+internal/feature/       the ports and shared types, command parsing, featuretest
 internal/features/*     one package per feature
 internal/kit/*          code with two or more users and no bot knowledge
 ```
@@ -43,7 +43,7 @@ Tests in `internal/arch` enforce these:
 
 - **Imports:** only the main package, at the module root, imports features and `internal/signal`; a feature imports only `internal/feature`, `internal/kit` and its own packages; `internal/signal` imports only `internal/feature`, kit, `internal/config` and `internal/bot` (network to core, never the reverse); `internal/config` and kit import no other internal package.
 - **No feature names in the core:** the core's source mentions no feature name or feature-only word (chart, MCP, group context, `/intro`, `/schedule`, …).
-- **Docs:** every setting read, the core's or a feature's (`h.Env("NAME", …)`), is in the README's configuration table.
+- **Docs:** every setting read, the core's or a feature's (`h.Env("NAME", …)`), is in the table in [docs/CONFIGURATION.md](docs/CONFIGURATION.md).
 
 And by convention:
 
@@ -52,6 +52,8 @@ And by convention:
 - **Scenarios:** `scenario_test.go` drives the whole bot through a fake signal-cli socket and a fake model API (OpenRouter's, or another provider's), and checks no message text reaches the log. The golden prompts in `testdata` pin the system prompt byte for byte (`go test . -run Golden -update` rewrites them).
 - **One test hook:** what a test needs to change inside the bot goes in `config.Test` (nil in production), never in an exported variable or method. The only other exports for tests only read: `logx.SetOutput` and `logx.Buffer` capture the log (kit can't import config).
 - **Sizes:** `go run ./internal/arch/sizes` reports lines per package; CI reports them on each PR, not enforced.
+- **Events follow the message rules:** an `OnEvent` hook's reply goes to the chat without the model, and the event itself is never logged or kept.
+- **Save only through `Host.Store`:** a feature never writes a file itself (an `internal/arch` test checks); its saved state is one JSON document, listed in PRIVACY.md with what it holds and for how long.
 - **Never log message text,** including in errors and panics, nor a URL (not even its host), file name, page title or declared type, a sticker's emoji or pack title, or a reaction's emoji. `logx` escapes line breaks; don't log what a user wrote.
 - Tests use only the names Alice and Bob.
 
@@ -60,10 +62,14 @@ Before sending a change: `gofmt -l .`, `go vet ./...` and `go test -race ./...`,
 ## Adding a feature
 
 1. Make `internal/features/<name>` with a `Register(h feature.Host) error`. Read settings with `h.Env`, register hooks and tool groups, and return an error only for a config error, which stops the bot.
-2. For a command, use `feature.Command(h, "name", fn)`. A name another feature has taken is refused. If the model should know the command, name it in your tool group's `Names` and `Listing`; a command that uses no model tool can go in a group with only `Names`, which the prompt's tools list names but `{tools}` doesn't.
-3. For tools, call `h.Tools` with a `ToolGroup`: `Names` for the intro's `{tools}`, `Listing` for the tools line, `System` for a prompt line while offered, and `Keywords` to offer it only when a message matches.
+2. For a command, use `h.Command("name", fn)`. A name another feature has taken is refused. If the model should know the command, name it in your tool group's `Names` and `Listing`; a command that uses no model tool can be named with `h.ListCommands("label", "name")`, which the prompt's tools list names but `{tools}` doesn't.
+3. For tools, call `h.OfferTools` with a `ToolGroup` (it reports whether the group was kept): `Names` for the intro's `{tools}`, `Listing` for the tools line, `System` for a prompt line while offered, and `Keywords` to offer it only when a message matches.
 4. Test it on `featuretest`, without the core.
 5. Add one line to `features.go`. Order matters: it is the order hooks run in and of the tools line.
-6. Add its settings to the README's configuration table, and a row in TECHNICAL.md's features table and a paragraph under it.
+6. Add its settings to the table in `docs/CONFIGURATION.md`, and a row in TECHNICAL.md's features table and a paragraph under it.
 
 `internal/features/intro` is the smallest feature to copy.
+
+---
+
+[Back to TECHNICAL.md](TECHNICAL.md) · [Back to README.md](README.md)

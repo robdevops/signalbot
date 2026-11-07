@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"image"
 	"image/color"
+	stddraw "image/draw"
 	"image/png"
 	"math"
 	"slices"
@@ -184,11 +185,12 @@ func (s *chartSpec) axisOf(sr chartSeries) *chartAxis {
 	return s.left
 }
 
-// parseChart reads and checks the model's arguments. Errors are written for
-// the model, so it can fix its call.
-func parseChart(arguments string) (*chartSpec, error) {
+// parseChart reads and checks the arguments the model gave tool, which
+// draws on two Y axes if dual. Errors are written for the model, naming the
+// tool it called, so it can fix its call.
+func parseChart(tool string, dual bool, arguments string) (*chartSpec, error) {
 	var s chartSpec
-	if err := decodeArgs(chartTool, axisShorthand(arguments), &s); err != nil {
+	if err := decodeArgs(tool, axisShorthand(arguments), &s); err != nil {
 		return nil, err
 	}
 	if s.YAxis != nil {
@@ -242,6 +244,9 @@ func parseChart(arguments string) (*chartSpec, error) {
 		for i := range s.Series {
 			s.Series[i].Axis = "left"
 		}
+	}
+	if s.right.used && !dual { // said first, as what the model got wrong
+		return nil, errors.New(tool + " has one Y axis: put every series on it, using change mode to compare series on different scales")
 	}
 	if s.right.used && (s.left.Title == "" || s.right.Title == "") {
 		return nil, errors.New("a chart that uses both axes needs a title on each: set axes.left.title and axes.right.title")
@@ -322,8 +327,10 @@ func (a *chartAxis) y(v float64) float64 {
 	return a.bottom - f*(a.bottom-a.top)
 }
 
-// summary is what the model is told after the chart is drawn: the final
-// value of each series, so its text can quote the same numbers.
+// summary is the tool's result, what the model reads within the current
+// reply once the chart is drawn: which series were drawn and the final
+// value of each, so its text can quote the same numbers. History keeps
+// only the picture's note, [sent the chart "…"], not this.
 func (s *chartSpec) summary() string {
 	var parts []string
 	for _, sr := range s.Series {
@@ -515,9 +522,28 @@ type canvas struct {
 	th  *theme
 }
 
-// fill paints polygons, each given as x,y pairs, in c.
+// fill paints polygons, each given as x,y pairs, in c. It rasterizes only
+// the rows and columns the polygons cover, shifted by a whole number of
+// pixels, at a fraction of the work of the whole canvas. The box is at
+// least floatWidth wide, since the rasterizer turns to fixed-point maths
+// for a small one, which shades edges visibly worse.
 func (cv *canvas) fill(c color.Color, polys ...[]float64) {
-	b := cv.img.Bounds()
+	minX, minY, maxX, maxY := math.Inf(1), math.Inf(1), math.Inf(-1), math.Inf(-1)
+	for _, p := range polys {
+		for i := 0; i+1 < len(p); i += 2 {
+			minX, maxX = min(minX, p[i]), max(maxX, p[i])
+			minY, maxY = min(minY, p[i+1]), max(maxY, p[i+1])
+		}
+	}
+	b := image.Rect(int(math.Floor(minX)), int(math.Floor(minY)), int(math.Ceil(maxX))+1, int(math.Ceil(maxY))+1).Intersect(cv.img.Bounds())
+	if b.Empty() {
+		return
+	}
+	if b.Dx() < floatWidth {
+		b.Max.X = min(b.Min.X+floatWidth, width)
+		b.Min.X = b.Max.X - floatWidth
+	}
+	ox, oy := float64(b.Min.X), float64(b.Min.Y)
 	r := vector.NewRasterizer(b.Dx(), b.Dy())
 	for _, p := range polys {
 		// Every polygon is wound the same way, so overlaps add up instead of
@@ -534,14 +560,19 @@ func (cv *canvas) fill(c color.Color, polys ...[]float64) {
 			}
 			p = q
 		}
-		r.MoveTo(float32(p[0]), float32(p[1]))
+		r.MoveTo(float32(p[0]-ox), float32(p[1]-oy))
 		for i := 2; i < len(p); i += 2 {
-			r.LineTo(float32(p[i]), float32(p[i+1]))
+			r.LineTo(float32(p[i]-ox), float32(p[i+1]-oy))
 		}
 		r.ClosePath()
 	}
 	r.Draw(cv.img, b, image.NewUniform(c), image.Point{})
 }
+
+// floatWidth is the least width vector.Rasterizer draws with floating-point
+// maths, as it always did over the whole canvas (golang.org/x/image/vector
+// switches below 513 pixels in both directions).
+const floatWidth = 513
 
 func circle(x, y, rad float64) []float64 {
 	var p []float64
@@ -602,7 +633,7 @@ const sourceDescription = "Where the data came from, e.g. the site or tool; fill
 // and the legend.
 func newCanvas(th *theme, title, subtitle, source string) *canvas {
 	cv := &canvas{img: image.NewRGBA(image.Rect(0, 0, width, height)), th: th}
-	cv.rect(th.bg, 0, 0, width, height)
+	stddraw.Draw(cv.img, cv.img.Bounds(), image.NewUniform(th.bg), image.Point{}, stddraw.Src) // whole pixels: no need to rasterize
 	titleFace, subFace := face(chartFonts.bold, 34), face(chartFonts.regular, 22)
 	defer titleFace.Close()
 	defer subFace.Close()
@@ -637,8 +668,13 @@ func (cv *canvas) encode() ([]byte, error) {
 	pix := cv.img.Pix
 	rgb := func(i int) uint32 { return uint32(pix[i])<<16 | uint32(pix[i+1])<<8 | uint32(pix[i+2]) }
 	counts := map[uint32]int{} // pixels of each colour
-	for i := 0; i < len(pix); i += 4 {
-		counts[rgb(i)]++
+	for i := 0; i < len(pix); {
+		c, j := rgb(i), i+4 // a run of one colour, such as the background, is counted at once
+		for j < len(pix) && rgb(j) == c {
+			j += 4
+		}
+		counts[c] += (j - i) / 4
+		i = j
 	}
 	var mask uint32
 	best, size := map[uint32]uint32{}, map[uint32]int{} // each group's most common colour, and its pixels
@@ -677,8 +713,12 @@ func (cv *canvas) encode() ([]byte, error) {
 		counts[c] = int(i)
 	}
 	out := image.NewPaletted(cv.img.Rect, pal)
+	last, idx := uint32(1<<24), uint8(0) // no colour, so the first pixel looks its index up
 	for i := range out.Pix {
-		out.Pix[i] = uint8(counts[rgb(4*i)])
+		if c := rgb(4 * i); c != last {
+			last, idx = c, uint8(counts[c])
+		}
+		out.Pix[i] = idx
 	}
 	var buf bytes.Buffer
 	err := png.Encode(&buf, out)

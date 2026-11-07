@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/robdevops/signalbot/internal/feature"
+	"github.com/robdevops/signalbot/internal/kit/state"
 )
 
 // Host records what a feature registers and lets a test drive it. Set its
@@ -22,15 +23,21 @@ type Host struct {
 	Shared   []feature.Group                                // what Groups returns
 	TimerErr error                                          // if set, At fails with it, as the core does at its cap
 	Redactor func(string) string                            // what Redact does; nil leaves text as it is
+	StoreErr error                                          // if set, Store fails with it, as the core does with no usable state directory
+	Unusable bool                                           // if set, OfferTools drops a group with tools, as the core does when the API can run none
 
 	mu        sync.Mutex
 	read      []string
 	messages  []func(context.Context, feature.Message) feature.Action
 	turns     []func(context.Context, feature.Message) feature.Additions
+	events    []func(context.Context, feature.Event) string
 	groups    []feature.ToolGroup
 	more      []string
 	timers    []*Timer
 	delivered []feature.Message
+	told      []Told
+	stores    []string
+	commands  feature.Commands
 	life      context.Context // what Go passes; ended by Stop
 	end       context.CancelFunc
 	running   sync.WaitGroup
@@ -62,13 +69,48 @@ func (h *Host) OnTurn(fn func(context.Context, feature.Message) feature.Addition
 
 // IntroLine records an introduction line, ending " (DM only)" if dmOnly;
 // IntroLines returns them.
-func (h *Host) IntroLine(line string, dmOnly bool) {
+func (h *Host) OnEvent(fn func(context.Context, feature.Event) string) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	if dmOnly {
-		line += " (DM only)"
+	h.events = append(h.events, fn)
+}
+
+// Event runs the OnEvent hooks on e, as the core does, and returns the reply
+// the core would send: the first non-empty one.
+func (h *Host) Event(ctx context.Context, e feature.Event) string {
+	h.mu.Lock()
+	hooks := slices.Clone(h.events)
+	h.mu.Unlock()
+	for _, fn := range hooks {
+		if r := fn(ctx, e); r != "" {
+			return r
+		}
 	}
+	return ""
+}
+
+// IntroLine records line; IntroLineDM records it marked " (DM only)".
+func (h *Host) IntroLine(line string) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
 	h.more = append(h.more, line)
+}
+
+func (h *Host) IntroLineDM(line string) { h.IntroLine(line + " (DM only)") }
+
+func (h *Host) Command(name string, fn func(context.Context, feature.Message, string) feature.Action) error {
+	if err := h.commands.Take(name); err != nil {
+		return err
+	}
+	h.OnMessage(feature.CommandHook(name, fn))
+	return nil
+}
+
+// ListCommands records a group with only its name, as the core keeps it.
+func (h *Host) ListCommands(label string, names ...string) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.groups = append(h.groups, feature.ToolGroup{Names: []string{"**" + label + "**: /" + strings.Join(names, ", /")}})
 }
 
 func (h *Host) IntroLines() []string {
@@ -77,10 +119,14 @@ func (h *Host) IntroLines() []string {
 	return slices.Clone(h.more)
 }
 
-func (h *Host) Tools(g feature.ToolGroup) {
+func (h *Host) OfferTools(g feature.ToolGroup) bool {
 	h.mu.Lock()
 	defer h.mu.Unlock()
+	if h.Unusable && len(g.Tools) > 0 {
+		return false
+	}
 	h.groups = append(h.groups, g)
+	return true
 }
 
 func (h *Host) At(name string, t time.Time, fn func(context.Context, time.Time)) (func(), error) {
@@ -112,6 +158,25 @@ func (h *Host) Env(key, def string) string {
 
 func (h *Host) Info() feature.Info { return h.Bot }
 
+// Store opens a saved state as the core does, in the directory
+// Settings["STATE_DIRECTORY"] names (the working directory if unset): each
+// name once, refusing the names the core refuses, and failing with StoreErr
+// if set, which stands for a state directory the core can't use.
+func (h *Host) Store(name string) (feature.Store, error) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	switch {
+	case h.StoreErr != nil:
+		return nil, h.StoreErr
+	case state.CheckName(name) != nil:
+		return nil, state.CheckName(name)
+	case slices.Contains(h.stores, name):
+		return nil, errors.New("a saved state called " + name + " is already open")
+	}
+	h.stores = append(h.stores, name)
+	return state.Open(state.Dir(h.Settings["STATE_DIRECTORY"]), name), nil
+}
+
 func (h *Host) Media(_ context.Context, m feature.Message, i int) ([]byte, error) {
 	if h.Fetch == nil {
 		return nil, errors.New("no media")
@@ -123,6 +188,22 @@ func (h *Host) Deliver(m feature.Message) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	h.delivered = append(h.delivered, m)
+}
+
+func (h *Host) Tell(user, text string) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.told = append(h.told, Told{user, text})
+}
+
+// Told is a text passed to Tell.
+type Told struct{ User, Text string }
+
+// TellsSent is the texts passed to Tell, in order.
+func (h *Host) TellsSent() []Told {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return slices.Clone(h.told)
 }
 
 func (h *Host) Groups(context.Context, string) ([]feature.Group, error) { return h.Shared, nil }

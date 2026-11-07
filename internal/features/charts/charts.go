@@ -49,15 +49,16 @@ var (
 // clockPattern is a time of day: 18, 18:30, 6pm, 6:30 am.
 var clockPattern = regexp.MustCompile(`^(\d{1,2})(?::(\d{2}))?\s*(am|pm)?$`)
 
-// darkMode reads DARKMODE: off (the default), on, or the hours charts are
-// dark, such as 18:00-6:00, 18-6 or 6pm-6am. Any other value is taken as
-// off, with a warning.
+// darkMode reads DARKMODE: off (the default; also false, no, 0 or light),
+// on (also true, yes, 1 or dark), or the hours charts are dark, such as
+// 18:00-6:00, 18-6 or 6pm-6am. Any other value is taken as off, with a
+// warning.
 func darkMode(h feature.Host) darkHours {
 	v := h.Env("DARKMODE", "off")
 	switch m := strings.ToLower(strings.TrimSpace(v)); m {
-	case "off":
+	case "off", "false", "no", "0", "light":
 		return never
-	case "on":
+	case "on", "true", "yes", "1", "dark":
 		return allDay
 	default:
 		if from, to, ok := strings.Cut(m, "-"); ok {
@@ -114,12 +115,12 @@ func themeFor(d darkHours) *theme {
 // caption.
 func Register(h feature.Host) error {
 	mode := darkMode(h)
-	h.Tools(feature.ToolGroup{
+	h.OfferTools(feature.ToolGroup{
 		Names:    []string{"**charts**: line, pie"},
 		Listing:  "charts (" + chartTool + ", " + pieTool + ")",
 		Keywords: wantsChart,
 		Tools: []feature.Tool{
-			{Name: chartTool, Description: chartToolDescription, Schema: chartToolSchema, Run: lineChart(mode, false)},
+			{Name: chartTool, Description: chartToolDescription, Schema: chartToolSchema, Run: lineChart(mode, chartTool, false)},
 			{Name: pieTool, Description: pieToolDescription, Schema: pieToolSchema, Run: func(_ context.Context, args string) (string, []feature.Picture, error) {
 				s, err := parsePie(args)
 				if err != nil {
@@ -131,21 +132,18 @@ func Register(h feature.Host) error {
 		},
 	})
 	// No Names: it is part of the charts the intro lists.
-	h.Tools(feature.ToolGroup{
+	h.OfferTools(feature.ToolGroup{
 		Listing:  "dual-axis chart (" + dualAxisTool + ")",
 		Keywords: wantsSecondAxis,
-		Tools:    []feature.Tool{{Name: dualAxisTool, Description: dualAxisToolDescription, Schema: dualAxisToolSchema, Run: lineChart(mode, true)}},
+		Tools:    []feature.Tool{{Name: dualAxisTool, Description: dualAxisToolDescription, Schema: dualAxisToolSchema, Run: lineChart(mode, dualAxisTool, true)}},
 	})
 	return nil
 }
 
-// lineChart runs a line chart tool, on two Y axes if dual.
-func lineChart(mode darkHours, dual bool) func(context.Context, string) (string, []feature.Picture, error) {
+// lineChart runs line chart tool, on two Y axes if dual.
+func lineChart(mode darkHours, tool string, dual bool) func(context.Context, string) (string, []feature.Picture, error) {
 	return func(_ context.Context, args string) (string, []feature.Picture, error) {
-		s, err := parseChart(args)
-		if err == nil && !dual && s.right.used {
-			err = errors.New(chartTool + " has one Y axis: put every series on it, using change mode to compare series on different scales")
-		}
+		s, err := parseChart(tool, dual, args)
 		if err != nil {
 			return "error: " + err.Error(), nil, fmt.Errorf("%w: %v", errArgs, err)
 		}

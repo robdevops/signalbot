@@ -15,14 +15,18 @@ func Register(h feature.Host) error {
 		if args != "" {
 			return feature.Action{} // only the command itself; anything more carries on
 		}
-		intro := h.Info().Intro
+		info := h.Info()
+		intro := info.Intro
 		if m.Chat.GroupID == "" {
-			intro = h.Info().IntroDM
+			intro = info.IntroDM
 		}
-		return feature.Action{Answer: intro + "\n\nThis message did not use the model."}
+		if info.Model != "" { // with no model, nothing does
+			intro += "\n\nThis message did not use the model."
+		}
+		return feature.Action{Answer: intro}
 	}
 	for _, name := range []string{"intro", "help"} {
-		if err := feature.Command(h, name, answer); err != nil {
+		if err := h.Command(name, answer); err != nil {
 			return err
 		}
 	}

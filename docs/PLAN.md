@@ -60,3 +60,7 @@ Behaviour changes, approved: the prompt asks for Markdown, and replies can show 
 
 8. **Refuse to start when the state directory can't be written** (done). At startup, `/schedule` checks that its directory (`$STATE_DIRECTORY`, or the working directory) can be listed and written. If not, the bot exits with a clear message saying to add `StateDirectory=signalbot` to the systemd unit, the way the Docker `/data` check already does. Approved.
 9. **Tell the model about the scheduling commands** (done). The prompt's "If asked what tools you have" list names `/schedule`, `/timer`, `/reminder` and `/job`, so a near-miss like `/time …` gets pointed to the right command instead of "I can't set reminders". This needs a command-only entry the core keeps although it has no model tools. No `/time` alias. Approved. A `ToolGroup` with only `Names` is kept for that list alone, not `{tools}`.
+
+---
+
+[Back to README.md](../README.md)

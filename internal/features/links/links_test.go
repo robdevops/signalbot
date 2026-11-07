@@ -31,9 +31,9 @@ func msg(text, quote string) feature.Message {
 	return m
 }
 
-// URLs come from the text, then the quote, distinct, at most two, with
+// URLs come from the text, then the quote, distinct, at most five, with
 // sentence punctuation and unbalanced brackets trimmed; distinct ones past
-// two are counted.
+// five are counted.
 func TestURLs(t *testing.T) {
 	for _, tc := range []struct {
 		text, quote string
@@ -45,12 +45,12 @@ func TestURLs(t *testing.T) {
 		{"<https://a.com/>, https://a.com/ again", "", []string{"https://a.com/"}, 0},
 		{"summarise", "read http://b.org/p?q=1#top please", []string{"http://b.org/p?q=1"}, 0},
 		{"thanks", "bot: see https://attacker.example/x?d=secret", nil, 0}, // a quote of the bot: see msg
-		{"https://1.com https://2.com https://3.com", "", []string{"https://1.com", "https://2.com"}, 1},
+		{"https://1.com https://2.com https://3.com https://4.com https://5.com https://6.com", "", []string{"https://1.com", "https://2.com", "https://3.com", "https://4.com", "https://5.com"}, 1},
 		{"https://1.com https://2.com https://1.com", "", []string{"https://1.com", "https://2.com"}, 0},
-		{"https://1.com https://2.com https://3.com https://3.com https://3.com#x", "", []string{"https://1.com", "https://2.com"}, 1},
+		{"https://1.com https://2.com https://3.com https://4.com https://5.com https://6.com https://6.com#x https://7.com", "", []string{"https://1.com", "https://2.com", "https://3.com", "https://4.com", "https://5.com"}, 2},
 		{"ftp://x.com mailto:a@b.c https://user:pw@c.com/ http://", "", nil, 0},
-		{"see https://a.com/x\u00a0and https://b.com/y\u3000too", "", []string{"https://a.com/x", "https://b.com/y"}, 0},                                     // Unicode spaces end a URL
-		{"http://a.com/x\vand http://b.com/y\u0085and http://c.com/z\u200band http://d.com/w\u2028and", "", []string{"http://a.com/x", "http://b.com/y"}, 2}, // so do controls, format characters and line separators
+		{"see https://a.com/x\u00a0and https://b.com/y\u3000too", "", []string{"https://a.com/x", "https://b.com/y"}, 0},                                                                         // Unicode spaces end a URL
+		{"http://a.com/x\vand http://b.com/y\u0085and http://c.com/z\u200band http://d.com/w\u2028and", "", []string{"http://a.com/x", "http://b.com/y", "http://c.com/z", "http://d.com/w"}, 0}, // so do controls, format characters and line separators
 	} {
 		if got, dropped := urls(msg(tc.text, tc.quote)); !slices.Equal(got, tc.want) || dropped != tc.dropped {
 			t.Errorf("%q: %q, %d dropped, want %q, %d", tc.text, got, dropped, tc.want, tc.dropped)
@@ -95,13 +95,13 @@ func TestClientRefusesPrivate(t *testing.T) {
 	defer func() { allowLoopback = false }()
 	srv := httptest.NewServer(http.RedirectHandler("http://169.254.169.254/latest/meta-data/", http.StatusFound))
 	defer srv.Close()
-	note, text, file := fetch(context.Background(), c, feature.Info{}, srv.URL)
-	if note != "[link "+srv.URL+" failed to load: it isn't a public address" || text != "" || file != nil {
-		t.Fatalf("note %q", note)
+	o := fetch(context.Background(), c, feature.Info{}, srv.URL)
+	if o.note() != "[link "+srv.URL+" couldn't be fetched: it isn't a public address]" || o.shown() {
+		t.Fatalf("note %q", o.note())
 	}
-	note, text, file = fetch(context.Background(), c, feature.Info{}, "http://bad host/")
-	if note != "[link http://bad host/ failed to load: not a web address" || text != "" || file != nil {
-		t.Fatalf("note %q", note)
+	o = fetch(context.Background(), c, feature.Info{}, "http://bad host/")
+	if o.note() != "[link http://bad host/ couldn't be fetched: not a web address]" || o.shown() {
+		t.Fatalf("note %q", o.note())
 	}
 	if l := logs.String(); strings.Contains(l, srv.URL) || strings.Contains(l, "bad host") || !strings.Contains(l, "<4>link failed: not a web address\n") {
 		t.Fatalf("log %q", l)
@@ -189,14 +189,14 @@ func TestFetch(t *testing.T) {
 	srv := httptest.NewServer(mux)
 	defer srv.Close()
 	c := newClient()
-	all := feature.Info{Files: true}
+	all := feature.Info{PDFs: true}
 
 	a := additions(context.Background(), c, newLimiter(), all, msg("what's this "+srv.URL+"/page?", ""))
 	if !strings.HasPrefix(a.Note, "[page "+srv.URL+`/page: "Gold news"]`+"\n```\nGold\nGold rose today.") || !a.Content ||
 		strings.Contains(a.Note, "evil") || strings.Contains(a.Note, "Home | About") || strings.Contains(a.Note, "©") {
 		t.Fatalf("note %q", a.Note)
 	}
-	if a.HistoryNote != "[page "+srv.URL+"/page was shown to you; it isn't kept]" {
+	if a.HistoryNote != "[page "+srv.URL+"/page was shown to you"+feature.NotKept(1)+"]" {
 		t.Fatalf("history %q", a.HistoryNote)
 	}
 	logged(`<6>link \d+\.\ds, \d+ bytes html, ` + strconv.Itoa(utf8.RuneCountInString("Gold\n"+strings.TrimSpace(article))) + ` chars of text \(<article>\)\n`)
@@ -212,7 +212,7 @@ func TestFetch(t *testing.T) {
 	if a := additions(context.Background(), c, newLimiter(), feature.Info{}, msg(srv.URL+"/report.pdf", "")); a.Files != nil || a.Content || !strings.Contains(a.Note, "which you can't read with this model") {
 		t.Fatalf("pdf without files %+v", a)
 	}
-	logged(`<6>link \d+\.\ds, 13 bytes pdf, not sent: this model can't read files\n`)
+	logged(`<6>link \d+\.\ds, 13 bytes pdf, not sent: this model can't read PDFs\n`)
 	a = additions(context.Background(), c, newLimiter(), all, msg(srv.URL+"/long", ""))
 	if !strings.HasPrefix(a.Note, "[page "+srv.URL+"/long]\n```\nxxx") || !strings.Contains(a.Note, "\n[…truncated]\n```") {
 		t.Fatalf("long %.80q", a.Note)
@@ -223,7 +223,7 @@ func TestFetch(t *testing.T) {
 	}
 	// A redirect's note says where the link ended up; history keeps the link.
 	a = additions(context.Background(), c, newLimiter(), all, msg(srv.URL+"/moved", ""))
-	if !strings.HasPrefix(a.Note, "[page "+srv.URL+"/moved, redirected to "+srv.URL+`/page: "Gold news"]`+"\n```\nGold") || a.HistoryNote != "[page "+srv.URL+"/moved was shown to you; it isn't kept]" || !a.Content {
+	if !strings.HasPrefix(a.Note, "[page "+srv.URL+"/moved, redirected to "+srv.URL+`/page: "Gold news"]`+"\n```\nGold") || a.HistoryNote != "[page "+srv.URL+"/moved was shown to you"+feature.NotKept(1)+"]" || !a.Content {
 		t.Fatalf("moved %.120q / %q", a.Note, a.HistoryNote)
 	}
 	// Where a redirect ended up is the server's choice: it is cut short, and
@@ -238,13 +238,13 @@ func TestFetch(t *testing.T) {
 	}
 	logged(`<6>link \d+\.\ds, \d+ bytes html, 11 chars of text \(whole page\)\n`)
 	for path, want := range map[string]string{
-		"/bin":     ", which isn't a page you can read]",
-		"/notype":  ", which isn't a page you can read]",
-		"/hostile": ", which isn't a page you can read]",
-		"/empty":   ", a page with no text you can read]",
-		"/blank":   ", a page with no text you can read]",
-		"/missing": " failed to load: status 404]",
-		"/loop":    " failed to load: too many or bad redirects]",
+		"/bin":     ", which can't be read]",
+		"/notype":  ", which can't be read]",
+		"/hostile": ", which can't be read]",
+		"/empty":   ", a page with no readable text]",
+		"/blank":   ", a page with no readable text]",
+		"/missing": " couldn't be fetched: the page wasn't found (404)]",
+		"/loop":    " couldn't be fetched: too many or bad redirects]",
 	} {
 		if a := additions(context.Background(), c, newLimiter(), all, msg(srv.URL+path, "")); !strings.HasSuffix(a.Note, want) || a.HistoryNote != a.Note || a.Content {
 			t.Errorf("%s: %q / %q", path, a.Note, a.HistoryNote)
@@ -255,7 +255,7 @@ func TestFetch(t *testing.T) {
 	logged(`<6>link \d+\.\ds, 5 bytes other, not a page the bot reads\n`)
 	logged(`<4>link \d+\.\ds, \d+ bytes html, no readable text\n`)
 	logged(`<4>link \d+\.\ds, 4 bytes text, no readable text\n`)
-	logged(`<4>link failed after \d+\.\ds: status 404\n`)
+	logged(`<4>link failed after \d+\.\ds: the page wasn't found \(404\)\n`)
 	logged(`<4>link failed after \d+\.\ds: too many or bad redirects\n`)
 	if a := additions(context.Background(), c, newLimiter(), all, msg("no links here", "")); a.Note != "" {
 		t.Fatalf("no links: %+v", a)
@@ -270,32 +270,61 @@ func TestFetch(t *testing.T) {
 	}
 }
 
-// Links past the second in a message are counted in one line, distinct
-// ones only, with no URL.
-func TestExtraLinksAreLogged(t *testing.T) {
+// Links past the fifth in a message, distinct ones only, are counted in a
+// note to the model, saying how to have them read, and in one log line,
+// with no URL; history keeps only the message, which has them.
+func TestExtraLinks(t *testing.T) {
 	logs := capture(t)
-	three := "https://a.example/reset?token=1 https://b.example/reset?token=2 https://c.example/reset?token=3"
-	skipped := "<6>link not fetched: looks private or one-time\n"
-	additions(context.Background(), newClient(), newLimiter(), feature.Info{}, msg(three, ""))
-	if logs.String() != "<6>link ignored: more than 2 in a message\n"+skipped+skipped {
-		t.Fatalf("log %q", logs.String())
+	var links []string
+	for _, h := range "abcdef" {
+		links = append(links, "https://"+string(h)+".example/reset?token=1")
 	}
-	before := logs.String()
-	additions(context.Background(), newClient(), newLimiter(), feature.Info{}, msg(three+" https://d.example/reset?token=4 https://d.example/reset?token=4", ""))
-	if l := strings.TrimPrefix(logs.String(), before); l != "<6>2 links ignored: more than 2 in a message\n"+skipped+skipped || strings.Contains(logs.String(), "example") {
-		t.Fatalf("log %q", logs.String())
+	skipped := "<6>link not fetched: looks private or one-time\n"
+	a := additions(context.Background(), newClient(), newLimiter(), feature.Info{}, msg(strings.Join(links, " "), ""))
+	if logs.String() != strings.Repeat(skipped, 5)+"<6>1 more links not opened: more than 5 in a message\n" ||
+		!strings.HasSuffix(a.Note, "\n[1 more link not opened: the bot reads at most 5 a message; send it on its own to have it read]") ||
+		strings.Contains(a.HistoryNote, "more link") {
+		t.Fatalf("log %q, note %q", logs.String(), a.Note)
+	}
+	links = append(links, "https://g.example/reset?token=1", links[0])
+	if a := additions(context.Background(), newClient(), newLimiter(), feature.Info{}, msg(strings.Join(links, " "), "")); !strings.HasSuffix(a.Note,
+		"\n[2 more links not opened: the bot reads at most 5 a message; send them on their own to have them read]") || strings.Contains(logs.String(), "example") {
+		t.Fatalf("note %q", a.Note)
+	}
+}
+
+// An error status is said in plain words, with its number.
+func TestStatusReason(t *testing.T) {
+	for code, want := range map[int]string{
+		401: "the site refused the request (401); it may need signing in or block bots",
+		403: "the site refused the request (403); it may need signing in or block bots",
+		404: "the page wasn't found (404)", 410: "the page wasn't found (410)",
+		429: "the site is limiting requests (429); try again later",
+		500: "the site had an error (500)", 503: "the site had an error (503)",
+		418: "the site answered with status 418", 302: "the site answered with status 302",
+	} {
+		if got := statusReason(code); got != want {
+			t.Errorf("%d: %q", code, got)
+		}
 	}
 }
 
 // A huge page is read as a stream: memory stays small and the text stops
-// near the cap, whether the page is a million small tokens or one text
-// node (and title) of megabytes.
+// near the cap, and a cut falls between runes. A page of a million small
+// tokens shows the memory; one text node and title past the caps show the
+// cap per token, in the lengths kept (what it allocates is the tokenizer's
+// own buffer for the token, the same with the cap or without).
 func TestPageTextIsStreamed(t *testing.T) {
-	for name, page := range map[string][]byte{
-		"many tokens": []byte("<html><head><title>Big</title></head><body>" + strings.Repeat("<p>a", 1_300_000) + "</body></html>"),
-		"one token":   []byte("<html><head><title>Big" + strings.Repeat(" title", 500_000) + "</title></head><body><p>" + strings.Repeat("a ", 1_500_000) + "</p></body></html>"),
-		"multibyte":   []byte("<html><head><title>Big</title></head><body><p>" + strings.Repeat("日", 1_000_000) + "</p></body></html>"),
+	for _, tc := range []struct {
+		name  string
+		page  []byte
+		bound uint64
+	}{
+		{"many tokens", []byte("<html><head><title>Big</title></head><body>" + strings.Repeat("<p>a", 1_300_000) + "</body></html>"), 30 << 20},
+		{"one token", []byte("<html><head><title>Big" + strings.Repeat(" title", 50_000) + "</title></head><body><p>" + strings.Repeat("a ", maxText*4) + "</p></body></html>"), 30 << 20},
+		{"multibyte", []byte("<html><head><title>Big</title></head><body><p>" + strings.Repeat("日", maxText*3) + "</p></body></html>"), 30 << 20},
 	} {
+		name, page := tc.name, tc.page
 		var before, after runtime.MemStats
 		runtime.GC()
 		runtime.ReadMemStats(&before)
@@ -304,7 +333,7 @@ func TestPageTextIsStreamed(t *testing.T) {
 		if !strings.HasPrefix(title, "Big") || len(title) > 1000 || len(text) > maxText*2+10 || !utf8.ValidString(text) { // cut between runes, never inside one
 			t.Fatalf("%s: title %d bytes, text %d bytes, valid %v", name, len(title), len(text), utf8.ValidString(text))
 		}
-		if n := after.TotalAlloc - before.TotalAlloc; n > 30<<20 {
+		if n := after.TotalAlloc - before.TotalAlloc; n > tc.bound {
 			t.Fatalf("%s: allocated %d MB", name, n>>20)
 		}
 	}
@@ -396,7 +425,7 @@ func TestPrivateLinksAreNotFetched(t *testing.T) {
 	if a.Note != "[link http://example.com:8080/admin not fetched: it isn't on a standard web port]" || logs.String() != "<6>link not fetched: not a standard web port\n" {
 		t.Fatalf("port note %q, log %q", a.Note, logs.String())
 	}
-	if a := additions(context.Background(), c, newLimiter(), feature.Info{}, msg(srv.URL+"/port", "")); a.Note != "[link "+srv.URL+"/port failed to load: redirected to a non-standard port]" {
+	if a := additions(context.Background(), c, newLimiter(), feature.Info{}, msg(srv.URL+"/port", "")); a.Note != "[link "+srv.URL+"/port couldn't be fetched: redirected to a non-standard port]" {
 		t.Fatalf("port redirect note %q", a.Note)
 	}
 	a = additions(context.Background(), c, newLimiter(), feature.Info{}, msg("is this legit? "+srv.URL+"/login?token=abc", ""))
@@ -404,7 +433,7 @@ func TestPrivateLinksAreNotFetched(t *testing.T) {
 		t.Fatalf("note %q", a.Note)
 	}
 	a = additions(context.Background(), c, newLimiter(), feature.Info{}, msg(srv.URL+"/short", ""))
-	if a.Note != "[link "+srv.URL+"/short failed to load: redirected to a private or one-time link]" {
+	if a.Note != "[link "+srv.URL+"/short couldn't be fetched: redirected to a private or one-time link]" {
 		t.Fatalf("redirect note %q", a.Note)
 	}
 	if l := logs.String(); !strings.Contains(l, "<6>link not fetched: looks private or one-time\n") ||
@@ -429,19 +458,19 @@ func TestFetchesPerHour(t *testing.T) {
 	now = func() time.Time { return clock }
 	l := newLimiter()
 	for i := range maxPerHour {
-		if !l.allow("g:a") {
+		if ok, _ := l.allow("g:a"); !ok {
 			t.Fatalf("fetch %d refused", i+1)
 		}
 		clock = clock.Add(time.Minute)
 	}
-	if l.allow("g:a") {
-		t.Fatal("fetch over the cap allowed")
+	if ok, wait := l.allow("g:a"); ok || wait != 40*time.Minute { // the first leaves the hour 40 minutes on
+		t.Fatalf("fetch over the cap allowed, or wait %v", wait)
 	}
-	if !l.allow("g:b") {
+	if ok, _ := l.allow("g:b"); !ok {
 		t.Fatal("another chat refused")
 	}
 	clock = clock.Add(time.Hour)
-	if !l.allow("g:a") {
+	if ok, _ := l.allow("g:a"); !ok {
 		t.Fatal("refused an hour later")
 	}
 	if _, kept := l.recent["g:b"]; kept {
@@ -452,10 +481,10 @@ func TestFetchesPerHour(t *testing.T) {
 		l.allow("u:c")
 	}
 	a := additions(context.Background(), newClient(), l, feature.Info{}, feature.Message{Chat: feature.Chat{User: "c"}, Text: "https://example.com/a", Addressed: true})
-	if a.Note != "[link https://example.com/a not fetched: too many links this hour; try again later]" {
+	if a.Note != "[link https://example.com/a not fetched: this chat has had its 20 links for the hour; links can be read again in about 60 minutes]" {
 		t.Fatalf("note %q", a.Note)
 	}
-	if l := logs.String(); l != "<4>link not fetched: 20 an hour for this chat reached\n" {
+	if l := logs.String(); l != "<4>link not fetched: this chat reached its 20 links an hour\n" {
 		t.Fatalf("log %q", l)
 	}
 }

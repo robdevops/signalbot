@@ -81,7 +81,7 @@ func TestPhotoShownToModel(t *testing.T) {
 	var fetched []int
 	h := host(t, true, &fetched)
 	a := additionsOf(t, h, turn("", photo))
-	if a.Note != "[1 image attached]" || a.HistoryNote != "[1 image attached"+notKept+"]" {
+	if a.Note != "[1 image attached]" || a.HistoryNote != "[1 image attached"+feature.NotKept(1)+"]" {
 		t.Fatalf("got %+v", a)
 	}
 	if len(a.Images) != 1 || !strings.HasPrefix(a.Images[0], "data:image/png;base64,") || len(fetched) != 1 || fetched[0] != 0 {
@@ -93,7 +93,7 @@ func TestPhotoShownToModel(t *testing.T) {
 
 	// The message's own images and the quoted one's are counted together.
 	a = additionsOf(t, h, turn("what's this?", photo, quoted))
-	if a.Note != "[2 images attached]" || a.HistoryNote != "[2 images attached"+notKept+"]" || len(a.Images) != 2 {
+	if a.Note != "[2 images attached]" || a.HistoryNote != "[2 images attached"+feature.NotKept(2)+"]" || len(a.Images) != 2 {
 		t.Fatalf("got %q, %q with %d images", a.Note, a.HistoryNote, len(a.Images))
 	}
 }
@@ -128,7 +128,7 @@ func TestStickerShownToModel(t *testing.T) {
 	var fetched []int
 	h := host(t, true, &fetched)
 	a := additionsOf(t, h, turn("", sticker))
-	if a.Note != `[sticker attached: 🕵️ from "My Daily Life"]` || a.HistoryNote != `[sticker attached: 🕵️ from "My Daily Life"`+notKept+"]" {
+	if a.Note != `[sticker attached: 🕵️ from "My Daily Life"]` || a.HistoryNote != `[sticker attached: 🕵️ from "My Daily Life"`+feature.NotKept(1)+"]" {
 		t.Fatalf("got %q, %q", a.Note, a.HistoryNote)
 	}
 	if len(a.Images) != 1 || !strings.HasPrefix(a.Images[0], "data:image/webp;base64,") || len(fetched) != 1 {
@@ -168,7 +168,7 @@ func TestPhotoAndSticker(t *testing.T) {
 	h := host(t, true, &fetched)
 	a := additionsOf(t, h, turn("", quoted, sticker))
 	if a.Note != "[1 image attached]\n[sticker attached"+sticker.Label+"]" ||
-		a.HistoryNote != "[1 image attached"+notKept+"]\n[sticker attached"+sticker.Label+notKept+"]" {
+		a.HistoryNote != "[1 image attached"+feature.NotKept(1)+"]\n[sticker attached"+sticker.Label+feature.NotKept(1)+"]" {
 		t.Fatalf("got %q, %q", a.Note, a.HistoryNote)
 	}
 	if len(a.Images) != 2 || !strings.HasPrefix(a.Images[0], "data:image/png;") || !strings.HasPrefix(a.Images[1], "data:image/webp;") {
@@ -177,7 +177,7 @@ func TestPhotoAndSticker(t *testing.T) {
 }
 
 // One image that can't be fetched, or isn't an image, is skipped and
-// logged without its content, and the model is told it failed to load, not
+// logged without its content, and the model is told it couldn't be fetched, not
 // that it can't see images.
 func TestFetchFailures(t *testing.T) {
 	var out, errw logx.Buffer
@@ -195,8 +195,8 @@ func TestFetchFailures(t *testing.T) {
 		return []byte("not a picture"), nil
 	}
 	a := additionsOf(t, h, turn("look", photo, photo, sticker))
-	if a.Note != "[1 image attached]\n[1 image attached, which failed to load; you can see images, just not this one]\n[sticker attached"+sticker.Label+", which failed to load]" ||
-		a.HistoryNote != "[1 image attached"+notKept+"]\n[1 image attached, which failed to load; you can see images, just not this one]\n[sticker attached"+sticker.Label+", which failed to load]" || len(a.Images) != 1 {
+	if a.Note != "[1 image attached]\n[1 image attached, which couldn't be fetched; you can see images, just not this one]\n[sticker attached"+sticker.Label+", which couldn't be fetched]" ||
+		a.HistoryNote != "[1 image attached"+feature.NotKept(1)+"]\n[1 image attached, which couldn't be fetched; you can see images, just not this one]\n[sticker attached"+sticker.Label+", which couldn't be fetched]" || len(a.Images) != 1 {
 		t.Fatalf("got %q with %d images", a.Note, len(a.Images))
 	}
 	logs := errw.String()
@@ -210,7 +210,7 @@ func TestFetchFailures(t *testing.T) {
 
 	h.Fetch = nil // every fetch fails
 	a = additionsOf(t, h, turn("", photo, photo))
-	if a.Note != "[2 images attached, which failed to load; you can see images, just not these]" || a.Images != nil {
+	if a.Note != "[2 images attached, which couldn't be fetched; you can see images, just not these]" || a.Images != nil {
 		t.Fatalf("got %+v", a)
 	}
 }
@@ -221,14 +221,14 @@ func TestBigPhotoIsShrunk(t *testing.T) {
 	out, _ := capture(t)
 	var fetched []int
 	h := host(t, true, &fetched)
-	m := image.NewRGBA(image.Rect(0, 0, 1400, 1400))
+	m := image.NewRGBA(image.Rect(0, 0, 1160, 1160))
 	x := uint32(1)
 	for i := range m.Pix {
 		x = x*1664525 + 1013904223
 		m.Pix[i] = byte(x >> 24)
 	}
-	var b bytes.Buffer
-	png.Encode(&b, m)
+	var b bytes.Buffer // noise doesn't compress, so it isn't tried: just over img.MaxBytes
+	(&png.Encoder{CompressionLevel: png.NoCompression}).Encode(&b, m)
 	if b.Len() <= img.MaxBytes {
 		t.Fatalf("only %d bytes", b.Len())
 	}

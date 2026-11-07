@@ -21,6 +21,8 @@ jobs:
         run: test -z "$(gofmt -l .)" || { gofmt -l .; exit 1; }
       - run: go vet ./...
       - run: go test -race ./...
+      - name: memory at real size, too slow under -race
+        run: go test -run AtRealSize ./internal/kit/img/
       - name: sizes
         run: |
           if [ -n "$GITHUB_BASE_REF" ]; then

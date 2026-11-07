@@ -1,6 +1,7 @@
 package arch_test
 
 import (
+	"go/ast"
 	"go/parser"
 	"go/token"
 	"os"
@@ -107,7 +108,7 @@ func TestNoFeatureWordsInTheCore(t *testing.T) {
 	}
 }
 
-// Every setting the bot reads is in the README's configuration table: each
+// Every setting the bot reads is in docs/CONFIGURATION.md's table: each
 // one its code names to Env, the core's (and number's, in config) and each
 // feature's.
 func TestSettingsAreDocumented(t *testing.T) {
@@ -125,7 +126,7 @@ func TestSettingsAreDocumented(t *testing.T) {
 			settings = append(settings, m[1])
 		}
 	}
-	readme, err := os.ReadFile(root + "/README.md")
+	readme, err := os.ReadFile(root + "/docs/CONFIGURATION.md")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -136,7 +137,84 @@ func TestSettingsAreDocumented(t *testing.T) {
 	}
 	for _, s := range settings {
 		if !strings.Contains(string(readme), "\n| `"+s+"` |") {
-			t.Errorf("%s is not in the README's configuration table", s)
+			t.Errorf("%s is not in docs/CONFIGURATION.md's table", s)
+		}
+	}
+}
+
+// fileImports are packages a feature may not import, under any name: they
+// write files, or are the store's own parts.
+var fileImports = map[string]bool{"io/ioutil": true, module + "internal/kit/fsx": true, module + "internal/kit/state": true}
+
+// osWrites are the functions of package os that change files.
+var osWrites = map[string]bool{"WriteFile": true, "Create": true, "CreateTemp": true, "OpenFile": true, "Mkdir": true,
+	"MkdirAll": true, "MkdirTemp": true, "Rename": true, "Remove": true, "RemoveAll": true, "Chmod": true, "Chown": true,
+	"Lchown": true, "Chtimes": true, "Symlink": true, "Link": true, "Truncate": true}
+
+// fileWrites lists, for Go source, each way it changes files: an import of
+// a package in fileImports, a dot-import of os, or any use of a function in
+// osWrites through os's name, whatever that is, called or not.
+func fileWrites(t *testing.T, src string) []string {
+	t.Helper()
+	f, err := parser.ParseFile(token.NewFileSet(), "", src, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out []string
+	osName := ""
+	for _, spec := range f.Imports {
+		imp, _ := strconv.Unquote(spec.Path.Value)
+		name := path.Base(imp)
+		if spec.Name != nil {
+			name = spec.Name.Name
+		}
+		switch {
+		case fileImports[imp]:
+			out = append(out, "imports "+imp)
+		case imp == "os" && name == ".":
+			out = append(out, "dot-imports os")
+		case imp == "os":
+			osName = name
+		}
+	}
+	ast.Inspect(f, func(n ast.Node) bool {
+		if sel, ok := n.(*ast.SelectorExpr); ok && osName != "" {
+			if x, ok := sel.X.(*ast.Ident); ok && x.Name == osName && osWrites[sel.Sel.Name] {
+				out = append(out, osName+"."+sel.Sel.Name)
+			}
+		}
+		return true
+	})
+	return out
+}
+
+// A feature saves only through Host.Store, so every file the bot writes is
+// a named document in the state directory, listed in PRIVACY.md. (A child
+// process, such as a local MCP server, can still write files: this checks
+// the bot's own code.)
+func TestFeaturesSaveOnlyThroughTheStore(t *testing.T) {
+	for _, p := range goFiles(t) {
+		if !under(p, "internal/features") || strings.HasSuffix(p, "_test.go") {
+			continue
+		}
+		data, err := os.ReadFile(root + "/" + p)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, w := range fileWrites(t, string(data)) {
+			t.Errorf("%s writes files itself (%s): use Host.Store", p, w)
+		}
+	}
+	for src, want := range map[string]int{
+		"package x\nimport \"os\"\nfunc f() { os.WriteFile(\"p\", nil, 0) }":                              1,
+		"package x\nimport xos \"os\"\nfunc f() { w := xos.WriteFile; _ = w; xos.Rename (\"a\", \"b\") }": 2,
+		"package x\nimport \"io/ioutil\"\nvar _ = ioutil.WriteFile":                                       1,
+		"package x\nimport . \"os\"\nvar _ = Getenv":                                                      1,
+		"package x\nimport \"" + module + "internal/kit/fsx\"\nvar _ = fsx.WriteAtomic":                   1,
+		"package x\nimport \"os\"\nfunc f() { os.ReadFile(\"p\"); os.LookupEnv(\"K\") }":                  0,
+	} {
+		if got := fileWrites(t, src); len(got) != want {
+			t.Errorf("%q: found %v, want %d", src, got, want)
 		}
 	}
 }

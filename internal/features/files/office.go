@@ -13,14 +13,17 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+
+	"github.com/robdevops/signalbot/internal/kit/txt"
 )
 
 // maxPart caps the bytes read from one part of an Office file and maxTotal
 // those read from all its parts, so a small zip can't inflate into a huge
 // one; maxDepth caps how deep elements nest, since the decoder keeps a
 // stack of the open ones; maxParts caps a zip's entries, checked before its
-// directory is built (a 1,000-slide deck has about 10,000).
-const (
+// directory is built (a 1,000-slide deck has about 10,000). They are
+// variables only so that this package's tests can lower them.
+var (
 	maxPart  = 10 << 20
 	maxTotal = 32 << 20
 	maxDepth = 256
@@ -211,9 +214,9 @@ func paragraphs(z *zip.Reader, name, para, text string, budget *int, out *string
 	return nil
 }
 
-// sheets writes each worksheet of an xlsx as "Sheet N:" and its rows, cells
-// separated by tabs in their columns, from the shared strings and the
-// cells' own values.
+// sheets writes each worksheet of an xlsx as `Sheet "Name":` (or "Sheet
+// N:" when the workbook doesn't name it) and its rows, cells separated by
+// tabs in their columns, from the shared strings and the cells' own values.
 func sheets(z *zip.Reader, budget *int, out *strings.Builder) error {
 	var shared []string
 	if next, err := part(z, "xl/sharedStrings.xml", budget); err == nil {
@@ -242,8 +245,13 @@ func sheets(z *zip.Reader, budget *int, out *strings.Builder) error {
 			}
 		}
 	}
+	named := sheetNames(z, budget)
 	for i, name := range numbered(z, sheetPart) {
-		fmt.Fprintf(out, "Sheet %d:\n", i+1)
+		if n := named[name]; n != "" {
+			fmt.Fprintf(out, "Sheet %s:\n", strconv.Quote(n))
+		} else {
+			fmt.Fprintf(out, "Sheet %d:\n", i+1)
+		}
 		if err := rows(z, name, shared, budget, out); err != nil {
 			return err
 		}
@@ -252,6 +260,48 @@ func sheets(z *zip.Reader, budget *int, out *strings.Builder) error {
 		}
 	}
 	return nil
+}
+
+// sheetNames is each worksheet's name, by its part's name, from the
+// workbook (its sheets' names and relationship IDs) and the workbook's
+// relationships (each ID's part); empty if either can't be read. A name
+// is the file's to choose, so it is made one line and cut short.
+func sheetNames(z *zip.Reader, budget *int) map[string]string {
+	attrs := func(name, elem string, keys ...string) [][]string {
+		next, err := part(z, name, budget)
+		if err != nil {
+			return nil
+		}
+		var out [][]string
+		for len(out) < 1000 {
+			tok, err := next()
+			if err != nil {
+				break
+			}
+			if t, ok := tok.(xml.StartElement); ok && t.Name.Local == elem {
+				vals := make([]string, len(keys))
+				for _, a := range t.Attr {
+					if i := slices.Index(keys, a.Name.Local); i >= 0 {
+						vals[i] = a.Value
+					}
+				}
+				out = append(out, vals)
+			}
+		}
+		return out
+	}
+	targets := map[string]string{} // relationship ID: part
+	for _, r := range attrs("xl/_rels/workbook.xml.rels", "Relationship", "Id", "Target") {
+		t := strings.TrimPrefix(r[1], "/xl/")
+		targets[r[0]] = "xl/" + strings.TrimPrefix(t, "/")
+	}
+	named := map[string]string{}
+	for _, s := range attrs("xl/workbook.xml", "sheet", "name", "id") {
+		if p := targets[s[1]]; p != "" && s[0] != "" {
+			named[p] = txt.Clamp(txt.SafeName(s[0]), 40)
+		}
+	}
+	return named
 }
 
 // rows writes a worksheet's rows, a line each.

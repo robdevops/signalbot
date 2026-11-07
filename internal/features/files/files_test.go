@@ -62,7 +62,7 @@ func officeFile(t *testing.T, parts map[string]string) []byte {
 	return b.Bytes()
 }
 
-var all = feature.Info{Images: true, Audio: true, Files: true}
+var all = feature.Info{Images: true, Audio: true, PDFs: true}
 
 // A PDF and audio go to the model as files; history keeps only notes, saying
 // they aren't kept. Images and stickers are left to vision. Each file is
@@ -77,7 +77,7 @@ func TestPDFAndAudio(t *testing.T) {
 	if a.Note != `[file "report.pdf" attached]`+"\n"+`[file "untitled" attached]` {
 		t.Fatalf("note %q", a.Note)
 	}
-	if a.HistoryNote != `[file "report.pdf" attached`+notKept+"]\n"+`[file "untitled" attached`+notKept+"]" {
+	if a.HistoryNote != `[file "report.pdf" was shown to you`+feature.NotKept(1)+"]\n"+`[file "untitled" was shown to you`+feature.NotKept(1)+"]" {
 		t.Fatalf("history %q", a.HistoryNote)
 	}
 	if len(a.Files) != 2 || a.Files[0].Name != "report.pdf" || a.Files[0].MIME != "application/pdf" || !bytes.Equal(a.Files[0].Data, pdf) || a.Files[1].MIME != "audio/aac" || a.Images != nil || !a.Content {
@@ -94,7 +94,7 @@ func TestPDFAndAudio(t *testing.T) {
 		`[file "note.m4a", audio such as a voice note, which you can't hear with this model]` || a.Files != nil || a.HistoryNote != a.Note || a.Content {
 		t.Fatalf("got %+v", a)
 	}
-	if l := out.String(); l != first+"<6>file pdf 12 bytes, not sent: this model can't read files\n<6>file audio 12 bytes, not sent: this model can't hear audio\n" ||
+	if l := out.String(); l != first+"<6>file pdf 12 bytes, not sent: this model can't read PDFs\n<6>file audio 12 bytes, not sent: this model can't hear audio\n" ||
 		strings.Contains(l, "report") || strings.Contains(l, "m4a") || strings.Contains(l, "application/pdf") {
 		t.Fatalf("log %q", l)
 	}
@@ -111,7 +111,7 @@ func TestText(t *testing.T) {
 	long := strings.Repeat("x", maxText+10)
 	h := host(t, all, map[string][]byte{"t": []byte("a ``` b\n"), "long": []byte(long), "bad": {0xff, 0xfe, 'a'}, "bin": []byte("a\x00b")})
 	a := additionsOf(t, h, turn(feature.Media{ID: "t", File: true, Name: "notes.md", MIME: "text/markdown"}))
-	if a.Note != `[file "notes.md" attached, its text]`+"\n````\na ``` b\n````" || a.HistoryNote != `[file "notes.md" attached, its text`+notKept+"]" || a.Files != nil || !a.Content {
+	if a.Note != `[file "notes.md" attached; its text follows]`+"\n````\na ``` b\n````" || a.HistoryNote != `[file "notes.md" was shown to you`+feature.NotKept(1)+"]" || a.Files != nil || !a.Content {
 		t.Fatalf("got %+v", a)
 	}
 	a = additionsOf(t, h, turn(feature.Media{ID: "long", File: true, Name: "big.log"}))
@@ -119,7 +119,7 @@ func TestText(t *testing.T) {
 		t.Fatalf("long note is %d bytes", len(a.Note))
 	}
 	for _, id := range []string{"bad", "bin"} {
-		if a := additionsOf(t, h, turn(feature.Media{ID: id, File: true, Name: "x.txt", MIME: "text/plain"})); a.Note != `[file "x.txt", which you can't read]` {
+		if a := additionsOf(t, h, turn(feature.Media{ID: id, File: true, Name: "x.txt", MIME: "text/plain"})); a.Note != `[file "x.txt", which can't be read]` {
 			t.Errorf("%s: %q", id, a.Note)
 		}
 	}
@@ -140,6 +140,13 @@ func TestOffice(t *testing.T) {
 		"xl/worksheets/sheet1.xml": `<worksheet><sheetData><row><c r="A1" t="s"><v>0</v></c><c r="C1" t="s"><v>1</v></c></row><row><c r="A2" t="s"><v>2</v></c><c r="C2"><v>187.5</v></c></row></sheetData></worksheet>`,
 		"xl/worksheets/sheet2.xml": `<worksheet><sheetData><row><c r="B1" t="inlineStr"><is><t>inline</t></is></c></row></sheetData></worksheet>`,
 	})
+	named := officeFile(t, map[string]string{
+		"xl/workbook.xml": `<workbook><sheets><sheet name="Budget  2030" sheetId="1" r:id="rId2"/><sheet name="" sheetId="2" r:id="rId1"/></sheets></workbook>`,
+		"xl/_rels/workbook.xml.rels": `<Relationships><Relationship Id="rId1" Target="worksheets/sheet1.xml"/>` +
+			`<Relationship Id="rId2" Target="/xl/worksheets/sheet2.xml"/></Relationships>`,
+		"xl/worksheets/sheet1.xml": `<worksheet><sheetData><row><c r="A1"><v>1</v></c></row></sheetData></worksheet>`,
+		"xl/worksheets/sheet2.xml": `<worksheet><sheetData><row><c r="A1"><v>2</v></c></row></sheetData></worksheet>`,
+	})
 	pptx := officeFile(t, map[string]string{
 		"ppt/slides/slide10.xml": `<p:sld><a:p><a:r><a:t>Ten</a:t></a:r></a:p></p:sld>`,
 		"ppt/slides/slide2.xml":  `<p:sld><a:p><a:r><a:t>Two</a:t></a:r></a:p></p:sld>`,
@@ -148,8 +155,9 @@ func TestOffice(t *testing.T) {
 		"a.docx": "Hello\tworld\nSecond\n",
 		"b.xlsx": "Sheet 1:\nName\t\tPrice\nAAPL\t\t187.5\nSheet 2:\n\tinline\n",
 		"c.pptx": "Slide 1:\nTwo\nSlide 2:\nTen\n",
+		"d.xlsx": "Sheet 1:\n1\nSheet \"Budget 2030\":\n2\n", // named from the workbook, unnamed by number
 	} {
-		data := map[string][]byte{"a.docx": docx, "b.xlsx": xlsx, "c.pptx": pptx}[name]
+		data := map[string][]byte{"a.docx": docx, "b.xlsx": xlsx, "c.pptx": pptx, "d.xlsx": named}[name]
 		got, _, err := officeText(data, name[strings.Index(name, "."):])
 		if err != nil || got != want {
 			t.Errorf("%s: %q, %v", name, got, err)
@@ -166,10 +174,11 @@ func TestOffice(t *testing.T) {
 	files := map[string][]byte{"d": docx, "big": big, "broken": broken, "empty": officeFile(t, map[string]string{"word/document.xml": "<w:document/>"}),
 		"missing": officeFile(t, map[string]string{"xl/foo.xml": "<x/>"}), "badxml": officeFile(t, map[string]string{"word/document.xml": "<w:document><w:p>"})}
 	h := host(t, all, files)
-	if a := additionsOf(t, h, turn(feature.Media{ID: "d", File: true, Name: "letter.docx"})); a.Note != `[file "letter.docx" attached, its text]`+"\n```\nHello\tworld\nSecond\n```" || !a.Content {
+	if a := additionsOf(t, h, turn(feature.Media{ID: "d", File: true, Name: "letter.docx"})); a.Note != `[file "letter.docx" attached; its text follows]`+"\n```\nHello\tworld\nSecond\n```" || !a.Content {
 		t.Fatalf("note %q", a.Note)
 	}
-	if a := additionsOf(t, h, turn(feature.Media{ID: "big", File: true, Name: "big.docx"})); !strings.HasSuffix(a.Note, "\n[…truncated]\n```") {
+	if a := additionsOf(t, h, turn(feature.Media{ID: "big", File: true, Name: "big.docx"})); !strings.HasSuffix(a.Note, "\n[…truncated]\n```") ||
+		!strings.HasPrefix(a.Note, `[file "big.docx" attached; only the first part of its text is shown, as the file is too big to read whole]`) {
 		t.Fatalf("big note %.60q", a.Note)
 	}
 	if want := fmt.Sprintf("<6>file docx %d bytes, 18 chars of text\n<6>file docx %d bytes, first %d chars of text\n", len(docx), len(big), maxText); out.String() != want {
@@ -177,7 +186,7 @@ func TestOffice(t *testing.T) {
 	}
 	for id, kind := range map[string]string{"broken": "not a zip", "empty": "no text", "missing": "missing part", "badxml": "bad xml"} {
 		before := errw.String()
-		if a := additionsOf(t, h, turn(feature.Media{ID: id, File: true, Name: "x.docx"})); a.Note != `[file "x.docx", which couldn't be read]` || a.Content {
+		if a := additionsOf(t, h, turn(feature.Media{ID: id, File: true, Name: "x.docx"})); a.Note != `[file "x.docx", which can't be read]` || a.Content {
 			t.Errorf("%s: %q", id, a.Note)
 		}
 		if l := strings.TrimPrefix(errw.String(), before); l != fmt.Sprintf("<4>could not read an Office file (docx, %d bytes): %s\n", len(files[id]), kind) {
@@ -197,7 +206,10 @@ func TestOffice(t *testing.T) {
 // is built; elements nested past maxDepth stop the read; parts inflating
 // to more than maxTotal together stop it, however little text they hold,
 // and what was read by then stands, cut. Each refusal is reported by kind.
+// The budgets are lowered for the test, so the same paths run on a
+// sixteenth of the data.
 func TestOfficeBudgets(t *testing.T) {
+	smallBudgets(t)
 	declared := officeFile(t, map[string]string{"word/document.xml": "<w:document/>"})
 	binary.LittleEndian.PutUint16(declared[bytes.LastIndex(declared, []byte("PK\x05\x06"))+10:], 0xffff)
 	if n := entries(declared); n != 0xffff {
@@ -278,8 +290,24 @@ func storedZip(t *testing.T, parts map[string]string) []byte {
 	return b.Bytes()
 }
 
+// smallBudgets lowers the Office budgets for the test to a sixteenth or so,
+// restoring them after.
+func smallBudgets(t *testing.T) {
+	part, total, depth, parts := maxPart, maxTotal, maxDepth, maxParts
+	maxPart, maxTotal, maxDepth, maxParts = 640<<10, 2<<20, 64, 2_000
+	t.Cleanup(func() { maxPart, maxTotal, maxDepth, maxParts = part, total, depth, parts })
+}
+
+// The budgets are what the docs say.
+func TestOfficeBudgetValues(t *testing.T) {
+	if maxPart != 10<<20 || maxTotal != 32<<20 || maxDepth != 256 || maxParts != 20_000 {
+		t.Fatalf("budgets %d, %d, %d, %d", maxPart, maxTotal, maxDepth, maxParts)
+	}
+}
+
 // A zip that inflates past maxPart is read only that far.
 func TestOfficeBomb(t *testing.T) {
+	smallBudgets(t)
 	huge := "<w:document><w:body><w:p><w:r><w:t>" + strings.Repeat("a", maxPart+1000) + "</w:t></w:r></w:p></w:body></w:document>"
 	got, _, _ := officeText(officeFile(t, map[string]string{"word/document.xml": huge}), ".docx")
 	if len(got) > maxText+maxPart/100 {
@@ -296,7 +324,7 @@ func TestNotes(t *testing.T) {
 	h := host(t, all, map[string][]byte{"zip": []byte("PK\x03\x04...")})
 	a := additionsOf(t, h, turn(feature.Media{ID: "gone", File: true, Name: "a.pdf"}, feature.Media{File: true, Quoted: true, Name: "b.pdf"},
 		feature.Media{ID: "zip", File: true, Name: "c.zip\n]\"injected"}))
-	want := `[file "a.pdf", which failed to load]` + "\n" + `[file "b.pdf", which is no longer available]` + "\n" + `[file "c.zip ]\"injected", which you can't read]`
+	want := `[file "a.pdf", which couldn't be fetched]` + "\n" + `[file "b.pdf", which is no longer available]` + "\n" + `[file "c.zip ]\"injected", which can't be read]`
 	if a.Note != want || a.HistoryNote != want || a.Files != nil || a.Content {
 		t.Fatalf("got %+v", a)
 	}

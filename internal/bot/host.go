@@ -3,11 +3,15 @@ package bot
 import (
 	"cmp"
 	"context"
+	"fmt"
+	"slices"
+	"strings"
 	"time"
 
 	"github.com/robdevops/signalbot/internal/chats"
 	"github.com/robdevops/signalbot/internal/config"
 	"github.com/robdevops/signalbot/internal/feature"
+	"github.com/robdevops/signalbot/internal/kit/state"
 )
 
 // The ports. Features call them while they register, before Run.
@@ -20,20 +24,39 @@ func (b *Bot) OnTurn(fn func(context.Context, feature.Message) feature.Additions
 	b.turns = append(b.turns, fn)
 }
 
-func (b *Bot) IntroLine(line string, dmOnly bool) {
-	b.more = append(b.more, introLine{line, dmOnly})
+func (b *Bot) OnEvent(fn func(context.Context, feature.Event) string) {
+	b.events = append(b.events, fn)
 }
 
-// Tools keeps g with only the tools the model's API can run, and drops a
-// group whose tools it can run none of. A group with no tools at all, only
-// Names, is kept for the prompt's list of what the bot has.
-func (b *Bot) Tools(g feature.ToolGroup) {
+func (b *Bot) Command(name string, fn func(context.Context, feature.Message, string) feature.Action) error {
+	if err := b.commands.Take(name); err != nil {
+		return err
+	}
+	b.OnMessage(feature.CommandHook(name, fn))
+	return nil
+}
+
+// ListCommands adds a group with no tools, only its name, which is kept for
+// the prompt's list of what the bot has and left out of {tools}.
+func (b *Bot) ListCommands(label string, names ...string) {
+	if len(names) > 0 {
+		b.groups = append(b.groups, feature.ToolGroup{Names: []string{"**" + label + "**: /" + strings.Join(names, ", /")}})
+	}
+}
+
+func (b *Bot) IntroLine(line string)   { b.introLines = append(b.introLines, introLine{line, false}) }
+func (b *Bot) IntroLineDM(line string) { b.introLines = append(b.introLines, introLine{line, true}) }
+
+// OfferTools keeps g with only the tools the model's API can run, and drops
+// a group whose tools it can run none of.
+func (b *Bot) OfferTools(g feature.ToolGroup) (kept bool) {
 	if b.ai != nil && len(g.Tools) > 0 {
 		if g.Tools = b.ai.Usable(g.Tools); len(g.Tools) == 0 {
-			return
+			return false
 		}
 	}
 	b.groups = append(b.groups, g)
+	return true
 }
 
 func (b *Bot) At(name string, t time.Time, fn func(context.Context, time.Time)) (func(), error) {
@@ -44,9 +67,28 @@ func (b *Bot) At(name string, t time.Time, fn func(context.Context, time.Time)) 
 
 func (b *Bot) Env(key, def string) string { return config.Env(key, def) }
 
+// Store opens a feature's saved state in the state directory, checked the
+// first time one is opened, so a bot whose features save nothing needs
+// none. Each name may be opened once, and budget is the core's.
+func (b *Bot) Store(name string) (feature.Store, error) {
+	if err := state.CheckName(name); err != nil {
+		return nil, err
+	}
+	if slices.Contains(b.stores, name) {
+		return nil, fmt.Errorf("a saved state called %q is already open", name)
+	}
+	if len(b.stores) == 0 {
+		if err := state.Check(state.Dir(b.cfg.StateDir)); err != nil {
+			return nil, err
+		}
+	}
+	b.stores = append(b.stores, name)
+	return state.Open(state.Dir(b.cfg.StateDir), name), nil
+}
+
 func (b *Bot) Info() feature.Info {
 	info := feature.Info{Name: b.net.BotName(), Version: b.cfg.Version, Model: b.cfg.Model,
-		Images: b.images.Load(), Audio: b.audio.Load(), Files: b.files.Load(), CallsTools: b.callsTools.Load(), Tools: b.toolNames(false), Intro: b.intro(false), IntroDM: b.intro(true)}
+		Images: b.images.Load(), Audio: b.audio.Load(), PDFs: b.files.Load(), CallsTools: b.callsTools.Load(), Tools: b.toolNames(false), Intro: b.intro(false), IntroDM: b.intro(true)}
 	if b.ai == nil {
 		info.Model = ""
 	}
@@ -71,7 +113,48 @@ func (b *Bot) Groups(ctx context.Context, user string) ([]feature.Group, error) 
 // posted it.
 func (b *Bot) Deliver(msg feature.Message) {
 	if !b.closing.Load() {
-		b.post(Received{Message: msg})
+		b.post(Posted{Message: msg})
+	}
+}
+
+// Tell sends text to user, in their DM's mailbox.
+func (b *Bot) Tell(user, text string) {
+	if !b.closing.Load() && user != "" && text != "" {
+		b.post(Told{User: user, Text: text})
+	}
+}
+
+// told sends a Told in its chat's slot, if its user may still DM the bot,
+// which the network checks as it does for a delivered DM.
+func (b *Bot) told(t Told) {
+	chat := feature.Chat{User: t.User}
+	if _, ok := b.net.Delivered(b.ctx, feature.Message{Chat: chat, Sender: t.User}); ok {
+		b.net.Send(chat, t.Text, nil, nil)
+	}
+}
+
+// event runs the OnEvent hooks in its chat's slot, and sends the first
+// non-empty reply, with @Name linked to the chat's known names and the
+// event's people, so a welcome can mention a newcomer.
+func (b *Bot) event(e feature.Event) {
+	for _, fn := range b.events {
+		reply := fn(b.ctx, e)
+		if reply == "" {
+			continue
+		}
+		known := b.chats.Names(e.Chat.Key())
+		if known == nil {
+			known = map[string]string{}
+		}
+		people := []feature.Person{e.By}
+		if m := e.Members; m != nil {
+			people = append(append(people, m.Joined...), m.Left...)
+		}
+		for _, p := range people {
+			chats.Claim(known, p.Name, p.ID)
+		}
+		b.net.Send(e.Chat, reply, nil, known)
+		return
 	}
 }
 
@@ -100,6 +183,6 @@ func (b *Bot) delivered(msg feature.Message) {
 	}
 	b.net.Send(msg.Chat, msg.Text, nil, known)
 	if b.ai != nil { // with no model, nothing would read it
-		b.chats.Add(key, time.Now(), msg.Expires, chats.Entry{Role: "user", Content: cmp.Or(msg.Name, "someone") + ": " + msg.Text, Context: true})
+		b.chats.Add(key, b.now(), msg.Expires, chats.Entry{Role: "user", Content: cmp.Or(msg.Name, "someone") + ": " + msg.Text, Context: true})
 	}
 }

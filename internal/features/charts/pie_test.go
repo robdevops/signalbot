@@ -16,6 +16,7 @@ const alphabetPie = `{"title":"GOOGL Q3 FY2026 revenue by type ($B)","subtitle":
 	{"label":"Other bets","value":0.3}]}`
 
 func TestParsePie(t *testing.T) {
+	t.Parallel()
 	s, err := parsePie(alphabetPie)
 	if err != nil {
 		t.Fatal(err)
@@ -43,6 +44,7 @@ func TestParsePie(t *testing.T) {
 }
 
 func TestParsePieErrors(t *testing.T) {
+	t.Parallel()
 	for name, args := range map[string]string{
 		"not json":  `{`,
 		"no title":  `{"slices":[{"label":"a","value":1},{"label":"b","value":2}]}`,
@@ -59,6 +61,7 @@ func TestParsePieErrors(t *testing.T) {
 }
 
 func TestWrapLabel(t *testing.T) {
+	t.Parallel()
 	f := face(chartFonts.regular, 26)
 	defer f.Close()
 	if got := wrapLabel(f, "Google cloud  24.1%", 510); len(got) != 1 {
@@ -75,6 +78,7 @@ func TestWrapLabel(t *testing.T) {
 }
 
 func TestRenderPie(t *testing.T) {
+	t.Parallel()
 	s, _ := parsePie(alphabetPie)
 	out, err := renderPie(s, lightTheme)
 	if err != nil {
@@ -95,6 +99,7 @@ func TestRenderPie(t *testing.T) {
 // The total is shortened, and a scale suffix on values that were already raw
 // is not applied twice.
 func TestPieTotal(t *testing.T) {
+	t.Parallel()
 	for args, want := range map[string]string{
 		`"unit":"$","suffix":"B","slices":[{"label":"a","value":54300000000},{"label":"b","value":55117000000}]`: "$109.4B",
 		`"unit":"$","suffix":"B","slices":[{"label":"a","value":54.3},{"label":"b","value":30.7}]`:               "$85B",
@@ -115,6 +120,7 @@ func TestPieTotal(t *testing.T) {
 // The legend shows each slice's amount, scaled and shortened like the total;
 // the ring itself shows the shares.
 func TestPieAmounts(t *testing.T) {
+	t.Parallel()
 	s, err := parsePie(alphabetPie)
 	if err != nil {
 		t.Fatal(err)
@@ -129,6 +135,7 @@ func TestPieAmounts(t *testing.T) {
 }
 
 func TestCommas(t *testing.T) {
+	t.Parallel()
 	for in, want := range map[string]string{"0": "0", "999": "999", "1000": "1,000", "-1234567.5": "-1,234,567.5", "123456": "123,456", "-100": "-100", "12.3456": "12.3456"} {
 		if got := commas(in); got != want {
 			t.Errorf("commas(%q) = %q, want %q", in, got, want)

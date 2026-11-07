@@ -64,7 +64,7 @@ func (w *world) dm(text string) string {
 // saved is the schedules file.
 func (w *world) saved() []entry {
 	w.t.Helper()
-	data, err := os.ReadFile(filepath.Join(w.dir, fileName))
+	data, err := os.ReadFile(filepath.Join(w.dir, storeName+".json"))
 	if err != nil {
 		w.t.Fatal(err)
 	}
@@ -78,7 +78,7 @@ func (w *world) saved() []entry {
 func (w *world) write(es ...entry) {
 	w.t.Helper()
 	data, _ := json.Marshal(map[string]any{"schedules": es})
-	if err := os.WriteFile(filepath.Join(w.dir, fileName), data, 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(w.dir, storeName+".json"), data, 0o600); err != nil {
 		w.t.Fatal(err)
 	}
 }
@@ -125,8 +125,10 @@ func TestParse(t *testing.T) {
 		{`"/forecast Paris"  2030-01-31T09:00Z every week  My  big   group `, "/forecast Paris", "2030-01-31T09:00:00Z", "week", "My  big   group"},
 		{`"she said "hi" then “bye”" 2030-01-31T09:00 every month`, `she said "hi" then “bye”`, "2030-01-31T09:00:00", "month", ""},
 		{`"a" 2030-01-31T09:00 everyone`, "a", "2030-01-31T09:00:00", "", "everyone"},
+		{`"a" 2030-01-31 09:00`, "a", "2030-01-31T09:00:00", "", ""},
+		{`"a" 2030-01-31 09:00+10:00 every day Work`, "a", "2030-01-31T09:00:00+10:00", "day", "Work"},
 	} {
-		r, problem := parse(c.in, time.UTC)
+		r, problem := parse(c.in, time.UTC, "2030-01-15 12:00")
 		if problem != "" || r.text != c.text || r.start != c.start || r.every != c.every || r.group != c.group {
 			t.Errorf("%s: got %+v %q", c.in, r, problem)
 		}
@@ -135,13 +137,15 @@ func TestParse(t *testing.T) {
 		{`Hi all 2030-01-31T09:00`, "Put the message in quotes"},
 		{`"Hi all 2030-01-31T09:00`, "needs a closing quote"},
 		{`"Hi all"`, "Add a time after the message"},
-		{`"Hi all" tomorrow`, "I couldn't read the time tomorrow"},
+		{`"Hi all" tomorrow`, "I couldn't read the time tomorrow. Write a date and time like 2030-01-15 12:00, or with an offset, like 2030-01-15 12:00+10:00."},
+		{`"Hi all" 2030-01-31`, "Add a time after the date, like 2030-01-31 12:00."},
+		{`"Hi all" 2030-01-31 every day`, "Add a time after the date"},
 		{`"Hi all" 2030-01-31T09:00 every fortnight`, "Say how often"},
 		{`"Hi all" 2030-01-31T09:00 every`, "Say how often"},
 		{`"  " 2030-01-31T09:00`, "The message is empty"},
 		{`"` + strings.Repeat("x", maxText+1) + `" 2030-01-31T09:00`, "too long"},
 	} {
-		if _, problem := parse(c.in, time.UTC); !strings.Contains(problem, c.problem) {
+		if _, problem := parse(c.in, time.UTC, "2030-01-15 12:00"); !strings.Contains(problem, c.problem) {
 			t.Errorf("%s: got %q", c.in, problem)
 		}
 	}
@@ -205,7 +209,8 @@ func TestAddListDel(t *testing.T) {
 		t.Fatalf("got %q", got)
 	}
 	if got := w.dm("/schedule"); !strings.Contains(got, usage) || !strings.Contains(got, "my time zone (UTC)") || w.dm("/schedule help") != got ||
-		!strings.Contains(got, "+10:00.\n\n- Without a group name") || !strings.HasSuffix(got, "/schedule.\n\nThe current time is "+w.now.Format("2006-01-02T15:04Z07:00")) {
+		!strings.Contains(got, "\n\nCopy and edit this one, which has the time now:\n/schedule \"hello\" 2030-02-03 10:00\n\n") ||
+		!strings.Contains(got, "like 2030-02-03 10:00+10:00.\n\n- Without a group name") || !strings.HasSuffix(got, "/timer and /reminder work the same as /schedule.") {
 		t.Fatalf("help %q", got)
 	}
 	w.noTextLogged("Morning all", "forecast Paris")
@@ -255,7 +260,7 @@ func TestRefusals(t *testing.T) {
 		t.Fatalf("got %q", got)
 	}
 	for _, text := range []string{"/schedule list", "/SCHEDULE", "@Botty /schedule del 1", "@signalbot  @botty /schedule help",
-		"/timer list", "@Botty /reminder help", "/Reminder", "/job del 1"} {
+		"/timer list", "@Botty /reminder help", "/Reminder", "/timer del 1"} {
 		if got := w.dm(`/schedule "` + text + `" 2030-02-01T09:00`); got != "A schedule can't make schedules." {
 			t.Errorf("%s: got %q", text, got)
 		}
@@ -411,7 +416,10 @@ func TestLoad(t *testing.T) {
 		t.Fatalf("saved %+v", s)
 	}
 	logs := w.logs.String()
-	for _, want := range []string{"<3>a saved schedule is malformed and was skipped\n", "<4>a one-off schedule was dropped: it was due 1h1m0s ago\n", "<5>loaded 3 schedules\n"} {
+	if told := w.h.TellsSent(); len(told) != 1 || told[0] != (featuretest.Told{User: alice, Text: `I was offline at Tue 15 Jan 2030 10:59 UTC, so your reminder "stale one" didn't post.`}) {
+		t.Fatalf("told %+v", told)
+	}
+	for _, want := range []string{"<3>schedules.json: entry 4 skipped: no text; it will be removed at the next save\n", "<4>a one-off schedule was dropped: it was due 1h1m0s ago\n", "<5>loaded 3 schedules\n"} {
 		if !strings.Contains(logs, want) {
 			t.Errorf("no %q in:\n%s", want, logs)
 		}
@@ -443,8 +451,8 @@ func TestLoadAtTheCap(t *testing.T) {
 // overwritten.
 func TestUnreadableFile(t *testing.T) {
 	w := newWorld(t)
-	os.WriteFile(filepath.Join(w.dir, fileName), []byte("{not json"), 0o600)
-	if err := w.register(); err == nil || !strings.Contains(err.Error(), "schedules in "+filepath.Join(w.dir, fileName)+" can't be read") {
+	os.WriteFile(filepath.Join(w.dir, storeName+".json"), []byte("{not json"), 0o600)
+	if err := w.register(); err == nil || !strings.Contains(err.Error(), "schedules: "+filepath.Join(w.dir, storeName+".json")+" can't be read") {
 		t.Fatalf("got %v", err)
 	}
 }
@@ -460,79 +468,36 @@ func TestWorkingDirectory(t *testing.T) {
 	if len(w.saved()) != 1 {
 		t.Fatal("not saved")
 	}
-	os.Remove(filepath.Join(w.dir, fileName))
-	os.Mkdir(filepath.Join(w.dir, fileName), 0o700) // so the rename fails
+	os.Remove(filepath.Join(w.dir, storeName+".json"))
+	os.Mkdir(filepath.Join(w.dir, storeName+".json"), 0o700) // so the rename fails
 	if got := w.dm(`/schedule "hi" 2030-02-01T09:00`); got != "Sorry, I couldn't save that schedule: I can't write to my storage. Please let my owner know." || len(w.h.Timers()) != 1 {
 		t.Fatalf("got %q, %d timers", got, len(w.h.Timers()))
 	}
 }
 
-// In Docker, a state directory the bot can't use stops it, saying how to
-// fix the host directory's owner.
-func TestDockerDirectory(t *testing.T) {
-	w := newWorld(t)
-	old := dockerDir
-	t.Cleanup(func() { dockerDir = old })
-	dockerDir = filepath.Join(w.dir, "data")
-	w.h.Settings["STATE_DIRECTORY"] = dockerDir
-	err := w.register()
-	if err == nil || !strings.Contains(err.Error(), "run: chown 65532 /var/lib/private/signalbot") {
-		t.Fatalf("got %v", err)
-	}
-	os.Mkdir(dockerDir, 0o700)
-	if err := w.register(); err != nil {
-		t.Fatal(err)
-	}
-	if entries, _ := os.ReadDir(dockerDir); len(entries) != 0 {
-		t.Fatalf("left %v", entries)
-	}
-}
-
-// Anywhere else, a state directory the bot can't list and write stops it
-// at startup, saying to give the systemd unit a StateDirectory, and adds
-// nothing. (Tests may run as root, which file modes don't stop, so the
-// directories here are missing rather than read-only.)
+// A state directory the core can't use stops the bot at startup, and
+// nothing is registered. (The core's message, saying how to fix it, is
+// tested in kit/state.)
 func TestStateDirectory(t *testing.T) {
-	const fix = "add StateDirectory=signalbot to the unit's [Service] section"
 	w := newWorld(t)
-	missing := filepath.Join(w.dir, "missing")
-	w.h.Settings["STATE_DIRECTORY"] = missing + ":" + w.dir
-	err := w.register()
-	if err == nil || !strings.Contains(err.Error(), "its state directory "+missing+" (") || !strings.Contains(err.Error(), fix) {
+	w.h.StoreErr = errors.New("the bot can't list and write its state directory /x")
+	if err := w.register(); err == nil || err.Error() != "/schedule: the bot can't list and write its state directory /x" {
 		t.Fatalf("got %v", err)
 	}
 	if len(w.h.IntroLines()) != 0 || len(w.h.ToolGroups()) != 0 || w.dm(`/schedule list`) != "" {
 		t.Fatal("registered anyway")
 	}
-
-	// Run by hand, the working directory.
-	gone := filepath.Join(w.dir, "gone")
-	os.Mkdir(gone, 0o700)
-	t.Chdir(gone)
-	os.Remove(gone)
-	delete(w.h.Settings, "STATE_DIRECTORY")
-	err = w.register()
-	if err == nil || !strings.Contains(err.Error(), "the working directory, as STATE_DIRECTORY isn't set") || !strings.Contains(err.Error(), fix) {
-		t.Fatalf("got %v", err)
-	}
-
-	os.Mkdir(missing, 0o700)
-	w.h.Settings["STATE_DIRECTORY"] = missing
-	w.start()
-	if entries, _ := os.ReadDir(missing); len(entries) != 0 {
-		t.Fatalf("left %v", entries)
-	}
 }
 
-// /timer, /reminder and /job are the same command as /schedule, and the
-// model is told all four, with no tools, for a near-miss such as "/time".
+// /timer and /reminder are the same command as /schedule, and the model is
+// told all three, with no tools, for a near-miss such as "/time".
 func TestAliases(t *testing.T) {
 	w := newWorld(t).start()
-	want := []feature.ToolGroup{{Names: []string{"**schedules and reminders**: /schedule, /timer, /reminder, /job"}}}
+	want := []feature.ToolGroup{{Names: []string{"**schedules and reminders**: /schedule, /timer, /reminder"}}}
 	if g := w.h.ToolGroups(); !reflect.DeepEqual(g, want) {
 		t.Fatalf("tool groups %+v", g)
 	}
-	for _, cmd := range []string{"/timer", "/reminder", "/job"} {
+	for _, cmd := range []string{"/timer", "/reminder", "/schedule"} {
 		if got := w.dm(cmd + ` "hi" 2030-02-01T09:00`); !strings.HasPrefix(got, "Scheduled for ") {
 			t.Fatalf("%s: got %q", cmd, got)
 		}
@@ -540,7 +505,42 @@ func TestAliases(t *testing.T) {
 	if got := w.dm("/reminder list"); !strings.Contains(got, "1.") || !strings.Contains(got, "3.") {
 		t.Fatalf("list: %q", got)
 	}
-	if got := w.dm("/timer help"); !strings.Contains(got, "/timer, /reminder and /job work the same as /schedule.") {
+	if got := w.dm("/timer help"); !strings.Contains(got, "/timer and /reminder work the same as /schedule.") {
 		t.Fatalf("help: %q", got)
+	}
+	if a := w.h.Message(context.Background(), feature.Message{Chat: feature.Chat{User: alice}, Sender: alice, Text: "/job list", Addressed: true}); a != (feature.Action{}) {
+		t.Fatalf("/job is still a command: %+v", a)
+	}
+}
+
+// The subcommands have the words people reach for; anything else that isn't
+// quoted and holds no time is named back, with what to try, while one with
+// a time is a schedule missing its quotes.
+func TestSubcommands(t *testing.T) {
+	w := newWorld(t).start()
+	for range 3 {
+		w.dm(`/schedule "hi" 2030-02-01 09:00`)
+	}
+	for _, del := range []string{"del 1", "DELETE 2", "remove 3"} {
+		if got := w.dm("/schedule " + del); !strings.HasPrefix(got, "Deleted schedule ") {
+			t.Errorf("%s: got %q", del, got)
+		}
+	}
+	for _, del := range []string{"cancel 1", "rm 1"} {
+		if got := w.dm("/schedule " + del); !strings.HasPrefix(got, "Schedule 1 has already run") {
+			t.Errorf("%s: got %q", del, got)
+		}
+	}
+	if got := w.dm("/schedule ls"); !strings.HasPrefix(got, "You have no schedules.") {
+		t.Errorf("ls: got %q", got)
+	}
+	if got := w.dm("/schedule erase 1"); got != `I don't know "/schedule erase". Try /schedule list, /schedule del <number>, or /schedule help.` {
+		t.Errorf("got %q", got)
+	}
+	if got := w.dm("/timer 10m"); got != `I don't know "/timer 10m". Try /schedule list, /schedule del <number>, or /schedule help.` {
+		t.Errorf("got %q", got)
+	}
+	if got := w.dm("/schedule take the bins out 2030-02-01 09:00"); !strings.HasPrefix(got, "Put the message in quotes, then the time") {
+		t.Errorf("got %q", got)
 	}
 }

@@ -68,25 +68,15 @@ func TestWebSearchWithNoModel(t *testing.T) {
 }
 
 // When the host drops the tool (another API), "web search on" isn't logged.
-// A model that calls no tools lists none, and the line is logged as before.
 func TestWebSearchDroppedByHost(t *testing.T) {
-	for _, tc := range []struct {
-		info feature.Info
-		on   bool
-	}{
-		{feature.Info{Model: "x/test-model", CallsTools: true}, false},
-		{feature.Info{Model: "x/test-model"}, true},
-	} {
-		var out, errw logx.Buffer
-		restore := logx.SetOutput(&out, &errw, true)
-		h := featuretest.New()
-		h.Bot = tc.info
-		if err := Register(h); err != nil {
-			t.Fatal(err)
-		}
-		restore()
-		if on := strings.Contains(out.String(), "web search on"); on != tc.on {
-			t.Errorf("%+v: log %q", tc.info, out.String())
-		}
+	var out, errw logx.Buffer
+	defer logx.SetOutput(&out, &errw, true)()
+	h := featuretest.New()
+	h.Bot, h.Unusable = feature.Info{Model: "x/test-model", CallsTools: true}, true
+	if err := Register(h); err != nil {
+		t.Fatal(err)
+	}
+	if len(h.ToolGroups()) != 0 || out.String() != "" {
+		t.Errorf("groups %+v, log %q", h.ToolGroups(), out.String())
 	}
 }

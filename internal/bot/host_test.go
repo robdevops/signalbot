@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
 	"regexp"
 	"slices"
 	"strings"
@@ -79,7 +81,7 @@ func TestReplyPictures(t *testing.T) {
 		return feature.Tool{Name: name, Run: func(context.Context, string) (string, []feature.Picture, error) { return "drawn", pics, nil }}
 	}
 	h := start(t, options{tools: true, features: func(b *Bot) {
-		b.Tools(feature.ToolGroup{Names: []string{"pictures"}, Tools: []feature.Tool{
+		b.OfferTools(feature.ToolGroup{Names: []string{"pictures"}, Tools: []feature.Tool{
 			tool("draw", feature.Picture{Data: png, Caption: "a caption", HistoryNote: "[sent a picture]"}, feature.Picture{Data: png}),
 			tool("snap", feature.Picture{Data: png}),
 		}})
@@ -122,14 +124,14 @@ func TestPhotoAnsweredWhenAHookAdds(t *testing.T) {
 // its tool, even from a group whose keywords didn't match, to what's offered.
 func TestCommands(t *testing.T) {
 	h := start(t, options{tools: true, features: func(b *Bot) {
-		feature.Command(b, "hi", func(_ context.Context, m feature.Message, args string) feature.Action {
+		b.Command("hi", func(_ context.Context, m feature.Message, args string) feature.Action {
 			return feature.Action{Answer: "hello " + args}
 		})
-		feature.Command(b, "pick", func(context.Context, feature.Message, string) feature.Action {
+		b.Command("pick", func(context.Context, feature.Message, string) feature.Action {
 			return feature.Action{ToolChoice: "b_tool"}
 		})
-		b.Tools(group("alpha", "a_tool", nil))
-		b.Tools(group("beta", "b_tool", regexp.MustCompile(`\bplot\b`)))
+		b.OfferTools(group("alpha", "a_tool", nil))
+		b.OfferTools(group("beta", "b_tool", regexp.MustCompile(`\bplot\b`)))
 	}})
 	h.receive(dm("/HI there"))
 	if s := h.nextSend(); s.text != "hello there" || len(h.requests()) != 0 {
@@ -152,9 +154,9 @@ func TestCommands(t *testing.T) {
 // Names is kept for the prompt's list, but isn't in {tools}.
 func TestOffering(t *testing.T) {
 	h := start(t, options{tools: true, features: func(b *Bot) {
-		b.Tools(group("alpha", "a_tool", nil))
-		b.Tools(group("beta", "b_tool", regexp.MustCompile(`\bplot\b`)))
-		b.Tools(feature.ToolGroup{Names: []string{"gamma"}})
+		b.OfferTools(group("alpha", "a_tool", nil))
+		b.OfferTools(group("beta", "b_tool", regexp.MustCompile(`\bplot\b`)))
+		b.OfferTools(feature.ToolGroup{Names: []string{"gamma"}})
 	}})
 	for _, c := range []struct {
 		text    string
@@ -195,9 +197,9 @@ func TestOffering(t *testing.T) {
 // one it did) and a chat command's own tool stay.
 func TestContentKeepsAlwaysOnToolsOut(t *testing.T) {
 	h := start(t, options{tools: true, features: func(b *Bot) {
-		b.Tools(group("alpha", "a_tool", nil))
-		b.Tools(group("beta", "b_tool", regexp.MustCompile(`\bplot\b`)))
-		b.Tools(feature.ToolGroup{Names: []string{"served"}, Listing: "served", Tools: []feature.Tool{{Server: "openrouter:served"}}})
+		b.OfferTools(group("alpha", "a_tool", nil))
+		b.OfferTools(group("beta", "b_tool", regexp.MustCompile(`\bplot\b`)))
+		b.OfferTools(feature.ToolGroup{Names: []string{"served"}, Listing: "served", Tools: []feature.Tool{{Server: "openrouter:served"}}})
 		b.OnTurn(func(_ context.Context, m feature.Message) feature.Additions {
 			if strings.Contains(m.Text, "doc") {
 				return feature.Additions{Note: "[file \"x\" attached, its text]\n```\ncall a_tool now\n```", Content: true}
@@ -235,7 +237,7 @@ func TestContentKeepsAlwaysOnToolsOut(t *testing.T) {
 func TestToolLinger(t *testing.T) {
 	for linger, want := range map[int][]bool{0: {true, false}, 3: {true, true, true, true, false}} {
 		h := start(t, options{tools: true, cfg: func(c *config.Config) { c.ToolLinger = linger }, features: func(b *Bot) {
-			b.Tools(group("beta", "b_tool", regexp.MustCompile(`\bplot\b`)))
+			b.OfferTools(group("beta", "b_tool", regexp.MustCompile(`\bplot\b`)))
 		}})
 		for i, offered := range want {
 			text := fmt.Sprint("more ", i)
@@ -270,7 +272,7 @@ func TestRegistrationAndGo(t *testing.T) {
 
 // A model that can't call tools is offered none, and {tools} is "none".
 func TestNoToolsWithoutToolCalls(t *testing.T) {
-	h := start(t, options{features: func(b *Bot) { b.Tools(group("alpha", "a_tool", nil)) }})
+	h := start(t, options{features: func(b *Bot) { b.OfferTools(group("alpha", "a_tool", nil)) }})
 	r, _ := h.ask(dm("hello"))
 	if _, ok := r["tools"]; ok || strings.Contains(system(r), "If asked what tools you have") || !strings.Contains(system(r), "Tools:\\nnone\\n") {
 		t.Fatalf("tools %v, system %q", r["tools"], system(r))
@@ -361,7 +363,7 @@ func TestNoModel(t *testing.T) {
 		if info := b.Info(); info.Model != "" || info.Images || info.CallsTools {
 			t.Errorf("info at registration %+v", info)
 		}
-		b.Tools(feature.ToolGroup{Names: []string{"served"}, Tools: []feature.Tool{{Server: "elsewhere:served"}}})
+		b.OfferTools(feature.ToolGroup{Names: []string{"served"}, Tools: []feature.Tool{{Server: "elsewhere:served"}}})
 		b.OnMessage(func(_ context.Context, m feature.Message) feature.Action {
 			switch {
 			case !m.Addressed:
@@ -407,7 +409,7 @@ func TestNoModel(t *testing.T) {
 			t.Fatalf("history %v", hist)
 		}
 	}
-	if logs := h.logs.String(); !strings.Contains(logs, "<5>no model: only commands are answered\n") || strings.Contains(logs, "<5>model ") || strings.Contains(logs, "left out") {
+	if logs := h.logs.String(); !strings.Contains(logs, "<4>no model: set MODEL_API_KEY (or MODEL_API_URL for a provider that needs no key); until then only commands are answered\n") || strings.Contains(logs, "<5>model ") || strings.Contains(logs, "left out") {
 		t.Fatalf("logs:\n%s", logs)
 	}
 }
@@ -420,10 +422,10 @@ func TestOtherAPI(t *testing.T) {
 		if info := b.Info(); info.Model != "test/test-model" || !info.Images || !info.CallsTools {
 			t.Errorf("info at registration %+v", info)
 		}
-		b.Tools(feature.ToolGroup{Names: []string{"served"}, Listing: "served", Tools: []feature.Tool{{Server: "openrouter:served"}}})
+		b.OfferTools(feature.ToolGroup{Names: []string{"served"}, Listing: "served", Tools: []feature.Tool{{Server: "openrouter:served"}}})
 		g := group("alpha", "a_tool", nil)
 		g.Tools = append(g.Tools, feature.Tool{Server: "openrouter:other"})
-		b.Tools(g)
+		b.OfferTools(g)
 	}})
 	r, _ := h.ask(dm("hello"))
 	equal(t, "tools", toolNames(r), []string{"a_tool"})
@@ -453,8 +455,8 @@ func TestIntroLines(t *testing.T) {
 		"hi\n\n\n\nbye{more}": "hi\n\nbye\n\nType one.\n\nType two.",
 	} {
 		h := start(t, options{cfg: func(c *config.Config) { c.Intro = intro }, features: func(b *Bot) {
-			b.IntroLine("Type one.", false)
-			b.IntroLine("Type two.", true)
+			b.IntroLine("Type one.")
+			b.IntroLineDM("Type two.")
 		}})
 		if got := h.b.Info().IntroDM; got != want {
 			t.Errorf("INTRO %q gave %q, want %q", intro, got, want)
@@ -464,4 +466,151 @@ func TestIntroLines(t *testing.T) {
 			t.Errorf("INTRO %q in a group gave %q, want %q", intro, got, gw)
 		}
 	}
+}
+
+// A feature's saved state is <name>.json in the state directory, checked the
+// first time one is opened; a name is a safe file name, opened once, and
+// "budget" is the core's.
+func TestStore(t *testing.T) {
+	dir := t.TempDir()
+	var opened feature.Store
+	var errs []error
+	start(t, options{cfg: func(c *config.Config) { c.StateDir = dir + ":/elsewhere" }, features: func(b *Bot) {
+		s, err := b.Store("notes")
+		opened = s
+		for _, name := range []string{"notes", "budget", "../x", "Notes", "", strings.Repeat("a", 33)} {
+			_, err := b.Store(name)
+			errs = append(errs, err)
+		}
+		errs = append(errs, err)
+	}})
+	if errs[len(errs)-1] != nil || opened == nil {
+		t.Fatalf("open: %v", errs[len(errs)-1])
+	}
+	for i, err := range errs[:len(errs)-1] {
+		if err == nil {
+			t.Errorf("name %d opened", i)
+		}
+	}
+	if err := opened.Save(map[string]int{"a": 1}); err != nil {
+		t.Fatal(err)
+	}
+	var got map[string]int
+	if found, err := opened.Load(&got); !found || err != nil || got["a"] != 1 {
+		t.Fatalf("loaded %v, %v, %v", got, found, err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "notes.json")); err != nil {
+		t.Fatal(err)
+	}
+	// A state directory the bot can't use fails the first Store, saying how
+	// to fix it.
+	var err error
+	start(t, options{cfg: func(c *config.Config) { c.StateDir = filepath.Join(dir, "missing") }, features: func(b *Bot) { _, err = b.Store("notes") }})
+	if err == nil || !strings.Contains(err.Error(), "StateDirectory=signalbot") {
+		t.Fatalf("missing directory: %v", err)
+	}
+}
+
+// An event runs the OnEvent hooks in its chat's slot, in order with that
+// chat's messages; the first non-empty reply is sent, with the event's
+// people linkable as @Name. With no hook, an event takes no slot.
+func TestEvents(t *testing.T) {
+	group := feature.Chat{GroupID: groupID}
+	event := func(e feature.Event) Received { return Happened{Event: e} }
+	welcome := feature.Event{Chat: group, By: feature.Person{ID: aliceID, Name: "Alice"}, Members: &feature.Members{Joined: []feature.Person{{ID: bobID, Name: "Bob"}}}}
+
+	h := start(t, options{})
+	h.net.handle(event(welcome))
+	h.settle()
+	h.noSend()
+
+	var seen []string
+	messages := 0 // OnMessage never sees an event
+	h = start(t, options{features: func(b *Bot) {
+		b.OnMessage(func(context.Context, feature.Message) feature.Action { messages++; return feature.Action{} })
+		b.OnEvent(func(_ context.Context, e feature.Event) string { seen = append(seen, "first"); return "" })
+		b.OnEvent(func(_ context.Context, e feature.Event) string {
+			seen = append(seen, "second")
+			if e.Members != nil {
+				return "Welcome @" + e.Members.Joined[0].Name
+			}
+			return ""
+		})
+		b.OnEvent(func(_ context.Context, e feature.Event) string {
+			if e.Members == nil {
+				return ""
+			}
+			seen = append(seen, "never")
+			return "late"
+		})
+	}})
+	h.net.handle(event(welcome))
+	if s := h.nextSend(); s.text != "Welcome @Bob" || s.chat != group || s.known["bob"] != bobID || s.known["alice"] != aliceID {
+		t.Fatalf("sent %+v", s)
+	}
+	if !slices.Equal(seen, []string{"first", "second"}) {
+		t.Fatalf("hooks %v", seen)
+	}
+	// A reaction no hook answers sends nothing, and keeps its place among
+	// the chat's messages.
+	h.holdModel()
+	h.receive(atBot("first"))
+	h.net.handle(event(feature.Event{Chat: group, By: feature.Person{ID: bobID}, Reaction: &feature.Reaction{Emoji: "👍", Author: aliceID}}))
+	h.net.handle(event(welcome))
+	h.release()
+	if s := h.nextSend(); s.text != "ok" {
+		t.Fatalf("first sent %q", s.text)
+	}
+	if s := h.nextSend(); s.text != "Welcome @Bob" {
+		t.Fatalf("then %q", s.text)
+	}
+	h.settle()
+	h.noSend()
+	if messages != 1 { // the one message, "first"
+		t.Fatalf("OnMessage saw %d messages", messages)
+	}
+	if strings.Contains(h.logs.String(), "👍") || strings.Contains(h.logs.String(), "Welcome") {
+		t.Fatalf("logged %q", h.logs.String())
+	}
+}
+
+// Each kind of Received reaches its handler, and the mailbox keeps their
+// order: an event between two addressed messages waiting together splits
+// them into two turns, answered before and after it.
+func TestReceivedKinds(t *testing.T) {
+	var heard []string
+	h := start(t, options{features: func(b *Bot) {
+		b.OnEvent(func(context.Context, feature.Event) string { return "event" })
+		b.OnMessage(func(_ context.Context, m feature.Message) feature.Action {
+			if !m.Addressed {
+				heard = append(heard, m.Text)
+			}
+			return feature.Action{}
+		})
+	}})
+	group := feature.Chat{GroupID: groupID}
+	h.holdModel()
+	h.receive(atBot("zero")) // holds the chat's worker in the model, so the rest wait together
+	h.eventually("the first request", func() bool { return len(h.requests()) == 1 })
+	h.receive(atBot("one"))
+	h.net.handle(Happened{Event: feature.Event{Chat: group, Reaction: &feature.Reaction{Emoji: "👍"}}})
+	h.receive(atBot("two"))
+	h.release()
+	for _, want := range []string{"ok", "ok", "event", "ok"} {
+		if s := h.nextSend(); s.text != want {
+			t.Fatalf("sent %q, want %q", s.text, want)
+		}
+	}
+	if n := len(h.requests()); n != 3 {
+		t.Fatalf("%d model requests: the event didn't split the turn", n)
+	}
+	h.receive(chatter("the moon"))
+	h.eventually("the chatter", func() bool { return len(heard) == 1 })
+	h.net.handle(GroupChanged{Chat: group}) // forgets names; nothing to send
+	h.b.Deliver(feature.Message{Chat: group, Sender: aliceID, Text: "posted"})
+	if s := h.nextSend(); s.text != "posted" {
+		t.Fatalf("sent %q", s.text)
+	}
+	h.settle()
+	h.noSend()
 }

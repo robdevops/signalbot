@@ -63,6 +63,7 @@ type Client struct {
 	allowed      map[string]bool // who may DM the bot, by ACI or number
 	typingEvery  time.Duration
 	writeTimeout time.Duration // writeTimeout; a test's shorter
+	backoff      time.Duration // the first wait before reconnecting; a test's shorter
 	nextID       atomic.Int64
 	mu           sync.Mutex // guards conn and pending, never held over a write
 	wmu          sync.Mutex // serialises writes
@@ -74,16 +75,15 @@ type Client struct {
 	closed       atomic.Bool // Run has returned
 	names        names
 	recent       recent       // attachments of recent messages, for replies to them
+	members      members      // each group's members, to tell who joined and left
 	test         *config.Test // nil in production
 }
 
-// New makes the client its settings say: SIGNALCLI_SOCKET, a unix socket
-// path or host:port, and SIGNAL_DM_USER_IDS, who may DM the bot.
-func New(test *config.Test) (*Client, error) {
-	addr := config.Env("SIGNALCLI_SOCKET", "")
-	if addr == "" {
-		return nil, errors.New("SIGNALCLI_SOCKET is required")
-	}
+// New makes the client its settings say: SIGNALCLI_SOCKET, host:port
+// (signal-cli's daemon --tcp on this host by default) or a unix socket path,
+// and SIGNAL_DM_USER_IDS, who may DM the bot.
+func New(test *config.Test) *Client {
+	addr := config.Env("SIGNALCLI_SOCKET", "127.0.0.1:7583")
 	allowed := map[string]bool{}
 	// Commas, semicolons or any white space, so a CRLF env file or a tab
 	// can't leave an unmatchable ID.
@@ -92,13 +92,23 @@ func New(test *config.Test) (*Client, error) {
 	}) {
 		allowed[id] = true
 	}
-	return newClient(addr, allowed, test), nil
+	if len(allowed) == 0 {
+		logx.Warnf("DMs are off: SIGNAL_DM_USER_IDS is empty; the bot answers only in groups")
+	} else {
+		ids := fmt.Sprintf("%d IDs", len(allowed))
+		if len(allowed) == 1 {
+			ids = "1 ID"
+		}
+		logx.Noticef("DMs: allowed from %s (SIGNAL_DM_USER_IDS)", ids)
+	}
+	return newClient(addr, allowed, test)
 }
 
 // newClient is New with its settings given.
 func newClient(addr string, allowed map[string]bool, test *config.Test) *Client {
-	c := &Client{addr: addr, allowed: allowed, typingEvery: 10 * time.Second, writeTimeout: writeTimeout, pending: map[string]chan *rpcMsg{},
+	c := &Client{addr: addr, allowed: allowed, typingEvery: 10 * time.Second, writeTimeout: writeTimeout, backoff: time.Second, pending: map[string]chan *rpcMsg{},
 		known: make(chan struct{}), test: test}
+	c.members.c = c
 	c.names.byID, c.names.numbers, c.names.minRefresh = map[string]rankedName{}, map[string]string{}, 15*time.Second
 	if test != nil && test.ReloadGap > 0 {
 		c.names.minRefresh = test.ReloadGap
@@ -136,7 +146,7 @@ func (c *Client) network() string {
 // reconnects with backoff until ctx ends. handle must not block.
 func (c *Client) Run(ctx context.Context, handle func(bot.Received)) {
 	defer c.closed.Store(true)
-	backoff := time.Second
+	backoff := c.backoff
 	for ctx.Err() == nil {
 		conn, err := net.DialTimeout(c.network(), c.addr, 10*time.Second)
 		if err != nil {
@@ -146,7 +156,7 @@ func (c *Client) Run(ctx context.Context, handle func(bot.Received)) {
 			c.serve(ctx, conn, handle)
 			// Only a connection that held resets it, so one that dies at once can't spin.
 			if time.Since(began) > time.Minute {
-				backoff = time.Second
+				backoff = c.backoff
 			}
 		}
 		select {
@@ -178,6 +188,9 @@ func (c *Client) serve(ctx context.Context, conn net.Conn, handle func(bot.Recei
 		c.knownOnce.Do(func() { close(c.known) })
 		logx.Noticef("bot account %s", id)
 		c.refreshSoon() // names, on every (re)connect
+		mctx, mcancel := context.WithTimeout(ctx, 15*time.Second)
+		defer mcancel()
+		c.members.start(mctx, handle) // so the first group update can be told apart
 	}()
 
 	err := readFrames(conn, maxLine, func(line []byte) { c.dispatch(line, handle) }, c.skipped)

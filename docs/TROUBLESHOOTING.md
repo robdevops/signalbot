@@ -1,19 +1,13 @@
 # Troubleshooting
 
-**The bot answers only commands, and ignores mentions and DMs.** It has no model: the startup log says "no model: only commands are answered" (a notice, which `journalctl -p warning` hides). Set `MODEL_API_KEY`, or `MODEL_API_URL` for a provider that needs no key. `OPENROUTER_API_KEY` is now `MODEL_API_KEY`, and the old name is ignored.
+**The bot answers only commands, and ignores mentions and DMs.** It has no model: the startup log warns "no model: set MODEL_API_KEY (or MODEL_API_URL for a provider that needs no key); until then only commands are answered". Set `MODEL_API_KEY`, or `MODEL_API_URL` for a provider that needs no key. `OPENROUTER_API_KEY` is now `MODEL_API_KEY`, and the old name is ignored, with a warning at startup.
 
-**Permission denied on the socket.** Whatever connects to `/run/signal-cli/socket` must be in the `signal-cli` Unix group, and the socket must be group-writable (`ls -l /run/signal-cli/socket` should show `srwxrwx---` and the group `signal-cli`). Common causes:
+**"signal-cli connect failed: … connection refused".** signal-cli isn't listening where the bot looks: by default `127.0.0.1:7583`, so run it with `daemon --tcp 127.0.0.1:7583` (as [`examples/signal-cli.service`](../examples/signal-cli.service) does), or set `SIGNALCLI_SOCKET` to where it listens. Under Docker, the container needs `network_mode: host` (as in `compose.yaml`) to reach the host's `127.0.0.1`.
 
-- A service started before the group existed. Restart it: `sudo systemctl restart signal-cli signalbot`.
-- You added yourself to the group (`sudo usermod -aG signal-cli "$USER"`) to test the socket with `socat`. Your open shell keeps its old groups until you log out and back in, or run `newgrp signal-cli`.
-- You run signal-cli from a shell instead of the systemd unit. It then uses your own group and umask, so the socket is `0755` and the group cannot write to it. Start it with the right group and umask, once `/run/signal-cli` exists with that group:
+**"Permission denied" on the Unix socket.** See [Unix socket](SOCKET.md#permission-denied-on-the-socket).
 
-  ```
-  # create socket directory:
-  sudo install -d -o "$USER" -g signal-cli -m 0750 /run/signal-cli
+**The bot exits at startup saying it can't write its state directory.** Under systemd, the unit needs `StateDirectory=signalbot` in `[Service]` (a copy of the unit without it runs the bot in `/`, which it can't write). Under Docker, the host directory mounted at `/data` must be owned by user 65532: `sudo chown 65532 /var/lib/private/signalbot`.
 
-  # run signal-cli
-  sudo -u "$USER" -g signal-cli sh -c 'umask 007 && signal-cli -o json daemon --socket /run/signal-cli/socket --no-receive-stdout'
-  ```
+---
 
-  On Linux, `sg signal-cli -c '…'` does the same without `sudo` if you are in the group. `doas` cannot set a group, so on OpenBSD use `su` or the system's `rc.d` service.
+[Back to README.md](../README.md)

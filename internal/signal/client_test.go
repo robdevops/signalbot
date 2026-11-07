@@ -10,6 +10,7 @@ import (
 	"maps"
 	"net"
 	"path/filepath"
+	"reflect"
 	"regexp"
 	"runtime"
 	"slices"
@@ -19,6 +20,7 @@ import (
 	"time"
 
 	"github.com/robdevops/signalbot/internal/bot"
+	"github.com/robdevops/signalbot/internal/config"
 	"github.com/robdevops/signalbot/internal/feature"
 	"github.com/robdevops/signalbot/internal/kit/logx"
 )
@@ -30,21 +32,28 @@ const (
 	groupID = "Z3JvdXA="
 )
 
-// New reads the socket, which it requires, and the DM list, split on
-// commas, semicolons and any white space.
+// New reads signal-cli's address, 127.0.0.1:7583 by default, and the DM list,
+// split on commas, semicolons and any white space, and says at startup who
+// may DM.
 func TestNew(t *testing.T) {
+	var logs logx.Buffer
+	t.Cleanup(logx.SetOutput(&logs, &logs, false))
 	t.Setenv("SIGNALCLI_SOCKET", "")
-	if _, err := New(nil); err == nil {
-		t.Error("no socket accepted")
+	t.Setenv("SIGNAL_DM_USER_IDS", "alice-id")
+	if c := New(nil); c.addr != "127.0.0.1:7583" || c.network() != "tcp" {
+		t.Errorf("default address %q on %s", c.addr, c.network())
 	}
 	t.Setenv("SIGNALCLI_SOCKET", "/run/signal.sock")
 	t.Setenv("SIGNAL_DM_USER_IDS", "alice-id,bob-id;\r\n+15550001\t")
-	c, err := New(nil)
-	if err != nil {
-		t.Fatal(err)
-	}
+	c := New(nil)
 	if c.addr != "/run/signal.sock" || !maps.Equal(c.allowed, map[string]bool{"alice-id": true, "bob-id": true, "+15550001": true}) {
 		t.Errorf("socket %q, allowed %v", c.addr, c.allowed)
+	}
+	t.Setenv("SIGNAL_DM_USER_IDS", "")
+	New(nil)
+	if got := logs.String(); got != "DMs: allowed from 1 ID (SIGNAL_DM_USER_IDS)\n"+"DMs: allowed from 3 IDs (SIGNAL_DM_USER_IDS)\n"+
+		"DMs are off: SIGNAL_DM_USER_IDS is empty; the bot answers only in groups\n" {
+		t.Errorf("logs %q", got)
 	}
 }
 
@@ -171,7 +180,7 @@ func next(t *testing.T, got <-chan bot.Received) bot.Received {
 		return r
 	case <-time.After(5 * time.Second):
 		t.Fatal("nothing received")
-		return bot.Received{}
+		return nil
 	}
 }
 
@@ -184,15 +193,16 @@ func TestReceiveAndReconnect(t *testing.T) {
 	captureLogs(t)
 	f := newFake(t)
 	c := newClient(f.sock, allowAll(), nil)
+	c.backoff = 10 * time.Millisecond
 	got, conn := run(t, c, f)
 	receive(conn, `{"sourceUuid":"`+aliceID+`","dataMessage":{"message":"hi"}}`)
-	if r := next(t, got); r.Chat.User != aliceID || !r.Addressed {
+	if r, ok := next(t, got).(bot.Incoming); !ok || r.Chat.User != aliceID {
 		t.Fatalf("got %+v", r)
 	}
 	conn.Close()
 	conn2 := <-f.conns
 	receive(conn2, `{"sourceUuid":"`+bobID+`","dataMessage":{"message":"again"}}`)
-	if r := next(t, got); r.Chat.User != bobID {
+	if r, ok := next(t, got).(bot.Incoming); !ok || r.Chat.User != bobID {
 		t.Fatalf("after reconnecting got %+v", r)
 	}
 }
@@ -218,7 +228,7 @@ func TestStalledWriteReconnects(t *testing.T) {
 		}
 	}()
 	c := newClient(sock, allowAll(), nil)
-	c.writeTimeout = time.Second
+	c.writeTimeout, c.backoff = 200*time.Millisecond, 10*time.Millisecond
 	got := make(chan bot.Received, 4)
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
@@ -471,5 +481,170 @@ func TestReconnectsDoNotLeakGoroutines(t *testing.T) {
 	time.Sleep(100 * time.Millisecond)
 	if delta := runtime.NumGoroutine() - before; delta > 5 {
 		t.Fatalf("%d goroutines left behind by 50 dropped connections", delta)
+	}
+}
+
+// A group update is compared with the members listGroups last gave: who
+// joined and who left reach the core as one event, named as the contact
+// list has them; a change of name or description, nothing; a group the bot
+// wasn't in, that it was added. Members already there at startup aren't
+// reported, and nothing is logged.
+func TestMemberChanges(t *testing.T) {
+	logs := captureLogs(t)
+	f := newFake(t)
+	listed := func(ms ...string) {
+		var js []string
+		for _, m := range ms {
+			js = append(js, `{"uuid":"`+m+`"}`)
+		}
+		f.set("listGroups", `[{"id":"`+groupID+`","name":"Family","isMember":true,"members":[`+strings.Join(js, ",")+`]}]`)
+	}
+	f.set("listContacts", `[{"uuid":"`+bobID+`","profile":{"givenName":"Bob"}},{"uuid":"`+aliceID+`","profile":{"givenName":"Alice"}}]`)
+	listed(botID, aliceID)
+	c := newClient(f.sock, allowAll(), &config.Test{ReloadGap: time.Millisecond})
+	c.Watch(true)
+	got, conn := run(t, c, f)
+	eventually(t, "the first listGroups", func() bool { return len(f.calls("listGroups")) == 1 })
+	update := func(group string) { // and wait for its comparison, so the next answer is the next update's
+		n := len(f.calls("listGroups"))
+		receive(conn, `{"sourceUuid":"`+aliceID+`","sourceName":"Alice","dataMessage":{"groupInfo":{"groupId":"`+group+`","type":"UPDATE"}}}`)
+		eventually(t, "the comparison", func() bool { return len(f.calls("listGroups")) > n })
+	}
+	members := func() *feature.Members {
+		t.Helper()
+		for {
+			switch r := next(t, got).(type) {
+			case bot.Happened:
+				if r.Event.By != (feature.Person{ID: aliceID, Name: "Alice"}) {
+					t.Fatalf("event %+v", r.Event)
+				}
+				return r.Event.Members
+			case bot.GroupChanged:
+			default:
+				t.Fatalf("got %+v", r)
+			}
+		}
+	}
+	listed(botID, aliceID, bobID)
+	update(groupID)
+	if m := members(); !reflect.DeepEqual(m, &feature.Members{Joined: []feature.Person{{ID: bobID, Name: "Bob"}}}) {
+		t.Fatalf("joined %+v", m)
+	}
+	update(groupID) // its name changed: no event
+	listed(botID, bobID)
+	update(groupID)
+	if m := members(); !reflect.DeepEqual(m, &feature.Members{Left: []feature.Person{{ID: aliceID, Name: "Alice"}}}) {
+		t.Fatalf("left %+v", m)
+	}
+	f.set("listGroups", `[{"id":"`+groupID+`","name":"Family","isMember":true,"members":[{"uuid":"`+bobID+`"}]},`+
+		`{"id":"new","name":"New","isMember":true,"members":[{"uuid":"`+aliceID+`"}]}]`)
+	update("new")
+	if m := members(); !reflect.DeepEqual(m, &feature.Members{BotAdded: true}) {
+		t.Fatalf("added %+v", m)
+	}
+	if strings.Contains(logs.String(), "Bob") || strings.Contains(logs.String(), bobID) {
+		t.Errorf("logged %q", logs.String())
+	}
+}
+
+// The bot's own group update refreshes the members it compares with but
+// reaches no feature, so a later update by someone else isn't credited with
+// it; updates folded together from several people say no one; and with no
+// event hook (Watch false) members are neither loaded nor compared.
+func TestMemberChangeRules(t *testing.T) {
+	captureLogs(t)
+	f := newFake(t)
+	listed := func(ms ...string) {
+		var js []string
+		for _, m := range ms {
+			js = append(js, `{"uuid":"`+m+`"}`)
+		}
+		f.set("listGroups", `[{"id":"`+groupID+`","name":"Family","isMember":true,"members":[`+strings.Join(js, ",")+`]}]`)
+	}
+	listed(botID, aliceID)
+	test := &config.Test{ReloadGap: time.Millisecond}
+	c := newClient(f.sock, allowAll(), test)
+	c.Watch(true)
+	got, conn := run(t, c, f)
+	eventually(t, "the first listGroups", func() bool { return len(f.calls("listGroups")) == 1 })
+	frame := func(from string) string {
+		return `{"sourceUuid":"` + from + `","dataMessage":{"groupInfo":{"groupId":"` + groupID + `","type":"UPDATE"}}}`
+	}
+	compared := func(n int) { // the nth listGroups made and its events handed over
+		t.Helper()
+		eventually(t, "the comparison", func() bool { return len(f.calls("listGroups")) >= n && test.Idle() })
+	}
+	drain := func() (events []feature.Event) {
+		for {
+			select {
+			case r := <-got:
+				if h, ok := r.(bot.Happened); ok {
+					events = append(events, h.Event)
+				}
+			default: // compared waited until they were handed over
+				return events
+			}
+		}
+	}
+
+	listed(botID, aliceID, bobID) // the bot added Bob, from its linked phone
+	receive(conn, frame(botID))
+	compared(2)
+	if e := drain(); len(e) != 0 {
+		t.Fatalf("the bot's own change reached features: %+v", e)
+	}
+	receive(conn, frame(aliceID)) // a change of name: Bob is no newcomer by now
+	compared(3)
+	if e := drain(); len(e) != 0 {
+		t.Fatalf("an old change was credited to Alice: %+v", e)
+	}
+
+	// Two people's updates folded into one comparison: who did it is unknown.
+	c.members.mu.Lock()
+	c.members.busy = true // hold the comparison until both are in
+	c.members.mu.Unlock()
+	listed(botID, bobID)
+	receive(conn, frame(aliceID))
+	receive(conn, frame(bobID))
+	eventually(t, "both updates", func() bool {
+		c.members.mu.Lock()
+		defer c.members.mu.Unlock()
+		return c.members.by[groupID] != nil && c.members.by[groupID].updates == 2
+	})
+	c.members.mu.Lock()
+	c.members.busy = false
+	c.members.schedule()
+	c.members.mu.Unlock()
+	compared(4)
+	e := drain()
+	if len(e) != 1 || e[0].By != (feature.Person{}) || !reflect.DeepEqual(e[0].Members.Left, []feature.Person{{ID: aliceID}}) {
+		t.Fatalf("folded %+v", e)
+	}
+
+	// No event hook: no listGroups at all.
+	f2 := newFake(t)
+	c2 := newClient(f2.sock, allowAll(), &config.Test{ReloadGap: time.Millisecond})
+	_, conn2 := run(t, c2, f2)
+	receive(conn2, frame(aliceID))
+	time.Sleep(20 * time.Millisecond)
+	if n := len(f2.calls("listGroups")); n != 0 {
+		t.Fatalf("%d listGroups calls with no event hook", n)
+	}
+}
+
+// Members are never loaded before the bot's ID is known, so the bot is
+// never taken for one of them.
+func TestMembersWaitForTheBotsID(t *testing.T) {
+	c := newClient("x", nil, nil)
+	c.Watch(true)
+	if gs, ok := c.members.load(context.Background(), func(string, ...any) {}); ok || gs != nil {
+		t.Fatalf("loaded %v before the ID was known", gs)
+	}
+}
+
+// The first wait before reconnecting is a second, and the write timeout ten.
+func TestReconnectWait(t *testing.T) {
+	if c := newClient("x", nil, nil); c.backoff != time.Second || c.writeTimeout != 10*time.Second {
+		t.Fatalf("backoff %v, write timeout %v", c.backoff, c.writeTimeout)
 	}
 }
