@@ -284,7 +284,7 @@ func TestRoundCap(t *testing.T) {
 	c, m, logs := start(t, calls("echo"))
 	echo := feature.Tool{Name: "echo", Run: func(context.Context, string) (string, []feature.Picture, error) { return "x", nil, nil }}
 	r, err := c.Ask(context.Background(), Request{Tools: []feature.Tool{echo}})
-	if err != nil || r.Text != "Sorry, I couldn't finish that." || len(r.ToolsUsed) != maxRounds-1 {
+	if !errors.Is(err, ErrTooManyRounds) || r.Text != "" || len(r.ToolsUsed) != maxRounds-1 || !r.Costed {
 		t.Fatalf("got %+v, %v", r, err)
 	}
 	if n := len(m.requests()); n != maxRounds {

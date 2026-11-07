@@ -39,9 +39,17 @@ const (
 		"or give its url when that helps."
 	// maxQuote caps quoted text in a prompt.
 	maxQuote = 500
-	sorry    = "Sorry, I couldn't get an answer right now."
+	// sorry answers when the model gave no answer, even after the client
+	// tried again; the cause may last, so it promises nothing.
+	sorry = "Sorry, I couldn't get an answer just now."
+	// tooManyRounds answers when the model was still calling tools when its
+	// rounds ran out.
+	tooManyRounds = "That took more lookups than I can do for one reply. Try asking for one thing at a time."
 	// noTools answers a chat command, which forces a tool, once tools are off.
-	noTools = "That command needs tools, which this model can't use."
+	noTools = "I can't run that command with the model I'm using now. Whoever runs me would need a model that supports tools."
+	// waiting reacts to a message the daily budget refuses, after the one
+	// notice, so the bot is seen to be paused rather than broken.
+	waiting = "⏳"
 )
 
 // respond acts on an addressed message: as act says, else by asking the
@@ -62,21 +70,23 @@ func (b *Bot) respond(msg feature.Message, act feature.Action, text string) {
 	case msg.Text == "" && len(b.turns) == 0:
 		return // nothing to answer
 	}
+	key := msg.Chat.Key()
 	if b.budget != nil {
-		if over, tell, left := b.budget.over(msg.Chat.Key()); over {
-			if tell { // once a day; then the chat is ignored until midnight
+		if over, left := b.budget.over(key); over {
+			if b.budget.markTold(key) { // once a day; then a ⏳ until midnight
 				logx.Warnf("a chat reached its daily budget; it is answered again at midnight")
-				b.net.Send(msg.Chat, limitNotice(left), nil, b.chats.Names(msg.Chat.Key()))
+				b.net.Send(msg.Chat, limitNotice(left), nil, b.chats.Names(key))
+			} else if msg.Timestamp != 0 { // a scheduled post can't be reacted to
+				b.net.React(msg.Chat, msg, waiting)
 			}
 			return
 		}
 	}
 	stop := b.net.Typing(msg.Chat)
-	defer stop() // also if something below panics
-	key := msg.Chat.Key()
+	defer stop()     // also if something below panics
 	start := b.now() // history expires from here, not from when it is stored
+	var t turn
 	var reply model.Reply
-	var kept string
 	var offered []int
 	var err error
 	imagesOff := false // by this turn
@@ -86,56 +96,37 @@ func (b *Bot) respond(msg feature.Message, act feature.Action, text string) {
 			b.net.Send(msg.Chat, noTools, nil, b.chats.Names(key))
 			return
 		}
-		asked, added, content := text, false, false
-		var images []string
-		var files []feature.File
-		kept = text
-		for _, fn := range b.turns {
-			a := fn(b.ctx, msg)
-			if a.Note != "" {
-				asked, kept, added = asked+"\n"+a.Note, kept+"\n"+cmp.Or(a.HistoryNote, a.Note), true
-			}
-			images = append(images, a.Images...)
-			files = append(files, a.Files...)
-			content = content || a.Content
-		}
-		if !b.images.Load() {
-			images = nil
-		}
-		if !b.files.Load() {
-			files = nil
-		}
-		var left int
-		if files, left = fitFiles(files); left > 0 {
-			logx.Warnf("%d of the files left out: together they are over %d MB", left, maxFileBytes>>20)
-			note := fmt.Sprintf("[%d of the files attached left out: together they are over %d MB]", left, maxFileBytes>>20)
-			asked, kept = asked+"\n"+note, kept+"\n"+note
-		}
-		if msg.Text == "" && !added && len(images) == 0 && len(files) == 0 {
+		if t = b.buildTurn(msg, text); t.empty(msg) {
 			return
 		}
 		var tools []feature.Tool
-		offered, tools = b.offer(key, msg.Text, act.ToolChoice, content)
+		offered, tools = b.offer(key, msg.Text, act.ToolChoice, t.content)
 		reply, err = b.ai.Ask(b.ctx, model.Request{
 			System:     b.system(offered, msg.Chat.GroupID == ""),
 			History:    contextBlocks(b.chats.History(key)),
-			Text:       strings.TrimSpace(asked),
-			Images:     images,
-			Files:      files,
+			Text:       strings.TrimSpace(t.asked),
+			Images:     t.images,
+			Files:      t.files,
 			Tools:      tools,
 			ToolChoice: act.ToolChoice,
 		})
 		if b.budget != nil && reply.Costed { // every request counts, a failed or rejected one too
 			b.budget.add(key, reply.Cost)
 		}
-		if !b.fallBack(err, &imagesOff) {
+		off, again := b.fallBack(err, imagesOff)
+		if !again {
 			break
 		}
+		imagesOff = off == "images"
 	}
 	stop()
 	if err != nil {
 		logx.Errorf("model error after %.1fs: %v", time.Since(start).Seconds(), err)
-		b.net.Send(msg.Chat, sorry, nil, b.chats.Names(key))
+		answer := sorry
+		if errors.Is(err, model.ErrTooManyRounds) {
+			answer = tooManyRounds
+		}
+		b.net.Send(msg.Chat, answer, nil, b.chats.Names(key))
 		return
 	}
 	b.followUp(key, offered, msg.Text, reply.ToolsUsed)
@@ -155,7 +146,7 @@ func (b *Bot) respond(msg feature.Message, act feature.Action, text string) {
 	// can't be reacted to.
 	if len(reply.Pictures) == 0 && msg.Timestamp != 0 && txt.SingleEmoji(reply.Text) {
 		emoji := strings.TrimSpace(reply.Text)
-		b.chats.Add(key, start, msg.Expires, chats.Entry{Role: "user", Content: strings.TrimSpace(kept)},
+		b.chats.Add(key, start, msg.Expires, chats.Entry{Role: "user", Content: strings.TrimSpace(t.kept)},
 			chats.Entry{Role: "assistant", Content: "[reacted " + emoji + "]"})
 		logx.Infof("reacting instead of replying")
 		b.net.React(msg.Chat, msg, emoji)
@@ -165,20 +156,66 @@ func (b *Bot) respond(msg feature.Message, act feature.Action, text string) {
 	if len(captions) > 0 {
 		reply.Text, sent = "", strings.Join(captions, "\n")
 	}
-	b.chats.Add(key, start, msg.Expires, chats.Entry{Role: "user", Content: strings.TrimSpace(kept)},
+	b.chats.Add(key, start, msg.Expires, chats.Entry{Role: "user", Content: strings.TrimSpace(t.kept)},
 		chats.Entry{Role: "assistant", Content: notes + reply.Text})
 	b.net.Send(msg.Chat, sent, reply.Pictures, b.chats.Names(key))
 }
 
+// turn is what one request for a message carries.
+type turn struct {
+	asked   string // the message as the model is asked it, hooks' notes included
+	kept    string // the message as history keeps it
+	added   bool   // a hook added a note
+	images  []string
+	files   []feature.File
+	content bool // a hook showed the model a page's or file's content
+}
+
+// buildTurn asks the OnTurn hooks what msg carries, text being the message
+// as the model sees it, and leaves out what the model can't take now:
+// images or files once off, and files past maxFileBytes, with a note.
+func (b *Bot) buildTurn(msg feature.Message, text string) turn {
+	t := turn{asked: text, kept: text}
+	for _, fn := range b.turns {
+		a := fn(b.ctx, msg)
+		if a.Note != "" {
+			t.asked, t.kept, t.added = t.asked+"\n"+a.Note, t.kept+"\n"+cmp.Or(a.HistoryNote, a.Note), true
+		}
+		t.images = append(t.images, a.Images...)
+		t.files = append(t.files, a.Files...)
+		t.content = t.content || a.Content
+	}
+	if !b.images.Load() {
+		t.images = nil
+	}
+	if !b.files.Load() {
+		t.files = nil
+	}
+	var left int
+	if t.files, left = fitFiles(t.files); left > 0 {
+		logx.Warnf("%d of the files left out: together they are over %d MB", left, maxFileBytes>>20)
+		note := fmt.Sprintf("[%d of the files attached left out: together they are over %d MB]", left, maxFileBytes>>20)
+		t.asked, t.kept = t.asked+"\n"+note, t.kept+"\n"+note
+	}
+	return t
+}
+
+// empty reports whether the turn has nothing to answer: no text typed, and
+// nothing a hook added.
+func (t turn) empty(msg feature.Message) bool {
+	return msg.Text == "" && !t.added && len(t.images) == 0 && len(t.files) == 0
+}
+
 // fallBack reports whether err is the API rejecting a request for its
-// images, files or tools, which it turns off for the rest of the run, with
-// one warning, so the turn is asked again without them; audio goes with
+// images, files or tools (again), which it turns off for the rest of the
+// run, with one warning, so the turn is asked again without them; off names
+// what it turned off, "" if another turn already had. Audio goes with
 // files. A request with several is blamed on its images first, then its
-// files; if the turn turned images off (*imagesOff) and the request without
+// files; if this turn turned images off (imagesOff) and the request without
 // them is rejected for its files or tools, they are turned back on, since
 // they weren't the problem. That ends: what is off is never sent again, and
 // images come back once.
-func (b *Bot) fallBack(err error, imagesOff *bool) bool {
+func (b *Bot) fallBack(err error, imagesOff bool) (off string, again bool) {
 	on, what := &b.images, "images"
 	switch {
 	case errors.Is(err, model.ErrFiles), errors.Is(err, model.ErrTools):
@@ -187,19 +224,18 @@ func (b *Bot) fallBack(err error, imagesOff *bool) bool {
 			on, what = &b.files, "files"
 			b.audio.Store(false)
 		}
-		if *imagesOff {
-			*imagesOff = false
+		if imagesOff {
 			b.images.Store(true)
 			logx.Infof("images are on again: the request without them was rejected too")
 		}
 	case !errors.Is(err, model.ErrImages):
-		return false
+		return "", false
 	}
-	if on.CompareAndSwap(true, false) {
-		*imagesOff = on == &b.images
-		logx.Warnf("the model's API rejected a request with %s, so %s are off: %v", what, what, err)
+	if !on.CompareAndSwap(true, false) {
+		return "", true
 	}
-	return true
+	logx.Warnf("the model's API rejected a request with %s, so %s are off: %v", what, what, err)
+	return what, true
 }
 
 // maxFileBytes caps the files sent with one message, all together: each is

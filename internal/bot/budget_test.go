@@ -23,7 +23,7 @@ func TestLimitNotice(t *testing.T) {
 		20 * time.Second:                "1 minute",
 		0:                               "1 minute",
 	} {
-		if got := limitNotice(left); got != "I've reached today's spending limit for this chat; I'll be back in "+want+"." {
+		if got := limitNotice(left); got != "I've reached today's spending limit for this chat, so I'll answer again in "+want+". Commands that don't need me to think still work." {
 			t.Errorf("%v: %q", left, got)
 		}
 	}
@@ -37,23 +37,23 @@ func TestBudget(t *testing.T) {
 	clock := func() time.Time { return now }
 	b := newBudget(dir, 1, clock)
 	const group, dm = "g:Z3JvdXA=", "u:+15551234567"
-	if over, _, _ := b.over(group); over {
+	if over, _ := b.over(group); over {
 		t.Fatal("over before spending")
 	}
 	b.add(group, 0.6)
 	b.add(group, -5) // ignored
-	if over, _, _ := b.over(group); over {
+	if over, _ := b.over(group); over {
 		t.Fatal("over at 0.60")
 	}
 	b.add(group, 0.4)
-	over, tell, left := b.over(group)
-	if !over || !tell || left != 90*time.Minute {
-		t.Fatalf("at 1.00: over %v, tell %v, left %v", over, tell, left)
+	over, left := b.over(group)
+	if !over || !b.markTold(group) || left != 90*time.Minute {
+		t.Fatalf("at 1.00: over %v, left %v", over, left)
 	}
-	if over, tell, _ := b.over(group); !over || tell {
-		t.Fatalf("told twice: over %v, tell %v", over, tell)
+	if over, _ := b.over(group); !over || b.markTold(group) {
+		t.Fatalf("told twice: over %v", over)
 	}
-	if over, _, _ := b.over(dm); over || len(b.chats) != 1 {
+	if over, _ := b.over(dm); over || len(b.chats) != 1 {
 		t.Fatalf("another chat is over, or kept: %d chats", len(b.chats))
 	}
 	data, err := os.ReadFile(filepath.Join(dir, "budget.json"))
@@ -62,12 +62,12 @@ func TestBudget(t *testing.T) {
 	}
 	// After a restart, still over and already told.
 	b = newBudget(dir, 1, clock)
-	if over, tell, _ := b.over(group); !over || tell {
-		t.Fatalf("after a restart: over %v, tell %v", over, tell)
+	if over, _ := b.over(group); !over || b.markTold(group) {
+		t.Fatalf("after a restart: over %v, or told again", over)
 	}
 	// After midnight, a new day.
 	now = now.Add(2 * time.Hour)
-	if over, _, _ := b.over(group); over {
+	if over, _ := b.over(group); over {
 		t.Fatal("over the next day")
 	}
 	if data, _ := os.ReadFile(filepath.Join(dir, "budget.json")); !strings.Contains(string(data), "\"day\": \"2026-11-05\",\n  \"chats\": {}") {

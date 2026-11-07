@@ -50,6 +50,9 @@ var (
 	ErrImages = errors.New("images rejected")
 	ErrFiles  = errors.New("files rejected")
 	ErrTools  = errors.New("tools rejected")
+	// ErrTooManyRounds means the model was still calling tools when its
+	// rounds ran out, with nothing to say yet.
+	ErrTooManyRounds = errors.New("the model was still calling tools when its rounds ran out")
 )
 
 // Caps is what the model can take: images, audio, PDF files and tools.
@@ -288,9 +291,11 @@ func (c *Client) Ask(ctx context.Context, r Request) (Reply, error) {
 		if len(a.calls) == 0 || round == maxRounds {
 			if len(a.calls) > 0 {
 				logx.Warnf("model still calling tools after %d requests; stopping", round)
-				a.text = cmp.Or(a.text, "Sorry, I couldn't finish that.")
 			}
 			if reply.Text = a.text; reply.Text == "" && len(reply.Pictures) == 0 {
+				if len(a.calls) > 0 {
+					return reply, ErrTooManyRounds
+				}
 				return reply, errors.New("empty response") // not the body: it can hold the conversation
 			}
 			cached := 100 * min(total.cached, total.input) / max(total.input, 1)

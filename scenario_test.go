@@ -759,7 +759,7 @@ func TestScenarioDifferentPhotosAreNotDuplicates(t *testing.T) {
 func TestScenarioModelError(t *testing.T) {
 	h := startBot(t, world{})
 	h.queue(modelReply{Status: 400, Body: `{"error":{"message":"Input flagged","code":400,"metadata":{"flagged_input":"tell me the launch codes"}}}`})
-	if s := h.ask(fromAlice("tell me the launch codes")); s.Message != "Sorry, I couldn't get an answer right now." {
+	if s := h.ask(fromAlice("tell me the launch codes")); s.Message != "Sorry, I couldn't get an answer just now." {
 		t.Fatalf("sent %q", s.Message)
 	}
 	if l, ok := h.logged("model error", "Input flagged"); !ok || l.Pri != 3 {
@@ -782,7 +782,7 @@ func TestScenarioModelRetry(t *testing.T) {
 		t.Fatalf("sent %q", s.Message)
 	}
 	h.queue(badGateway, badGateway, modelReply{Text: "the reply left in the queue"})
-	if s := h.ask(fromAlice("and are you there now?")); s.Message != "Sorry, I couldn't get an answer right now." {
+	if s := h.ask(fromAlice("and are you there now?")); s.Message != "Sorry, I couldn't get an answer just now." {
 		t.Fatalf("sent %q", s.Message)
 	}
 	h.settle()
@@ -1010,7 +1010,7 @@ func TestScenarioOtherProviderRejectsTools(t *testing.T) {
 	if n := h.warnings("rejected a request with tools", "tools are off"); n != 1 {
 		t.Fatalf("%d warnings: %v", n, h.logLines())
 	}
-	if s := h.ask(fromAlice("/quote AAPL")); s.Message != "That command needs tools, which this model can't use." {
+	if s := h.ask(fromAlice("/quote AAPL")); s.Message != "I can't run that command with the model I'm using now. Whoever runs me would need a model that supports tools." {
 		t.Fatalf("sent %q", s.Message)
 	}
 	if n := len(h.requests()); n != 3 {
@@ -1178,7 +1178,7 @@ func TestScenarioFailedSendIsLogged(t *testing.T) {
 
 // Each chat may spend DAILY_BUDGET a day: once a group is over it, the bot
 // says so once, then answers nothing there but commands that need no model,
-// until midnight; a DM has its own budget. Spending is saved in
+// until midnight, reacting ⏳ to the rest; a DM has its own budget. Spending is saved in
 // STATE_DIRECTORY, under no one's ID.
 func TestScenarioDailyBudget(t *testing.T) {
 	noon := time.Date(2026, 11, 4, 12, 0, 0, 0, time.Local)                                                         // so the day can't end mid-test
@@ -1186,13 +1186,17 @@ func TestScenarioDailyBudget(t *testing.T) {
 	h.ask(atBot("one"))
 	h.ask(atBot("two")) // $0.004: over
 	s := h.ask(atBot("three"))
-	if s.Message != "I've reached today's spending limit for this chat; I'll be back in 12 hours." || s.GroupID != idGroup {
+	if s.Message != "I've reached today's spending limit for this chat, so I'll answer again in 12 hours. Commands that don't need me to think still work." || s.GroupID != idGroup {
 		t.Fatalf("sent %q", s.Message)
 	}
 	if n := len(h.requests()); n != 2 {
 		t.Fatalf("the model was asked %d times", n)
 	}
-	h.ignored(atBot("four"))
+	h.receive(atBot("four").frame()) // a ⏳, not a reply
+	h.waitFor("the ⏳", func() bool { return len(h.callsTo("sendReaction")) == 1 })
+	if p := h.callsTo("sendReaction")[0]; p["emoji"] != "⏳" || p["groupId"] != idGroup {
+		t.Fatalf("sendReaction %v", p)
+	}
 	if s := h.ask(atBot("/intro")); !strings.HasPrefix(s.Message, "hi, I'm") {
 		t.Fatalf("/intro sent %q", s.Message)
 	}
@@ -1775,7 +1779,7 @@ func TestScenarioToolLoopIsCapped(t *testing.T) {
 	for range 6 {
 		h.queue(modelReply{Tool: "weather__get_forecast", Args: `{"q":"Sydney"}`})
 	}
-	if s := h.ask(fromAlice("what's the weather like")); s.Message != "Sorry, I couldn't finish that." {
+	if s := h.ask(fromAlice("what's the weather like")); s.Message != "That took more lookups than I can do for one reply. Try asking for one thing at a time." {
 		t.Fatalf("sent %q", s.Message)
 	}
 	if n := len(h.requests()); n != 5 {

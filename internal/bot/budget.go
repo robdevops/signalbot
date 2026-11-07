@@ -79,24 +79,33 @@ func (b *budget) of(key string, create bool) *spend {
 	return b.chats[k]
 }
 
-// over reports whether the chat has spent its limit today, and if so,
-// whether it is the first time it is asked today (tell), and the time
-// left until midnight.
-func (b *budget) over(key string) (over, tell bool, left time.Duration) {
+// over reports whether the chat has spent its limit today, and if so, the
+// time left until midnight.
+func (b *budget) over(key string) (over bool, left time.Duration) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	b.roll()
-	s := b.of(key, false)
-	if s == nil || s.Spent < b.limit {
-		return false, false, 0
-	}
-	if tell = !s.Told; tell {
-		s.Told = true
-		b.save()
+	if s := b.of(key, false); s == nil || s.Spent < b.limit {
+		return false, 0
 	}
 	now := b.now().In(time.Local)
 	y, m, d := now.Date()
-	return true, tell, time.Date(y, m, d+1, 0, 0, 0, 0, time.Local).Sub(now)
+	return true, time.Date(y, m, d+1, 0, 0, 0, 0, time.Local).Sub(now)
+}
+
+// markTold records that the chat was told it is over its limit, and
+// reports whether this was the first time today.
+func (b *budget) markTold(key string) (first bool) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.roll()
+	s := b.of(key, true)
+	if s.Told {
+		return false
+	}
+	s.Told = true
+	b.save()
+	return true
 }
 
 // add records cost against the chat's spend today.
@@ -126,7 +135,8 @@ func limitNotice(left time.Duration) string {
 	if left > 59*time.Minute {
 		when = plural(int(math.Ceil(left.Hours())), "hour")
 	}
-	return "I've reached today's spending limit for this chat; I'll be back in " + when + "."
+	return "I've reached today's spending limit for this chat, so I'll answer again in " + when + ". " +
+		"Commands that don't need me to think still work."
 }
 
 func plural(n int, unit string) string {
