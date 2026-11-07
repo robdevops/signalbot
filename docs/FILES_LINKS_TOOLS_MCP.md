@@ -31,7 +31,7 @@ The default of 2 is meant to cover a short aside ("thanks!", "what's AMD's ticke
 
 ## MCP connectors
 
-The model can call tools from [MCP](https://modelcontextprotocol.io) servers, remote (`url`) or local (`command`). Anyone who can address the bot can make it call them, so choose what each server offers: `allowed_tools` offers only the tools listed, `blocked_tools` offers all but those, and without either every tool the server has is offered. Put the servers in a file, for example `/etc/signalbot-mcp.json`:
+The model can call tools from [MCP](https://modelcontextprotocol.io) servers, remote (`url`) or local (`command`). Anyone who can address the bot can make it call them, so choose what each server offers: `allowed_tools` offers only the tools listed, `blocked_tools` offers all but those, and without either every tool the server has is offered. Put the servers in a file, for example `/etc/signalbot-mcp.json`. [`examples/signalbot-mcp.json`](../examples/signalbot-mcp.json) is this one, to start from: `sudo install -m 600 examples/signalbot-mcp.json /etc/signalbot-mcp.json`, then `sudoedit /etc/signalbot-mcp.json`.
 
 ```json
 {"mcpServers": {

@@ -650,3 +650,24 @@ func TestCallFailures(t *testing.T) {
 		t.Errorf("unreachable: %q", out)
 	}
 }
+
+// examples/signalbot-mcp.json is the docs' example, as written there, and
+// it loads: the disabled server is dropped, the other kept.
+func TestExampleFile(t *testing.T) {
+	example, err := os.ReadFile("../../../examples/signalbot-mcp.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	doc, err := os.ReadFile("../../../docs/FILES_LINKS_TOOLS_MCP.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(doc), "```json\n"+string(example)+"```\n") {
+		t.Error("examples/signalbot-mcp.json differs from the example in docs/FILES_LINKS_TOOLS_MCP.md")
+	}
+	t.Setenv("WEATHER_TOKEN", "x")
+	s, err := load("../../../examples/signalbot-mcp.json")
+	if err != nil || len(s) != 1 || s["weather"].Headers["Authorization"] != "Bearer x" || s["weather"].ChatCommands["forecast"].Example == "" {
+		t.Fatalf("loaded %+v, %v", s, err)
+	}
+}
