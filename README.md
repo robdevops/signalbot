@@ -40,7 +40,7 @@ Signalbot requires a running [signal-cli](https://github.com/AsamK/signal-cli) d
 [`examples/signal-cli.service`](examples/signal-cli.service) is an example unit that does this. Edit `User=` and the path in `ExecStart`, then copy it to `/etc/systemd/system/`, and run `sudo systemctl daemon-reload` and `sudo systemctl enable --now signal-cli`. signal-cli's data directory holds your account keys: keep it at mode `0700` (`chmod 700 ~/.local/share/signal-cli`), since its own mode is what keeps the bot and other users out of it, and don't run the bot as signal-cli's user. The bot's unit also hides `/home` (`ProtectHome=yes`); if signal-cli keeps its data elsewhere, such as `/var/lib/signal-cli`, add that path to `InaccessiblePaths=` in `signalbot.service`.
 
 > [!WARNING]
-> **On TCP, anyone with a login or a process on the host can connect to `127.0.0.1:7583` and read or send messages as your Signal account.** That is fine on a host only you use. On a shared host, or to limit the account to the bot alone, use signal-cli's Unix socket instead: see [Unix socket](docs/SOCKET.md).
+> **On TCP, anyone with a login or a process on the host can connect to `127.0.0.1:7583` and read or send messages as your bot's Signal account.** That is fine on a host only you use. On a shared host, or to limit the account to the bot alone, use signal-cli's Unix socket instead: see [Unix socket](docs/SOCKET.md).
 
 ### Configuration
 
