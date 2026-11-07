@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/robdevops/signalbot/internal/feature"
+	"github.com/robdevops/signalbot/internal/kit/state"
 )
 
 // Host records what a feature registers and lets a test drive it. Set its
@@ -22,6 +23,7 @@ type Host struct {
 	Shared   []feature.Group                                // what Groups returns
 	TimerErr error                                          // if set, At fails with it, as the core does at its cap
 	Redactor func(string) string                            // what Redact does; nil leaves text as it is
+	StoreErr error                                          // if set, Store fails with it, as the core does with no usable state directory
 
 	mu        sync.Mutex
 	read      []string
@@ -31,6 +33,7 @@ type Host struct {
 	more      []string
 	timers    []*Timer
 	delivered []feature.Message
+	stores    []string
 	life      context.Context // what Go passes; ended by Stop
 	end       context.CancelFunc
 	running   sync.WaitGroup
@@ -111,6 +114,22 @@ func (h *Host) Env(key, def string) string {
 }
 
 func (h *Host) Info() feature.Info { return h.Bot }
+
+// Store opens a saved state as the core does, in the directory
+// Settings["STATE_DIRECTORY"] names (the working directory if unset), each
+// name once, failing with StoreErr if set.
+func (h *Host) Store(name string) (feature.Store, error) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	switch {
+	case h.StoreErr != nil:
+		return nil, h.StoreErr
+	case slices.Contains(h.stores, name):
+		return nil, errors.New("a saved state called " + name + " is already open")
+	}
+	h.stores = append(h.stores, name)
+	return state.Open(state.Dir(h.Settings["STATE_DIRECTORY"]), name), nil
+}
 
 func (h *Host) Media(_ context.Context, m feature.Message, i int) ([]byte, error) {
 	if h.Fetch == nil {

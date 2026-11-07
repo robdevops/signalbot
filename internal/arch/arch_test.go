@@ -140,3 +140,33 @@ func TestSettingsAreDocumented(t *testing.T) {
 		}
 	}
 }
+
+// fileWrites are the calls that change files.
+var fileWrites = regexp.MustCompile(`\bos\.(WriteFile|Create|CreateTemp|OpenFile|Mkdir|MkdirAll|MkdirTemp|Rename|Remove|RemoveAll|Chmod|Chown|Symlink|Link|Truncate)\(|\bfsx\.|kit/state"`)
+
+// A feature saves only through Host.Store, so every file the bot writes is
+// a named document in the state directory, listed in PRIVACY.md.
+func TestFeaturesSaveOnlyThroughTheStore(t *testing.T) {
+	for _, p := range goFiles(t) {
+		if !under(p, "internal/features") || strings.HasSuffix(p, "_test.go") {
+			continue
+		}
+		data, err := os.ReadFile(root + "/" + p)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for i, line := range strings.Split(string(data), "\n") {
+			if w := fileWrites.FindString(line); w != "" {
+				t.Errorf("%s:%d writes files itself (%s): use Host.Store", p, i+1, w)
+			}
+		}
+	}
+	for _, line := range []string{`os.WriteFile(p, b, 0o600)`, `fsx.WriteAtomic(p, b)`, `"github.com/robdevops/signalbot/internal/kit/state"`, `os.Remove(name)`} {
+		if fileWrites.FindString(line) == "" {
+			t.Errorf("not caught: %s", line)
+		}
+	}
+	if fileWrites.FindString(`data, err := os.ReadFile(path)`) != "" {
+		t.Error("reading a file is allowed")
+	}
+}

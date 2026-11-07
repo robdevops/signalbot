@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
 	"regexp"
 	"slices"
 	"strings"
@@ -463,5 +465,48 @@ func TestIntroLines(t *testing.T) {
 		if got, gw := h.b.Info().Intro, strings.Replace(strings.Replace(want, "\n\nType two.", "", 1), "Type two.\n\n", "", 1); got != gw {
 			t.Errorf("INTRO %q in a group gave %q, want %q", intro, got, gw)
 		}
+	}
+}
+
+// A feature's saved state is <name>.json in the state directory, checked the
+// first time one is opened; a name is a safe file name, opened once, and
+// "budget" is the core's.
+func TestStore(t *testing.T) {
+	dir := t.TempDir()
+	var opened feature.Store
+	var errs []error
+	start(t, options{cfg: func(c *config.Config) { c.StateDir = dir + ":/elsewhere" }, features: func(b *Bot) {
+		s, err := b.Store("notes")
+		opened = s
+		for _, name := range []string{"notes", "budget", "../x", "Notes", "", strings.Repeat("a", 33)} {
+			_, err := b.Store(name)
+			errs = append(errs, err)
+		}
+		errs = append(errs, err)
+	}})
+	if errs[len(errs)-1] != nil || opened == nil {
+		t.Fatalf("open: %v", errs[len(errs)-1])
+	}
+	for i, err := range errs[:len(errs)-1] {
+		if err == nil {
+			t.Errorf("name %d opened", i)
+		}
+	}
+	if err := opened.Save(map[string]int{"a": 1}); err != nil {
+		t.Fatal(err)
+	}
+	var got map[string]int
+	if found, err := opened.Load(&got); !found || err != nil || got["a"] != 1 {
+		t.Fatalf("loaded %v, %v, %v", got, found, err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "notes.json")); err != nil {
+		t.Fatal(err)
+	}
+	// A state directory the bot can't use fails the first Store, saying how
+	// to fix it.
+	var err error
+	start(t, options{cfg: func(c *config.Config) { c.StateDir = filepath.Join(dir, "missing") }, features: func(b *Bot) { _, err = b.Store("notes") }})
+	if err == nil || !strings.Contains(err.Error(), "StateDirectory=signalbot") {
+		t.Fatalf("missing directory: %v", err)
 	}
 }

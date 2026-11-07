@@ -64,7 +64,7 @@ func (w *world) dm(text string) string {
 // saved is the schedules file.
 func (w *world) saved() []entry {
 	w.t.Helper()
-	data, err := os.ReadFile(filepath.Join(w.dir, fileName))
+	data, err := os.ReadFile(filepath.Join(w.dir, storeName+".json"))
 	if err != nil {
 		w.t.Fatal(err)
 	}
@@ -78,7 +78,7 @@ func (w *world) saved() []entry {
 func (w *world) write(es ...entry) {
 	w.t.Helper()
 	data, _ := json.Marshal(map[string]any{"schedules": es})
-	if err := os.WriteFile(filepath.Join(w.dir, fileName), data, 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(w.dir, storeName+".json"), data, 0o600); err != nil {
 		w.t.Fatal(err)
 	}
 }
@@ -443,8 +443,8 @@ func TestLoadAtTheCap(t *testing.T) {
 // overwritten.
 func TestUnreadableFile(t *testing.T) {
 	w := newWorld(t)
-	os.WriteFile(filepath.Join(w.dir, fileName), []byte("{not json"), 0o600)
-	if err := w.register(); err == nil || !strings.Contains(err.Error(), "schedules in "+filepath.Join(w.dir, fileName)+" can't be read") {
+	os.WriteFile(filepath.Join(w.dir, storeName+".json"), []byte("{not json"), 0o600)
+	if err := w.register(); err == nil || !strings.Contains(err.Error(), "schedules: "+filepath.Join(w.dir, storeName+".json")+" can't be read") {
 		t.Fatalf("got %v", err)
 	}
 }
@@ -460,67 +460,24 @@ func TestWorkingDirectory(t *testing.T) {
 	if len(w.saved()) != 1 {
 		t.Fatal("not saved")
 	}
-	os.Remove(filepath.Join(w.dir, fileName))
-	os.Mkdir(filepath.Join(w.dir, fileName), 0o700) // so the rename fails
+	os.Remove(filepath.Join(w.dir, storeName+".json"))
+	os.Mkdir(filepath.Join(w.dir, storeName+".json"), 0o700) // so the rename fails
 	if got := w.dm(`/schedule "hi" 2030-02-01T09:00`); got != "Sorry, I couldn't save that schedule: I can't write to my storage. Please let my owner know." || len(w.h.Timers()) != 1 {
 		t.Fatalf("got %q, %d timers", got, len(w.h.Timers()))
 	}
 }
 
-// In Docker, a state directory the bot can't use stops it, saying how to
-// fix the host directory's owner.
-func TestDockerDirectory(t *testing.T) {
-	w := newWorld(t)
-	old := dockerDir
-	t.Cleanup(func() { dockerDir = old })
-	dockerDir = filepath.Join(w.dir, "data")
-	w.h.Settings["STATE_DIRECTORY"] = dockerDir
-	err := w.register()
-	if err == nil || !strings.Contains(err.Error(), "run: chown 65532 /var/lib/private/signalbot") {
-		t.Fatalf("got %v", err)
-	}
-	os.Mkdir(dockerDir, 0o700)
-	if err := w.register(); err != nil {
-		t.Fatal(err)
-	}
-	if entries, _ := os.ReadDir(dockerDir); len(entries) != 0 {
-		t.Fatalf("left %v", entries)
-	}
-}
-
-// Anywhere else, a state directory the bot can't list and write stops it
-// at startup, saying to give the systemd unit a StateDirectory, and adds
-// nothing. (Tests may run as root, which file modes don't stop, so the
-// directories here are missing rather than read-only.)
+// A state directory the core can't use stops the bot at startup, and
+// nothing is registered. (The core's message, saying how to fix it, is
+// tested in kit/state.)
 func TestStateDirectory(t *testing.T) {
-	const fix = "add StateDirectory=signalbot to the unit's [Service] section"
 	w := newWorld(t)
-	missing := filepath.Join(w.dir, "missing")
-	w.h.Settings["STATE_DIRECTORY"] = missing + ":" + w.dir
-	err := w.register()
-	if err == nil || !strings.Contains(err.Error(), "its state directory "+missing+" (") || !strings.Contains(err.Error(), fix) {
+	w.h.StoreErr = errors.New("the bot can't list and write its state directory /x")
+	if err := w.register(); err == nil || err.Error() != "/schedule: the bot can't list and write its state directory /x" {
 		t.Fatalf("got %v", err)
 	}
 	if len(w.h.IntroLines()) != 0 || len(w.h.ToolGroups()) != 0 || w.dm(`/schedule list`) != "" {
 		t.Fatal("registered anyway")
-	}
-
-	// Run by hand, the working directory.
-	gone := filepath.Join(w.dir, "gone")
-	os.Mkdir(gone, 0o700)
-	t.Chdir(gone)
-	os.Remove(gone)
-	delete(w.h.Settings, "STATE_DIRECTORY")
-	err = w.register()
-	if err == nil || !strings.Contains(err.Error(), "the working directory, as STATE_DIRECTORY isn't set") || !strings.Contains(err.Error(), fix) {
-		t.Fatalf("got %v", err)
-	}
-
-	os.Mkdir(missing, 0o700)
-	w.h.Settings["STATE_DIRECTORY"] = missing
-	w.start()
-	if entries, _ := os.ReadDir(missing); len(entries) != 0 {
-		t.Fatalf("left %v", entries)
 	}
 }
 

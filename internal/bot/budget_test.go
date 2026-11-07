@@ -57,7 +57,7 @@ func TestBudget(t *testing.T) {
 		t.Fatalf("another chat is over, or kept: %d chats", len(b.chats))
 	}
 	data, err := os.ReadFile(filepath.Join(dir, "budget.json"))
-	if err != nil || strings.Contains(string(data), "Z3JvdXA") || strings.Contains(string(data), "15551234567") || !strings.Contains(string(data), `"day":"2026-11-04"`) {
+	if err != nil || strings.Contains(string(data), "Z3JvdXA") || strings.Contains(string(data), "15551234567") || !strings.Contains(string(data), `"day": "2026-11-04"`) {
 		t.Fatalf("budget.json %s, %v", data, err)
 	}
 	// After a restart, still over and already told.
@@ -70,7 +70,7 @@ func TestBudget(t *testing.T) {
 	if over, _, _ := b.over(group); over {
 		t.Fatal("over the next day")
 	}
-	if data, _ := os.ReadFile(filepath.Join(dir, "budget.json")); !strings.Contains(string(data), `"day":"2026-11-05","chats":{}`) {
+	if data, _ := os.ReadFile(filepath.Join(dir, "budget.json")); !strings.Contains(string(data), "\"day\": \"2026-11-05\",\n  \"chats\": {}") {
 		t.Fatalf("yesterday's spending stayed on disk: %s", data)
 	}
 	// A file from another day, or broken, starts at 0.

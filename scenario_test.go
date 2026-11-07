@@ -1181,7 +1181,7 @@ func TestScenarioDailyBudget(t *testing.T) {
 		t.Fatalf("%d warnings: %v", n, h.logLines())
 	}
 	data, err := os.ReadFile(filepath.Join(h.w.StateDir, "budget.json"))
-	if err != nil || strings.Contains(string(data), idGroup) || strings.Contains(string(data), idAlice) || !strings.Contains(string(data), `"told":true`) {
+	if err != nil || strings.Contains(string(data), idGroup) || strings.Contains(string(data), idAlice) || !strings.Contains(string(data), `"told": true`) {
 		t.Fatalf("budget.json %s, %v", data, err)
 	}
 }

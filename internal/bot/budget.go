@@ -3,18 +3,13 @@ package bot
 import (
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
-	"errors"
 	"fmt"
-	"io/fs"
 	"math"
-	"os"
-	"path/filepath"
 	"sync"
 	"time"
 
-	"github.com/robdevops/signalbot/internal/kit/fsx"
 	"github.com/robdevops/signalbot/internal/kit/logx"
+	"github.com/robdevops/signalbot/internal/kit/state"
 )
 
 // budget caps what each chat, a group or a DM, may spend on the model a
@@ -23,7 +18,7 @@ import (
 // doesn't reset it and the file holds no one's ID.
 type budget struct {
 	mu    sync.Mutex
-	path  string
+	doc   *state.Doc
 	limit float64
 	now   func() time.Time
 	day   string            // today, "2006-01-02", local time
@@ -40,20 +35,20 @@ type budgetFile struct {
 	Chats map[string]*spend `json:"chats"`
 }
 
+// budgetName is the budget's saved state, budget.json, which no feature
+// may open.
+const budgetName = "budget"
+
 // newBudget loads today's spend from dir's budget.json, if it has one for
 // today; a file it can't read starts the day afresh, with a warning.
 func newBudget(dir string, limit float64, now func() time.Time) *budget {
-	b := &budget{path: filepath.Join(dir, "budget.json"), limit: limit, now: now, chats: map[string]*spend{}}
+	b := &budget{doc: state.Open(state.Dir(dir), budgetName), limit: limit, now: now, chats: map[string]*spend{}}
 	b.day = b.today()
-	data, err := os.ReadFile(b.path)
 	var f budgetFile
-	switch {
-	case errors.Is(err, fs.ErrNotExist):
+	switch found, err := b.doc.Load(&f); {
 	case err != nil:
-		logx.Warnf("could not read %s, so today's spending starts at 0: %v", b.path, err)
-	case json.Unmarshal(data, &f) != nil:
-		logx.Warnf("%s is not valid JSON, so today's spending starts at 0", b.path)
-	case f.Day == b.day && f.Chats != nil:
+		logx.Warnf("%v, so today's spending starts at 0", err)
+	case found && f.Day == b.day && f.Chats != nil:
 		b.chats = f.Chats
 	}
 	return b
@@ -118,11 +113,7 @@ func (b *budget) add(key string, cost float64) {
 
 // save writes today's spending. b.mu is held.
 func (b *budget) save() {
-	data, err := json.Marshal(budgetFile{Day: b.day, Chats: b.chats})
-	if err == nil {
-		err = fsx.WriteAtomic(b.path, append(data, '\n'))
-	}
-	if err != nil {
+	if err := b.doc.Save(budgetFile{Day: b.day, Chats: b.chats}); err != nil {
 		logx.Warnf("could not save today's spending: %v", err)
 	}
 }

@@ -95,6 +95,7 @@ type Bot struct {
 	turns    []func(context.Context, feature.Message) feature.Additions
 	groups   []feature.ToolGroup
 	more     []introLine // features' lines for the introduction
+	stores   []string    // the names of the saved states features opened
 }
 
 // New makes the bot on net and reads what the model can do, so features

@@ -141,7 +141,7 @@ Add the bot's account to a group and @mention it, reply to one of its messages, 
 | `INTRO` | built-in sentence | Overrides the self-introduction; `{name}`, `{model}` (without any OpenRouter `provider/` prefix) and `{tools}` (the names of the tools, or `none`) are substituted |
 | `MAX_CONCURRENCY` | `32` | Conversations in flight at once; messages beyond this are dropped |
 | `MCP_CONFIG` | empty | Path of an MCP servers file; see [MCP tools](docs/MCP.md) |
-| `STATE_DIRECTORY` | working directory | Where `/schedule` saves `schedules.json`; the bot won't start if it can't list and write it. Set by systemd's `StateDirectory=signalbot` (`/var/lib/private/signalbot`) and by the Docker image (`/data`, which must be writable by user 65532) |
+| `STATE_DIRECTORY` | working directory | Where features save their state, one file each, such as `/schedule`'s `schedules.json` (and the core its `budget.json`); the bot won't start if a feature that saves can't list and write it. Set by systemd's `StateDirectory=signalbot` (`/var/lib/private/signalbot`) and by the Docker image (`/data`, which must be writable by user 65532) |
 | `TOOL_LINGER_ROUNDS` | `2` | Replies a keyword-gated tool group (charts, an MCP server with `keywords`) stays offered after the last one that matched its keywords or used its tools; `0` offers it only on a matching message. Any use or match starts the count again, so a run of follow-ups keeps it. Capped at `HISTORY_MAX`. See [How tools are offered](docs/TOOLS.md) |
 | `TZ` | `UTC` in Docker, the host's under systemd | Time zone for `/schedule` times without an offset and for `DARKMODE` hours, e.g. `Australia/Sydney` |
 

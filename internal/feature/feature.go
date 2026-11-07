@@ -142,6 +142,18 @@ type Info struct {
 	IntroDM    string   // the same in a DM, with IntroLine's DM-only lines too
 }
 
+// Store is a feature's saved state: one JSON document, written whole and
+// atomically to <name>.json in the state directory, so a crash never leaves
+// half of it.
+type Store interface {
+	// Load reads the saved document into v; found is false, with no error,
+	// when nothing is saved yet. A file that can't be read is an error.
+	Load(v any) (found bool, err error)
+	// Save replaces the document with v. Over 4 MB it fails and nothing is
+	// written.
+	Save(v any) error
+}
+
 // Group is a group chat.
 type Group struct {
 	ID, Name string
@@ -170,6 +182,11 @@ type Host interface {
 	// Env reads a feature's own setting. The docs test finds each name
 	// passed to it.
 	Env(key, def string) string
+	// Store opens the feature's saved state, called name (lowercase
+	// letters, digits, - and _, up to 32), while it registers. It fails,
+	// stopping the bot, if the state directory can't be listed and written,
+	// or another feature took the name.
+	Store(name string) (Store, error)
 	// Info says what the bot is.
 	Info() Info
 	// Media fetches the bytes of msg.Media[i].

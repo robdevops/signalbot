@@ -3,11 +3,16 @@ package bot
 import (
 	"cmp"
 	"context"
+	"fmt"
+	"regexp"
+	"slices"
 	"time"
 
 	"github.com/robdevops/signalbot/internal/chats"
 	"github.com/robdevops/signalbot/internal/config"
 	"github.com/robdevops/signalbot/internal/feature"
+	"github.com/robdevops/signalbot/internal/kit/state"
+	"github.com/robdevops/signalbot/internal/kit/txt"
 )
 
 // The ports. Features call them while they register, before Run.
@@ -43,6 +48,28 @@ func (b *Bot) At(name string, t time.Time, fn func(context.Context, time.Time)) 
 // The services.
 
 func (b *Bot) Env(key, def string) string { return config.Env(key, def) }
+
+// storeName is what a saved state may be called: it names a file.
+var storeName = regexp.MustCompile(`^[a-z0-9_-]{1,32}$`)
+
+// Store opens a feature's saved state in the state directory, checked the
+// first time one is opened, so a bot whose features save nothing needs
+// none. Each name may be opened once, and budget is the core's.
+func (b *Bot) Store(name string) (feature.Store, error) {
+	if !storeName.MatchString(name) {
+		return nil, fmt.Errorf("a saved state can't be called %q: use lowercase letters, digits, - and _, up to 32", txt.Clamp(name, 40))
+	}
+	if name == budgetName || slices.Contains(b.stores, name) {
+		return nil, fmt.Errorf("a saved state called %q is already open", name)
+	}
+	if len(b.stores) == 0 {
+		if err := state.Check(state.Dir(b.cfg.StateDir)); err != nil {
+			return nil, err
+		}
+	}
+	b.stores = append(b.stores, name)
+	return state.Open(state.Dir(b.cfg.StateDir), name), nil
+}
 
 func (b *Bot) Info() feature.Info {
 	info := feature.Info{Name: b.net.BotName(), Version: b.cfg.Version, Model: b.cfg.Model,
