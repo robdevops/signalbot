@@ -74,6 +74,7 @@ type Client struct {
 	closed       atomic.Bool // Run has returned
 	names        names
 	recent       recent       // attachments of recent messages, for replies to them
+	members      members      // each group's members, to tell who joined and left
 	test         *config.Test // nil in production
 }
 
@@ -99,6 +100,7 @@ func New(test *config.Test) (*Client, error) {
 func newClient(addr string, allowed map[string]bool, test *config.Test) *Client {
 	c := &Client{addr: addr, allowed: allowed, typingEvery: 10 * time.Second, writeTimeout: writeTimeout, pending: map[string]chan *rpcMsg{},
 		known: make(chan struct{}), test: test}
+	c.members.c = c
 	c.names.byID, c.names.numbers, c.names.minRefresh = map[string]rankedName{}, map[string]string{}, 15*time.Second
 	if test != nil && test.ReloadGap > 0 {
 		c.names.minRefresh = test.ReloadGap
@@ -178,6 +180,9 @@ func (c *Client) serve(ctx context.Context, conn net.Conn, handle func(bot.Recei
 		c.knownOnce.Do(func() { close(c.known) })
 		logx.Noticef("bot account %s", id)
 		c.refreshSoon() // names, on every (re)connect
+		mctx, mcancel := context.WithTimeout(ctx, 15*time.Second)
+		defer mcancel()
+		c.members.start(mctx, handle) // so the first group update can be told apart
 	}()
 
 	err := readFrames(conn, maxLine, func(line []byte) { c.dispatch(line, handle) }, c.skipped)

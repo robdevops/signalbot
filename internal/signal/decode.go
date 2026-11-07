@@ -33,7 +33,18 @@ type dataMessage struct {
 	GroupInfo        *groupInfo   `json:"groupInfo"`
 	Attachments      []attachment `json:"attachments"`
 	Sticker          *sticker     `json:"sticker"`
+	Reaction         *reaction    `json:"reaction"`
 	ExpiresInSeconds int          `json:"expiresInSeconds"` // the disappearing-messages timer, 0 if off
+}
+
+// reaction is an emoji put on a message, or taken back.
+type reaction struct {
+	Emoji               string `json:"emoji"`
+	TargetAuthor        string `json:"targetAuthor"`
+	TargetAuthorNumber  string `json:"targetAuthorNumber"`
+	TargetAuthorUUID    string `json:"targetAuthorUuid"`
+	TargetSentTimestamp int64  `json:"targetSentTimestamp"`
+	IsRemove            bool   `json:"isRemove"`
 }
 
 // mention is an @mention; Start and Length count UTF-16 code units.
@@ -152,7 +163,11 @@ func (c *Client) event(env *envelope) (bot.Received, bool) {
 	chat := env.chat()
 	if g := d.GroupInfo; g != nil && g.Type == "UPDATE" {
 		c.refreshSoon() // so new members are known and departed ones forgotten
-		return bot.Received{Chat: chat, GroupChange: true}, true
+		c.members.changed(chat.GroupID, c.person(env.SourceUUID, env.Source, env.SourceNumber, env.SourceName))
+		return bot.Received{Message: feature.Message{Chat: chat}, GroupChange: true}, true
+	}
+	if r := d.Reaction; r != nil {
+		return c.reacted(env, chat, r)
 	}
 	if chat.GroupID != "" || isAllowed(env, c.allowed) { // so a reply can fetch them
 		c.recent.add(chat.Key(), env.sender(), env.Timestamp, d.Attachments)
@@ -171,6 +186,26 @@ func (c *Client) event(env *envelope) (bot.Received, bool) {
 		return bot.Received{Message: c.message(env, self)}, true
 	}
 	return bot.Received{}, false
+}
+
+// reacted is a reaction as the core gets it: never the bot's own, nor one
+// in a DM from someone not allowed, nor before the bot's ID is known.
+func (c *Client) reacted(env *envelope, chat feature.Chat, r *reaction) (bot.Received, bool) {
+	self := c.self()
+	if self == "" || fromSelf(env, self) || chat.GroupID == "" && !isAllowed(env, c.allowed) || r.Emoji == "" {
+		return bot.Received{}, false
+	}
+	e := feature.Event{Chat: chat, By: c.person(env.SourceUUID, env.Source, env.SourceNumber, env.SourceName), Reaction: &feature.Reaction{
+		Emoji: txt.Clamp(r.Emoji, 16), Removed: r.IsRemove, Author: cmp.Or(r.TargetAuthorUUID, r.TargetAuthor, r.TargetAuthorNumber),
+		Bot: is(self, r.TargetAuthorUUID, r.TargetAuthor, r.TargetAuthorNumber), Sent: r.TargetSentTimestamp,
+	}}
+	return bot.Received{Message: feature.Message{Chat: chat}, Event: &e}, true
+}
+
+// person is someone by their IDs, an ACI first, named as the bot knows
+// them, else as their envelope did.
+func (c *Client) person(uuid, source, number, sent string) feature.Person {
+	return feature.Person{ID: cmp.Or(uuid, source, number), Name: txt.SafeName(cmp.Or(c.name(uuid, source, number), sent))}
 }
 
 // judge decides whether env is addressed, or another group message, for

@@ -93,11 +93,14 @@ The core's lifecycle has three stages. Each port is one stage; nothing else is a
 | A message arrives | `OnMessage(func(ctx, Message) Action)` | carry on, answer with text without the model, choose a tool, or keep text as context |
 | The model is asked | `OnTurn(func(ctx, Message) Additions)`, plus `Tools(ToolGroup)` | a note on the message (with its own version for history), and images |
 | Time arrives | `At` ([Timers](#timers)) | nothing: the timer may deliver a message |
+| Something besides a message happens | `OnEvent(func(ctx, Event) string)` | a reply to send to the chat, without the model, or "" |
 
 **Hook rules:**
 - Hooks run in feature order (`features.go`).
 - For an unaddressed message, `OnMessage` runs on the reader goroutine, so it must not block or call the network. For an addressed or delivered one it runs in the message's slot. The first non-zero `Action` wins.
 - `Answer` and `ToolChoice` count only on an addressed message, and `Context` only on an unaddressed one.
+- An `Event` is a reaction (its emoji, whether it was taken back, who wrote the message and when, and whether that was the bot) or a change in a group's members (who joined, who left, or that the bot was added), with who did it. The network decides which reach the core, as for messages: never the bot's own, in a DM only an allowed sender's, member changes only in groups. With no `OnEvent` hook the core drops events as they arrive. Otherwise each goes into its chat's mailbox and runs on a slot of its own, in order with that chat's messages, so a hook may block or call the network; the first non-empty reply is sent with `@Name` linked to the chat's known names and the event's people. Events are never logged, kept in history or shown to the model.
+- **Member changes on Signal:** signal-cli's group `UPDATE` says only that something changed, so the client keeps each group's members from `listGroups`, loaded once the bot's ID is known, and on an update reloads them (folded and spaced like the contact list) and compares. Members already there at startup are never reported; a group the bot wasn't in is `BotAdded`; a change of name or description alone is no event.
 - `OnTurn` runs only when the model is about to be asked.
 
 **Services the host offers:**

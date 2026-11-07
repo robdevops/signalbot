@@ -25,6 +25,10 @@ func (b *Bot) OnTurn(fn func(context.Context, feature.Message) feature.Additions
 	b.turns = append(b.turns, fn)
 }
 
+func (b *Bot) OnEvent(fn func(context.Context, feature.Event) string) {
+	b.events = append(b.events, fn)
+}
+
 func (b *Bot) IntroLine(line string, dmOnly bool) {
 	b.more = append(b.more, introLine{line, dmOnly})
 }
@@ -99,6 +103,31 @@ func (b *Bot) Groups(ctx context.Context, user string) ([]feature.Group, error) 
 func (b *Bot) Deliver(msg feature.Message) {
 	if !b.closing.Load() {
 		b.post(Received{Message: msg})
+	}
+}
+
+// event runs the OnEvent hooks in its chat's slot, and sends the first
+// non-empty reply, with @Name linked to the chat's known names and the
+// event's people, so a welcome can mention a newcomer.
+func (b *Bot) event(e feature.Event) {
+	for _, fn := range b.events {
+		reply := fn(b.ctx, e)
+		if reply == "" {
+			continue
+		}
+		known := b.chats.Names(e.Chat.Key())
+		if known == nil {
+			known = map[string]string{}
+		}
+		people := []feature.Person{e.By}
+		if m := e.Members; m != nil {
+			people = append(append(people, m.Joined...), m.Left...)
+		}
+		for _, p := range people {
+			chats.Claim(known, p.Name, p.ID)
+		}
+		b.net.Send(e.Chat, reply, nil, known)
+		return
 	}
 }
 

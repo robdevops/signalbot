@@ -63,6 +63,36 @@ type Media struct {
 	Size    int    // a file's size in bytes, as its sender's app gave it
 }
 
+// Event is something that happened in a chat besides a message. Exactly
+// one of its kinds is set.
+type Event struct {
+	Chat     Chat
+	By       Person    // who reacted, or who changed the group; ID "" if unknown
+	Reaction *Reaction // a reaction to a message
+	Members  *Members  // a change in a group's members
+}
+
+// Person is someone in a chat.
+type Person struct {
+	ID   string // the network's ID for them
+	Name string // their display name, made safe; "" if unknown
+}
+
+// Reaction is an emoji put on a message, or taken back.
+type Reaction struct {
+	Emoji   string
+	Removed bool   // the reaction was taken back
+	Author  string // the network's ID for who wrote the message reacted to
+	Bot     bool   // the bot wrote it
+	Sent    int64  // its Timestamp, as Message.Timestamp names it
+}
+
+// Members is who joined and left a group, or that the bot was added to it.
+type Members struct {
+	Joined, Left []Person
+	BotAdded     bool // the bot was just added: Joined and Left are empty
+}
+
 // File is a file shown to the model with a message: a PDF, or audio.
 type File struct {
 	Name, MIME string
@@ -169,6 +199,10 @@ type Host interface {
 	// OnTurn adds to the model's request for the addressed message being
 	// answered.
 	OnTurn(func(context.Context, Message) Additions)
+	// OnEvent sees each event, in order with its chat's messages, on a
+	// slot of its own, so it may block or call the network. The first
+	// non-empty reply returned is sent to the chat, without the model.
+	OnEvent(func(context.Context, Event) (reply string))
 	// Tools offers a group of tools to the model.
 	Tools(ToolGroup)
 	// IntroLine adds a paragraph to the bot's introduction, where INTRO has

@@ -7,6 +7,7 @@ package main
 import (
 	"context"
 	"net/url"
+	"slices"
 	"testing"
 	"time"
 
@@ -65,7 +66,7 @@ func startBot(t *testing.T, w world) *harness {
 	ctx, closeConn := context.WithCancel(context.Background())
 	t.Cleanup(closeConn)
 	b := bot.New(ctx, cfg, net)
-	for _, register := range features {
+	for _, register := range append(slices.Clone(features), w.Extra...) {
 		if err := register(b); err != nil {
 			t.Fatal(err)
 		}

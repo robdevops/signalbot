@@ -321,3 +321,39 @@ func TestDelivered(t *testing.T) {
 		t.Errorf("text logged: %q", out)
 	}
 }
+
+// A reaction reaches the core as an event, with whether the message was the
+// bot's; a removal says so. The bot's own reactions, a stranger's in a DM
+// and one before the bot's ID is known don't reach it, and none is logged.
+func TestReactions(t *testing.T) {
+	logs := captureLogs(t)
+	c := newClient("x", map[string]bool{aliceID: true}, nil)
+	react := func(from, where, target string, remove bool) string {
+		return `{` + from + `,"dataMessage":{` + where + `"reaction":{"emoji":"👍","targetAuthorUuid":"` + target + `","targetSentTimestamp":1700,"isRemove":` + map[bool]string{true: "true", false: "false"}[remove] + `}}}`
+	}
+	if _, ok := c.event(parse(t, react(fromBob, inGroup+",", botID, false))); ok {
+		t.Error("a reaction reached the core before the bot's ID was known")
+	}
+	connected(c)
+	r, ok := c.event(parse(t, react(fromBob, inGroup+",", botID, false)))
+	want := feature.Event{Chat: feature.Chat{GroupID: groupID}, By: feature.Person{ID: bobID, Name: "Bob"},
+		Reaction: &feature.Reaction{Emoji: "👍", Author: botID, Bot: true, Sent: 1700}}
+	if !ok || r.Event == nil || !reflect.DeepEqual(*r.Event, want) || r.Chat != want.Chat || r.Load != nil || r.Text != "" {
+		t.Fatalf("reaction %+v", r)
+	}
+	r, ok = c.event(parse(t, react(`"sourceUuid":"`+aliceID+`"`, "", bobID, true)))
+	if !ok || r.Event == nil || !r.Event.Reaction.Removed || r.Event.Reaction.Bot || r.Event.Reaction.Author != bobID || r.Chat.User != aliceID {
+		t.Fatalf("removal in a DM %+v", r)
+	}
+	for _, env := range []string{
+		react(`"sourceUuid":"`+botID+`"`, inGroup+",", aliceID, false), // its own
+		react(fromBob, "", botID, false),                               // a stranger's DM
+	} {
+		if r, ok := c.event(parse(t, env)); ok {
+			t.Errorf("%s reached the core: %+v", env, r)
+		}
+	}
+	if logs.String() != "" {
+		t.Errorf("logged %q", logs.String())
+	}
+}

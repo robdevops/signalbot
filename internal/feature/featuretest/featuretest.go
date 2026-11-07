@@ -29,6 +29,7 @@ type Host struct {
 	read      []string
 	messages  []func(context.Context, feature.Message) feature.Action
 	turns     []func(context.Context, feature.Message) feature.Additions
+	events    []func(context.Context, feature.Event) string
 	groups    []feature.ToolGroup
 	more      []string
 	timers    []*Timer
@@ -65,6 +66,26 @@ func (h *Host) OnTurn(fn func(context.Context, feature.Message) feature.Addition
 
 // IntroLine records an introduction line, ending " (DM only)" if dmOnly;
 // IntroLines returns them.
+func (h *Host) OnEvent(fn func(context.Context, feature.Event) string) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.events = append(h.events, fn)
+}
+
+// Event runs the OnEvent hooks on e, as the core does, and returns the reply
+// the core would send: the first non-empty one.
+func (h *Host) Event(ctx context.Context, e feature.Event) string {
+	h.mu.Lock()
+	hooks := slices.Clone(h.events)
+	h.mu.Unlock()
+	for _, fn := range hooks {
+		if r := fn(ctx, e); r != "" {
+			return r
+		}
+	}
+	return ""
+}
+
 func (h *Host) IntroLine(line string, dmOnly bool) {
 	h.mu.Lock()
 	defer h.mu.Unlock()

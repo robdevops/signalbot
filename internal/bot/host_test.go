@@ -510,3 +510,61 @@ func TestStore(t *testing.T) {
 		t.Fatalf("missing directory: %v", err)
 	}
 }
+
+// An event runs the OnEvent hooks in its chat's slot, in order with that
+// chat's messages; the first non-empty reply is sent, with the event's
+// people linkable as @Name. With no hook, an event takes no slot.
+func TestEvents(t *testing.T) {
+	group := feature.Chat{GroupID: groupID}
+	event := func(e feature.Event) Received { return Received{Message: feature.Message{Chat: e.Chat}, Event: &e} }
+	welcome := feature.Event{Chat: group, By: feature.Person{ID: aliceID, Name: "Alice"}, Members: &feature.Members{Joined: []feature.Person{{ID: bobID, Name: "Bob"}}}}
+
+	h := start(t, options{})
+	h.net.handle(event(welcome))
+	h.settle()
+	h.noSend()
+
+	var seen []string
+	h = start(t, options{features: func(b *Bot) {
+		b.OnEvent(func(_ context.Context, e feature.Event) string { seen = append(seen, "first"); return "" })
+		b.OnEvent(func(_ context.Context, e feature.Event) string {
+			seen = append(seen, "second")
+			if e.Members != nil {
+				return "Welcome @" + e.Members.Joined[0].Name
+			}
+			return ""
+		})
+		b.OnEvent(func(_ context.Context, e feature.Event) string {
+			if e.Members == nil {
+				return ""
+			}
+			seen = append(seen, "never")
+			return "late"
+		})
+	}})
+	h.net.handle(event(welcome))
+	if s := h.nextSend(); s.text != "Welcome @Bob" || s.chat != group || s.known["bob"] != bobID || s.known["alice"] != aliceID {
+		t.Fatalf("sent %+v", s)
+	}
+	if !slices.Equal(seen, []string{"first", "second"}) {
+		t.Fatalf("hooks %v", seen)
+	}
+	// A reaction no hook answers sends nothing, and keeps its place among
+	// the chat's messages.
+	h.holdModel()
+	h.receive(atBot("first"))
+	h.net.handle(event(feature.Event{Chat: group, By: feature.Person{ID: bobID}, Reaction: &feature.Reaction{Emoji: "👍", Author: aliceID}}))
+	h.net.handle(event(welcome))
+	h.release()
+	if s := h.nextSend(); s.text != "ok" {
+		t.Fatalf("first sent %q", s.text)
+	}
+	if s := h.nextSend(); s.text != "Welcome @Bob" {
+		t.Fatalf("then %q", s.text)
+	}
+	h.settle()
+	h.noSend()
+	if strings.Contains(h.logs.String(), "👍") || strings.Contains(h.logs.String(), "Welcome") {
+		t.Fatalf("logged %q", h.logs.String())
+	}
+}

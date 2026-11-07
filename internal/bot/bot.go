@@ -51,8 +51,9 @@ type Network interface {
 // network's reader goroutine, as a feature delivers it, or as Delivered
 // readies that. It is what a chat's mailbox holds. Features never see one.
 type Received struct {
-	feature.Message      // what is known without calling the network
-	GroupChange     bool // only that a group's members, name or description changed
+	feature.Message                // what is known without calling the network
+	GroupChange     bool           // only that a group's members, name or description changed
+	Event           *feature.Event // something besides a message; only Chat is set besides
 	// Load completes, in its slot, an addressed message, or one that arrived
 	// before the bot's own ID was known. It may call the network, and calls
 	// learn with each name it shows the model and that person's ID. It
@@ -96,6 +97,7 @@ type Bot struct {
 	groups   []feature.ToolGroup
 	more     []introLine // features' lines for the introduction
 	stores   []string    // the names of the saved states features opened
+	events   []func(context.Context, feature.Event) string
 }
 
 // New makes the bot on net and reads what the model can do, so features
@@ -175,6 +177,10 @@ func (b *Bot) handle(r Received) {
 	case b.closing.Load():
 	case r.GroupChange:
 		b.chats.ForgetNames(r.Chat.Key())
+	case r.Event != nil:
+		if len(b.events) > 0 { // with no hook, nothing would read it
+			b.post(r)
+		}
 	case r.Load != nil:
 		b.post(r)
 	default:
@@ -239,6 +245,10 @@ func (b *Bot) work(rs []Received) {
 			return
 		}
 		safely(func() {
+			if r.Event != nil {
+				alone(func() { b.event(*r.Event) })
+				return
+			}
 			if r.Load == nil { // delivered
 				alone(func() { b.delivered(r.Message) })
 				return

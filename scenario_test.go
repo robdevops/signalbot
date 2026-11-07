@@ -10,6 +10,7 @@ package main
 import (
 	"archive/zip"
 	"bytes"
+	"context"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -20,10 +21,13 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 	"unicode/utf8"
+
+	"github.com/robdevops/signalbot/internal/feature"
 )
 
 // --- messages as signal-cli delivers them ---------------------------------------
@@ -37,8 +41,16 @@ type incoming struct {
 	Quote       *quoteOf
 	Attachments []attached
 	Sticker     *stickerOf
-	Expires     int  // the chat's disappearing-messages timer, in seconds
-	Update      bool // a group update: its members, name or description changed
+	Expires     int       // the chat's disappearing-messages timer, in seconds
+	Update      bool      // a group update: its members, name or description changed
+	Reaction    *reaction // a reaction to a message, instead of text
+}
+
+// reaction is an emoji put on the message its author sent at Sent.
+type reaction struct {
+	Emoji, Author string
+	Sent          int64
+	Remove        bool
 }
 
 type atMention struct {
@@ -117,6 +129,10 @@ func (m incoming) frame() string {
 	}
 	if s := m.Sticker; s != nil {
 		data["sticker"] = map[string]any{"packId": s.Pack, "stickerId": s.ID}
+	}
+	if r := m.Reaction; r != nil {
+		data["reaction"] = map[string]any{"emoji": r.Emoji, "targetAuthor": r.Author, "targetAuthorNumber": nil, "targetAuthorUuid": r.Author,
+			"targetSentTimestamp": r.Sent, "isRemove": r.Remove}
 	}
 	b, _ := json.Marshal(map[string]any{"account": idBot, "envelope": map[string]any{
 		"source": m.From, "sourceNumber": nil, "sourceUuid": m.From, "sourceName": m.Name, "sourceDevice": 1,
@@ -271,6 +287,11 @@ func TestScenarioUnaddressedMessagesAreNeverLogged(t *testing.T) {
 		"message from the bot itself": dmFrom(idBot, "Botty", "note to self, ignore").frame(),
 		"DM with no text":             fromAlice("").frame(),
 		"group voice note to nobody":  voice.frame(),
+		"reaction, with no feature for it": func() string {
+			m := inGroup("")
+			m.Reaction = &reaction{Emoji: "👍", Author: idBot, Sent: 1}
+			return m.frame()
+		}(),
 		"typing indicator": `{"envelope":{"source":"` + idAlice + `","sourceUuid":"` + idAlice + `","sourceName":"Alice","timestamp":1,` +
 			`"typingMessage":{"action":"STARTED","timestamp":1,"groupId":"` + idGroup + `"}},"account":"` + idBot + `"}`,
 		"read receipt": `{"envelope":{"source":"` + idAlice + `","sourceUuid":"` + idAlice + `","sourceName":"Alice","timestamp":1,` +
@@ -2042,5 +2063,63 @@ func TestScenarioScheduleCannotLoop(t *testing.T) {
 	h.ignored(inGroup("@Botty hello everyone").by(idBot, "Botty"))
 	if n := len(h.requests()); n != 1 {
 		t.Fatalf("the model was asked %d times", n)
+	}
+}
+
+// --- events ---------------------------------------------------------------------------
+
+// A feature's OnEvent sees a reaction, with whether it was on the bot's
+// message, and who joined the group; its reply is sent, the newcomer
+// mentioned. Neither event is logged, kept or shown to the model.
+func TestScenarioEvents(t *testing.T) {
+	var mu sync.Mutex
+	var seen []feature.Event
+	welcome := func(h feature.Host) error {
+		h.OnEvent(func(_ context.Context, e feature.Event) string {
+			mu.Lock()
+			seen = append(seen, e)
+			mu.Unlock()
+			if e.Members != nil && len(e.Members.Joined) == 1 {
+				return "Welcome @" + e.Members.Joined[0].Name + "!"
+			}
+			return ""
+		})
+		return nil
+	}
+	events := func() []feature.Event {
+		mu.Lock()
+		defer mu.Unlock()
+		return slices.Clone(seen)
+	}
+	h := startBot(t, world{Contacts: map[string]string{idBob: "Bob"}, Extra: []func(feature.Host) error{welcome}, Members: []string{idAlice, idBot}})
+	h.waitFor("the first listGroups", func() bool { return len(h.callsTo("listGroups")) >= 1 })
+
+	thumbs := inGroup("")
+	thumbs.Reaction = &reaction{Emoji: "👍", Author: idBot, Sent: 1700}
+	h.receive(thumbs.frame())
+	h.waitFor("the reaction", func() bool { return len(events()) == 1 })
+	if r := events()[0]; r.Reaction == nil || r.Reaction.Emoji != "👍" || !r.Reaction.Bot || r.Reaction.Sent != 1700 || r.By.ID != idAlice || r.Chat.GroupID != idGroup {
+		t.Fatalf("reaction %+v", r)
+	}
+
+	h.setMembers(idAlice, idBob, idBot)
+	update := inGroup("")
+	update.Update = true
+	h.receive(update.frame())
+	h.waitFor("the welcome", func() bool { return len(h.callsTo("send")) == 1 })
+	p := h.callsTo("send")[0]
+	if !strings.Contains(fmt.Sprint(p["message"]), "Welcome") || !strings.Contains(fmt.Sprint(p["mention"]), idBob) || p["groupId"] != idGroup {
+		t.Fatalf("send %v", p)
+	}
+	if m := events()[1].Members; m == nil || len(m.Joined) != 1 || m.Joined[0] != (feature.Person{ID: idBob, Name: "Bob"}) {
+		t.Fatalf("members %+v", events()[1])
+	}
+	if n := len(h.requests()); n != 0 {
+		t.Fatalf("%d model requests", n)
+	}
+	for _, l := range h.logLines() {
+		if strings.Contains(l.Text, "👍") || strings.Contains(l.Text, "Welcome") || strings.Contains(l.Text, "Bob") {
+			t.Fatalf("an event reached the log: %q", l.Text)
+		}
 	}
 }

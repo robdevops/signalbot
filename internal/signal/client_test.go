@@ -10,6 +10,7 @@ import (
 	"maps"
 	"net"
 	"path/filepath"
+	"reflect"
 	"regexp"
 	"runtime"
 	"slices"
@@ -19,6 +20,7 @@ import (
 	"time"
 
 	"github.com/robdevops/signalbot/internal/bot"
+	"github.com/robdevops/signalbot/internal/config"
 	"github.com/robdevops/signalbot/internal/feature"
 	"github.com/robdevops/signalbot/internal/kit/logx"
 )
@@ -471,5 +473,65 @@ func TestReconnectsDoNotLeakGoroutines(t *testing.T) {
 	time.Sleep(100 * time.Millisecond)
 	if delta := runtime.NumGoroutine() - before; delta > 5 {
 		t.Fatalf("%d goroutines left behind by 50 dropped connections", delta)
+	}
+}
+
+// A group update is compared with the members listGroups last gave: who
+// joined and who left reach the core as one event, named as the contact
+// list has them; a change of name or description, nothing; a group the bot
+// wasn't in, that it was added. Members already there at startup aren't
+// reported, and nothing is logged.
+func TestMemberChanges(t *testing.T) {
+	logs := captureLogs(t)
+	f := newFake(t)
+	listed := func(ms ...string) {
+		var js []string
+		for _, m := range ms {
+			js = append(js, `{"uuid":"`+m+`"}`)
+		}
+		f.set("listGroups", `[{"id":"`+groupID+`","name":"Family","isMember":true,"members":[`+strings.Join(js, ",")+`]}]`)
+	}
+	f.set("listContacts", `[{"uuid":"`+bobID+`","profile":{"givenName":"Bob"}},{"uuid":"`+aliceID+`","profile":{"givenName":"Alice"}}]`)
+	listed(botID, aliceID)
+	c := newClient(f.sock, allowAll(), &config.Test{ReloadGap: time.Millisecond})
+	got, conn := run(t, c, f)
+	eventually(t, "the first listGroups", func() bool { return len(f.calls("listGroups")) == 1 })
+	update := func(group string) {
+		receive(conn, `{"sourceUuid":"`+aliceID+`","sourceName":"Alice","dataMessage":{"groupInfo":{"groupId":"`+group+`","type":"UPDATE"}}}`)
+	}
+	members := func() *feature.Members {
+		t.Helper()
+		for {
+			r := next(t, got)
+			if r.Event != nil {
+				if r.Event.By != (feature.Person{ID: aliceID, Name: "Alice"}) || r.Chat != r.Event.Chat {
+					t.Fatalf("event %+v", r.Event)
+				}
+				return r.Event.Members
+			}
+			if !r.GroupChange {
+				t.Fatalf("got %+v", r)
+			}
+		}
+	}
+	listed(botID, aliceID, bobID)
+	update(groupID)
+	if m := members(); !reflect.DeepEqual(m, &feature.Members{Joined: []feature.Person{{ID: bobID, Name: "Bob"}}}) {
+		t.Fatalf("joined %+v", m)
+	}
+	update(groupID) // its name changed: no event
+	listed(botID, bobID)
+	update(groupID)
+	if m := members(); !reflect.DeepEqual(m, &feature.Members{Left: []feature.Person{{ID: aliceID, Name: "Alice"}}}) {
+		t.Fatalf("left %+v", m)
+	}
+	f.set("listGroups", `[{"id":"`+groupID+`","name":"Family","isMember":true,"members":[{"uuid":"`+bobID+`"}]},`+
+		`{"id":"new","name":"New","isMember":true,"members":[{"uuid":"`+aliceID+`"}]}]`)
+	update("new")
+	if m := members(); !reflect.DeepEqual(m, &feature.Members{BotAdded: true}) {
+		t.Fatalf("added %+v", m)
+	}
+	if strings.Contains(logs.String(), "Bob") || strings.Contains(logs.String(), bobID) {
+		t.Errorf("logged %q", logs.String())
 	}
 }
