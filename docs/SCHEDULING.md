@@ -18,3 +18,7 @@ For example `/schedule "@signalbot what's the weather today?" 2030-01-31 07:30 e
 - Straight and curly quotes both work. A schedule can't run `/schedule`, `/timer` or `/reminder`, so it can't make more schedules. The bot never answers its own posts, so a scheduled message that @mentions it gets exactly one answer.
 - If the bot was down when a run was due, a repeating schedule skips it and a one-off up to an hour late still runs; an older one-off is dropped, and the bot tells you by DM: `I was offline at Sat 31 Jan 2030 09:00 AEDT, so your reminder "…" didn't post.`
 - Schedules are saved in `schedules.json` in `STATE_DIRECTORY` until deleted. See [PRIVACY.md](../PRIVACY.md).
+
+---
+
+[Back to README.md](../README.md)

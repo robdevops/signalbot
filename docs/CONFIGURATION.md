@@ -28,3 +28,7 @@ A number that can't be read is warned about at startup, and the default used. `O
 The default `INTRO` is short paragraphs: `hi, I'm *{name}*, your open source assistant running {model}.`, `I respond to @{name} and replies to my messages.`, `Tools:` then `{tools}`, one tool category per paragraph, then `{more}`, lines features add (such as `Type "/schedule" for schedules and reminders.`, only in a DM, where schedules are made), then the link `https://github.com/robdevops/signalbot/blob/main/README.md` (Signal makes a bare url clickable; it has no named links).
 
 The cost logged with each reply is the amount OpenRouter reports billing for it. An API that reports no cost gets none logged.
+
+---
+
+[Back to README.md](../README.md)

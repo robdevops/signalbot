@@ -63,3 +63,7 @@ In a group, signal-cli passes every message to the bot, which checks each one fo
 - **signal-cli's own data.** The account keys and whatever else signal-cli stores sit in its data directory, which the bot does not read. Keep it private (see the [README](README.md#prerequisites)).
 - **Anyone in the host's `signal-cli` Unix group** (not a Signal group) can use the socket to drive the Signal account, so keep that group's members to just the bot code.
 - **The host.** Root users can read process memory, and log backups keep what the logs contain.
+
+---
+
+[Back to README.md](README.md)

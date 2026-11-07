@@ -167,3 +167,7 @@ Files: TestScenarioPDFInADM, TestScenarioTextAndOfficeFiles, TestScenarioVoiceNo
 - **Day-long limits** (contacts over a day old, the 24-hour history cap, the dedupe window ending) need the clock moved; they stay unit tests.
 - **Log wording.** Scenarios check only lines with no deliberate change: the stranger's id with "not in SIGNAL_DM_USER_IDS", "OpenRouter error" (now "model error", changed with `MODEL_API_URL`), "at capacity" (now "dropped a message: all N worker slots are busy"), "truncated", the cost, "tools are off", "images are off", "skipped" (an oversized frame), "could not fetch an image", signal-cli's error text, the lines for a reaction and for each link, file, image and sticker ("reacting instead of replying", "link failed after", "link not fetched", "file <kind> N bytes, …", "image N bytes, …" and their priorities), and each line's priority. "mention from Alice(id)" is not pinned, as it becomes "received group chat".
 - **At `e40dc5f` with `LOG_LEVEL=debug`,** an unaddressed group message that mentions someone whose name the bot doesn't know logs "unresolved mention of <id>" at debug. The spec says an unaddressed message is never logged, so TestScenarioUnaddressedMessagesAreNeverLogged uses a known name. The new core, which always writes debug, must not log it.
+
+---
+
+[Back to TECHNICAL.md](../TECHNICAL.md) · [Back to README.md](../README.md)

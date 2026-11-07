@@ -69,3 +69,7 @@ Before sending a change: `gofmt -l .`, `go vet ./...` and `go test -race ./...`,
 6. Add its settings to the table in `docs/CONFIGURATION.md`, and a row in TECHNICAL.md's features table and a paragraph under it.
 
 `internal/features/intro` is the smallest feature to copy.
+
+---
+
+[Back to TECHNICAL.md](TECHNICAL.md) · [Back to README.md](README.md)

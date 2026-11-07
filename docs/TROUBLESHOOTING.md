@@ -19,3 +19,7 @@
   On Linux, `sg signal-cli -c '…'` does the same without `sudo` if you are in the group. `doas` cannot set a group, so on OpenBSD use `su` or the system's `rc.d` service.
 
 **The bot exits at startup saying it can't write its state directory.** Under systemd, the unit needs `StateDirectory=signalbot` in `[Service]` (a copy of the unit without it runs the bot in `/`, which it can't write). Under Docker, the host directory mounted at `/data` must be owned by user 65532: `sudo chown 65532 /var/lib/private/signalbot`.
+
+---
+
+[Back to README.md](../README.md)
