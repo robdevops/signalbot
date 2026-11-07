@@ -38,6 +38,8 @@ const (
 	pdfEngine = "mistral-ocr"
 )
 
+// retryDelay is the wait before trying a failed request again, unless the
+// client's test hook sets its own.
 var retryDelay = time.Second
 
 // ErrImages, ErrFiles and ErrTools mean an API other than OpenRouter's
@@ -69,6 +71,7 @@ type Client struct {
 	openRouter                  bool // the API is OpenRouter's
 	nativeFiles                 bool // OpenRouter's list says the model reads files itself
 	http                        *http.Client
+	retry                       time.Duration // the wait before trying a failed request again
 }
 
 // New makes the client of cfg.APIURL, keeping one idle connection per reply
@@ -79,9 +82,13 @@ func New(cfg *config.Config) *Client {
 	if cfg.Test != nil && cfg.Test.OpenRouter != "" {
 		host = cfg.Test.OpenRouter
 	}
+	retry := retryDelay
+	if cfg.Test != nil && cfg.Test.RetryDelay > 0 {
+		retry = cfg.Test.RetryDelay
+	}
 	u, err := url.Parse(cfg.APIURL)
 	return &Client{key: cfg.APIKey, model: cfg.Model, reasoning: cfg.Reasoning, base: cfg.APIURL,
-		openRouter: err == nil && strings.EqualFold(u.Hostname(), host), http: httpx.Client(cfg.MaxConcurrency)}
+		openRouter: err == nil && strings.EqualFold(u.Hostname(), host), http: httpx.Client(cfg.MaxConcurrency), retry: retry}
 }
 
 // Usable is the tools the API can run: every function tool, and a server
@@ -450,7 +457,7 @@ func (c *Client) post(ctx context.Context, payload []byte) ([]byte, error) {
 		}
 		select {
 		case <-ctx.Done():
-		case <-time.After(retryDelay):
+		case <-time.After(c.retry):
 		}
 	}
 }

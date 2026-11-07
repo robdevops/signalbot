@@ -98,6 +98,7 @@ type Bot struct {
 	more     []introLine // features' lines for the introduction
 	stores   []string    // the names of the saved states features opened
 	events   []func(context.Context, feature.Event) string
+	now      func() time.Time // the clock history and the budget go by
 }
 
 // New makes the bot on net and reads what the model can do, so features
@@ -105,7 +106,7 @@ type Bot struct {
 // answered. Work in progress ends with ctx, which should outlive the
 // shutdown signal so that Shutdown can let replies finish.
 func New(ctx context.Context, cfg *config.Config, net Network) *Bot {
-	b := &Bot{cfg: cfg, net: net, timers: timers.New(), slots: make(chan struct{}, cfg.MaxConcurrency), ctx: ctx}
+	b := &Bot{cfg: cfg, net: net, timers: timers.New(), slots: make(chan struct{}, cfg.MaxConcurrency), ctx: ctx, now: time.Now}
 	b.chats = chats.New(cfg.HistoryMax, b.work, b.spawn)
 	b.timerCtx, b.stop = context.WithCancel(ctx)
 	if cfg.NoModel {
@@ -122,15 +123,16 @@ func New(ctx context.Context, cfg *config.Config, net Network) *Bot {
 	if !caps.Tools {
 		logx.Warnf("model %s can't call tools, so tools are off", cfg.Model)
 	}
-	switch now := time.Now; {
+	if cfg.Test != nil && cfg.Test.Now != nil {
+		b.now = cfg.Test.Now
+		b.chats.SetClock(b.now)
+	}
+	switch {
 	case cfg.DailyBudget <= 0:
 	case !b.ai.ReportsCost():
 		logx.Noticef("DAILY_BUDGET isn't applied: only OpenRouter reports what a reply costs")
 	default:
-		if cfg.Test != nil && cfg.Test.Now != nil {
-			now = cfg.Test.Now
-		}
-		b.budget = newBudget(cfg.StateDir, cfg.DailyBudget, now)
+		b.budget = newBudget(cfg.StateDir, cfg.DailyBudget, b.now)
 		logx.Noticef("daily budget $%.2f per chat", cfg.DailyBudget)
 	}
 	return b
@@ -192,7 +194,7 @@ func (b *Bot) handle(r Received) {
 // the Context one returns in history.
 func (b *Bot) keep(msg feature.Message) {
 	if a := b.onMessage(b.ctx, msg); a.Context != "" && b.ai != nil { // with no model, nothing would read it
-		b.chats.Add(msg.Chat.Key(), time.Now(), msg.Expires, chats.Entry{Role: "user", Content: a.Context, Context: true})
+		b.chats.Add(msg.Chat.Key(), b.now(), msg.Expires, chats.Entry{Role: "user", Content: a.Context, Context: true})
 	}
 }
 

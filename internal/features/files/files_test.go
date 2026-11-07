@@ -197,7 +197,10 @@ func TestOffice(t *testing.T) {
 // is built; elements nested past maxDepth stop the read; parts inflating
 // to more than maxTotal together stop it, however little text they hold,
 // and what was read by then stands, cut. Each refusal is reported by kind.
+// The budgets are lowered for the test, so the same paths run on a
+// sixteenth of the data.
 func TestOfficeBudgets(t *testing.T) {
+	smallBudgets(t)
 	declared := officeFile(t, map[string]string{"word/document.xml": "<w:document/>"})
 	binary.LittleEndian.PutUint16(declared[bytes.LastIndex(declared, []byte("PK\x05\x06"))+10:], 0xffff)
 	if n := entries(declared); n != 0xffff {
@@ -278,8 +281,24 @@ func storedZip(t *testing.T, parts map[string]string) []byte {
 	return b.Bytes()
 }
 
+// smallBudgets lowers the Office budgets for the test to a sixteenth or so,
+// restoring them after.
+func smallBudgets(t *testing.T) {
+	part, total, depth, parts := maxPart, maxTotal, maxDepth, maxParts
+	maxPart, maxTotal, maxDepth, maxParts = 640<<10, 2<<20, 64, 2_000
+	t.Cleanup(func() { maxPart, maxTotal, maxDepth, maxParts = part, total, depth, parts })
+}
+
+// The budgets are what the docs say.
+func TestOfficeBudgetValues(t *testing.T) {
+	if maxPart != 10<<20 || maxTotal != 32<<20 || maxDepth != 256 || maxParts != 20_000 {
+		t.Fatalf("budgets %d, %d, %d, %d", maxPart, maxTotal, maxDepth, maxParts)
+	}
+}
+
 // A zip that inflates past maxPart is read only that far.
 func TestOfficeBomb(t *testing.T) {
+	smallBudgets(t)
 	huge := "<w:document><w:body><w:p><w:r><w:t>" + strings.Repeat("a", maxPart+1000) + "</w:t></w:r></w:p></w:body></w:document>"
 	got, _, _ := officeText(officeFile(t, map[string]string{"word/document.xml": huge}), ".docx")
 	if len(got) > maxText+maxPart/100 {

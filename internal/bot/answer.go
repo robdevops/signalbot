@@ -74,7 +74,7 @@ func (b *Bot) respond(msg feature.Message, act feature.Action, text string) {
 	stop := b.net.Typing(msg.Chat)
 	defer stop() // also if something below panics
 	key := msg.Chat.Key()
-	start := time.Now() // history expires from here, not from when it is stored
+	start := b.now() // history expires from here, not from when it is stored
 	var reply model.Reply
 	var kept string
 	var offered []int

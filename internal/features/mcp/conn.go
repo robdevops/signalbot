@@ -114,9 +114,13 @@ func (c *stdioConn) start(ctx context.Context) error {
 	return nil
 }
 
+// restartDelay is the first wait before restarting a local server that
+// exited, doubling to 32s while it keeps failing; tests shorten it.
+var restartDelay = time.Second
+
 // supervise restarts the server whenever it exits, until ctx ends.
 func (c *stdioConn) supervise(ctx context.Context) {
-	backoff := time.Second
+	backoff := restartDelay
 	for {
 		c.mu.Lock()
 		done := c.done
@@ -142,7 +146,7 @@ func (c *stdioConn) supervise(ctx context.Context) {
 		if _, err := initialize(ictx, c, c.version); err != nil {
 			logx.Warnf("MCP server %s failed to initialize: %v", c.name, err)
 		} else {
-			backoff = time.Second
+			backoff = restartDelay
 		}
 		cancel()
 	}

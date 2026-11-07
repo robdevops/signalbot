@@ -520,6 +520,8 @@ func TestHelperProcess(t *testing.T) {
 // A stdio server sees only its configured environment, never the bot's API
 // key, is restarted when it exits, and is stopped when the bot stops.
 func TestStdio(t *testing.T) {
+	defer func(d time.Duration) { restartDelay = d }(restartDelay)
+	restartDelay = 10 * time.Millisecond
 	var log logx.Buffer
 	defer logx.SetOutput(&log, &log, true)()
 	t.Setenv("MODEL_API_KEY", "secret-key")

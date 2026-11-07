@@ -210,9 +210,8 @@ func sixSeries() string {
 // whatever the time. The single-series dark colours are checked in
 // TestAreaStyle. Set CHART_THEMES to a directory to write samples to look at.
 func TestDarkCharts(t *testing.T) {
-	setClock(t, time.Date(2026, 1, 1, 23, 0, 0, 0, time.Local))
-	light, _ := registerWith(t, "off")
-	dark, _ := registerWith(t, "on")
+	t.Parallel() // off and on never read the clock
+	light, dark := registerMode(t, "off"), registerMode(t, "on")
 	dir := os.Getenv("CHART_THEMES")
 	for _, tc := range []struct {
 		name, tool, args string
@@ -222,29 +221,32 @@ func TestDarkCharts(t *testing.T) {
 		{"pie", "make_pie_chart", alphabetPie, true},
 		{"line-six", "make_chart", sixSeries(), false},
 	} {
-		d := draw(t, dark, tc.tool, tc.args)
-		img := decode(t, d)
-		if !isDark(t, d) {
-			t.Errorf("%s: dark is not on the dark background", tc.name)
-		}
-		if n := countColour(img, img.Bounds(), white); n > 0 {
-			t.Errorf("%s: %d white pixels in the dark theme", tc.name, n)
-		}
-		if countColour(img, img.Bounds(), darkTheme.palette[0]) == 0 || countColour(img, img.Bounds(), lightTheme.palette[0]) > 0 {
-			t.Errorf("%s: not drawn in the dark palette", tc.name)
-		}
-		if dir != "" {
-			os.WriteFile(filepath.Join(dir, "dark-"+tc.name+".png"), d, 0o644)
-		}
-		if !tc.light {
-			continue
-		}
-		l := draw(t, light, tc.tool, tc.args)
-		if isDark(t, l) || bytes.Equal(l, d) {
-			t.Errorf("%s: light is dark, or the same as dark", tc.name)
-		}
-		if dir != "" {
-			os.WriteFile(filepath.Join(dir, "light-"+tc.name+".png"), l, 0o644)
-		}
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			d := draw(t, dark, tc.tool, tc.args)
+			img := decode(t, d)
+			if !isDark(t, d) {
+				t.Errorf("%s: dark is not on the dark background", tc.name)
+			}
+			if n := countColour(img, img.Bounds(), white); n > 0 {
+				t.Errorf("%s: %d white pixels in the dark theme", tc.name, n)
+			}
+			if countColour(img, img.Bounds(), darkTheme.palette[0]) == 0 || countColour(img, img.Bounds(), lightTheme.palette[0]) > 0 {
+				t.Errorf("%s: not drawn in the dark palette", tc.name)
+			}
+			if dir != "" {
+				os.WriteFile(filepath.Join(dir, "dark-"+tc.name+".png"), d, 0o644)
+			}
+			if !tc.light {
+				return
+			}
+			l := draw(t, light, tc.tool, tc.args)
+			if isDark(t, l) || bytes.Equal(l, d) {
+				t.Errorf("%s: light is dark, or the same as dark", tc.name)
+			}
+			if dir != "" {
+				os.WriteFile(filepath.Join(dir, "light-"+tc.name+".png"), l, 0o644)
+			}
+		})
 	}
 }

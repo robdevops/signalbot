@@ -441,11 +441,12 @@ func TestScenarioHistoryDropsToHalf(t *testing.T) {
 
 // A chat with disappearing messages forgets its history when they disappear.
 func TestScenarioDisappearingMessagesLeaveHistory(t *testing.T) {
-	h := startBot(t, world{})
+	var clock skewed
+	h := startBot(t, world{Now: clock.now})
 	m := fromAlice("this will disappear soon")
 	m.Expires = 1
 	h.ask(m)
-	time.Sleep(time.Second + 50*time.Millisecond) // the timer runs from before the reply
+	clock.skip(time.Second + 50*time.Millisecond) // the timer runs from before the reply
 	m.Text = "are you still there"
 	h.ask(m)
 	equal(t, "conversation", h.lastRequest().contents(), []string{"user: are you still there"})
@@ -1043,7 +1044,7 @@ func TestScenarioNoModel(t *testing.T) {
 		t.Fatalf("typing %v", typing)
 	}
 
-	at := time.Now().Add(2 * time.Second).Truncate(time.Second)
+	at := soon()
 	if s := h.ask(fromAlice(`/schedule "lunch is ready @Bob" ` + at.Format("2006-01-02T15:04:05") + ` test group`)); !strings.HasPrefix(s.Message, "Scheduled for ") {
 		t.Fatalf("sent %q", s.Message)
 	}
@@ -1142,7 +1143,7 @@ func TestScenarioShutdownDrainsReplies(t *testing.T) {
 // connection and carries on.
 func TestScenarioOversizedFrameIsSkipped(t *testing.T) {
 	h := startBot(t, world{})
-	h.receiveRaw(strings.Repeat("x", 40<<20))
+	h.receiveRaw(strings.Repeat("x", 18<<20)) // just over the cap, 17 MB
 	h.waitFor("the warning", func() bool { _, ok := h.logged("skipped"); return ok })
 	if s := h.ask(atBot("are you still there")); s.Message != "ok" {
 		t.Fatalf("sent %q", s.Message)
@@ -1482,30 +1483,25 @@ func TestScenarioReplyToSomeonesPDF(t *testing.T) {
 
 // --- images and stickers -----------------------------------------------------------------
 
-// A photo of a few megabytes, too big for one old signal-cli frame, is shown
-// as it is; one over the model's 5 MB is shrunk to a JPEG first.
+// A photo over the model's 5 MB, far too big for one old signal-cli frame,
+// is fetched whole and shrunk to a JPEG; the connection is kept. (One under
+// 5 MB is sent as it is: img and vision's own tests.)
 func TestScenarioLargePhotosAreShown(t *testing.T) {
-	medium, large := noisyPNG(t, 800, 800), noisyPNG(t, 1400, 1400)
-	if len(medium) < 2<<20 || len(medium) > 5<<20 || len(large) < 6<<20 {
-		t.Fatalf("sizes %d, %d", len(medium), len(large))
+	large := noisyPNG(t, 1160, 1160)
+	if len(large) <= 5<<20 {
+		t.Fatalf("only %d bytes", len(large))
 	}
-	h := startBot(t, world{Vision: true, Attachments: map[string][]byte{"medium.png": medium, "large.png": large}})
-	for _, tc := range []struct {
-		id, mime string
-		data     []byte
-	}{{"medium.png", "image/png", medium}, {"large.png", "image/jpeg", large}} {
-		m := fromAlice("")
-		m.Attachments = []attached{{ID: tc.id, Type: "image/png", Size: len(large)}}
-		h.ask(m)
-		last := h.lastRequest().last()
-		if last.Content != "[1 image attached]" || len(last.Images) != 1 || !strings.HasPrefix(last.Images[0], "data:"+tc.mime+";base64,") || len(last.Images[0]) > 7<<20 {
-			t.Fatalf("%s: model got %q with %d images", tc.id, last.Content, len(last.Images))
-		}
-		// The image is logged by size, and the size sent when it was shrunk.
-		l, ok := h.logged(fmt.Sprintf("image %d bytes, ", len(tc.data)))
-		if !ok || l.Pri != 6 || strings.Contains(l.Text, "sent as") != (tc.mime == "image/jpeg") {
-			t.Fatalf("%s: log %+v, %v", tc.id, l, ok)
-		}
+	h := startBot(t, world{Vision: true, Attachments: map[string][]byte{"large.png": large}})
+	m := fromAlice("")
+	m.Attachments = []attached{{ID: "large.png", Type: "image/png", Size: len(large)}}
+	h.ask(m)
+	last := h.lastRequest().last()
+	if last.Content != "[1 image attached]" || len(last.Images) != 1 || !strings.HasPrefix(last.Images[0], "data:image/jpeg;base64,") || len(last.Images[0]) > 7<<20 {
+		t.Fatalf("model got %q with %d images", last.Content, len(last.Images))
+	}
+	// The image is logged by size, and the size sent once shrunk.
+	if l, ok := h.logged(fmt.Sprintf("image %d bytes, sent as ", len(large))); !ok || l.Pri != 6 {
+		t.Fatalf("log %+v, %v", l, ok)
 	}
 	if n := len(h.callsTo("listAccounts")); n != 1 {
 		t.Fatalf("reconnected: listAccounts called %d times", n)
@@ -1516,7 +1512,7 @@ func TestScenarioLargePhotosAreShown(t *testing.T) {
 // big, is left out, and the model is told it failed to load rather than
 // that it can't see images. The connection is kept.
 func TestScenarioPhotoThatFailsToLoad(t *testing.T) {
-	h := startBot(t, world{Vision: true, Attachments: map[string][]byte{"huge.png": make([]byte, 30<<20)}})
+	h := startBot(t, world{Vision: true, Attachments: map[string][]byte{"huge.png": make([]byte, 13<<20)}})
 	m := fromAlice("what is this?")
 	m.Attachments = []attached{{ID: "huge.png", Type: "image/png", Size: 10000000}}
 	h.ask(m)
@@ -1874,14 +1870,15 @@ func TestScenarioChartReply(t *testing.T) {
 
 // When a chat's history is erased, its chart follow-ups end with it.
 func TestScenarioErasedHistoryEndsChartFollowUps(t *testing.T) {
-	h := startBot(t, world{})
+	var clock skewed
+	h := startBot(t, world{Now: clock.now})
 	m := fromAlice("chart NVDA for 3 months")
 	m.Expires = 1
 	h.ask(m)
 	if !hasChartTool(h.lastRequest()) {
 		t.Fatal("the chart tool was not offered")
 	}
-	time.Sleep(time.Second + 50*time.Millisecond) // the timer runs from before the reply
+	clock.skip(time.Second + 50*time.Millisecond) // the timer runs from before the reply
 	m.Text = "what about AMD"
 	h.ask(m)
 	if hasChartTool(h.lastRequest()) {
@@ -1985,7 +1982,7 @@ func TestScenarioGoldenPromptNoFeatures(t *testing.T) {
 // group's history as hers. The text is never logged.
 func TestScenarioScheduleRunsInAGroup(t *testing.T) {
 	h := startBot(t, world{Contacts: map[string]string{idAlice: "Alice", idBob: "Bob"}})
-	at := time.Now().Add(2 * time.Second).Truncate(time.Second)
+	at := soon()
 	s := h.ask(fromAlice(`/schedule “lunch is ready @Bob” ` + at.Format("2006-01-02T15:04:05") + ` test GROUP`))
 	if want := "Scheduled for " + at.Format("Mon 2 Jan 2006 15:04 MST") + ", in Test group."; s.Recipient != idAlice || s.Message != want {
 		t.Fatalf("sent %+v, want %q", s, want)
@@ -2051,7 +2048,7 @@ func TestScenarioScheduleCannotLoop(t *testing.T) {
 		}
 	}
 	h.queue(modelReply{Text: "@Botty hello everyone"})
-	at := time.Now().Add(2 * time.Second).Truncate(time.Second)
+	at := soon()
 	if s := h.ask(fromAlice(`/timer "@Botty say hello" ` + at.Format("2006-01-02T15:04:05") + ` test group`)); !strings.HasPrefix(s.Message, "Scheduled for ") {
 		t.Fatalf("sent %q", s.Message)
 	}
@@ -2122,4 +2119,23 @@ func TestScenarioEvents(t *testing.T) {
 			t.Fatalf("an event reached the log: %q", l.Text)
 		}
 	}
+}
+
+// skewed is the real clock moved on by what a scenario skips, so history
+// can lapse without the scenario waiting for it.
+type skewed struct{ by atomic.Int64 }
+
+func (c *skewed) now() time.Time       { return time.Now().Add(time.Duration(c.by.Load())) }
+func (c *skewed) skip(d time.Duration) { c.by.Add(int64(d)) }
+
+// soon is the next whole second at least 400ms away: a time /schedule
+// takes, which isn't past by the time the command is read, and which a
+// scenario waits for as briefly as it can.
+func soon() time.Time {
+	now := time.Now()
+	at := now.Truncate(time.Second).Add(time.Second)
+	if at.Sub(now) < 400*time.Millisecond {
+		at = at.Add(time.Second)
+	}
+	return at
 }

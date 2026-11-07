@@ -186,6 +186,7 @@ func TestReceiveAndReconnect(t *testing.T) {
 	captureLogs(t)
 	f := newFake(t)
 	c := newClient(f.sock, allowAll(), nil)
+	c.backoff = 10 * time.Millisecond
 	got, conn := run(t, c, f)
 	receive(conn, `{"sourceUuid":"`+aliceID+`","dataMessage":{"message":"hi"}}`)
 	if r := next(t, got); r.Chat.User != aliceID || !r.Addressed {
@@ -220,7 +221,7 @@ func TestStalledWriteReconnects(t *testing.T) {
 		}
 	}()
 	c := newClient(sock, allowAll(), nil)
-	c.writeTimeout = time.Second
+	c.writeTimeout, c.backoff = 200*time.Millisecond, 10*time.Millisecond
 	got := make(chan bot.Received, 4)
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})

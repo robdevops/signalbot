@@ -63,6 +63,7 @@ type Client struct {
 	allowed      map[string]bool // who may DM the bot, by ACI or number
 	typingEvery  time.Duration
 	writeTimeout time.Duration // writeTimeout; a test's shorter
+	backoff      time.Duration // the first wait before reconnecting; a test's shorter
 	nextID       atomic.Int64
 	mu           sync.Mutex // guards conn and pending, never held over a write
 	wmu          sync.Mutex // serialises writes
@@ -98,7 +99,7 @@ func New(test *config.Test) (*Client, error) {
 
 // newClient is New with its settings given.
 func newClient(addr string, allowed map[string]bool, test *config.Test) *Client {
-	c := &Client{addr: addr, allowed: allowed, typingEvery: 10 * time.Second, writeTimeout: writeTimeout, pending: map[string]chan *rpcMsg{},
+	c := &Client{addr: addr, allowed: allowed, typingEvery: 10 * time.Second, writeTimeout: writeTimeout, backoff: time.Second, pending: map[string]chan *rpcMsg{},
 		known: make(chan struct{}), test: test}
 	c.members.c = c
 	c.names.byID, c.names.numbers, c.names.minRefresh = map[string]rankedName{}, map[string]string{}, 15*time.Second
@@ -138,7 +139,7 @@ func (c *Client) network() string {
 // reconnects with backoff until ctx ends. handle must not block.
 func (c *Client) Run(ctx context.Context, handle func(bot.Received)) {
 	defer c.closed.Store(true)
-	backoff := time.Second
+	backoff := c.backoff
 	for ctx.Err() == nil {
 		conn, err := net.DialTimeout(c.network(), c.addr, 10*time.Second)
 		if err != nil {
@@ -148,7 +149,7 @@ func (c *Client) Run(ctx context.Context, handle func(bot.Received)) {
 			c.serve(ctx, conn, handle)
 			// Only a connection that held resets it, so one that dies at once can't spin.
 			if time.Since(began) > time.Minute {
-				backoff = time.Second
+				backoff = c.backoff
 			}
 		}
 		select {

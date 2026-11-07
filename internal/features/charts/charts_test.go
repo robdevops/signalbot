@@ -16,9 +16,16 @@ import (
 )
 
 // register registers the feature on a fake host.
-func register(t *testing.T) *featuretest.Host {
+func register(t *testing.T) *featuretest.Host { return registerMode(t, "") }
+
+// registerMode registers the feature with DARKMODE set to mode, without
+// capturing the log, so a test can run in parallel.
+func registerMode(t *testing.T, mode string) *featuretest.Host {
 	t.Helper()
 	h := featuretest.New()
+	if mode != "" {
+		h.Settings["DARKMODE"] = mode
+	}
 	if err := Register(h); err != nil {
 		t.Fatal(err)
 	}
@@ -44,6 +51,7 @@ func tool(t *testing.T, h *featuretest.Host, name string) feature.Tool {
 // only when a message asks for a second axis, with no Names of its own. It
 // reads only DARKMODE.
 func TestChartsToolGroup(t *testing.T) {
+	t.Parallel()
 	h := register(t)
 	g := h.ToolGroups()
 	if len(g) != 2 {
@@ -80,6 +88,7 @@ func TestChartsToolGroup(t *testing.T) {
 }
 
 func TestWantsChart(t *testing.T) {
+	t.Parallel()
 	kw := register(t).ToolGroups()[0].Keywords
 	for text, want := range map[string]bool{
 		"chart NVDA vs AMD": true, "Can you graph this?": true, "plot the yields": true,
@@ -99,6 +108,7 @@ func TestWantsChart(t *testing.T) {
 // The model calls the line chart tool: it is told the final values, and the
 // chart comes back as a PNG with its caption and history note.
 func TestWantsSecondAxis(t *testing.T) {
+	t.Parallel()
 	kw := register(t).ToolGroups()[1].Keywords
 	for text, want := range map[string]bool{
 		"chart it with a second axis": true, "secondary y-axis for yield": true, "dual axis please": true,
@@ -114,6 +124,7 @@ func TestWantsSecondAxis(t *testing.T) {
 // make_chart refuses a series on a right axis, saying how to fix it; the
 // dual-axis chart draws it.
 func TestSecondAxisOnlyWhenAsked(t *testing.T) {
+	t.Parallel()
 	h := register(t)
 	args := `{"title":"T","axes":{"left":{"title":"Price"},"right":{"title":"Yield"}},"series":[` +
 		`{"name":"A","points":[{"date":"2026-01-01","value":100},{"date":"2026-01-02","value":120}]},` +
@@ -130,8 +141,9 @@ func TestSecondAxisOnlyWhenAsked(t *testing.T) {
 // make_chart's axis is "y_axis"; an axis given as just its title, as
 // models guess, is taken as meant.
 func TestChartYAxis(t *testing.T) {
+	t.Parallel()
 	pts := `"series":[{"name":"A","points":[{"date":"2026-01-01","value":1.4},{"date":"2026-01-02","value":1.5}]}]`
-	for _, args := range []string{
+	for i, args := range []string{
 		`{"title":"T","y_axis":{"title":"Population (bn)","mode":"value"},` + pts + `}`,
 		`{"title":"T","y_axis":"Population (bn)",` + pts + `}`,
 		`{"title":"T","axes":{"label":"Population (bn)"},` + pts + `}`,
@@ -141,6 +153,9 @@ func TestChartYAxis(t *testing.T) {
 		s, err := parseChart(args)
 		if err != nil || s.left.Title != "Population (bn)" || s.left.Mode != "value" {
 			t.Errorf("%s: %+v, %v", args, s, err)
+			continue
+		}
+		if i > 0 { // every form parses to the same axis, so one drawing shows it is drawn
 			continue
 		}
 		if _, pics, err := tool(t, register(t), "make_chart").Run(context.Background(), args); err != nil || len(pics) != 1 {
@@ -154,6 +169,7 @@ func TestChartYAxis(t *testing.T) {
 }
 
 func TestChartTool(t *testing.T) {
+	t.Parallel()
 	out, pics, err := tool(t, register(t), "make_chart").Run(context.Background(), sampleChart())
 	if err != nil || !strings.HasPrefix(out, chartNote+"Final values: NVDA ") || len(pics) != 1 {
 		t.Fatalf("got %q, %d pictures, %v", out, len(pics), err)
@@ -170,6 +186,7 @@ func TestChartTool(t *testing.T) {
 
 // The model calls the pie chart tool: it is told the total and the shares.
 func TestPieTool(t *testing.T) {
+	t.Parallel()
 	out, pics, err := tool(t, register(t), "make_pie_chart").Run(context.Background(), alphabetPie)
 	if err != nil || !strings.Contains(out, "Total $127.6B") || len(pics) != 1 {
 		t.Fatalf("got %q, %d pictures, %v", out, len(pics), err)
@@ -185,6 +202,7 @@ func TestPieTool(t *testing.T) {
 // Bad arguments go back to the model with what to fix, and the log gets the
 // same reason, so an operator can see why a call keeps failing.
 func TestChartToolBadArguments(t *testing.T) {
+	t.Parallel()
 	h := register(t)
 	for name, args := range map[string]string{
 		"make_chart":     `{"title":"Alice's savings","series":[{"name":"Alice's account","points":[{"date":"Alice's birthday","value":1},{"date":"2026-01-02","value":2}]}]}`,

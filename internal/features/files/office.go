@@ -19,8 +19,9 @@ import (
 // those read from all its parts, so a small zip can't inflate into a huge
 // one; maxDepth caps how deep elements nest, since the decoder keeps a
 // stack of the open ones; maxParts caps a zip's entries, checked before its
-// directory is built (a 1,000-slide deck has about 10,000).
-const (
+// directory is built (a 1,000-slide deck has about 10,000). They are
+// variables only so that this package's tests can lower them.
+var (
 	maxPart  = 10 << 20
 	maxTotal = 32 << 20
 	maxDepth = 256

@@ -221,14 +221,14 @@ func TestBigPhotoIsShrunk(t *testing.T) {
 	out, _ := capture(t)
 	var fetched []int
 	h := host(t, true, &fetched)
-	m := image.NewRGBA(image.Rect(0, 0, 1400, 1400))
+	m := image.NewRGBA(image.Rect(0, 0, 1160, 1160))
 	x := uint32(1)
 	for i := range m.Pix {
 		x = x*1664525 + 1013904223
 		m.Pix[i] = byte(x >> 24)
 	}
-	var b bytes.Buffer
-	png.Encode(&b, m)
+	var b bytes.Buffer // noise doesn't compress, so it isn't tried: just over img.MaxBytes
+	(&png.Encoder{CompressionLevel: png.NoCompression}).Encode(&b, m)
 	if b.Len() <= img.MaxBytes {
 		t.Fatalf("only %d bytes", b.Len())
 	}

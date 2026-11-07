@@ -1023,8 +1023,8 @@ func noisyPNG(t *testing.T, w, h int) []byte {
 		x = x*1664525 + 1013904223
 		m.Pix[i] = byte(x >> 24)
 	}
-	var b bytes.Buffer
-	if err := png.Encode(&b, m); err != nil {
+	var b bytes.Buffer // noise doesn't compress, so it isn't tried: about 4 bytes a pixel
+	if err := (&png.Encoder{CompressionLevel: png.NoCompression}).Encode(&b, m); err != nil {
 		t.Fatal(err)
 	}
 	return b.Bytes()

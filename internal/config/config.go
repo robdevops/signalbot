@@ -44,8 +44,9 @@ type Config struct {
 type Test struct {
 	ReloadGap  time.Duration    // the least time between two loads of the network's contacts, instead of its own
 	OpenRouter string           // the API host given OpenRouter's extras, instead of openrouter.ai
-	Now        func() time.Time // the core's clock, instead of time.Now
+	Now        func() time.Time // the core's clock, for history and the budget, instead of time.Now
 	Handled    func()           // called on the network's reader goroutine after each frame received
+	RetryDelay time.Duration    // the model client's wait before trying again, instead of its own
 	busy       atomic.Int64     // work under way, as Begin counts it
 }
 

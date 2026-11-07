@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"image"
 	"image/color"
+	stddraw "image/draw"
 	"image/png"
 	"math"
 	"slices"
@@ -515,9 +516,23 @@ type canvas struct {
 	th  *theme
 }
 
-// fill paints polygons, each given as x,y pairs, in c.
+// fill paints polygons, each given as x,y pairs, in c. It rasterizes only
+// the whole pixels the polygons cover, shifted by a whole number of pixels,
+// so the result is the same as over the whole canvas at a fraction of the
+// work.
 func (cv *canvas) fill(c color.Color, polys ...[]float64) {
-	b := cv.img.Bounds()
+	minX, minY, maxX, maxY := math.Inf(1), math.Inf(1), math.Inf(-1), math.Inf(-1)
+	for _, p := range polys {
+		for i := 0; i+1 < len(p); i += 2 {
+			minX, maxX = min(minX, p[i]), max(maxX, p[i])
+			minY, maxY = min(minY, p[i+1]), max(maxY, p[i+1])
+		}
+	}
+	b := image.Rect(int(math.Floor(minX)), int(math.Floor(minY)), int(math.Ceil(maxX))+1, int(math.Ceil(maxY))+1).Intersect(cv.img.Bounds())
+	if b.Empty() {
+		return
+	}
+	ox, oy := float64(b.Min.X), float64(b.Min.Y)
 	r := vector.NewRasterizer(b.Dx(), b.Dy())
 	for _, p := range polys {
 		// Every polygon is wound the same way, so overlaps add up instead of
@@ -534,9 +549,9 @@ func (cv *canvas) fill(c color.Color, polys ...[]float64) {
 			}
 			p = q
 		}
-		r.MoveTo(float32(p[0]), float32(p[1]))
+		r.MoveTo(float32(p[0]-ox), float32(p[1]-oy))
 		for i := 2; i < len(p); i += 2 {
-			r.LineTo(float32(p[i]), float32(p[i+1]))
+			r.LineTo(float32(p[i]-ox), float32(p[i+1]-oy))
 		}
 		r.ClosePath()
 	}
@@ -602,7 +617,7 @@ const sourceDescription = "Where the data came from, e.g. the site or tool; fill
 // and the legend.
 func newCanvas(th *theme, title, subtitle, source string) *canvas {
 	cv := &canvas{img: image.NewRGBA(image.Rect(0, 0, width, height)), th: th}
-	cv.rect(th.bg, 0, 0, width, height)
+	stddraw.Draw(cv.img, cv.img.Bounds(), image.NewUniform(th.bg), image.Point{}, stddraw.Src) // whole pixels: no need to rasterize
 	titleFace, subFace := face(chartFonts.bold, 34), face(chartFonts.regular, 22)
 	defer titleFace.Close()
 	defer subFace.Close()
@@ -637,8 +652,13 @@ func (cv *canvas) encode() ([]byte, error) {
 	pix := cv.img.Pix
 	rgb := func(i int) uint32 { return uint32(pix[i])<<16 | uint32(pix[i+1])<<8 | uint32(pix[i+2]) }
 	counts := map[uint32]int{} // pixels of each colour
-	for i := 0; i < len(pix); i += 4 {
-		counts[rgb(i)]++
+	for i := 0; i < len(pix); {
+		c, j := rgb(i), i+4 // a run of one colour, such as the background, is counted at once
+		for j < len(pix) && rgb(j) == c {
+			j += 4
+		}
+		counts[c] += (j - i) / 4
+		i = j
 	}
 	var mask uint32
 	best, size := map[uint32]uint32{}, map[uint32]int{} // each group's most common colour, and its pixels
@@ -677,8 +697,12 @@ func (cv *canvas) encode() ([]byte, error) {
 		counts[c] = int(i)
 	}
 	out := image.NewPaletted(cv.img.Rect, pal)
+	last, idx := uint32(1<<24), uint8(0) // no colour, so the first pixel looks its index up
 	for i := range out.Pix {
-		out.Pix[i] = uint8(counts[rgb(4*i)])
+		if c := rgb(4 * i); c != last {
+			last, idx = c, uint8(counts[c])
+		}
+		out.Pix[i] = idx
 	}
 	var buf bytes.Buffer
 	err := png.Encode(&buf, out)

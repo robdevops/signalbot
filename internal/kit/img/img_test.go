@@ -55,17 +55,33 @@ func encode(t *testing.T, m image.Image) []byte {
 	return b.Bytes()
 }
 
+// smallLimits lowers Fit's limits for the test, by about 16 times, so the
+// same paths run on images a sixteenth the size.
+func smallLimits(t *testing.T) {
+	old := [3]any{sendLimit, decodeLimit, sideLimit}
+	sendLimit, decodeLimit, sideLimit = 64<<10, 4<<20, 256
+	t.Cleanup(func() { sendLimit, decodeLimit, sideLimit = old[0].(int), old[1].(int64), old[2].(int) })
+}
+
+// The limits are the constants, which callers see.
+func TestLimits(t *testing.T) {
+	if sendLimit != MaxBytes || MaxBytes != 5<<20 || decodeLimit != 64<<20 || sideLimit != 2048 || MaxReceived != 12<<20 {
+		t.Fatalf("limits %d, %d, %d", sendLimit, decodeLimit, sideLimit)
+	}
+}
+
 // A sendable image is kept as it is; a bigger one is shrunk by a whole
-// factor to at most 2048 pixels a side as a JPEG that fits, keeping its
+// factor to at most sideLimit pixels a side as a JPEG that fits, keeping its
 // shape; anything else fails, as does a canvas too big to decode safely.
 func TestFit(t *testing.T) {
+	smallLimits(t)
 	small := pngBytes(t)
 	if got, err := Fit(small); err != nil || !bytes.Equal(got, small) {
 		t.Fatalf("small: %v", err)
 	}
-	for _, c := range []struct{ w, h, wantW, wantH int }{{1400, 1400, 1400, 1400}, {3000, 1000, 1500, 500}, {1000, 3000, 500, 1500}} {
+	for _, c := range []struct{ w, h, wantW, wantH int }{{200, 200, 200, 200}, {512, 200, 256, 100}, {200, 512, 100, 256}} {
 		big := encode(t, noise(c.w, c.h))
-		if len(big) <= MaxBytes {
+		if len(big) <= sendLimit {
 			t.Fatalf("%dx%d is only %d bytes", c.w, c.h, len(big))
 		}
 		got, err := Fit(big)
@@ -81,29 +97,31 @@ func TestFit(t *testing.T) {
 		t.Error("text fitted")
 	}
 	// A big file that isn't a valid image, and a canvas too big to decode.
-	if _, err := Fit(append(slices.Clone(small[:20]), make([]byte, MaxBytes)...)); err == nil {
+	if _, err := Fit(append(slices.Clone(small[:20]), make([]byte, sendLimit)...)); err == nil {
 		t.Error("a broken PNG fitted")
 	}
 	var huge bytes.Buffer
-	gif.Encode(&huge, image.NewPaletted(image.Rect(0, 0, 10000, 7000), []color.Color{color.White}), nil)
+	gif.Encode(&huge, image.NewPaletted(image.Rect(0, 0, 2500, 1750), []color.Color{color.White}), nil)
 	if _, err := Fit(pad(huge.Bytes())); err == nil || err.Error() != "image too large to shrink" {
-		t.Errorf("a 70 MP GIF: %v", err)
+		t.Errorf("a 4.4 MP GIF: %v", err)
 	}
-	if _, err := Fit(pad(encode(t, image.NewRGBA64(image.Rect(0, 0, 4000, 2500))))); err == nil || err.Error() != "image too large to shrink" {
-		t.Errorf("a 10 MP 16-bit PNG: %v", err)
+	if _, err := Fit(pad(encode(t, image.NewRGBA64(image.Rect(0, 0, 1000, 625))))); err == nil || err.Error() != "image too large to shrink" {
+		t.Errorf("a 0.6 MP 16-bit PNG: %v", err)
 	}
-	if _, err := Fit(pad(encode(t, image.NewGray(image.Rect(0, 0, 1, 5000))))); err == nil {
+	if _, err := Fit(pad(encode(t, image.NewGray(image.Rect(0, 0, 1, 625))))); err == nil {
 		t.Error("a 1 by 5000 image shrank to nothing")
 	}
 }
 
 // pad makes data too big to send as it is, so Fit decodes it; decoders
 // ignore what follows an image.
-func pad(data []byte) []byte { return append(slices.Clone(data), make([]byte, MaxBytes)...) }
+func pad(data []byte) []byte { return append(slices.Clone(data), make([]byte, sendLimit)...) }
 
-// A 12 MP photo is shrunk within a small fraction of the bot's memory.
+// A photo is shrunk within a small fraction of the bot's memory (a 12 MP
+// one at the real limits; here a sixteenth of each).
 func TestFitMemory(t *testing.T) {
-	m := image.NewGray(image.Rect(0, 0, 4000, 3000))
+	smallLimits(t)
+	m := image.NewGray(image.Rect(0, 0, 1000, 750))
 	for i := range m.Pix {
 		m.Pix[i] = byte(i % 251)
 	}
@@ -119,8 +137,8 @@ func TestFitMemory(t *testing.T) {
 	if err != nil || !Sendable(got) {
 		t.Fatal(err)
 	}
-	if n := after.TotalAlloc - before.TotalAlloc; n > 60<<20 {
-		t.Fatalf("allocated %d MB", n>>20)
+	if n := after.TotalAlloc - before.TotalAlloc; n > 60<<20/16 { // as 60 MB at the real limits
+		t.Fatalf("allocated %d KB", n>>10)
 	}
 }
 

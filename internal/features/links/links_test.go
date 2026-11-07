@@ -293,8 +293,8 @@ func TestExtraLinksAreLogged(t *testing.T) {
 func TestPageTextIsStreamed(t *testing.T) {
 	for name, page := range map[string][]byte{
 		"many tokens": []byte("<html><head><title>Big</title></head><body>" + strings.Repeat("<p>a", 1_300_000) + "</body></html>"),
-		"one token":   []byte("<html><head><title>Big" + strings.Repeat(" title", 500_000) + "</title></head><body><p>" + strings.Repeat("a ", 1_500_000) + "</p></body></html>"),
-		"multibyte":   []byte("<html><head><title>Big</title></head><body><p>" + strings.Repeat("日", 1_000_000) + "</p></body></html>"),
+		"one token":   []byte("<html><head><title>Big" + strings.Repeat(" title", 50_000) + "</title></head><body><p>" + strings.Repeat("a ", maxText*4) + "</p></body></html>"),
+		"multibyte":   []byte("<html><head><title>Big</title></head><body><p>" + strings.Repeat("日", maxText*3) + "</p></body></html>"),
 	} {
 		var before, after runtime.MemStats
 		runtime.GC()
