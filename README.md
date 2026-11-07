@@ -29,7 +29,7 @@ A small, [privacy-conscious](PRIVACY.md) chat bot that connects to a running [si
 - A private assistant in your DMs
 - Use this project as the basis of your own bot project
 
-The messages the bot answers, and the names in them, are sent to the model's API (OpenRouter, unless you [choose another](docs/MODELS.md)). See [TECHNICAL.md](TECHNICAL.md) and [PRIVACY.md](PRIVACY.md) for details on how it works.
+The messages the bot answers, and the names in them, are sent to the model's API (OpenRouter, unless you [choose another](docs/MODELS.md)). See [PRIVACY.md](PRIVACY.md) for what happens to your messages.
 
 ## Install
 
@@ -88,7 +88,7 @@ The bot runs as a dynamic user (`DynamicUser=yes`). Its schedules and budget are
    sudo systemctl daemon-reload
    sudo systemctl enable --now signalbot
    ```
-3. Read the logs (see [Logs](TECHNICAL.md#logs)):
+3. Read the logs:
    ```
    journalctl -fu signalbot
    journalctl -u signalbot -p warning   # warnings and errors only
