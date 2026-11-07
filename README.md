@@ -7,8 +7,8 @@ A small, [privacy-conscious](PRIVACY.md) chat bot that connects to a running [si
 - [Install](#install)
   - [Prerequisites](#prerequisites)
   - [Configuration](#configuration)
-  - [With systemd](#with-systemd)
-  - [With Docker](#with-docker)
+  - [Install as a systemd service](#install-as-a-systemd-service)
+  - [Install as a Docker container](#install-as-a-docker-container)
   - [Test](#test)
 - [Docs](#docs)
 
@@ -70,7 +70,7 @@ To get the bot working with Signal and a model on OpenRouter, set these:
 
 Every other setting (daily budget, chart colours, history length, MCP connectors, time zone, …) is in [Configuration](docs/CONFIGURATION.md). Then install the bot with systemd or with Docker.
 
-### With systemd
+### Install as a systemd service
 
 The bot runs as a dynamic user (`DynamicUser=yes`). Its schedules and budget are kept in `/var/lib/private/signalbot`, which systemd creates.
 
@@ -94,7 +94,7 @@ The bot runs as a dynamic user (`DynamicUser=yes`). Its schedules and budget are
    journalctl -u signalbot -p warning   # warnings and errors only
    ```
 
-### With Docker
+### Install as a Docker container
 
 `--network=host` lets the container reach signal-cli on the host's `127.0.0.1`. Run it with `sudo`, because Docker reads `--env-file` as the calling user and the file is root-only.
 
