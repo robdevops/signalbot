@@ -132,6 +132,6 @@ Add the bot's account to a group and @mention it, reply to one of its messages, 
 - [Configuration](docs/CONFIGURATION.md)
 - [Unix socket](docs/SOCKET.md)
 - [Files, Links, Tools, and MCP connectors](docs/FILES_LINKS_TOOLS_MCP.md)
-- [Models](docs/MODELS.md)
+- [Language models](docs/MODELS.md)
 - [Scheduling](docs/SCHEDULING.md)
 - [Troubleshooting](docs/TROUBLESHOOTING.md)

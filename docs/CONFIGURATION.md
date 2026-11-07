@@ -8,7 +8,7 @@ Every setting, read from the environment (`/etc/signalbot.env` in the install). 
 | `SIGNAL_DM_USER_IDS` | empty | UUIDs/numbers allowed to DM the bot, separated by commas or whitespace; empty turns DMs off, and the startup log says which |
 | `MODEL` | `deepseek/deepseek-v4.1-flash-1017` | The model's name at the API: on OpenRouter as `provider/model` |
 | `MODEL_API_KEY` | empty | API key for the model's API, such as your [OpenRouter](https://openrouter.ai) key; none is sent when empty. With neither this nor `MODEL_API_URL` the bot has [no model](MODELS.md#no-model) |
-| `MODEL_API_URL` | `https://openrouter.ai/api/v1` | Base URL of an OpenAI-compatible chat completions API; see [Models](MODELS.md#other-providers) |
+| `MODEL_API_URL` | `https://openrouter.ai/api/v1` | Base URL of an OpenAI-compatible chat completions API; see [Language models](MODELS.md#other-providers) |
 | `MODEL_REASONING` | `low` | Reasoning effort, e.g. `low`, `medium`, `high` (`none` to omit). Sent as OpenRouter's `reasoning.effort`, or elsewhere as `reasoning_effort` |
 | `MODEL_SEARCH` | `true` | Lets the model search the web (OpenRouter's web search tool) when it decides to, citing the sites it uses by url; searches are billed. Only on OpenRouter: on another API it is left out, with a warning. Accepts `true`/`false`, `yes`/`no`, `on`/`off`, `1`/`0` |
 | `MODEL_SYSTEM_PROMPT` | empty | Extra instructions, appended to the built-in prompt (which keeps answers short and Signal-sized and, when the model has tools, asks it to name its source) |

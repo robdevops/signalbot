@@ -1,4 +1,4 @@
-# Models
+# Language models
 
 - [Other providers](#other-providers)
 - [No model](#no-model)
