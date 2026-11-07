@@ -158,14 +158,14 @@ func isAddressed(env *envelope, self string, allowed map[string]bool) bool {
 func (c *Client) event(env *envelope) (bot.Received, bool) {
 	d := env.DataMessage
 	if d == nil {
-		return bot.Received{}, false
+		return nil, false
 	}
 	chat := env.chat()
 	if g := d.GroupInfo; g != nil && g.Type == "UPDATE" {
 		c.refreshSoon() // so new members are known and departed ones forgotten
 		self := c.self()
 		c.members.changed(chat.GroupID, c.person(env.SourceUUID, env.Source, env.SourceNumber, env.SourceName), self != "" && fromSelf(env, self))
-		return bot.Received{Message: feature.Message{Chat: chat}, GroupChange: true}, true
+		return bot.GroupChanged{Chat: chat}, true
 	}
 	if r := d.Reaction; r != nil {
 		return c.reacted(env, chat, r)
@@ -178,15 +178,15 @@ func (c *Client) event(env *envelope) (bot.Received, bool) {
 	}
 	self := c.self()
 	if self == "" {
-		return bot.Received{Chat: chat, Load: load}, true
+		return bot.Pending{Chat: chat, Load: load}, true
 	}
 	switch addressed, other := c.judge(env, self); {
 	case addressed:
-		return bot.Received{Chat: chat, Addressed: true, Load: load}, true
+		return bot.Pending{Chat: chat, Load: load}, true
 	case other:
-		return bot.Received{Message: c.message(env, self)}, true
+		return bot.Chatter{Message: c.message(env, self)}, true
 	}
-	return bot.Received{}, false
+	return nil, false
 }
 
 // reacted is a reaction as the core gets it: never the bot's own, nor one
@@ -194,13 +194,13 @@ func (c *Client) event(env *envelope) (bot.Received, bool) {
 func (c *Client) reacted(env *envelope, chat feature.Chat, r *reaction) (bot.Received, bool) {
 	self := c.self()
 	if self == "" || fromSelf(env, self) || chat.GroupID == "" && !isAllowed(env, c.allowed) || r.Emoji == "" {
-		return bot.Received{}, false
+		return nil, false
 	}
 	e := feature.Event{Chat: chat, By: c.person(env.SourceUUID, env.Source, env.SourceNumber, env.SourceName), Reaction: &feature.Reaction{
 		Emoji: txt.Clamp(r.Emoji, 16), Removed: r.IsRemove, Author: cmp.Or(r.TargetAuthorUUID, r.TargetAuthor, r.TargetAuthorNumber),
 		Bot: is(self, r.TargetAuthorUUID, r.TargetAuthor, r.TargetAuthorNumber), Sent: r.TargetSentTimestamp,
 	}}
-	return bot.Received{Message: feature.Message{Chat: chat}, Event: &e}, true
+	return bot.Happened{Event: e}, true
 }
 
 // person is someone by their IDs, an ACI first, named as the bot knows
@@ -350,32 +350,32 @@ func (c *Client) text(msg string, ms []mention, self string) string {
 // sender had just posted it, waiting up to 10s for signal-cli and the bot's
 // own name: a DM's sender must still be allowed, by ACI or number, and a
 // group's still a member. A drop is logged without content.
-func (c *Client) Delivered(ctx context.Context, msg feature.Message) (bot.Received, bool) {
+func (c *Client) Delivered(ctx context.Context, msg feature.Message) (bot.Ready, bool) {
 	wait, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
 	if c.WaitID(wait) == "" {
 		logx.Warnf("delivered message dropped: not connected to signal-cli after 10s")
-		return bot.Received{}, false
+		return bot.Ready{}, false
 	}
 	c.loadNames(wait, &envelope{})
 	if msg.Chat.GroupID == "" && !c.allowed[msg.Sender] && !c.allowed[c.number(msg.Sender)] {
 		logx.Infof("delivered message from %s dropped because not in SIGNAL_DM_USER_IDS", cmp.Or(msg.Sender, "unknown sender"))
-		return bot.Received{}, false
+		return bot.Ready{}, false
 	}
 	msg.Name = cmp.Or(msg.Name, c.name(msg.Sender))
-	var r bot.Received
+	var r bot.Ready
 	if msg.Chat.GroupID != "" {
 		ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 		gs, err := c.groups(ctx, msg.Sender)
 		cancel()
 		if err != nil {
 			logx.Warnf("delivered message dropped: listGroups failed: %v", err)
-			return bot.Received{}, false
+			return bot.Ready{}, false
 		}
 		i := slices.IndexFunc(gs, func(g group) bool { return g.ID == msg.Chat.GroupID })
 		if i < 0 {
 			logx.Infof("delivered message dropped: its sender is not in the group")
-			return bot.Received{}, false
+			return bot.Ready{}, false
 		}
 		for _, m := range gs[i].Members {
 			r.Members = append(r.Members, bot.Member{Name: c.name(m.UUID, m.Number), ID: m.UUID}) // a member without an ACI is never linked

@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/robdevops/signalbot/internal/bot"
 	"github.com/robdevops/signalbot/internal/config"
 )
 
@@ -143,7 +144,7 @@ func TestContactsReloadOnConnectAndGroupChange(t *testing.T) {
 		t.Fatalf("someone who left is still known as %q", n)
 	}
 	for range 5 {
-		if r := next(t, got); !r.GroupChange {
+		if r, ok := next(t, got).(bot.GroupChanged); !ok {
 			t.Fatalf("got %+v", r) // the changes still reach the core
 		}
 	}

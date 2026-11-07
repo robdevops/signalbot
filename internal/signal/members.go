@@ -168,7 +168,7 @@ func (m *members) compare() {
 			}
 		}
 		chat := feature.Chat{GroupID: group}
-		handle(bot.Received{Message: feature.Message{Chat: chat}, Event: &feature.Event{Chat: chat, By: p.by, Members: &e}})
+		handle(bot.Happened{Event: feature.Event{Chat: chat, By: p.by, Members: &e}})
 	}
 }
 

@@ -95,11 +95,11 @@ func (n *fakeNet) Typing(feature.Chat) func() {
 	return func() {}
 }
 
-func (n *fakeNet) Delivered(ctx context.Context, msg feature.Message) (Received, bool) {
+func (n *fakeNet) Delivered(ctx context.Context, msg feature.Message) (Ready, bool) {
 	if n.WaitID(ctx) == "" || msg.Chat.GroupID != "" && msg.Chat.GroupID != groupID {
-		return Received{}, false
+		return Ready{}, false
 	}
-	var r Received
+	var r Ready
 	if msg.Chat.GroupID != "" {
 		r.Members = []Member{{Name: "Alice", ID: aliceID}, {Name: "Bob", ID: bobID}}
 	}
@@ -253,17 +253,17 @@ func (h *harness) receive(m feature.Message) {
 		}
 		return m, m.Addressed || m.Chat.GroupID != ""
 	}
-	r := Received{Message: m}
+	var r Received = Chatter{Message: m}
 	select {
 	case <-h.net.id:
 		switch {
 		case m.Addressed:
-			r = Received{Chat: m.Chat, Addressed: true, Load: load}
+			r = Pending{Chat: m.Chat, Load: load}
 		case m.Chat.GroupID == "":
 			return
 		}
 	default:
-		r = Received{Chat: m.Chat, Load: load}
+		r = Pending{Chat: m.Chat, Load: load}
 	}
 	h.net.handle(r)
 }

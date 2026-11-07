@@ -36,10 +36,9 @@ type Network interface {
 	// React puts emoji on msg in chat, as a reaction from the bot.
 	React(chat feature.Chat, msg feature.Message, emoji string)
 	Typing(chat feature.Chat) (stop func())
-	// Delivered readies a delivered message in its slot: its sender's name
-	// filled in, the bot's @name stripped (Mentioned if it was there), and
-	// in a group the Members. ok is false, logged, if msg is dropped.
-	Delivered(ctx context.Context, msg feature.Message) (r Received, ok bool)
+	// Delivered readies a posted message in its slot. ok is false, logged,
+	// if msg is dropped.
+	Delivered(ctx context.Context, msg feature.Message) (r Ready, ok bool)
 	// BotName never blocks.
 	BotName() string
 	// Prompt is the network's own line in the system prompt, such as its
@@ -48,25 +47,6 @@ type Network interface {
 	Media(ctx context.Context, msg feature.Message, i int) ([]byte, error)
 	Groups(ctx context.Context, user string) ([]feature.Group, error)
 	Redact(text string) string
-}
-
-// Received is a message as the chat network hands it to the core: on the
-// network's reader goroutine, as a feature delivers it, or as Delivered
-// readies that. It is what a chat's mailbox holds. Features never see one.
-type Received struct {
-	feature.Message                // what is known without calling the network
-	GroupChange     bool           // only that a group's members, name or description changed
-	Event           *feature.Event // something besides a message; only Chat is set besides
-	// Load completes, in its slot, an addressed message, or one that arrived
-	// before the bot's own ID was known. It may call the network, and calls
-	// learn with each name it shows the model and that person's ID. It
-	// reports false for a message the core has nothing to do with. It is nil
-	// for an unaddressed group message and for a delivered one.
-	Load func(ctx context.Context, learn func(name, id string)) (feature.Message, bool)
-
-	// Set only by Delivered.
-	Mentioned bool     // the text had the bot's @name, now stripped
-	Members   []Member // a group's members, whose @Name a post links
 }
 
 // Member is a group member: a display name and the network's ID for them,
@@ -174,23 +154,26 @@ func (b *Bot) Shutdown(d time.Duration) {
 	}
 }
 
-// handle runs on the network's reader goroutine for every message received,
-// so it never blocks or calls the network. A message to load goes to its
-// chat's mailbox; an unaddressed group message goes to the OnMessage hooks
-// here, and is never logged.
+// handle runs on the network's reader goroutine for everything received (a
+// member change comes from another of its goroutines), so it never blocks
+// or calls the network. A Pending message, a Posted one and, with a hook
+// for them, a Happened event go to their chat's mailbox; Chatter goes to the
+// OnMessage hooks here, and is never logged.
 func (b *Bot) handle(r Received) {
-	switch {
-	case b.closing.Load():
-	case r.GroupChange:
+	if b.closing.Load() {
+		return
+	}
+	switch r := r.(type) {
+	case GroupChanged:
 		b.chats.ForgetNames(r.Chat.Key())
-	case r.Event != nil:
+	case Chatter:
+		b.keep(r.Message)
+	case Happened:
 		if len(b.events) > 0 { // with no hook, nothing would read it
 			b.post(r)
 		}
-	case r.Load != nil:
+	case Pending, Posted:
 		b.post(r)
-	default:
-		b.keep(r.Message)
 	}
 }
 
@@ -216,7 +199,7 @@ func (b *Bot) spawn(worker func()) bool {
 
 // post adds r to its chat's mailbox.
 func (b *Bot) post(r Received) {
-	switch err := b.chats.Post(r.Chat.Key(), r); {
+	switch err := b.chats.Post(r.chat().Key(), r); {
 	case errors.Is(err, chats.ErrNoSlot):
 		logx.Warnf("at capacity (%d), dropping message", b.cfg.MaxConcurrency)
 	case err != nil:
@@ -251,15 +234,20 @@ func (b *Bot) work(rs []Received) {
 			return
 		}
 		safely(func() {
-			if r.Event != nil {
-				alone(func() { b.event(*r.Event) })
+			var p Pending
+			switch r := r.(type) {
+			case Happened:
+				alone(func() { b.event(r.Event) })
 				return
-			}
-			if r.Load == nil { // delivered
+			case Posted:
 				alone(func() { b.delivered(r.Message) })
 				return
+			case Pending:
+				p = r
+			default:
+				return
 			}
-			msg, ok := b.load(r)
+			msg, ok := b.load(p)
 			switch {
 			case !ok:
 			case !msg.Addressed:
@@ -360,7 +348,7 @@ func merge(msgs []feature.Message) (feature.Message, string) {
 
 // load completes a message in its chat's slot. An addressed one is logged
 // as it arrives, and reported false if it is a repeat.
-func (b *Bot) load(r Received) (feature.Message, bool) {
+func (b *Bot) load(r Pending) (feature.Message, bool) {
 	key := r.Chat.Key()
 	msg, ok := r.Load(b.ctx, func(name, id string) { b.chats.Learn(key, name, id) })
 	if !ok || !msg.Addressed {

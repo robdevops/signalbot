@@ -516,7 +516,7 @@ func TestStore(t *testing.T) {
 // people linkable as @Name. With no hook, an event takes no slot.
 func TestEvents(t *testing.T) {
 	group := feature.Chat{GroupID: groupID}
-	event := func(e feature.Event) Received { return Received{Message: feature.Message{Chat: e.Chat}, Event: &e} }
+	event := func(e feature.Event) Received { return Happened{Event: e} }
 	welcome := feature.Event{Chat: group, By: feature.Person{ID: aliceID, Name: "Alice"}, Members: &feature.Members{Joined: []feature.Person{{ID: bobID, Name: "Bob"}}}}
 
 	h := start(t, options{})
@@ -572,4 +572,34 @@ func TestEvents(t *testing.T) {
 	if strings.Contains(h.logs.String(), "👍") || strings.Contains(h.logs.String(), "Welcome") {
 		t.Fatalf("logged %q", h.logs.String())
 	}
+}
+
+// Each kind of Received reaches its handler, and the mailbox keeps their
+// order: an event between two addressed messages splits them into two
+// turns, answered before and after it.
+func TestReceivedKinds(t *testing.T) {
+	h := start(t, options{features: func(b *Bot) {
+		b.OnEvent(func(context.Context, feature.Event) string { return "event" })
+	}})
+	group := feature.Chat{GroupID: groupID}
+	h.holdModel()
+	h.receive(atBot("one"))
+	h.net.handle(Happened{Event: feature.Event{Chat: group, Reaction: &feature.Reaction{Emoji: "👍"}}})
+	h.receive(atBot("two"))
+	h.release()
+	for _, want := range []string{"ok", "event", "ok"} {
+		if s := h.nextSend(); s.text != want {
+			t.Fatalf("sent %q, want %q", s.text, want)
+		}
+	}
+	if n := len(h.requests()); n != 2 {
+		t.Fatalf("%d model requests: the event didn't split the turn", n)
+	}
+	h.net.handle(GroupChanged{Chat: group}) // forgets names; nothing to send
+	h.b.Deliver(feature.Message{Chat: group, Sender: aliceID, Text: "posted"})
+	if s := h.nextSend(); s.text != "posted" {
+		t.Fatalf("sent %q", s.text)
+	}
+	h.settle()
+	h.noSend()
 }

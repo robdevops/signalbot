@@ -167,16 +167,20 @@ func TestEvents(t *testing.T) {
 	connected(c)
 	event := func(env string) (bot.Received, bool) { return c.event(parse(t, env)) }
 
-	if r, ok := event(`{` + fromBob + `,"dataMessage":{"message":"￼ hi",` + atBot + `,` + inGroup + `}}`); !ok ||
-		!reflect.DeepEqual(r.Message, feature.Message{Chat: feature.Chat{GroupID: groupID}, Addressed: true}) || r.Load == nil || r.GroupChange {
+	if r, ok := event(`{` + fromBob + `,"dataMessage":{"message":"￼ hi",` + atBot + `,` + inGroup + `}}`); !ok {
+		t.Errorf("mention dropped")
+	} else if p, isP := r.(bot.Pending); !isP || p.Chat != (feature.Chat{GroupID: groupID}) || p.Load == nil {
 		t.Errorf("mention %+v", r)
 	}
-	if r, ok := event(`{` + fromBob + `,"dataMessage":{"message":"the moon",` + inGroup + `}}`); !ok ||
-		r.Text != "the moon" || r.Name != "Bob" || r.Addressed || r.Load != nil {
+	if r, ok := event(`{` + fromBob + `,"dataMessage":{"message":"the moon",` + inGroup + `}}`); !ok {
+		t.Errorf("chatter dropped")
+	} else if c, isC := r.(bot.Chatter); !isC || c.Message.Text != "the moon" || c.Message.Name != "Bob" || c.Message.Addressed {
 		t.Errorf("chatter %+v", r)
 	}
 	update := `{"sourceUuid":"` + botID + `","dataMessage":{"groupInfo":{"groupId":"` + groupID + `","type":"UPDATE"}}}`
-	if r, ok := event(update); !ok || !r.GroupChange || r.Chat.GroupID != groupID || r.Load != nil {
+	if r, ok := event(update); !ok {
+		t.Errorf("group change dropped")
+	} else if g, isG := r.(bot.GroupChanged); !isG || g.Chat.GroupID != groupID {
 		t.Errorf("group change %+v", r)
 	}
 	for _, env := range []string{
@@ -200,17 +204,18 @@ func TestEventsBeforeTheIDIsKnown(t *testing.T) {
 	logs := captureLogs(t)
 	c := newClient("x", map[string]bool{aliceID: true}, nil)
 	c.names.refreshedAt = time.Now() // so loading names doesn't try the socket
-	var rs []bot.Received
+	var rs []bot.Pending
 	for _, env := range []string{
 		`{"sourceUuid":"` + aliceID + `","sourceName":"Alice","dataMessage":{"message":"hi"}}`,
 		`{` + fromBob + `,"dataMessage":{"message":"the moon",` + inGroup + `}}`,
 		`{` + fromBob + `,"dataMessage":{"message":"let me in"}}`,
 	} {
 		r, ok := c.event(parse(t, env))
-		if !ok || r.Addressed || r.Load == nil {
+		p, isP := r.(bot.Pending)
+		if !ok || !isP || p.Load == nil {
 			t.Fatalf("%s: %+v", env, r)
 		}
-		rs = append(rs, r)
+		rs = append(rs, p)
 	}
 	gone, cancel := context.WithCancel(context.Background())
 	cancel()
@@ -242,7 +247,10 @@ func TestLoad(t *testing.T) {
 	got, conn := run(t, c, f)
 	receive(conn, `{`+fromBob+`,"dataMessage":{"message":"￼ ask ￼","sticker":{"packId":"p","stickerId":2},`+
 		`"mentions":[{"uuid":"`+botID+`","start":0,"length":1},{"uuid":"`+aliceID+`","start":6,"length":1}],`+inGroup+`}}`)
-	r := next(t, got)
+	r, ok := next(t, got).(bot.Pending)
+	if !ok {
+		t.Fatalf("got %+v", r)
+	}
 	var learned []string
 	m, ok := r.Load(context.Background(), func(name, id string) { learned = append(learned, name+" "+id) })
 	if !ok || m.Text != "ask @Alice" || len(m.Media) != 1 || m.Media[0].Label != `: 🙂 from "Pack"` {
@@ -268,7 +276,7 @@ func TestDelivered(t *testing.T) {
 	c := newClient(f.sock, allowed, nil)
 	ctx := context.Background()
 	type result struct {
-		r  bot.Received
+		r  bot.Ready
 		ok bool
 	}
 	early := make(chan result, 1)
@@ -279,7 +287,7 @@ func TestDelivered(t *testing.T) {
 	run(t, c, f)
 	select {
 	case e := <-early:
-		if !e.ok || !e.r.Mentioned || e.r.Text != "up?" || e.r.Name != "Alice" {
+		if !e.ok || !e.r.Mentioned || e.r.Message.Text != "up?" || e.r.Message.Name != "Alice" {
 			t.Fatalf("delivered before connecting: %+v", e)
 		}
 	case <-time.After(5 * time.Second):
@@ -287,10 +295,10 @@ func TestDelivered(t *testing.T) {
 	}
 
 	r, ok := c.Delivered(ctx, feature.Message{Chat: feature.Chat{GroupID: groupID}, Sender: aliceID, Text: "@BOTTY what's new, @Bob?"})
-	if want := []bot.Member{{Name: "Alice", ID: aliceID}, {Name: "Bob", ID: bobID}}; !ok || !r.Mentioned || r.Text != "what's new, @Bob?" || r.Name != "Alice" || !reflect.DeepEqual(r.Members, want) {
+	if want := []bot.Member{{Name: "Alice", ID: aliceID}, {Name: "Bob", ID: bobID}}; !ok || !r.Mentioned || r.Message.Text != "what's new, @Bob?" || r.Message.Name != "Alice" || !reflect.DeepEqual(r.Members, want) {
 		t.Fatalf("group: %+v %v", r, ok)
 	}
-	if r, ok := c.Delivered(ctx, feature.Message{Chat: feature.Chat{User: aliceID}, Sender: aliceID, Name: "Alice S", Text: "water the plants"}); !ok || r.Mentioned || r.Name != "Alice S" || r.Members != nil {
+	if r, ok := c.Delivered(ctx, feature.Message{Chat: feature.Chat{User: aliceID}, Sender: aliceID, Name: "Alice S", Text: "water the plants"}); !ok || r.Mentioned || r.Message.Name != "Alice S" || r.Members != nil {
 		t.Fatalf("DM allowed by number: %+v %v", r, ok)
 	}
 	if _, ok := c.Delivered(ctx, feature.Message{Chat: feature.Chat{GroupID: groupID}, Sender: bobID, Text: "hello all"}); !ok {
@@ -338,11 +346,11 @@ func TestReactions(t *testing.T) {
 	r, ok := c.event(parse(t, react(fromBob, inGroup+",", botID, false)))
 	want := feature.Event{Chat: feature.Chat{GroupID: groupID}, By: feature.Person{ID: bobID, Name: "Bob"},
 		Reaction: &feature.Reaction{Emoji: "👍", Author: botID, Bot: true, Sent: 1700}}
-	if !ok || r.Event == nil || !reflect.DeepEqual(*r.Event, want) || r.Chat != want.Chat || r.Load != nil || r.Text != "" {
+	if h, isH := r.(bot.Happened); !ok || !isH || !reflect.DeepEqual(h.Event, want) {
 		t.Fatalf("reaction %+v", r)
 	}
 	r, ok = c.event(parse(t, react(`"sourceUuid":"`+aliceID+`"`, "", bobID, true)))
-	if !ok || r.Event == nil || !r.Event.Reaction.Removed || r.Event.Reaction.Bot || r.Event.Reaction.Author != bobID || r.Chat.User != aliceID {
+	if h, isH := r.(bot.Happened); !ok || !isH || !h.Event.Reaction.Removed || h.Event.Reaction.Bot || h.Event.Reaction.Author != bobID || h.Event.Chat.User != aliceID {
 		t.Fatalf("removal in a DM %+v", r)
 	}
 	for _, env := range []string{

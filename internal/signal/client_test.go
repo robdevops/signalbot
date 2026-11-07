@@ -173,7 +173,7 @@ func next(t *testing.T, got <-chan bot.Received) bot.Received {
 		return r
 	case <-time.After(5 * time.Second):
 		t.Fatal("nothing received")
-		return bot.Received{}
+		return nil
 	}
 }
 
@@ -189,13 +189,13 @@ func TestReceiveAndReconnect(t *testing.T) {
 	c.backoff = 10 * time.Millisecond
 	got, conn := run(t, c, f)
 	receive(conn, `{"sourceUuid":"`+aliceID+`","dataMessage":{"message":"hi"}}`)
-	if r := next(t, got); r.Chat.User != aliceID || !r.Addressed {
+	if r, ok := next(t, got).(bot.Pending); !ok || r.Chat.User != aliceID {
 		t.Fatalf("got %+v", r)
 	}
 	conn.Close()
 	conn2 := <-f.conns
 	receive(conn2, `{"sourceUuid":"`+bobID+`","dataMessage":{"message":"again"}}`)
-	if r := next(t, got); r.Chat.User != bobID {
+	if r, ok := next(t, got).(bot.Pending); !ok || r.Chat.User != bobID {
 		t.Fatalf("after reconnecting got %+v", r)
 	}
 }
@@ -506,14 +506,14 @@ func TestMemberChanges(t *testing.T) {
 	members := func() *feature.Members {
 		t.Helper()
 		for {
-			r := next(t, got)
-			if r.Event != nil {
-				if r.Event.By != (feature.Person{ID: aliceID, Name: "Alice"}) || r.Chat != r.Event.Chat {
+			switch r := next(t, got).(type) {
+			case bot.Happened:
+				if r.Event.By != (feature.Person{ID: aliceID, Name: "Alice"}) {
 					t.Fatalf("event %+v", r.Event)
 				}
 				return r.Event.Members
-			}
-			if !r.GroupChange {
+			case bot.GroupChanged:
+			default:
 				t.Fatalf("got %+v", r)
 			}
 		}
@@ -571,8 +571,8 @@ func TestMemberChangeRules(t *testing.T) {
 		for {
 			select {
 			case r := <-got:
-				if r.Event != nil {
-					events = append(events, *r.Event)
+				if h, ok := r.(bot.Happened); ok {
+					events = append(events, h.Event)
 				}
 			default: // compared waited until they were handed over
 				return events
