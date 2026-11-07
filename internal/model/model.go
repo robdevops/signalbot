@@ -515,8 +515,12 @@ func (c *Client) Capabilities(ctx context.Context) Caps {
 			SupportedParameters []string `json:"supported_parameters"`
 		} `json:"data"`
 	}
-	if resp.StatusCode != http.StatusOK || json.NewDecoder(io.LimitReader(resp.Body, 32<<20)).Decode(&r) != nil {
+	if resp.StatusCode != http.StatusOK {
 		logx.Warnf("could not check what %s supports, so images and audio are off: status %d", c.model, resp.StatusCode)
+		return unknown
+	}
+	if json.NewDecoder(io.LimitReader(resp.Body, 32<<20)).Decode(&r) != nil {
+		logx.Warnf("could not check what %s supports, so images and audio are off: the model list couldn't be read", c.model)
 		return unknown
 	}
 	for _, m := range r.Data {
@@ -527,6 +531,6 @@ func (c *Client) Capabilities(ctx context.Context) Caps {
 				Tools: slices.Contains(m.SupportedParameters, "tools")}
 		}
 	}
-	logx.Warnf("model %s is not in OpenRouter's model list, so images and audio are off", c.model)
+	logx.Warnf("MODEL is %q, but OpenRouter has no model with that ID; if it's a typo, replies will fail. Images and audio are off.", c.model)
 	return unknown
 }

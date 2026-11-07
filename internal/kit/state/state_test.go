@@ -68,7 +68,7 @@ func TestCheck(t *testing.T) {
 	old := DockerDir
 	t.Cleanup(func() { DockerDir = old })
 	DockerDir = missing
-	if err := Check(missing); err == nil || !strings.Contains(err.Error(), "run: chown 65532 /var/lib/private/signalbot") {
+	if err := Check(missing); err == nil || !strings.Contains(err.Error(), "chown 65532 the directory mounted at "+missing+", such as /var/lib/private/signalbot") {
 		t.Fatalf("docker: %v", err)
 	}
 	gone := filepath.Join(dir, "gone")

@@ -33,8 +33,10 @@ const (
 )
 
 // New reads the socket, which it requires, and the DM list, split on
-// commas, semicolons and any white space.
+// commas, semicolons and any white space, and says at startup who may DM.
 func TestNew(t *testing.T) {
+	var logs logx.Buffer
+	t.Cleanup(logx.SetOutput(&logs, &logs, false))
 	t.Setenv("SIGNALCLI_SOCKET", "")
 	if _, err := New(nil); err == nil {
 		t.Error("no socket accepted")
@@ -47,6 +49,14 @@ func TestNew(t *testing.T) {
 	}
 	if c.addr != "/run/signal.sock" || !maps.Equal(c.allowed, map[string]bool{"alice-id": true, "bob-id": true, "+15550001": true}) {
 		t.Errorf("socket %q, allowed %v", c.addr, c.allowed)
+	}
+	t.Setenv("SIGNAL_DM_USER_IDS", "")
+	if _, err := New(nil); err != nil {
+		t.Fatal(err)
+	}
+	if got := logs.String(); got != "DMs: allowed from 3 IDs (SIGNAL_DM_USER_IDS)\n"+
+		"DMs are off: SIGNAL_DM_USER_IDS is empty; the bot answers only in groups\n" {
+		t.Errorf("logs %q", got)
 	}
 }
 

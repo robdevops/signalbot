@@ -94,6 +94,11 @@ func New(test *config.Test) (*Client, error) {
 	}) {
 		allowed[id] = true
 	}
+	if len(allowed) == 0 {
+		logx.Warnf("DMs are off: SIGNAL_DM_USER_IDS is empty; the bot answers only in groups")
+	} else {
+		logx.Noticef("DMs: allowed from %d IDs (SIGNAL_DM_USER_IDS)", len(allowed))
+	}
 	return newClient(addr, allowed, test), nil
 }
 

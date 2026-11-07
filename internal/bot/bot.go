@@ -93,7 +93,7 @@ func New(ctx context.Context, cfg *config.Config, net Network) *Bot {
 	b.chats = chats.New(cfg.HistoryMax, b.work, b.spawn)
 	b.timerCtx, b.stop = context.WithCancel(ctx)
 	if cfg.NoModel {
-		logx.Noticef("no model: only commands are answered")
+		logx.Warnf("no model: set MODEL_API_KEY (or MODEL_API_URL for a provider that needs no key); until then only commands are answered")
 		return b
 	}
 	b.ai = model.New(cfg)
@@ -112,6 +112,8 @@ func New(ctx context.Context, cfg *config.Config, net Network) *Bot {
 	}
 	switch {
 	case cfg.DailyBudget <= 0:
+	case !b.ai.ReportsCost() && cfg.DailyBudgetSet:
+		logx.Warnf("DAILY_BUDGET=%g is ignored: only OpenRouter reports what a reply costs, so spending is not capped", cfg.DailyBudget)
 	case !b.ai.ReportsCost():
 		logx.Noticef("DAILY_BUDGET isn't applied: only OpenRouter reports what a reply costs")
 	default:
@@ -202,9 +204,9 @@ func (b *Bot) spawn(worker func()) bool {
 func (b *Bot) post(r Received) {
 	switch err := b.chats.Post(r.chat().Key(), r); {
 	case errors.Is(err, chats.ErrNoSlot):
-		logx.Warnf("at capacity (%d), dropping message", b.cfg.MaxConcurrency)
+		logx.Warnf("dropped a message: all %d worker slots are busy (raise MAX_CONCURRENCY)", b.cfg.MaxConcurrency)
 	case err != nil:
-		logx.Warnf("%v, dropping message", err)
+		logx.Warnf("dropped a message: %v", err)
 	}
 }
 

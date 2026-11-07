@@ -409,7 +409,7 @@ func TestNoModel(t *testing.T) {
 			t.Fatalf("history %v", hist)
 		}
 	}
-	if logs := h.logs.String(); !strings.Contains(logs, "<5>no model: only commands are answered\n") || strings.Contains(logs, "<5>model ") || strings.Contains(logs, "left out") {
+	if logs := h.logs.String(); !strings.Contains(logs, "<4>no model: set MODEL_API_KEY (or MODEL_API_URL for a provider that needs no key); until then only commands are answered\n") || strings.Contains(logs, "<5>model ") || strings.Contains(logs, "left out") {
 		t.Fatalf("logs:\n%s", logs)
 	}
 }

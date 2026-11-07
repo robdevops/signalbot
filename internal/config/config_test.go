@@ -1,6 +1,10 @@
 package config
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/robdevops/signalbot/internal/kit/logx"
+)
 
 func setRequired(t *testing.T) {
 	t.Setenv("MODEL_API_KEY", "key")
@@ -83,5 +87,41 @@ func TestDailyBudget(t *testing.T) {
 	t.Setenv("STATE_DIRECTORY", "/var/lib/a:/var/lib/b")
 	if got := Load().StateDir; got != "/var/lib/a" {
 		t.Errorf("state dir %q", got)
+	}
+}
+
+// A bad number, a TOOL_LINGER_ROUNDS past HISTORY_MAX and a retired name
+// are each warned about, naming the setting and what is used instead.
+func TestWarnings(t *testing.T) {
+	setRequired(t)
+	var logs logx.Buffer
+	t.Cleanup(logx.SetOutput(&logs, &logs, false))
+	t.Setenv("HISTORY_MAX", "4")
+	t.Setenv("MAX_CONCURRENCY", "0")
+	t.Setenv("TOOL_LINGER_ROUNDS", "6")
+	t.Setenv("DAILY_BUDGET", "lots")
+	t.Setenv("REASONING", "high")
+	c := Load()
+	if c.ToolLinger != 4 || c.MaxConcurrency != 32 || c.DailyBudget != 1 || c.DailyBudgetSet {
+		t.Errorf("got %+v", c)
+	}
+	want := "REASONING is ignored; rename it to MODEL_REASONING\n" +
+		"MAX_CONCURRENCY=\"0\" is not a whole number above 0; using 32\n" +
+		"TOOL_LINGER_ROUNDS=6 is more than HISTORY_MAX=4, which is as long as it can help; using 4\n" +
+		"DAILY_BUDGET=\"lots\" is not a number of dollars, 0 or more; using 1\n"
+	if got := logs.String(); got != want {
+		t.Errorf("logs %q\nwant %q", got, want)
+	}
+	var again logx.Buffer
+	t.Cleanup(logx.SetOutput(&again, &again, false))
+	t.Setenv("TOOL_LINGER_ROUNDS", "-1")
+	t.Setenv("DAILY_BUDGET", "2")
+	t.Setenv("REASONING", "")
+	if c := Load(); !c.DailyBudgetSet || c.DailyBudget != 2 {
+		t.Errorf("got %+v", c)
+	}
+	if got := again.String(); got != "MAX_CONCURRENCY=\"0\" is not a whole number above 0; using 32\n"+
+		"TOOL_LINGER_ROUNDS=\"-1\" is not a whole number 0 or more; using 2\n" {
+		t.Errorf("logs %q", got)
 	}
 }

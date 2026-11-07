@@ -866,7 +866,7 @@ func TestScenarioModelNotListed(t *testing.T) {
 	if r := h.lastRequest(); r.last().Content != "[1 image attached, which you can't see with this model]" || !slices.Contains(r.Tools, "openrouter:web_search") {
 		t.Fatalf("model got %q with tools %v", r.last().Content, r.Tools)
 	}
-	if l, ok := h.logged("images and audio are off"); !ok || l.Pri != 4 {
+	if l, ok := h.logged("but OpenRouter has no model with that ID"); !ok || l.Pri != 4 {
 		t.Fatalf("no warning: %v", h.logLines())
 	}
 }
@@ -1023,7 +1023,7 @@ func TestScenarioOtherProviderRejectsTools(t *testing.T) {
 // connects to no server, and a scheduled plain text is still posted.
 func TestScenarioNoModel(t *testing.T) {
 	h := startBot(t, world{NoModel: true, MCP: true, Contacts: map[string]string{idAlice: "Alice", idBob: "Bob"}})
-	if l, ok := h.logged("no model: only commands are answered"); !ok || l.Pri != 5 {
+	if l, ok := h.logged("no model: set MODEL_API_KEY (or MODEL_API_URL for a provider that needs no key); until then only commands are answered"); !ok || l.Pri != 4 {
 		t.Fatalf("no notice: %v", h.logLines())
 	}
 	if _, ok := h.logged("MCP off: no model"); !ok {
@@ -1093,7 +1093,7 @@ func TestScenarioAtCapacityDrops(t *testing.T) {
 	h.receive(atBot("the first question").frame())
 	h.waitRequests(1)
 	h.receive(fromAlice("a question from elsewhere").frame())
-	if l, ok := h.logged("at capacity"); !ok || l.Pri != 4 {
+	if l, ok := h.logged("dropped a message: all 1 worker slots are busy (raise MAX_CONCURRENCY)"); !ok || l.Pri != 4 {
 		t.Fatalf("no warning: %v", h.logLines())
 	}
 	release()
@@ -1209,7 +1209,7 @@ func TestScenarioDailyBudget(t *testing.T) {
 }
 
 // Another API reports no cost, so the budget isn't applied, and the
-// startup log says so.
+// startup log warns, since DAILY_BUDGET was set.
 func TestScenarioDailyBudgetNeedsCosts(t *testing.T) {
 	h := startBot(t, world{OtherProvider: true, Env: map[string]string{"DAILY_BUDGET": "0.001"}})
 	for i := range 3 {
@@ -1217,7 +1217,7 @@ func TestScenarioDailyBudgetNeedsCosts(t *testing.T) {
 			t.Fatalf("sent %q", s.Message)
 		}
 	}
-	if _, ok := h.logged("DAILY_BUDGET isn't applied: only OpenRouter reports what a reply costs"); !ok {
+	if l, ok := h.logged("DAILY_BUDGET=0.001 is ignored: only OpenRouter reports what a reply costs, so spending is not capped"); !ok || l.Pri != 4 {
 		t.Fatalf("no notice: %v", h.logLines())
 	}
 }

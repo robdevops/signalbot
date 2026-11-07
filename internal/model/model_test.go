@@ -356,7 +356,8 @@ func TestCapabilities(t *testing.T) {
 	}{
 		{"listed", "x/model", served{body: list}, true, true, ""},
 		{"listed without", "x/plain", served{body: list}, false, false, ""},
-		{"not listed", "x/other", served{body: list}, false, true, "not in OpenRouter's model list"},
+		{"not listed", "x/other", served{body: list}, false, true, `MODEL is "x/other", but OpenRouter has no model with that ID`},
+		{"unreadable", "x/model", served{body: "{"}, false, true, "the model list couldn't be read"},
 		{"failed", "x/model", served{status: 500, body: "x"}, false, true, "status 500"},
 		{"unreachable", "x/model", served{body: "hangup"}, false, true, "images and audio are off"},
 	} {

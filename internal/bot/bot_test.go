@@ -151,7 +151,7 @@ func TestMailbox(t *testing.T) {
 		h.receive(dm(s))
 	}
 	h.eventually("the full mailbox", func() bool {
-		return strings.Contains(h.logs.String(), "<4>the chat's mailbox is full, dropping message")
+		return strings.Contains(h.logs.String(), "<4>dropped a message: 4 messages are already waiting in this chat")
 	})
 	h.receive(atBot("meanwhile"))
 	h.eventually("the other chat's request", func() bool { return len(h.requests()) == 2 })
@@ -210,7 +210,9 @@ func TestAtCapacity(t *testing.T) {
 	h.receive(dm("first"))
 	h.eventually("the first request", func() bool { return len(h.requests()) == 1 })
 	h.receive(atBot("elsewhere"))
-	h.eventually("the warning", func() bool { return strings.Contains(h.logs.String(), "<4>at capacity (1), dropping message\n") })
+	h.eventually("the warning", func() bool {
+		return strings.Contains(h.logs.String(), "<4>dropped a message: all 1 worker slots are busy (raise MAX_CONCURRENCY)\n")
+	})
 	h.release()
 	h.nextSend()
 	h.noSend()
@@ -329,13 +331,15 @@ func TestFourWaitDuringABatch(t *testing.T) {
 	for _, s := range []string{"b", "c", "d", "e", "dropped"} {
 		h.receive(dm(s))
 	}
-	h.eventually("the full mailbox", func() bool { return strings.Contains(h.logs.String(), "the chat's mailbox is full, dropping message") })
+	h.eventually("the full mailbox", func() bool {
+		return strings.Contains(h.logs.String(), "dropped a message: 4 messages are already waiting in this chat")
+	})
 	first.open()
 	h.eventually("the batch's request", func() bool { return len(h.requests()) == 2 })
 	for _, s := range []string{"f", "g", "h", "i"} {
 		h.receive(dm(s))
 	}
-	if n := strings.Count(h.logs.String(), "mailbox is full"); n != 1 {
+	if n := strings.Count(h.logs.String(), "already waiting in this chat"); n != 1 {
 		t.Fatalf("%d drops; logs:\n%s", n, h.logs)
 	}
 	second.open()

@@ -34,6 +34,7 @@ type Config struct {
 	HistoryMax     int     // HISTORY_MAX: most messages remembered per chat; when full, the older half goes
 	ToolLinger     int     // TOOL_LINGER_ROUNDS: replies a keyword tool group stays offered after one that matched or used it; 0 to HistoryMax
 	DailyBudget    float64 // DAILY_BUDGET: US dollars each chat (a group or a DM) may spend a day; 0 for no cap
+	DailyBudgetSet bool    // DAILY_BUDGET was given (validly), not the default
 	StateDir       string  // STATE_DIRECTORY's first directory, for the core's saved state; "" for the working directory
 	Version        string  // the bot's version, set by main
 	Test           *Test   // nil in production
@@ -71,16 +72,53 @@ func Env(key, def string) string {
 	return def
 }
 
-// number is the setting key as a positive number, else def.
-func number(key string, def int) int {
-	if n, err := strconv.Atoi(Env(key, "")); err == nil && n > 0 {
+// number is the setting key as a whole number, least or more, else
+// def; a value that isn't one is warned about, so a typo isn't silent.
+func number(key string, least, def int) int {
+	v := Env(key, "")
+	if v == "" {
+		return def
+	}
+	if n, err := strconv.Atoi(v); err == nil && n >= least {
 		return n
 	}
+	what := "above 0"
+	if least == 0 {
+		what = "0 or more"
+	}
+	logx.Warnf("%s=%q is not a whole number %s; using %d", key, txt.Clamp(v, 20), what, def)
 	return def
+}
+
+// dollars is the setting key as dollars, 0 or more, else def, warned about
+// as number is; set reports whether a value was given.
+func dollars(key string, def float64) (n float64, set bool) {
+	v := Env(key, "")
+	if v == "" {
+		return def, false
+	}
+	if n, err := strconv.ParseFloat(v, 64); err == nil && n >= 0 && !math.IsInf(n, 0) {
+		return n, true
+	}
+	logx.Warnf("%s=%q is not a number of dollars, 0 or more; using %g", key, txt.Clamp(v, 20), def)
+	return def, false
+}
+
+// retired are settings that were renamed, by their new names; one still
+// set is warned about, as it does nothing now.
+var retired = []struct{ old, now string }{
+	{"OPENROUTER_API_KEY", "MODEL_API_KEY"},
+	{"REASONING", "MODEL_REASONING"},
+	{"SYSTEM_PROMPT", "MODEL_SYSTEM_PROMPT"},
 }
 
 // Load reads the core's settings.
 func Load() *Config {
+	for _, r := range retired {
+		if Env(r.old, "") != "" {
+			logx.Warnf("%s is ignored; rename it to %s", r.old, r.now)
+		}
+	}
 	c := &Config{
 		APIURL:         strings.TrimRight(Env("MODEL_API_URL", ""), "/"),
 		APIKey:         Env("MODEL_API_KEY", ""),
@@ -88,26 +126,22 @@ func Load() *Config {
 		Reasoning:      strings.ToLower(Env("MODEL_REASONING", "low")),
 		SystemPrompt:   Env("MODEL_SYSTEM_PROMPT", ""),
 		Intro:          Env("INTRO", DefaultIntro),
-		MaxConcurrency: number("MAX_CONCURRENCY", 32),
-		HistoryMax:     number("HISTORY_MAX", 10),
-		ToolLinger:     2,
+		MaxConcurrency: number("MAX_CONCURRENCY", 1, 32),
+		HistoryMax:     number("HISTORY_MAX", 1, 10),
+		// 0 is allowed: offered only on a message that matches.
+		ToolLinger: number("TOOL_LINGER_ROUNDS", 0, 2),
 	}
-	// 0 is allowed: offered only on a message that matches. More than
-	// HISTORY_MAX can't help: by then the exchange that used it has left
-	// history, so the model doesn't know it was in use.
-	if n, err := strconv.Atoi(strings.TrimSpace(Env("TOOL_LINGER_ROUNDS", ""))); err == nil && n >= 0 {
-		c.ToolLinger = n
-	}
-	c.ToolLinger = min(c.ToolLinger, c.HistoryMax)
-	c.StateDir, _, _ = strings.Cut(Env("STATE_DIRECTORY", ""), ":") // systemd may list several
-	c.DailyBudget = 1
-	if v := strings.TrimSpace(Env("DAILY_BUDGET", "")); v != "" {
-		if n, err := strconv.ParseFloat(v, 64); err == nil && n >= 0 && !math.IsInf(n, 0) {
-			c.DailyBudget = n
-		} else {
-			logx.Warnf("DAILY_BUDGET=%q is not a number of dollars, 0 or more; using 1", txt.Clamp(v, 20))
+	// More than HISTORY_MAX can't help: by then the exchange that used it
+	// has left history, so the model doesn't know it was in use.
+	if c.ToolLinger > c.HistoryMax {
+		if Env("TOOL_LINGER_ROUNDS", "") != "" {
+			logx.Warnf("TOOL_LINGER_ROUNDS=%d is more than HISTORY_MAX=%d, which is as long as it can help; using %d",
+				c.ToolLinger, c.HistoryMax, c.HistoryMax)
 		}
+		c.ToolLinger = c.HistoryMax
 	}
+	c.StateDir, _, _ = strings.Cut(Env("STATE_DIRECTORY", ""), ":") // systemd may list several
+	c.DailyBudget, c.DailyBudgetSet = dollars("DAILY_BUDGET", 1)
 	// A key alone is OpenRouter's; a URL alone is a provider that needs no
 	// key, such as a local one.
 	c.NoModel = c.APIURL == "" && c.APIKey == ""

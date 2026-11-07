@@ -127,7 +127,7 @@ Add the bot's account to a group and @mention it, reply to one of its messages, 
 | Variable | Default | Description |
 |---|---|---|
 | `SIGNALCLI_SOCKET` | required | Unix socket path, or `host:port` for TCP |
-| `SIGNAL_DM_USER_IDS` | empty | UUIDs/numbers allowed to DM the bot, separated by commas or whitespace |
+| `SIGNAL_DM_USER_IDS` | empty | UUIDs/numbers allowed to DM the bot, separated by commas or whitespace; empty turns DMs off, and the startup log says which |
 | `MODEL` | `deepseek/deepseek-v4.1-flash-1017` | The model's name at the API: on OpenRouter as `provider/model` |
 | `MODEL_API_KEY` | empty | API key for the model's API, such as your [OpenRouter](https://openrouter.ai) key; none is sent when empty. With neither this nor `MODEL_API_URL` the bot has [no model](docs/NO_MODEL.md) |
 | `MODEL_API_URL` | `https://openrouter.ai/api/v1` | Base URL of an OpenAI-compatible chat completions API; see [Other providers](docs/PROVIDERS.md) |
@@ -139,13 +139,13 @@ Add the bot's account to a group and @mention it, reply to one of its messages, 
 | `GROUP_CONTEXT` | `true` | Remember group messages not addressed to the bot as context, so "what do you think @bot" works without replying to the message; they are never logged |
 | `HISTORY_MAX` | `10` | Most messages remembered per chat, the bot's replies and, in groups, messages not addressed to it included. When full, the older half is dropped, so the start of the model's request stays the same for several messages and comes from the API's prompt cache (cheaper and faster); below 3, the oldest message is dropped |
 | `INTRO` | built-in sentence | Overrides the self-introduction; `{name}`, `{model}` (without any OpenRouter `provider/` prefix) and `{tools}` (the names of the tools, or `none`) are substituted |
-| `MAX_CONCURRENCY` | `32` | Conversations in flight at once; messages beyond this are dropped |
+| `MAX_CONCURRENCY` | `32` | Conversations in flight at once; messages beyond this are dropped, with a warning |
 | `MCP_CONFIG` | empty | Path of an MCP servers file; see [MCP tools](docs/MCP.md) |
 | `STATE_DIRECTORY` | working directory | Where features save their state, one file each, such as `/schedule`'s `schedules.json` (and the core its `budget.json`); the bot won't start if a feature that saves can't list and write it. Set by systemd's `StateDirectory=signalbot` (`/var/lib/private/signalbot`) and by the Docker image (`/data`, which must be writable by user 65532) |
 | `TOOL_LINGER_ROUNDS` | `2` | Replies a keyword-gated tool group (charts, an MCP server with `keywords`) stays offered after the last one that matched its keywords or used its tools; `0` offers it only on a matching message. Any use or match starts the count again, so a run of follow-ups keeps it. Capped at `HISTORY_MAX`. See [How tools are offered](docs/TOOLS.md) |
 | `TZ` | `UTC` in Docker, the host's under systemd | Time zone for `/schedule` times without an offset and for `DARKMODE` hours, e.g. `Australia/Sydney` |
 
-`OPENROUTER_API_KEY` is now `MODEL_API_KEY`, and `REASONING` and `SYSTEM_PROMPT` are now `MODEL_REASONING` and `MODEL_SYSTEM_PROMPT`; the old names are ignored. `LOG_LEVEL` is gone: every level is always written (see [Logs](TECHNICAL.md#logs)).
+A number that can't be read is warned about at startup, and the default used. `OPENROUTER_API_KEY` is now `MODEL_API_KEY`, and `REASONING` and `SYSTEM_PROMPT` are now `MODEL_REASONING` and `MODEL_SYSTEM_PROMPT`; the old names are ignored, with a warning at startup. `LOG_LEVEL` is gone: every level is always written (see [Logs](TECHNICAL.md#logs)).
 
 The default `INTRO` is short paragraphs: `hi, I'm *{name}*, your open source assistant running {model}.`, `I respond to @{name} and replies to my messages.`, `Tools:` then `{tools}`, one tool category per paragraph, then `{more}`, lines features add (such as `Type "/schedule" for schedules and reminders.`, only in a DM, where schedules are made), then the link `https://github.com/robdevops/signalbot/blob/main/README.md` (Signal makes a bare url clickable; it has no named links).
 

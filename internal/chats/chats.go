@@ -6,6 +6,7 @@ package chats
 
 import (
 	"errors"
+	"fmt"
 	"maps"
 	"slices"
 	"strings"
@@ -28,8 +29,8 @@ const (
 )
 
 var (
-	errFull      = errors.New("too many chats")
-	errQueueFull = errors.New("the chat's mailbox is full")
+	errFull      = fmt.Errorf("%d chats are already held in memory, none idle", maxChats)
+	errQueueFull = fmt.Errorf("%d messages are already waiting in this chat", maxQueue)
 	ErrNoSlot    = errors.New("no worker slot is free")
 )
 

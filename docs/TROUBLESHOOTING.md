@@ -1,6 +1,6 @@
 # Troubleshooting
 
-**The bot answers only commands, and ignores mentions and DMs.** It has no model: the startup log says "no model: only commands are answered" (a notice, which `journalctl -p warning` hides). Set `MODEL_API_KEY`, or `MODEL_API_URL` for a provider that needs no key. `OPENROUTER_API_KEY` is now `MODEL_API_KEY`, and the old name is ignored.
+**The bot answers only commands, and ignores mentions and DMs.** It has no model: the startup log warns "no model: set MODEL_API_KEY (or MODEL_API_URL for a provider that needs no key); until then only commands are answered". Set `MODEL_API_KEY`, or `MODEL_API_URL` for a provider that needs no key. `OPENROUTER_API_KEY` is now `MODEL_API_KEY`, and the old name is ignored, with a warning at startup.
 
 **Permission denied on the socket.** Whatever connects to `/run/signal-cli/socket` must be in the `signal-cli` Unix group, and the socket must be group-writable (`ls -l /run/signal-cli/socket` should show `srwxrwx---` and the group `signal-cli`). Common causes:
 

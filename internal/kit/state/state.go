@@ -69,8 +69,8 @@ func Check(dir string) error {
 	case err == nil:
 		return nil
 	case filepath.Clean(dir) == DockerDir:
-		return fmt.Errorf("%s must be readable and writable by the bot's user (65532); "+
-			"on the host, run: chown 65532 /var/lib/private/signalbot (%v)", dir, err)
+		return fmt.Errorf("%s must be writable by the bot's user (65532): on the host, chown 65532 "+
+			"the directory mounted at %s, such as /var/lib/private/signalbot (%v)", dir, DockerDir, err)
 	}
 	where := "its state directory " + dir
 	if dir == "." {

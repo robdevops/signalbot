@@ -219,7 +219,7 @@ func (c *Client) judge(env *envelope, self string) (addressed, other bool) {
 	case fromSelf(env, self):
 	case env.chat().GroupID == "":
 		if !isAllowed(env, c.allowed) {
-			logx.Infof("%s ignored because not in SIGNAL_DM_USER_IDS", cmp.Or(env.sender(), "unknown sender"))
+			logx.Infof("%s ignored because not in SIGNAL_DM_USER_IDS (add this ID to allow DMs)", cmp.Or(env.sender(), "unknown sender"))
 		}
 	default:
 		return false, true
@@ -359,7 +359,7 @@ func (c *Client) Delivered(ctx context.Context, msg feature.Message) (bot.Ready,
 	}
 	c.loadNames(wait, &envelope{})
 	if msg.Chat.GroupID == "" && !c.allowed[msg.Sender] && !c.allowed[c.number(msg.Sender)] {
-		logx.Infof("delivered message from %s dropped because not in SIGNAL_DM_USER_IDS", cmp.Or(msg.Sender, "unknown sender"))
+		logx.Infof("delivered message from %s dropped because not in SIGNAL_DM_USER_IDS (add this ID to allow DMs)", cmp.Or(msg.Sender, "unknown sender"))
 		return bot.Ready{}, false
 	}
 	msg.Name = cmp.Or(msg.Name, c.name(msg.Sender))

@@ -193,7 +193,7 @@ func TestEvents(t *testing.T) {
 			t.Errorf("%s reached the core: %+v", env, r)
 		}
 	}
-	if out := logs.String(); out != bobID+" ignored because not in SIGNAL_DM_USER_IDS\n" {
+	if out := logs.String(); out != bobID+" ignored because not in SIGNAL_DM_USER_IDS (add this ID to allow DMs)\n" {
 		t.Errorf("logged %q", out)
 	}
 }
@@ -319,7 +319,7 @@ func TestDelivered(t *testing.T) {
 	}
 	out := logs.String()
 	for _, want := range []string{"delivered message dropped: its sender is not in the group\n",
-		"delivered message from " + bobID + " dropped because not in SIGNAL_DM_USER_IDS\n",
+		"delivered message from " + bobID + " dropped because not in SIGNAL_DM_USER_IDS (add this ID to allow DMs)\n",
 		"delivered message dropped: not connected to signal-cli after 10s\n"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("no %q in logs %q", want, out)
