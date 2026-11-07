@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"image"
 	"image/png"
@@ -185,7 +186,7 @@ func TestNoModel(t *testing.T) {
 	if err != nil || len(h.ToolGroups()) != 0 || started.Load() {
 		t.Fatalf("groups %+v, %v, started %v", h.ToolGroups(), err, started.Load())
 	}
-	if l := log.String(); l != "<4>MCP off: no model\n" {
+	if l := log.String(); l != "<4>MCP_CONFIG is set but no model is configured, so MCP servers were not started\n" {
 		t.Fatalf("log %q", l)
 	}
 }
@@ -239,9 +240,25 @@ func TestLoad(t *testing.T) {
 		s["l"].Args[0] != "--key=s3cret" || s["l"].Env["KEY"] != "s3cretx" {
 		t.Fatalf("expanded: %+v, %v", s, err)
 	}
-	if _, err := load(writeConfig(t, `{"mcpServers":{"w":{"url":"u","headers":{"A":"${MCP_TEST_UNSET}"}}}}`)); err == nil ||
-		err.Error() != `MCP server "w": ${MCP_TEST_UNSET} isn't set in the bot's environment` {
+	unset := writeConfig(t, `{"mcpServers":{"w":{"url":"u","headers":{"A":"${MCP_TEST_UNSET}"}}}}`)
+	if _, err := load(unset); err == nil || err.Error() != unset+`: MCP server "w": ${MCP_TEST_UNSET} isn't set in the bot's environment` {
 		t.Fatalf("unset: %v", err)
+	}
+	// An unknown setting, in a server or a chat command, is refused with the
+	// settings it could be, and both lists at once too; keys other clients
+	// write are ignored, so a pasted entry starts.
+	for bad, want := range map[string]string{
+		`{"mcpServers":{"w":{"url":"u","allowedTools":["t"]}}}`:                                 `: MCP server "w": unknown setting "allowedTools" (settings are url, headers, command, args, env, allowed_tools, blocked_tools, instructions, keywords, chat_commands, disabled)`,
+		`{"mcpServers":{"w":{"url":"u","chat_commands":{"x":{"tool":"t","requireArg":true}}}}}`: `: MCP server "w": chat command "x": unknown setting "requireArg" (settings are tool, require_arg, example)`,
+		`{"mcpServers":{"w":{"url":"u","allowed_tools":[],"blocked_tools":["t"]}}}`:             `: MCP server "w": has both allowed_tools and blocked_tools; use one`,
+	} {
+		p := writeConfig(t, bad)
+		if _, err := load(p); err == nil || err.Error() != p+want {
+			t.Errorf("%s: got %v", bad, err)
+		}
+	}
+	if s, err := load(writeConfig(t, `{"mcpServers":{"w":{"type":"http","url":"u","timeout":60,"alwaysAllow":[],"autoApprove":[],"description":"d","transport":"x"}}}`)); err != nil || len(s) != 1 {
+		t.Fatalf("ignored keys: %+v, %v", s, err)
 	}
 	// A bad config stops the bot from starting.
 	if _, _, err := register(t, `{"mcpServers":{"w":{"url":"u","command":"c"}}}`); err == nil {
@@ -302,7 +319,6 @@ func TestToolLists(t *testing.T) {
 		{"whitelist", `,"allowed_tools":["echo"]`, "echo"},
 		{"empty whitelist", `,"allowed_tools":[]`, ""},
 		{"blacklist", `,"blocked_tools":["fail"]`, "echo,pic"},
-		{"both", `,"allowed_tools":["echo","fail"],"blocked_tools":["fail"]`, "echo"},
 	} {
 		h, _, err := register(t, `{"mcpServers":{"fake":{"url":"`+serve(t, &fakeMCP{})+`"`+tc.lists+`}}}`)
 		if err != nil {
@@ -335,16 +351,28 @@ func TestHTTPSessionExpiry(t *testing.T) {
 	}
 }
 
+// A tool name the server lacks, in either list, or two tools with one name
+// for the model, stops the bot with the file's path, the list, and what the
+// server has (a typo in blocked_tools would leave the real tool offered).
 func TestStartupErrors(t *testing.T) {
 	url, url2 := serve(t, &fakeMCP{}), serve(t, &fakeMCP{})
-	if _, _, err := register(t, `{"mcpServers":{"fake":{"url":"`+url+`","allowed_tools":["echo","typo"]}}}`); err == nil {
-		t.Error("a whitelisted tool the server lacks must be an error")
+	if h, _, err := register(t, `{"mcpServers":{"fake":{"url":"`+url+`","allowed_tools":["echo","typo"]}}}`); err == nil ||
+		err.Error() != h.Settings["MCP_CONFIG"]+`: MCP server "fake": allowed_tools names "typo", which the server doesn't have; its tools are: echo, fail, pic` {
+		t.Errorf("whitelist: %v", err)
 	}
-	if _, _, err := register(t, `{"mcpServers":{"fake":{"url":"`+url+`","blocked_tools":["typo"]}}}`); err == nil {
-		t.Error("a blacklisted tool the server lacks must be an error, or a typo would leave the real tool offered")
+	if _, _, err := register(t, `{"mcpServers":{"fake":{"url":"`+url+`","blocked_tools":["typo"]}}}`); err == nil || !strings.Contains(err.Error(), `blocked_tools names "typo"`) {
+		t.Errorf("blacklist: %v", err)
 	}
-	if _, _, err := register(t, `{"mcpServers":{"a.b":{"url":"`+url+`","allowed_tools":["echo"]},"a_b":{"url":"`+url2+`","allowed_tools":["echo"]}}}`); err == nil {
-		t.Error("two tools with the same model name must be an error")
+	if _, _, err := register(t, `{"mcpServers":{"a.b":{"url":"`+url+`","allowed_tools":["echo"]},"a_b":{"url":"`+url2+`","allowed_tools":["echo"]}}}`); err == nil ||
+		!strings.HasSuffix(err.Error(), `: MCP server "a_b": tool "echo" becomes "a_b__echo" for the model, as does server "a.b"'s tool "echo"; block one`) {
+		t.Errorf("clash: %v", err)
+	}
+	var many []tool
+	for i := range 25 {
+		many = append(many, tool{Name: fmt.Sprintf("t%02d", i)})
+	}
+	if l := toolList(many); !strings.HasPrefix(l, "t00, t01") || !strings.HasSuffix(l, "t19, …") {
+		t.Errorf("tool list %q", l)
 	}
 	// An unreachable server is left out and logged, and the bot still starts.
 	gone := httptest.NewServer(&fakeMCP{})
@@ -415,7 +443,7 @@ func TestChatCommands(t *testing.T) {
 	h, log, err := register(t, `{"mcpServers":{"fake":{"url":"`+serve(t, fake)+`","allowed_tools":["echo","pic"],
 		"chat_commands":{
 			"Echo":{"tool":"echo","require_arg":true},
-			"/pic":{"tool":"pic"},
+			"/pic":{"tool":"pic","require_arg":true,"example":"/pic of a cat."},
 			"example":{"tool":"echo"},
 			"bad name":{"tool":"echo"},
 			"fail":{"tool":"fail"}}}}}`,
@@ -429,8 +457,8 @@ func TestChatCommands(t *testing.T) {
 		t.Fatalf("names %q, version %q", got, fake.version)
 	}
 	for _, want := range []string{
-		`<4>MCP server fake: chat command "bad name" is not a free name`,
-		`<4>MCP server fake: chat command "example" is not a free name`,
+		`<4>MCP server fake: chat command skipped: command /bad name: a name is 1 to 32 lowercase letters, digits, _ or -`,
+		`<4>MCP server fake: chat command skipped: command /example is already taken`,
 		`<4>MCP server fake: chat command /fail names tool "fail", which isn't offered; skipped`,
 		"<5>chat commands: /echo, /pic\n",
 	} {
@@ -444,8 +472,8 @@ func TestChatCommands(t *testing.T) {
 	ctx := context.Background()
 	for text, want := range map[string]feature.Action{
 		"/echo what's up":  {ToolChoice: "fake__echo"},
-		"/ECHO":            {Answer: "/echo needs something after it."},
-		"/pic":             {ToolChoice: "fake__pic"},
+		"/ECHO":            {Answer: "Put what you want after it, like /echo <your request>. Or just ask me in plain words."},
+		"/pic":             {Answer: "Put what you want after it, like /pic <your request>. Try: /pic of a cat. Or just ask me in plain words."},
 		"/pic of a cat":    {ToolChoice: "fake__pic"},
 		"/fail it":         {},
 		"echo what's up":   {},
@@ -601,5 +629,24 @@ func TestInstructions(t *testing.T) {
 func TestRestartDelay(t *testing.T) {
 	if restartDelay != time.Second {
 		t.Fatalf("restart delay %v", restartDelay)
+	}
+}
+
+// failing is a server that answers every call with err.
+type failing struct{ err error }
+
+func (f failing) call(context.Context, string, any) (json.RawMessage, error) { return nil, f.err }
+func (f failing) notify(context.Context, string, any) error                  { return f.err }
+
+// A call that times out tells the model so, and what to try; any other
+// failure says only that the tool couldn't be reached.
+func TestCallFailures(t *testing.T) {
+	ctx := context.Background()
+	if out, _, err := call(ctx, failing{fmt.Errorf("post: %w", context.DeadlineExceeded)}, "t", "{}"); err == nil ||
+		out != "error: the tool didn't answer within 30s; try a narrower request or later" {
+		t.Errorf("timeout: %q", out)
+	}
+	if out, _, err := call(ctx, failing{errors.New("connection refused")}, "t", "{}"); err == nil || out != "error: the tool could not be reached" {
+		t.Errorf("unreachable: %q", out)
 	}
 }

@@ -1026,7 +1026,7 @@ func TestScenarioNoModel(t *testing.T) {
 	if l, ok := h.logged("no model: set MODEL_API_KEY (or MODEL_API_URL for a provider that needs no key); until then only commands are answered"); !ok || l.Pri != 4 {
 		t.Fatalf("no notice: %v", h.logLines())
 	}
-	if _, ok := h.logged("MCP off: no model"); !ok {
+	if _, ok := h.logged("MCP_CONFIG is set but no model is configured, so MCP servers were not started"); !ok {
 		t.Fatalf("no MCP line: %v", h.logLines())
 	}
 	if _, ok := h.logged("web search on"); ok {
@@ -1734,7 +1734,7 @@ func checkToolReplay(t *testing.T, r modelRequest, tool, result string) {
 // With require_arg, a bare command is answered by the bot, not the model.
 func TestScenarioChatCommandRequiresArg(t *testing.T) {
 	h := startBot(t, world{MCP: true})
-	if s := h.ask(fromAlice("/quote")); s.Message != "/quote needs something after it." {
+	if s := h.ask(fromAlice("/quote")); s.Message != "Put what you want after it, like /quote <your request>. Or just ask me in plain words." {
 		t.Fatalf("sent %q", s.Message)
 	}
 	if n := len(h.requests()); n != 0 {

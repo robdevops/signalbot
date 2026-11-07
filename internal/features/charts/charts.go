@@ -49,15 +49,16 @@ var (
 // clockPattern is a time of day: 18, 18:30, 6pm, 6:30 am.
 var clockPattern = regexp.MustCompile(`^(\d{1,2})(?::(\d{2}))?\s*(am|pm)?$`)
 
-// darkMode reads DARKMODE: off (the default), on, or the hours charts are
-// dark, such as 18:00-6:00, 18-6 or 6pm-6am. Any other value is taken as
-// off, with a warning.
+// darkMode reads DARKMODE: off (the default; also false, no, 0 or light),
+// on (also true, yes, 1 or dark), or the hours charts are dark, such as
+// 18:00-6:00, 18-6 or 6pm-6am. Any other value is taken as off, with a
+// warning.
 func darkMode(h feature.Host) darkHours {
 	v := h.Env("DARKMODE", "off")
 	switch m := strings.ToLower(strings.TrimSpace(v)); m {
-	case "off":
+	case "off", "false", "no", "0", "light":
 		return never
-	case "on":
+	case "on", "true", "yes", "1", "dark":
 		return allDay
 	default:
 		if from, to, ok := strings.Cut(m, "-"); ok {

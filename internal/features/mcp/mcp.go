@@ -50,11 +50,23 @@ type server struct {
 }
 
 // chatCommand makes "/name ..." a turn in which the model must call tool.
-// With require_arg, a bare "/name" is answered by the bot, not the model.
+// With require_arg, a bare "/name" is answered by the bot, not the model,
+// showing example if set.
 type chatCommand struct {
 	Tool       string `json:"tool"`
 	RequireArg bool   `json:"require_arg"`
+	Example    string `json:"example"`
 }
+
+// settings are the keys a server may have, and commandSettings a chat
+// command's; others are a typo, refused at startup. ignored are keys other
+// MCP clients write that the bot has no use for, so a pasted entry starts.
+var (
+	settings = []string{"url", "headers", "command", "args", "env", "allowed_tools", "blocked_tools",
+		"instructions", "keywords", "chat_commands", "disabled"}
+	commandSettings = []string{"tool", "require_arg", "example"}
+	ignored         = []string{"type", "transport", "timeout", "alwaysAllow", "autoApprove", "description"}
+)
 
 var unsafeToolChars = regexp.MustCompile(`[^A-Za-z0-9_-]`)
 
@@ -71,7 +83,7 @@ func Register(h feature.Host) error {
 		return nil
 	}
 	if h.Info().Model == "" {
-		logx.Warnf("MCP off: no model")
+		logx.Warnf("MCP_CONFIG is set but no model is configured, so MCP servers were not started")
 		return nil
 	}
 	servers, err := load(path)
@@ -80,7 +92,7 @@ func Register(h feature.Host) error {
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	h.Go(func(life context.Context) { <-life.Done(); cancel() })
-	return start(ctx, h, servers)
+	return start(ctx, h, path, servers)
 }
 
 func load(path string) (map[string]server, error) {
@@ -107,20 +119,51 @@ func load(path string) (map[string]server, error) {
 		}
 		return nil, fmt.Errorf("%s: %v", path, err)
 	}
+	var raw struct {
+		Servers map[string]map[string]json.RawMessage `json:"mcpServers"`
+	}
+	json.Unmarshal(data, &raw) // it decoded above, into the same shape
 	for name, s := range f.Servers {
 		if s.Disabled {
 			delete(f.Servers, name) // not started, and not checked, so it can be parked half-written
 			continue
 		}
-		if (s.URL == "") == (s.Command == "") {
-			return nil, fmt.Errorf("MCP server %q needs a url or a command, not both or neither", name)
+		bad := func(format string, args ...any) error {
+			return fmt.Errorf("%s: MCP server %q: %s", path, txt.Clamp(name, 40), fmt.Sprintf(format, args...))
+		}
+		if err := unknown(raw.Servers[name], settings); err != nil {
+			return nil, bad("%v", err)
+		}
+		var cmds map[string]map[string]json.RawMessage
+		json.Unmarshal(raw.Servers[name]["chat_commands"], &cmds)
+		for n, c := range cmds {
+			if err := unknown(c, commandSettings); err != nil {
+				return nil, bad("chat command %q: %v", txt.Clamp(n, 40), err)
+			}
+		}
+		switch {
+		case (s.URL == "") == (s.Command == ""):
+			return nil, bad("needs a url or a command, not both or neither")
+		case s.AllowedTools != nil && s.BlockedTools != nil:
+			return nil, bad("has both allowed_tools and blocked_tools; use one")
 		}
 		if err := s.expand(); err != nil {
-			return nil, fmt.Errorf("MCP server %q: %v", name, err)
+			return nil, bad("%v", err)
 		}
 		f.Servers[name] = s
 	}
 	return f.Servers, nil
+}
+
+// unknown is an error naming the first key of entry, in order, that is
+// neither one of known nor ignored, with the keys it could be.
+func unknown(entry map[string]json.RawMessage, known []string) error {
+	for _, k := range slices.Sorted(maps.Keys(entry)) {
+		if !slices.Contains(known, k) && !slices.Contains(ignored, k) {
+			return fmt.Errorf("unknown setting %q (settings are %s)", txt.Clamp(k, 40), strings.Join(known, ", "))
+		}
+	}
+	return nil
 }
 
 // expand fills each ${NAME} in the server's url, headers, args and env with
@@ -188,17 +231,19 @@ func modelName(server, tool string) string {
 
 // start connects to every server, in name order, and offers each one's
 // tools that its allowed_tools and blocked_tools let through as a tool
-// group, named by those tools and then its chat commands. A server that cannot be reached is logged
-// and left out. A tool named in either list that a reachable server does
-// not have, or two tools that end up with the same name, is an error: a
-// typo in blocked_tools would otherwise leave the tool offered. Local
-// servers are stopped when ctx ends, and the bot waits for them. While the
-// model can't call tools, no command is registered.
-func start(ctx context.Context, h feature.Host, servers map[string]server) error {
+// group, named by those tools and then its chat commands. A server that
+// cannot be reached is logged and left out. A tool named in either list
+// that a reachable server does not have, or two tools that end up with the
+// same name, is an error starting with the file's path: a typo in
+// blocked_tools would otherwise leave the tool offered. Local servers are
+// stopped when ctx ends, and the bot waits for them. While the model can't
+// call tools, no command is registered.
+func start(ctx context.Context, h feature.Host, path string, servers map[string]server) error {
 	info := h.Info()
 	version := cmp.Or(info.Version, "dev")
-	taken := map[string]bool{} // the model's names for tools
-	var cmds []string          // for the startup line
+	type owner struct{ server, tool string }
+	taken := map[string]owner{} // the model's names for tools, and whose they are
+	var cmds []string           // for the startup line
 	for _, name := range slices.Sorted(maps.Keys(servers)) {
 		cfg := servers[name]
 		var c conn = &httpConn{url: cfg.URL, headers: cfg.Headers, client: httpx.Client(2), version: version}
@@ -210,9 +255,12 @@ func start(ctx context.Context, h feature.Host, servers map[string]server) error
 			logx.Errorf("MCP server %s unavailable, its tools are left out: %v", name, err)
 			continue
 		}
-		for _, want := range append(slices.Clone(cfg.AllowedTools), cfg.BlockedTools...) {
-			if !slices.ContainsFunc(listed, func(t tool) bool { return t.Name == want }) {
-				return fmt.Errorf("MCP server %q has no tool %q", name, want)
+		for list, names := range map[string][]string{"allowed_tools": cfg.AllowedTools, "blocked_tools": cfg.BlockedTools} {
+			for _, want := range names {
+				if !slices.ContainsFunc(listed, func(t tool) bool { return t.Name == want }) {
+					return fmt.Errorf("%s: MCP server %q: %s names %q, which the server doesn't have; its tools are: %s",
+						path, name, list, txt.Clamp(want, 64), toolList(listed))
+				}
 			}
 		}
 		g := feature.ToolGroup{
@@ -225,10 +273,14 @@ func start(ctx context.Context, h feature.Host, servers map[string]server) error
 				continue
 			}
 			model := modelName(name, t.Name)
-			if taken[model] {
-				return fmt.Errorf("MCP tool %q of server %q clashes with another tool's name", t.Name, name)
+			if o, ok := taken[model]; ok {
+				if o.server == name {
+					return fmt.Errorf("%s: MCP server %q: tools %q and %q both become %q for the model; block one", path, name, o.tool, t.Name, model)
+				}
+				return fmt.Errorf("%s: MCP server %q: tool %q becomes %q for the model, as does server %q's tool %q; block one",
+					path, name, t.Name, model, o.server, o.tool)
 			}
-			taken[model], models[t.Name] = true, model
+			taken[model], models[t.Name] = owner{name, t.Name}, model
 			g.Names = append(g.Names, t.Name)
 			g.Tools = append(g.Tools, feature.Tool{Name: model, Description: t.Description, Schema: t.Schema,
 				Run: func(ctx context.Context, args string) (string, []feature.Picture, error) {
@@ -269,6 +321,18 @@ func start(ctx context.Context, h feature.Host, servers map[string]server) error
 	return nil
 }
 
+// toolList names a server's tools, the first 20 and then "…".
+func toolList(tools []tool) string {
+	var names []string
+	for _, t := range tools[:min(len(tools), 20)] {
+		names = append(names, txt.Clamp(t.Name, 64))
+	}
+	if len(tools) > 20 {
+		names = append(names, "…")
+	}
+	return cmp.Or(strings.Join(names, ", "), "none")
+}
+
 // instructions is a server's system-prompt line: its config's
 // "instructions" if set (even to ""), otherwise the server's own, capped.
 func instructions(cfg *string, own string) string {
@@ -303,14 +367,19 @@ func command(h feature.Host, server, n string, c chatCommand, models map[string]
 		logx.Warnf("MCP server %s: chat command /%s names tool %q, which isn't offered; skipped", server, txt.Clamp(name, 40), txt.Clamp(c.Tool, 64))
 		return ""
 	}
+	bare := "Put what you want after it, like /" + name + " <your request>."
+	if ex := strings.TrimRight(strings.TrimSpace(c.Example), "."); ex != "" {
+		bare += " Try: " + ex + "."
+	}
+	bare += " Or just ask me in plain words."
 	err := feature.Command(h, name, func(_ context.Context, m feature.Message, args string) feature.Action {
 		if c.RequireArg && args == "" {
-			return feature.Action{Answer: "/" + name + " needs something after it."}
+			return feature.Action{Answer: bare}
 		}
 		return feature.Action{ToolChoice: model}
 	})
 	if err != nil {
-		logx.Warnf("MCP server %s: chat command %q is not a free name of letters, digits, _ or -; skipped", server, txt.Clamp(n, 40))
+		logx.Warnf("MCP server %s: chat command skipped: %v", server, err)
 		return ""
 	}
 	return "/" + name
@@ -372,6 +441,9 @@ func call(ctx context.Context, c conn, name, arguments string) (string, []featur
 	if err != nil {
 		if re, ok := errors.AsType[*rpcError](err); ok {
 			return "error: " + txt.Clamp(re.Message, 500), nil, fmt.Errorf("rpc error %d", re.Code)
+		}
+		if errors.Is(err, context.DeadlineExceeded) {
+			return fmt.Sprintf("error: the tool didn't answer within %ds; try a narrower request or later", int(callTimeout.Seconds())), nil, err
 		}
 		return "error: the tool could not be reached", nil, err
 	}
