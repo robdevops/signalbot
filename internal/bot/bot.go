@@ -245,6 +245,9 @@ func (b *Bot) work(rs []Received) {
 			case Posted:
 				alone(func() { b.delivered(r.Message) })
 				return
+			case Told:
+				alone(func() { b.told(r) })
+				return
 			case Pending:
 				p = r
 			default:

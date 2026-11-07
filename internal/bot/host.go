@@ -101,6 +101,22 @@ func (b *Bot) Deliver(msg feature.Message) {
 	}
 }
 
+// Tell sends text to user, in their DM's mailbox.
+func (b *Bot) Tell(user, text string) {
+	if !b.closing.Load() && user != "" && text != "" {
+		b.post(Told{User: user, Text: text})
+	}
+}
+
+// told sends a Told in its chat's slot, if its user may still DM the bot,
+// which the network checks as it does for a delivered DM.
+func (b *Bot) told(t Told) {
+	chat := feature.Chat{User: t.User}
+	if _, ok := b.net.Delivered(b.ctx, feature.Message{Chat: chat, Sender: t.User}); ok {
+		b.net.Send(chat, t.Text, nil, nil)
+	}
+}
+
 // event runs the OnEvent hooks in its chat's slot, and sends the first
 // non-empty reply, with @Name linked to the chat's known names and the
 // event's people, so a welcome can mention a newcomer.

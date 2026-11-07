@@ -14,8 +14,9 @@ const quotes = "\"“”„"
 // maxText caps the scheduled text, in runes: Signal's limit for one message.
 const maxText = 2000
 
-// exampleTime is the time the help and the errors show.
-const exampleTime = "2030-01-31T09:00"
+// exampleLayout is how the example time the help and the errors show is
+// written: the current time, ready to copy and edit.
+const exampleLayout = "2006-01-02 15:04"
 
 // request is a new schedule as the user wrote it.
 type request struct {
@@ -26,9 +27,10 @@ type request struct {
 	group string // the group's name as typed; "" for the DM
 }
 
-// parse reads `"<text>" <time> [every <unit>] [group name]`. It returns
-// what is wrong, for the user, if it can't.
-func parse(args string, loc *time.Location) (request, string) {
+// parse reads `"<text>" <time> [every <unit>] [group name]`, the time one
+// word or a date and a time as two. It returns what is wrong, for the user,
+// if it can't, showing example as a time.
+func parse(args string, loc *time.Location, example string) (request, string) {
 	var r request
 	args = strings.TrimSpace(args)
 	q, size := utf8.DecodeRuneInString(args)
@@ -50,16 +52,29 @@ func parse(args string, loc *time.Location) (request, string) {
 		_, qs := utf8.DecodeRuneInString(body[j:])
 		rest := body[j+qs:]
 		word, after := cutField(rest)
+		dateOnly := false
+		if isDate(word) { // a date and a time typed as two words
+			if clock, rest := cutField(after); clock != "" && strings.Contains(clock, ":") {
+				word, after = word+"T"+clock, rest
+			} else {
+				dateOnly = true
+			}
+		}
 		switch {
 		case word == "" && !seen:
-			seen, problem = true, "Add a time after the message, like "+exampleTime+"."
+			seen, problem = true, "Add a time after the message, like "+example+"."
 		case word == "" || !startsWithSpace(rest):
+		case dateOnly:
+			if !seen {
+				_, clock, _ := strings.Cut(example, " ")
+				seen, problem = true, "Add a time after the date, like "+word+" "+clock+"."
+			}
 		default:
 			at, start, ok := parseTime(word, loc)
 			if !ok {
 				if !seen {
-					seen, problem = true, "I couldn't read the time "+word+". Use ISO 8601, like "+exampleTime+
-						", or with an offset, like "+exampleTime+"+10:00."
+					seen, problem = true, "I couldn't read the time "+word+". Write a date and time like "+example+
+						", or with an offset, like "+example+"+10:00."
 				}
 				continue
 			}
@@ -81,6 +96,12 @@ func parse(args string, loc *time.Location) (request, string) {
 			return r, ""
 		}
 	}
+}
+
+// isDate reports whether s is a date alone, such as 2030-01-31.
+func isDate(s string) bool {
+	_, err := time.Parse(time.DateOnly, s)
+	return err == nil
 }
 
 // cutField splits s into its first word and the rest, both trimmed.

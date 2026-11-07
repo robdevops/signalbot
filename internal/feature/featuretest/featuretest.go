@@ -34,6 +34,7 @@ type Host struct {
 	more      []string
 	timers    []*Timer
 	delivered []feature.Message
+	told      []Told
 	stores    []string
 	life      context.Context // what Go passes; ended by Stop
 	end       context.CancelFunc
@@ -166,6 +167,22 @@ func (h *Host) Deliver(m feature.Message) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	h.delivered = append(h.delivered, m)
+}
+
+func (h *Host) Tell(user, text string) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.told = append(h.told, Told{user, text})
+}
+
+// Told is a text passed to Tell.
+type Told struct{ User, Text string }
+
+// TellsSent is the texts passed to Tell, in order.
+func (h *Host) TellsSent() []Told {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return slices.Clone(h.told)
 }
 
 func (h *Host) Groups(context.Context, string) ([]feature.Group, error) { return h.Shared, nil }

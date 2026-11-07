@@ -34,7 +34,12 @@ type Happened struct{ Event feature.Event }
 // in its chat's mailbox for the network to ready it.
 type Posted struct{ Message feature.Message }
 
+// Told is a text the bot sends a user in their DM (Tell), waiting in that
+// chat's mailbox.
+type Told struct{ User, Text string }
+
 func (r Pending) chat() feature.Chat      { return r.Chat }
+func (r Told) chat() feature.Chat         { return feature.Chat{User: r.User} }
 func (r Chatter) chat() feature.Chat      { return r.Message.Chat }
 func (r GroupChanged) chat() feature.Chat { return r.Chat }
 func (r Happened) chat() feature.Chat     { return r.Event.Chat }

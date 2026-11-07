@@ -229,6 +229,9 @@ type Host interface {
 	Media(ctx context.Context, msg Message, i int) ([]byte, error)
 	// Deliver acts on msg as if its sender had just posted it in its chat.
 	Deliver(msg Message)
+	// Tell sends text from the bot to user in their DM, as written, never
+	// through the model, if they may still DM the bot.
+	Tell(user, text string)
 	// Groups lists the groups the bot shares with user.
 	Groups(ctx context.Context, user string) ([]Group, error)
 	// Redact replaces every name and ID of anyone but the bot in text with
