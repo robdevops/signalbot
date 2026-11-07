@@ -108,11 +108,15 @@ sudo chown 65532 /var/lib/private/signalbot
 Use one install per host, systemd or Docker: the unit's dynamic user and the container's user 65532 can't share the directory.
 
 ```
-sudo docker build --build-arg VERSION=$(git describe --tags --always --dirty) -t signalbot .
-sudo docker run -d --name signalbot --restart=always --env-file /etc/signalbot.env \
-  --network=host -v /var/lib/private/signalbot:/data \
+sudo docker build -t signalbot \
+  --build-arg VERSION=$(git describe --tags --always --dirty) .
+sudo docker run -d --name signalbot --restart=always \
+  --env-file /etc/signalbot.env \
+  --network=host \
+  -v /var/lib/private/signalbot:/data \
   $(test -S /run/systemd/journal/socket && echo --log-driver=journald || echo --log-driver=local) \
-  --read-only --cap-drop=ALL --security-opt=no-new-privileges --pids-limit=64 --memory=300m --memory-swap=300m --ulimit core=0 \
+  --read-only --cap-drop=ALL --security-opt=no-new-privileges \
+  --pids-limit=64 --memory=300m --memory-swap=300m --ulimit core=0 \
   signalbot
 ```
 
