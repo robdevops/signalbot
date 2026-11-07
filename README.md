@@ -37,7 +37,7 @@ The messages the bot answers, and the names in them, are sent to the model's API
 
 Signalbot requires a running [signal-cli](https://github.com/AsamK/signal-cli) daemon with your Signal account linked, listening on `127.0.0.1:7583` (`signal-cli -o json daemon --tcp 127.0.0.1:7583 --no-receive-stdout`).
 
-[`examples/signal-cli.service`](examples/signal-cli.service) is an example systemd unit that runs signal-cli as above. Edit `User=` and the path in `ExecStart`, then copy it to `/etc/systemd/system/`, and run `sudo systemctl daemon-reload` and `sudo systemctl enable --now signal-cli`.
+[`examples/signal-cli.service`](examples/signal-cli.service) is a systemd unit that runs signal-cli as above. Edit `User=` and the path in `ExecStart`, then copy it to `/etc/systemd/system/`, and run `sudo systemctl daemon-reload` and `sudo systemctl enable --now signal-cli`.
 
 Secure your signal account details:
 
