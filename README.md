@@ -1,6 +1,6 @@
 # signalbot
 
-A small, [privacy-conscious](PRIVACY.md) chat bot that connects to a running [signal-cli](https://github.com/AsamK/signal-cli) daemon over its socket and answers using a model from [OpenRouter](https://openrouter.ai) or [compatible provider](docs/MODELS.md).
+A small, [privacy-conscious](PRIVACY.md) chat bot that connects to a running [signal-cli](https://github.com/AsamK/signal-cli) daemon and answers using a model from [OpenRouter](https://openrouter.ai) or [compatible provider](docs/MODELS.md).
 
 - [Features](#features)
 - [Use cases](#use-cases)
@@ -35,16 +35,12 @@ The messages the bot answers, and the names in them, are sent to the model's API
 
 ### Prerequisites
 
-Signalbot requires a running [signal-cli](https://github.com/AsamK/signal-cli) daemon with your Signal account registered or linked. How you run it is up to you, but the bot needs only its socket:
+Signalbot requires a running [signal-cli](https://github.com/AsamK/signal-cli) daemon with your Signal account registered or linked, listening on `127.0.0.1:7583` (`signal-cli -o json daemon --tcp 127.0.0.1:7583 --no-receive-stdout`). How you run it is up to you; the bot only connects to it.
 
-- The socket is at `/run/signal-cli/socket` (or set `SIGNALCLI_SOCKET`).
-- A Unix group named `signal-cli` can write to the socket and search its directory. The bot's systemd unit joins that group (`SupplementaryGroups=signal-cli`) and Docker does too (`--group-add`). Create it with `sudo groupadd --system signal-cli`.
-- signal-cli runs with `UMask=0007`, which makes the socket `0770`. The default umask gives `0755`, which locks the group out. Check with `ls -l /run/signal-cli/socket`.
-- signal-cli's data directory holds your account keys, so keep it at mode `0700` (`chmod 700 ~/.local/share/signal-cli`). The umask above makes new files in it group-accessible, so the directory's own mode is what keeps the bot out. Don't run the bot as signal-cli's user.
+[`examples/signal-cli.service`](examples/signal-cli.service) is an example unit that does this. Edit `User=` and the path in `ExecStart`, then copy it to `/etc/systemd/system/`, and run `sudo systemctl daemon-reload` and `sudo systemctl enable --now signal-cli`. signal-cli's data directory holds your account keys, so keep it at mode `0700` (`chmod 700 ~/.local/share/signal-cli`), and don't run the bot as signal-cli's user.
 
-[`examples/signal-cli.service`](examples/signal-cli.service) is an example unit that does this. Edit `User=` and the path in `ExecStart`, then copy it to `/etc/systemd/system/`, and run `sudo systemctl daemon-reload` and `sudo systemctl enable --now signal-cli`.
-
-To use TCP instead, run signal-cli with `--tcp 127.0.0.1:7583` and set `SIGNALCLI_SOCKET=127.0.0.1:7583`. But any local user can then connect and control or spy on the Signal account (PRIVACY RISK).
+> [!WARNING]
+> **On TCP, anyone with a login or a process on the host can connect to `127.0.0.1:7583` and read or send messages as your Signal account.** That is fine on a host only you use. On a shared host, or to limit the account to the bot alone, use signal-cli's Unix socket instead: see [Unix socket](docs/SOCKET.md).
 
 ### Configuration
 
@@ -61,7 +57,7 @@ To get the bot working with Signal and a model on OpenRouter, set these:
 
 | Variable | Default | Description |
 |---|---|---|
-| `SIGNALCLI_SOCKET` | `/run/signal-cli/socket` | signal-cli's Unix socket path, or `host:port` for TCP |
+| `SIGNALCLI_SOCKET` | `127.0.0.1:7583` | signal-cli's `host:port`, or its [Unix socket](docs/SOCKET.md) path |
 | `MODEL_API_KEY` | empty | Your [OpenRouter](https://openrouter.ai) API key ([other providers](docs/MODELS.md)) |
 | `MODEL` | `deepseek/deepseek-v4.1-flash-1017` | The model, as OpenRouter's `provider/model` |
 | `SIGNAL_DM_USER_IDS` | empty | UUIDs or numbers allowed to DM the bot, separated by commas or whitespace; empty turns DMs off |
@@ -70,7 +66,7 @@ Every other setting (daily budget, chart colours, history length, MCP connectors
 
 ### With systemd
 
-The bot runs as a dynamic user (`DynamicUser=yes`) in the `signal-cli` Unix group, which is how it reaches the socket. Its schedules and budget are kept in `/var/lib/private/signalbot`, which systemd creates.
+The bot runs as a dynamic user (`DynamicUser=yes`). Its schedules and budget are kept in `/var/lib/private/signalbot`, which systemd creates.
 
 1. Install Go 1.27+:
    ```
@@ -94,7 +90,7 @@ The bot runs as a dynamic user (`DynamicUser=yes`) in the `signal-cli` Unix grou
 
 ### With Docker
 
-`--group-add` gives the container the `signal-cli` Unix group, which is how it reaches the socket. Run it with `sudo`, because Docker reads `--env-file` as the calling user and the file is root-only.
+`--network=host` lets the container reach signal-cli on the host's `127.0.0.1`. Run it with `sudo`, because Docker reads `--env-file` as the calling user and the file is root-only.
 
 Schedules are saved in `/data` in the container (`STATE_DIRECTORY=/data`), bind-mounted from the same host directory systemd would use. The container runs as user 65532, which must own it, or the bot exits asking for this:
 
@@ -108,8 +104,7 @@ Use one install per host, systemd or Docker: the unit's dynamic user and the con
 ```
 sudo docker build --build-arg VERSION=$(git describe --tags --always --dirty) -t signalbot .
 sudo docker run -d --name signalbot --restart=always --env-file /etc/signalbot.env \
-  -v /run/signal-cli:/run/signal-cli -v /var/lib/private/signalbot:/data \
-  --group-add "$(getent group signal-cli | cut -d: -f3)" \
+  --network=host -v /var/lib/private/signalbot:/data \
   $(test -S /run/systemd/journal/socket && echo --log-driver=journald || echo --log-driver=local) \
   --read-only --cap-drop=ALL --security-opt=no-new-privileges --pids-limit=64 --memory=300m --memory-swap=300m --ulimit core=0 \
   signalbot
@@ -129,6 +124,7 @@ Add the bot's account to a group and @mention it, reply to one of its messages, 
 ## Docs
 
 - [Configuration](docs/CONFIGURATION.md)
+- [Unix socket](docs/SOCKET.md)
 - [Files, Links, Tools, and MCP connectors](docs/FILES_LINKS_TOOLS_MCP.md)
 - [Models](docs/MODELS.md)
 - [Scheduling](docs/SCHEDULING.md)

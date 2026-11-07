@@ -61,7 +61,7 @@ In a group, signal-cli passes every message to the bot, which checks each one fo
 - **The provider.** Once a message is sent, the model provider's retention, logging and sub-processors apply.
 - **End-to-end encryption.** Signal's encryption protects messages between people. The bot is a participant: signal-cli decrypts what it receives, and what it answers goes to the provider. People in a chat should know the bot is there.
 - **signal-cli's own data.** The account keys and whatever else signal-cli stores sit in its data directory, which the bot does not read. Keep it private (see the [README](README.md#prerequisites)).
-- **Anyone in the host's `signal-cli` Unix group** (not a Signal group) can use the socket to drive the Signal account, so keep that group's members to just the bot code.
+- **Anyone on the host, with the default TCP connection.** signal-cli listens on `127.0.0.1:7583`, and any local user or process can connect to it and read or send messages as the Signal account. On a shared host, use signal-cli's [Unix socket](docs/SOCKET.md), which only a Unix group can use; then anyone in that `signal-cli` group (not a Signal group) can drive the account, so keep it to just the bot.
 - **The host.** Root users can read process memory, and log backups keep what the logs contain.
 
 ---

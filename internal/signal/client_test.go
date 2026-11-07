@@ -32,7 +32,7 @@ const (
 	groupID = "Z3JvdXA="
 )
 
-// New reads the socket, signal-cli's usual one by default, and the DM list,
+// New reads signal-cli's address, 127.0.0.1:7583 by default, and the DM list,
 // split on commas, semicolons and any white space, and says at startup who
 // may DM.
 func TestNew(t *testing.T) {
@@ -40,8 +40,8 @@ func TestNew(t *testing.T) {
 	t.Cleanup(logx.SetOutput(&logs, &logs, false))
 	t.Setenv("SIGNALCLI_SOCKET", "")
 	t.Setenv("SIGNAL_DM_USER_IDS", "alice-id")
-	if c := New(nil); c.addr != "/run/signal-cli/socket" {
-		t.Errorf("default socket %q", c.addr)
+	if c := New(nil); c.addr != "127.0.0.1:7583" || c.network() != "tcp" {
+		t.Errorf("default address %q on %s", c.addr, c.network())
 	}
 	t.Setenv("SIGNALCLI_SOCKET", "/run/signal.sock")
 	t.Setenv("SIGNAL_DM_USER_IDS", "alice-id,bob-id;\r\n+15550001\t")

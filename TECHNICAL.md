@@ -57,13 +57,13 @@ Each line has a journald priority, and every priority is always written:
 - **Answered together.** Messages that arrive while the worker is busy are answered as one turn, a line each (in a group with the sender's name), so "actually" and "forget it" get one reply that sees both. On its own, in order, goes a message a hook acts on (such as a command), a delivered one, and one that waited for the bot's ID and was not addressed after all; a run is split where it would carry more than 4 images or a second sticker. A panic loses only the message or turn that caused it, and once shutdown begins nothing more that waited starts, not even its hooks.
 - **Per-chat state.** One struct per chat (`internal/chats`), in one capped map: the history and its expiry timer, recent message keys (for dedupe), mention names, the tool groups' follow-up counts, and the mailbox. One lock guards the whole map and is held only to read or change it, never across a model call. The struct is deleted, or evicted when the map is full, only once its mailbox is empty and no worker is active, so a chat never gets a second worker.
 - **HTTP.** The model client keeps up to `MAX_CONCURRENCY` idle connections (Go's default is 2 per host).
-- **Shutdown.** On SIGTERM or SIGINT, timers and new work stop, work in flight drains for up to 8s (under Docker's 10s stop timeout), then the socket closes and the bot waits for what features run with `Go`. A second signal kills the process at once.
+- **Shutdown.** On SIGTERM or SIGINT, timers and new work stop, work in flight drains for up to 8s (under Docker's 10s stop timeout), then the connection closes and the bot waits for what features run with `Go`. A second signal kills the process at once.
 
 ## Layout
 
 ```
 main.go, features.go    the main package at the module root: wiring, and one line per feature
-internal/signal/        the chat network, outside the core: its settings, the socket, decoding, sending (Markdown to text styles), names; only main imports it, and it imports bot
+internal/signal/        the chat network, outside the core: its settings, the connection, decoding, sending (Markdown to text styles), names; only main imports it, and it imports bot
 internal/model/         the model client (OpenRouter or another chat completions API) and the tool loop
 internal/chats/         per-chat state: history, dedupe, mention names, the mailbox
 internal/timers/        one-shot timers
@@ -266,19 +266,9 @@ By convention:
 
 ## What the bot needs from signal-cli
 
-Only the socket. The bot speaks JSON-RPC to it and never touches signal-cli's data directory, where the account keys live.
+Only a connection to `signal-cli daemon`: TCP on `127.0.0.1:7583` by default, or its Unix socket. The bot speaks JSON-RPC over it and never touches signal-cli's data directory, where the account keys live.
 
-The socket's permissions decide who may connect, and the bot is let in through a Unix group, not a user id, so a transient `DynamicUser` works:
-
-- `signalbot.service` runs with `DynamicUser=yes` and `SupplementaryGroups=signal-cli`, so its throwaway user is in the group.
-- Docker's `--group-add` puts the container's user in the same group. The container mounts only the socket's directory, so the data directory isn't there to read.
-- signal-cli should create the socket group-writable (`0770`, from `UMask=0007`) in a directory the group can search (`0750`). A default umask gives `0755` and locks out even the group.
-
-Everyone outside the Unix group gets "Permission denied". The group is the only access control: anyone in it can drive the Signal account, so keep it to the bot.
-
-The bot's keys stay out of reach in two ways. It runs as a different user from signal-cli, and the data directory is mode `0700`, so it can't be searched. That mode matters: `UMask=0007` makes files signal-cli creates group-accessible, and the bot is in that group, so with a `0755` directory it could read them (tested). Also, `ProtectHome=yes` hides `/home`, where signal-cli keeps its data by default (`~/.local/share/signal-cli`). Data kept elsewhere, such as `/var/lib/signal-cli`, relies on the directory mode alone; add it to `InaccessiblePaths=` in the unit to hide it outright.
-
-A TCP socket (`--tcp 127.0.0.1:7583`) needs none of this, but then any local user can connect and control or spy on the Signal account (PRIVACY RISK).
+On TCP anyone with a login or a process on the host can connect and control or spy on the Signal account (PRIVACY RISK); the systemd unit needs nothing more, and Docker runs with `--network=host` to reach the host's `127.0.0.1`. The Unix socket limits it to a Unix group only the bot joins (`SupplementaryGroups=signal-cli`, or Docker's `--group-add`), with signal-cli's data directory kept at `0700` so the bot, in signal-cli's group, can't read the keys: the setup, and why each part matters, is in [docs/SOCKET.md](docs/SOCKET.md).
 
 ---
 

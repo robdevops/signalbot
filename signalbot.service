@@ -4,8 +4,9 @@ Description=Signal LLM chat bot
 Wants=network-online.target
 
 [Service]
-# A transient user: it reaches signal-cli's socket as a member of the
-# signal-cli group (SupplementaryGroups), so nothing needs to know its uid.
+# A transient user. It reaches signal-cli over TCP on 127.0.0.1:7583; for the
+# Unix socket instead (docs/SOCKET.md), uncomment SupplementaryGroups below, so
+# it joins the signal-cli group and nothing needs to know its uid.
 DynamicUser=yes
 EnvironmentFile=/etc/signalbot.env
 # MCP tools: the servers file, readable by this service only
@@ -18,7 +19,7 @@ Restart=on-failure
 RestartSec=10s
 StandardError=journal
 StandardOutput=journal
-SupplementaryGroups=signal-cli
+#SupplementaryGroups=signal-cli
 SyslogIdentifier=signalbot
 
 # Filesystem
@@ -54,7 +55,7 @@ ProcSubset=pid
 ProtectProc=invisible
 RestrictNamespaces=yes
 
-# Network: the signal-cli socket, plus the model's API
+# Network: signal-cli (TCP, or its Unix socket), plus the model's API
 RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
 
 # Resources

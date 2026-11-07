@@ -79,11 +79,11 @@ type Client struct {
 	test         *config.Test // nil in production
 }
 
-// New makes the client its settings say: SIGNALCLI_SOCKET, a unix socket
-// path or host:port (signal-cli's usual socket by default), and
-// SIGNAL_DM_USER_IDS, who may DM the bot.
+// New makes the client its settings say: SIGNALCLI_SOCKET, host:port
+// (signal-cli's daemon --tcp on this host by default) or a unix socket path,
+// and SIGNAL_DM_USER_IDS, who may DM the bot.
 func New(test *config.Test) *Client {
-	addr := config.Env("SIGNALCLI_SOCKET", "/run/signal-cli/socket")
+	addr := config.Env("SIGNALCLI_SOCKET", "127.0.0.1:7583")
 	allowed := map[string]bool{}
 	// Commas, semicolons or any white space, so a CRLF env file or a tab
 	// can't leave an unmatchable ID.
