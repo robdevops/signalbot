@@ -130,7 +130,6 @@ Add the bot's account to a group and @mention it, reply to one of its messages, 
 
 - [Configuration](docs/CONFIGURATION.md)
 - [Files, Links, Tools, and MCP connectors](docs/FILES_LINKS_TOOLS_MCP.md)
-  - [MCP connectors](docs/FILES_LINKS_TOOLS_MCP.md#mcp-connectors)
 - [Models](docs/MODELS.md)
 - [Scheduling](docs/SCHEDULING.md)
 - [Troubleshooting](docs/TROUBLESHOOTING.md)
