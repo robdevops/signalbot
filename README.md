@@ -35,7 +35,7 @@ The messages the bot answers, and the names in them, are sent to the model's API
 
 ### Prerequisites
 
-A running [signal-cli](https://github.com/AsamK/signal-cli) daemon with your Signal account registered or linked. How you run it is up to you, but the bot needs only its socket:
+Signalbot requires a running [signal-cli](https://github.com/AsamK/signal-cli) daemon with your Signal account registered or linked. How you run it is up to you, but the bot needs only its socket:
 
 - The socket is at `/run/signal-cli/socket` (or set `SIGNALCLI_SOCKET`).
 - A Unix group named `signal-cli` can write to the socket and search its directory. The bot's systemd unit joins that group (`SupplementaryGroups=signal-cli`) and Docker does too (`--group-add`). Create it with `sudo groupadd --system signal-cli`.
