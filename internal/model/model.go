@@ -55,9 +55,10 @@ var (
 	ErrTooManyRounds = errors.New("the model was still calling tools when its rounds ran out")
 )
 
-// Caps is what the model can take: images, audio, PDF files and tools.
+// Caps is what the model can take: images, audio and PDFs, and whether
+// it can call tools.
 type Caps struct {
-	Images, Audio, Files, Tools bool
+	Images, Audio, PDFs, CallsTools bool
 }
 
 // statusError is an error response, reduced to its status and message.
@@ -498,9 +499,9 @@ func errorText(data []byte) string {
 func (c *Client) Capabilities(ctx context.Context) Caps {
 	if !c.openRouter {
 		logx.Noticef("only OpenRouter's model list says what a model supports, so images, files and tools are on until the API rejects them")
-		return Caps{Images: true, Audio: true, Files: true, Tools: true}
+		return Caps{Images: true, Audio: true, PDFs: true, CallsTools: true}
 	}
-	unknown := Caps{Files: true, Tools: true}
+	unknown := Caps{PDFs: true, CallsTools: true}
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, c.base+"/models", nil)
@@ -532,8 +533,8 @@ func (c *Client) Capabilities(ctx context.Context) Caps {
 		if m.ID == c.model {
 			in := m.Architecture.InputModalities
 			c.nativeFiles = slices.Contains(in, "file")
-			return Caps{Images: slices.Contains(in, "image"), Audio: slices.Contains(in, "audio"), Files: true,
-				Tools: slices.Contains(m.SupportedParameters, "tools")}
+			return Caps{Images: slices.Contains(in, "image"), Audio: slices.Contains(in, "audio"), PDFs: true,
+				CallsTools: slices.Contains(m.SupportedParameters, "tools")}
 		}
 	}
 	logx.Warnf("MODEL is %q, but OpenRouter has no model with that ID; if it's a typo, replies will fail. Images and audio are off.", c.model)

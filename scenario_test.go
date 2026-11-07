@@ -1282,7 +1282,7 @@ func TestScenarioOneEmojiIsAReaction(t *testing.T) {
 func TestScenarioLinkToAPrivateAddressIsRefused(t *testing.T) {
 	h := startBot(t, world{})
 	h.ask(atBot("what's at http://127.0.0.1/secrets ?"))
-	if last := h.lastRequest().last(); !strings.Contains(last.Content, "[link http://127.0.0.1/secrets failed to load: it isn't a public address]") {
+	if last := h.lastRequest().last(); !strings.Contains(last.Content, "[link http://127.0.0.1/secrets couldn't be fetched: it isn't a public address]") {
 		t.Fatalf("model got %q", last.Content)
 	}
 	// The failure is logged as a warning, without the URL.
@@ -1350,7 +1350,7 @@ func TestScenarioPDFInADM(t *testing.T) {
 		}
 	}
 	h.ask(fromAlice("and the total?"))
-	if first := h.lastRequest().Messages[0]; !strings.HasPrefix(first.Content, `[file "q3.pdf" attached; you see files only in the latest message`) || first.Files != nil {
+	if first := h.lastRequest().Messages[0]; !strings.HasPrefix(first.Content, `[file "q3.pdf" was shown to you; it isn't kept, so to see it again they must reply`) || first.Files != nil {
 		t.Fatalf("history kept %q with %v", first.Content, first.Files)
 	}
 }
@@ -1367,8 +1367,8 @@ func TestScenarioTextAndOfficeFiles(t *testing.T) {
 	m := atBot("what's this?")
 	m.Attachments = []attached{{ID: "t1", Type: "text/plain", Name: "notes.txt", Size: 17}, {ID: "d1", Type: "application/vnd.openxmlformats-officedocument.wordprocessingml.document", Name: "minutes.docx", Size: docx.Len()}}
 	h.ask(m)
-	want := "Alice: what's this?\n[file \"notes.txt\" attached, its text]\n```\nline one\nline two\n```\n" +
-		"[file \"minutes.docx\" attached, its text]\n```\nMinutes of the meeting\n```"
+	want := "Alice: what's this?\n[file \"notes.txt\" attached; its text follows]\n```\nline one\nline two\n```\n" +
+		"[file \"minutes.docx\" attached; its text follows]\n```\nMinutes of the meeting\n```"
 	if last := h.lastRequest().last(); last.Content != want || last.Files != nil {
 		t.Fatalf("model got %q", last.Content)
 	}
@@ -1513,14 +1513,14 @@ func TestScenarioLargePhotosAreShown(t *testing.T) {
 }
 
 // A photo that can't be fetched, here because signal-cli's answer is too
-// big, is left out, and the model is told it failed to load rather than
+// big, is left out, and the model is told it couldn't be fetched rather than
 // that it can't see images. The connection is kept.
 func TestScenarioPhotoThatFailsToLoad(t *testing.T) {
 	h := startBot(t, world{Vision: true, Attachments: map[string][]byte{"huge.png": make([]byte, 13<<20)}})
 	m := fromAlice("what is this?")
 	m.Attachments = []attached{{ID: "huge.png", Type: "image/png", Size: 10000000}}
 	h.ask(m)
-	if last := h.lastRequest().last(); last.Content != "what is this?\n[1 image attached, which failed to load; you can see images, just not this one]" || last.Images != nil {
+	if last := h.lastRequest().last(); last.Content != "what is this?\n[1 image attached, which couldn't be fetched; you can see images, just not this one]" || last.Images != nil {
 		t.Fatalf("model got %q with %d images", last.Content, len(last.Images))
 	}
 	if _, ok := h.logged("could not fetch an image: getAttachment result too large"); !ok {
@@ -1547,7 +1547,7 @@ func TestScenarioPhotoIsShownToModel(t *testing.T) {
 	}
 	h.ask(fromAlice("what colour was it"))
 	first := h.lastRequest().Messages[0]
-	if first.Content != "[1 image attached; you see images only in the latest message, so to look again they must reply to it and mention you]" || first.Images != nil {
+	if first.Content != "[1 image attached; it isn't kept, so to see it again they must reply to the message with it and mention you]" || first.Images != nil {
 		t.Fatalf("history kept %q with %d images", first.Content, len(first.Images))
 	}
 }

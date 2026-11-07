@@ -100,10 +100,10 @@ func New(ctx context.Context, cfg *config.Config, net Network) *Bot {
 	caps := b.ai.Capabilities(ctx)
 	b.images.Store(caps.Images)
 	b.audio.Store(caps.Audio)
-	b.files.Store(caps.Files)
-	b.callsTools.Store(caps.Tools)
-	logx.Noticef("model %s, reasoning %s, images %v, audio %v, files %v, tools %v", cfg.Model, cfg.Reasoning, caps.Images, caps.Audio, caps.Files, caps.Tools)
-	if !caps.Tools {
+	b.files.Store(caps.PDFs)
+	b.callsTools.Store(caps.CallsTools)
+	logx.Noticef("model %s, reasoning %s, images %v, audio %v, PDFs %v, tools %v", cfg.Model, cfg.Reasoning, caps.Images, caps.Audio, caps.PDFs, caps.CallsTools)
+	if !caps.CallsTools {
 		logx.Warnf("model %s can't call tools, so tools are off", cfg.Model)
 	}
 	if cfg.Test != nil && cfg.Test.Now != nil {

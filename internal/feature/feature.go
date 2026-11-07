@@ -157,7 +157,7 @@ type Tool struct {
 }
 
 // Info is what the core knows about itself. All but Name and Tools are
-// known when features register, though Images, Audio, Files and CallsTools turn off for
+// known when features register, though Images, Audio, PDFs and CallsTools turn off for
 // the rest of the run if the model's API rejects them.
 type Info struct {
 	Name       string   // the bot's name
@@ -165,7 +165,7 @@ type Info struct {
 	Model      string   // the model's ID, such as "provider/model" on OpenRouter; "" with no model
 	Images     bool     // the model takes images
 	Audio      bool     // the model takes audio
-	Files      bool     // the model's API takes PDF files
+	PDFs       bool     // the model's API takes PDFs
 	CallsTools bool     // the model can call tools
 	Tools      []string // the Names of every tool group with tools, in feature order; none when it can't call tools
 	Intro      string   // INTRO with {name}, {model}, {tools} and {more} filled in, as in a group
@@ -240,4 +240,13 @@ type Host interface {
 	// Go runs fn for as long as the bot runs: its ctx ends when the bot
 	// stops, which then waits for fn to return.
 	Go(fn func(ctx context.Context))
+}
+
+// NotKept ends a history note for n things the model was shown but history
+// doesn't keep, saying how it can be shown them again.
+func NotKept(n int) string {
+	if n == 1 {
+		return "; it isn't kept, so to see it again they must reply to the message with it and mention you"
+	}
+	return "; they aren't kept, so to see them again they must reply to the message with them and mention you"
 }

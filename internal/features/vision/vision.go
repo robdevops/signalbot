@@ -15,11 +15,6 @@ import (
 	"github.com/robdevops/signalbot/internal/kit/logx"
 )
 
-// notKept ends the history's note for an image the model saw. History keeps
-// only the note, never the picture, and says so, or the model concludes
-// later that it can't see images at all.
-const notKept = "; you see images only in the latest message, so to look again they must reply to it and mention you"
-
 // Register adds a message's images and sticker to the model's request on h.
 func Register(h feature.Host) error {
 	h.OnTurn(func(ctx context.Context, m feature.Message) feature.Additions { return additions(ctx, h, m) })
@@ -28,7 +23,7 @@ func Register(h feature.Host) error {
 
 // additions notes m's images and sticker, with the history's own version,
 // and fetches them as data: URLs if the model can see images. One that
-// can't be fetched is skipped, and the model told it failed to load, so it
+// can't be fetched is skipped, and the model told it couldn't be fetched, so it
 // doesn't conclude that it can't see images.
 func additions(ctx context.Context, h feature.Host, m feature.Message) feature.Additions {
 	see := h.Info().Images
@@ -52,16 +47,16 @@ func additions(ctx context.Context, h feature.Host, m feature.Message) feature.A
 	}
 	if len(seen) > 0 {
 		notes = append(notes, imageNote(len(seen), "attached"))
-		kept = append(kept, imageNote(len(seen), "attached"+notKept))
+		kept = append(kept, imageNote(len(seen), "attached"+feature.NotKept(len(seen))))
 	}
 	switch failed := images - len(seen); {
 	case !see && images > 0:
 		logx.Infof("%s not sent: this model can't see images", plural(images))
 		note(imageNote(images, "attached, which you can't see with this model"))
 	case failed == 1:
-		note("[1 image attached, which failed to load; you can see images, just not this one]")
+		note("[1 image attached, which couldn't be fetched; you can see images, just not this one]")
 	case failed > 1:
-		note(fmt.Sprintf("[%d images attached, which failed to load; you can see images, just not these]", failed))
+		note(fmt.Sprintf("[%d images attached, which couldn't be fetched; you can see images, just not these]", failed))
 	}
 	if sticker >= 0 {
 		label, url := m.Media[sticker].Label, ""
@@ -73,10 +68,10 @@ func additions(ctx context.Context, h feature.Host, m feature.Message) feature.A
 			logx.Infof("sticker not sent: this model can't see images")
 			note("[sticker attached" + label + ", which you can't see]")
 		case url == "":
-			note("[sticker attached" + label + ", which failed to load]")
+			note("[sticker attached" + label + ", which couldn't be fetched]")
 		default:
 			notes = append(notes, "[sticker attached"+label+"]")
-			kept = append(kept, "[sticker attached"+label+notKept+"]")
+			kept = append(kept, "[sticker attached"+label+feature.NotKept(1)+"]")
 			seen = append(seen, url)
 		}
 	}

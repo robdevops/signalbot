@@ -365,7 +365,7 @@ func TestCapabilities(t *testing.T) {
 			c, m, logs := start(t, tc.answer)
 			c.model = tc.model
 			caps := c.Capabilities(context.Background())
-			if caps.Images != tc.images || caps.Tools != tc.tools || !caps.Files {
+			if caps.Images != tc.images || caps.CallsTools != tc.tools || !caps.PDFs {
 				t.Errorf("caps %+v", caps)
 			}
 			if l := logs.String(); tc.warn == "" && l != "" || !strings.Contains(l, tc.warn) {
@@ -453,7 +453,7 @@ func TestUsable(t *testing.T) {
 // with one startup line and no request.
 func TestOtherAPICapabilities(t *testing.T) {
 	c, m, logs := startAt(t, false, served{status: 500})
-	if caps := c.Capabilities(context.Background()); caps != (Caps{Images: true, Audio: true, Files: true, Tools: true}) {
+	if caps := c.Capabilities(context.Background()); caps != (Caps{Images: true, Audio: true, PDFs: true, CallsTools: true}) {
 		t.Errorf("caps %+v", caps)
 	}
 	if n := len(m.requests()); n != 0 {
@@ -585,11 +585,11 @@ func TestAnnotationsSentBack(t *testing.T) {
 // The model list says whether the model takes audio and reads files itself.
 func TestCapabilitiesAudioAndFiles(t *testing.T) {
 	c, _, _ := start(t, served{body: `{"data":[{"id":"x/model","architecture":{"input_modalities":["text","image","audio","file"]},"supported_parameters":["tools"]}]}`})
-	if caps := c.Capabilities(context.Background()); caps != (Caps{Images: true, Audio: true, Files: true, Tools: true}) || !c.nativeFiles {
+	if caps := c.Capabilities(context.Background()); caps != (Caps{Images: true, Audio: true, PDFs: true, CallsTools: true}) || !c.nativeFiles {
 		t.Fatalf("caps %+v, native %v", caps, c.nativeFiles)
 	}
 	c, _, _ = start(t, served{body: `{"data":[{"id":"x/model","architecture":{"input_modalities":["text"]},"supported_parameters":[]}]}`})
-	if caps := c.Capabilities(context.Background()); caps != (Caps{Files: true}) || c.nativeFiles {
+	if caps := c.Capabilities(context.Background()); caps != (Caps{PDFs: true}) || c.nativeFiles {
 		t.Fatalf("caps %+v, native %v", caps, c.nativeFiles)
 	}
 }
