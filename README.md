@@ -4,20 +4,20 @@ A small, [privacy-conscious](PRIVACY.md) chat bot that connects to a running [si
 
 - [Features](#features)
 - [Use cases](#use-cases)
-- [Prerequisites](#prerequisites)
 - [Install](#install)
+  - [Prerequisites](#prerequisites)
+  - [Configuration](#configuration)
   - [With systemd](#with-systemd)
   - [With Docker](#with-docker)
-  - [Then](#then)
-- [Configuration](#configuration)
+  - [Test](#test)
 - [Docs](#docs)
 
 ## Features
 
 - Responds to @mentions, replies to its messages, and DMs from whitelisted contacts
-- Tools: web search, line and pie charts, and your own [MCP](docs/MCP.md) tools
+- Tools: web search, line and pie charts, and your own [MCP connectors](docs/FILES_LINKS_TOOLS_MCP.md#mcp-connectors)
 - [`/schedule`](docs/SCHEDULING.md) a message or command, once or repeating
-- Understands [files](docs/FILES_LINKS_TOOLS.md#files) (PDFs, text and code, Word, Excel and PowerPoint) and the [pages you link to](docs/FILES_LINKS_TOOLS.md#links), and if the model supports it, images, stickers, voice notes and other audio
+- Understands [files](docs/FILES_LINKS_TOOLS_MCP.md#files) (PDFs, text and code, Word, Excel and PowerPoint) and the [pages you link to](docs/FILES_LINKS_TOOLS_MCP.md#links), and if the model supports it, images, stickers, voice notes and other audio
 - Typing indicators, reactions, stickers, @mentions and replies
 - In-memory conversation context (Default: 10 messages). Never logged to disk, forgotten after 24 hours, or sooner if _disappearing messages_ requires.
 
@@ -31,7 +31,9 @@ A small, [privacy-conscious](PRIVACY.md) chat bot that connects to a running [si
 
 The messages the bot answers, and the names in them, are sent to the model's API (OpenRouter, unless you [choose another](docs/MODELS.md)). See [TECHNICAL.md](TECHNICAL.md) and [PRIVACY.md](PRIVACY.md) for details on how it works.
 
-## Prerequisites
+## Install
+
+### Prerequisites
 
 A running [signal-cli](https://github.com/AsamK/signal-cli) daemon with your Signal account registered or linked. How you run it is up to you, but the bot needs only its socket:
 
@@ -44,23 +46,27 @@ A running [signal-cli](https://github.com/AsamK/signal-cli) daemon with your Sig
 
 To use TCP instead, run signal-cli with `--tcp 127.0.0.1:7583` and set `SIGNALCLI_SOCKET=127.0.0.1:7583`. But any local user can then connect and control or spy on the Signal account (PRIVACY RISK).
 
-## Install
+### Configuration
 
-Get the code:
+Get the code and create the config, which is root-only since it holds your API key:
 
 ```
 git clone https://github.com/robdevops/signalbot.git
 cd signalbot
-```
-
-Create the config. The file holds your API key, so it is root-only; edit it, setting `MODEL_API_KEY` (your [OpenRouter](https://openrouter.ai) key; see [Models](docs/MODELS.md) for the alternatives) and `SIGNAL_DM_USER_IDS`:
-
-```
 sudo install -m 660 .env.example /etc/signalbot.env
 sudoedit /etc/signalbot.env
 ```
 
-Then install the bot with systemd or with Docker.
+To get the bot working with Signal and a model on OpenRouter, set these:
+
+| Variable | Default | Description |
+|---|---|---|
+| `SIGNALCLI_SOCKET` | required | signal-cli's Unix socket path (`.env.example` has `/run/signal-cli/socket`), or `host:port` for TCP |
+| `MODEL_API_KEY` | empty | Your [OpenRouter](https://openrouter.ai) API key ([other providers](docs/MODELS.md)) |
+| `MODEL` | `deepseek/deepseek-v4.1-flash-1017` | The model, as OpenRouter's `provider/model` |
+| `SIGNAL_DM_USER_IDS` | empty | UUIDs or numbers allowed to DM the bot, separated by commas or whitespace; empty turns DMs off |
+
+Every other setting (daily budget, chart colours, history length, MCP connectors, time zone, …) is in [Configuration](docs/CONFIGURATION.md). Then install the bot with systemd or with Docker.
 
 ### With systemd
 
@@ -116,28 +122,15 @@ docker logs -f signalbot
 journalctl CONTAINER_NAME=signalbot -p err   # warnings and errors only, where Docker logs to journald
 ```
 
-### Then
+### Test
 
 Add the bot's account to a group and @mention it, reply to one of its messages, or DM it from an allowed sender. Send it `/intro` or `/help` to see its introduction.
-
-## Configuration
-
-To get the bot working with Signal and a model on OpenRouter, set these in `/etc/signalbot.env`:
-
-| Variable | Default | Description |
-|---|---|---|
-| `SIGNALCLI_SOCKET` | required | signal-cli's Unix socket path (`.env.example` has `/run/signal-cli/socket`), or `host:port` for TCP |
-| `MODEL_API_KEY` | empty | Your [OpenRouter](https://openrouter.ai) API key ([other providers](docs/MODELS.md)) |
-| `MODEL` | `deepseek/deepseek-v4.1-flash-1017` | The model, as OpenRouter's `provider/model` |
-| `SIGNAL_DM_USER_IDS` | empty | UUIDs or numbers allowed to DM the bot, separated by commas or whitespace; empty turns DMs off |
-
-Every other setting (daily budget, chart colours, history length, MCP tools, time zone, …) is in [Configuration](docs/CONFIGURATION.md).
 
 ## Docs
 
 - [Configuration](docs/CONFIGURATION.md)
-- [Files, Links and Tools](docs/FILES_LINKS_TOOLS.md)
-  - [MCP tools](docs/MCP.md)
+- [Files, Links, Tools, and MCP connectors](docs/FILES_LINKS_TOOLS_MCP.md)
+  - [MCP connectors](docs/FILES_LINKS_TOOLS_MCP.md#mcp-connectors)
 - [Models](docs/MODELS.md)
 - [Scheduling](docs/SCHEDULING.md)
 - [Troubleshooting](docs/TROUBLESHOOTING.md)
