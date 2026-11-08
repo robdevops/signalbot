@@ -1029,3 +1029,12 @@ func noisyPNG(t *testing.T, w, h int) []byte {
 	}
 	return b.Bytes()
 }
+
+// skipWithout skips a scenario that needs a feature this build leaves out,
+// such as charts under -tags nocharts.
+func skipWithout(t *testing.T, f func(feature.Host) error) {
+	t.Helper()
+	if f == nil {
+		t.Skip("feature left out of this build")
+	}
+}

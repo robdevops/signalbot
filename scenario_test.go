@@ -879,6 +879,7 @@ func TestScenarioModelNotListed(t *testing.T) {
 // OpenRouter's web search is left out with a warning. A photo goes to the
 // model as an image.
 func TestScenarioOtherProvider(t *testing.T) {
+	skipWithout(t, chartsFeature) // its prompt or intro names charts
 	h := startBot(t, world{OtherProvider: true, Vision: true})
 	if s := h.ask(atBot("what is up")); s.Message != "ok" || s.GroupID != idGroup {
 		t.Fatalf("sent %+v", s)
@@ -952,6 +953,7 @@ func TestScenarioOtherProviderRejectsImages(t *testing.T) {
 // request without them is rejected too, the tools were the problem: images
 // come back on for the third request, which is answered, and stay on.
 func TestScenarioOtherProviderRejectsToolsWithImages(t *testing.T) {
+	skipWithout(t, chartsFeature) // its prompt or intro names charts
 	h := startBot(t, world{OtherProvider: true})
 	bad := modelReply{Status: 400, Body: `{"error":{"message":"tools are not supported"}}`}
 	h.queue(bad, bad)
@@ -1075,6 +1077,7 @@ func TestScenarioSystemPromptLayering(t *testing.T) {
 }
 
 func TestScenarioIntroPlaceholders(t *testing.T) {
+	skipWithout(t, chartsFeature) // its prompt or intro names charts
 	h := startBot(t, world{Env: map[string]string{"INTRO": `yo, {name} here on {model} with {tools}; "quoted"` + "\nnext line"}})
 	h.ask(fromAlice("introduce yourself"))
 	want := `If asked to introduce yourself, reply with exactly this text and nothing else: "yo, Botty here on test-model with **web search**\n\n**charts**: line, pie; \"quoted\"\nnext line"`
@@ -1323,6 +1326,31 @@ func TestScenarioPrivateLookingLinkIsNotFetched(t *testing.T) {
 }
 
 // --- files ---------------------------------------------------------------------------
+
+// With FILES off, a PDF is never fetched: the model is told only that it
+// was attached, and history keeps the same note.
+func TestScenarioFilesOff(t *testing.T) {
+	h := startBot(t, world{Env: map[string]string{"FILES": "off"}, Attachments: map[string][]byte{"doc1": []byte("%PDF-1.7 quarterly results")}})
+	m := fromAlice("what does this say?")
+	m.Attachments = []attached{{ID: "doc1", Type: "application/pdf", Name: "q3.pdf", Size: 26}}
+	if s := h.ask(m); s.Message != "ok" {
+		t.Fatalf("sent %q", s.Message)
+	}
+	if n := len(h.callsTo("getAttachment")); n != 0 {
+		t.Fatalf("%d getAttachment calls", n)
+	}
+	note := `[file "q3.pdf" attached, but reading files is turned off]`
+	if last := h.lastRequest().last(); !strings.Contains(last.Content, note) || last.Files != nil {
+		t.Fatalf("model got %q with %v", last.Content, last.Files)
+	}
+	if _, ok := h.logged("files: off (FILES)"); !ok {
+		t.Fatal("not logged at start")
+	}
+	h.ask(fromAlice("and the total?"))
+	if first := h.lastRequest().Messages[0]; !strings.Contains(first.Content, note) {
+		t.Fatalf("history kept %q", first.Content)
+	}
+}
 
 // A PDF alone in a DM is answered: it goes to the model as a file, read by
 // OpenRouter's OCR for a model that can't read files itself, and history
@@ -1647,6 +1675,7 @@ func TestScenarioStickerWithoutVision(t *testing.T) {
 // --- /intro and chat commands ----------------------------------------------------------
 
 func TestScenarioExampleWithoutModel(t *testing.T) {
+	skipWithout(t, chartsFeature) // its prompt or intro names charts
 	h := startBot(t, world{})
 	s := h.ask(atBot("/intro"))
 	// /intro sends INTRO, the same text the model gives when asked to
@@ -1680,6 +1709,7 @@ func TestScenarioExampleWithoutModel(t *testing.T) {
 }
 
 func TestScenarioBotWithoutProfileNameIsSignalbot(t *testing.T) {
+	skipWithout(t, chartsFeature) // its prompt or intro names charts
 	h := startBot(t, world{NoBotName: true, MCP: true})
 	if s := h.ask(fromAlice("/intro")); !strings.HasPrefix(s.Message, "hi, I'm signalbot, your open source assistant running test-model.\n\nI respond to @signalbot and replies to my messages.\n\nTools:\nweb search\n\ncharts: line, pie\n\nstocks MCP: get_quote, price_chart, /quote\n\nweather MCP: get_forecast, /forecast\n\n") {
 		t.Fatalf("sent %q", s.Message)
@@ -1826,6 +1856,7 @@ func hasChartTool(r modelRequest) bool { return slices.Contains(r.Tools, "make_c
 // The chart tool is offered when a message asks for a chart, and for the 2
 // replies after one that asked for or drew one; only in that chat.
 func TestScenarioChartToolOffering(t *testing.T) {
+	skipWithout(t, chartsFeature)
 	h := startBot(t, world{})
 	for i, step := range []struct {
 		text  string
@@ -1859,6 +1890,7 @@ func TestScenarioChartToolOffering(t *testing.T) {
 // A chart is sent captioned with its title in place of the model's text, and
 // the history notes that it was sent, in place of that text too.
 func TestScenarioChartReply(t *testing.T) {
+	skipWithout(t, chartsFeature)
 	h := startBot(t, world{})
 	h.queue(modelReply{Tool: "make_chart", Args: chartArgs}, modelReply{Text: "Done"})
 	s := h.ask(fromAlice("chart NVDA vs AMD for a month"))
@@ -1874,6 +1906,7 @@ func TestScenarioChartReply(t *testing.T) {
 
 // When a chat's history is erased, its chart follow-ups end with it.
 func TestScenarioErasedHistoryEndsChartFollowUps(t *testing.T) {
+	skipWithout(t, chartsFeature)
 	var clock skewed
 	h := startBot(t, world{Now: clock.now})
 	m := fromAlice("chart NVDA for 3 months")
@@ -1906,6 +1939,7 @@ func pieTool(r modelRequest) string {
 // A pie chart is offered on "pie" or "donut", and sent like a line chart:
 // captioned with its title, and noted in the history.
 func TestScenarioPieChartReply(t *testing.T) {
+	skipWithout(t, chartsFeature)
 	h := startBot(t, world{})
 	h.ask(atBot("show the budget as a pie"))
 	tool := pieTool(h.lastRequest())
@@ -1951,6 +1985,7 @@ func golden(t *testing.T, name, got string) {
 // Every feature on: web search, the chart tool offered, two MCP servers with
 // tools and chat commands, group context.
 func TestScenarioGoldenPromptFull(t *testing.T) {
+	skipWithout(t, chartsFeature)
 	h := startBot(t, world{Vision: true, MCP: true})
 	h.ignored(inGroup("the moon is made of cheese"))
 	h.ask(atBot("chart AAPL against the S&P 500 for a year"))

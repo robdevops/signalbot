@@ -39,15 +39,21 @@ var (
 		".wav": "audio/wav", ".ogg": "audio/ogg", ".opus": "audio/ogg", ".flac": "audio/flac"}
 )
 
-// Register adds a message's files to the model's request on h.
+// Register adds a message's files to the model's request on h. With FILES
+// off, files are never fetched: the model is told only that each was
+// attached, so it can say why it can't see one.
 func Register(h feature.Host) error {
-	h.OnTurn(func(ctx context.Context, m feature.Message) feature.Additions { return additions(ctx, h, m) })
+	off := !txt.Bool(h.Env("FILES", ""), true)
+	if off {
+		logx.Infof("files: off (FILES)")
+	}
+	h.OnTurn(func(ctx context.Context, m feature.Message) feature.Additions { return additions(ctx, h, m, off) })
 	return nil
 }
 
 // additions notes each of m's files, with the history's version, and shows
 // the model what it can take of each.
-func additions(ctx context.Context, h feature.Host, m feature.Message) feature.Additions {
+func additions(ctx context.Context, h feature.Host, m feature.Message, off bool) feature.Additions {
 	info := h.Info()
 	var notes, kept []string
 	var files []feature.File
@@ -56,7 +62,7 @@ func additions(ctx context.Context, h feature.Host, m feature.Message) feature.A
 		if !md.File {
 			continue
 		}
-		o := one(ctx, h, info, m, i)
+		o := one(ctx, h, info, m, i, off)
 		notes, kept = append(notes, o.note()), append(kept, o.kept())
 		content = content || o.shown()
 		if o.file != nil {
@@ -100,10 +106,14 @@ func (o outcome) kept() string {
 
 // one handles m.Media[i]. It logs one line, what the file came to, by kind
 // and size: never its name or declared type, which the sender chose.
-func one(ctx context.Context, h feature.Host, info feature.Info, m feature.Message, i int) outcome {
+func one(ctx context.Context, h feature.Host, info feature.Info, m feature.Message, i int, off bool) outcome {
 	md := m.Media[i]
 	o := outcome{subject: "file " + strconv.Quote(cmp.Or(txt.SafeName(md.Name), "untitled"))}
 	with := func(status string) outcome { o.status = status; return o }
+	if off {
+		logx.Infof("file not fetched: FILES is off")
+		return with(" attached, but reading files is turned off")
+	}
 	if md.ID == "" {
 		logx.Warnf("file no longer available")
 		return with(", which is no longer available")

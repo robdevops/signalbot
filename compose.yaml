@@ -8,6 +8,8 @@ services:
       context: .
       args:
         VERSION: ${VERSION:-dev}
+        # Build tags that leave parts out, such as TAGS=nocharts (README).
+        TAGS: ${TAGS:-}
     image: signalbot
     container_name: signalbot
     restart: always

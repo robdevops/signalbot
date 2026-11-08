@@ -4,6 +4,8 @@ The bot is a small core and features on top. [TECHNICAL.md](TECHNICAL.md) descri
 
 ```
 main.go, features.go    the main package at the module root: wiring, and one line per feature
+features_*.go           a feature a build tag can leave out (nocharts): a variable, nil when left out
+network_*.go            the chat network this build has (Signal; nosignal leaves the build with none, which fails)
 internal/signal/        the chat network: the signal-cli client, decoding, sending, names; only main imports it, and it imports bot
 internal/model/         the model client (OpenRouter or another chat completions API) and the tool loop
 internal/chats/         per-chat state: history, dedupe, mention names, the mailbox
@@ -28,6 +30,15 @@ Features reach the core only through the ports in `internal/feature`, one per st
 and the host's services: `Env`, `Info`, `Media`, `Deliver`, `Groups`, `Redact` and `Go`. Hooks run in `features.go` order. An `OnMessage` hook for an unaddressed message runs on the reader goroutine, so it must not block or call the network.
 
 If a feature can't be built on these, that's a design finding. Either a port becomes more generic, and stays tied to its stage, or the feature takes on more of the work. A feature-shaped field in the core is never the answer: delete any feature and the core doesn't change.
+
+## Build tags
+
+A plain `go build` has everything. A tag leaves a part out, and never adds one, so a forgotten tag can't ship a smaller bot:
+
+- **`nocharts`** leaves out charts and their fonts. A feature that can be left out is a variable from a pair of files, `features_<name>.go` (`//go:build !no<name>`, the feature's `Register`) and `features_no<name>.go` (`//go:build no<name>`, nil). Its place in `features.go` stays, so the order is still set in one list; `enabled()` drops the nils. A scenario that needs it starts with `skipWithout(t, <name>Feature)`, and CI runs the tests with the tag too.
+- **`nosignal`** leaves the build with no chat network, so `network_none.go` stops it with a compile error rather than making a bot that answers no one. A second network gets a `network_<name>.go` of its own, and that file's tag becomes `nosignal && no<name>`.
+
+Give a feature a tag only for a real saving, such as a dependency; a runtime setting (like `FILES`) is the way to turn a feature off.
 
 ## Plain Go, no ceremony
 

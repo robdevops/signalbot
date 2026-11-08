@@ -7,21 +7,19 @@ package main
 import (
 	"context"
 	"net/url"
-	"slices"
 	"testing"
 	"time"
 
 	"github.com/robdevops/signalbot/internal/bot"
 	"github.com/robdevops/signalbot/internal/config"
 	"github.com/robdevops/signalbot/internal/kit/logx"
-	"github.com/robdevops/signalbot/internal/signal"
 )
 
 // settingNames is every environment variable the bot reads; each scenario
 // starts with all of them cleared.
 var settingNames = []string{"SIGNALCLI_SOCKET", "MODEL_API_URL", "MODEL_API_KEY", "MODEL", "MODEL_SEARCH", "MODEL_REASONING",
 	"SIGNAL_DM_USER_IDS", "MODEL_SYSTEM_PROMPT", "INTRO", "MAX_CONCURRENCY", "HISTORY_MAX", "TOOL_LINGER_ROUNDS",
-	"MCP_CONFIG", "GROUP_CONTEXT", "JOURNAL_STREAM"}
+	"MCP_CONFIG", "GROUP_CONTEXT", "FILES", "JOURNAL_STREAM"}
 
 // startBot starts the bot in w, connected to its fakes, and returns once it
 // has connected and loaded its contacts. Everything it started is drained
@@ -59,11 +57,11 @@ func startBot(t *testing.T, w world) *harness {
 	// What main does.
 	cfg := config.Load()
 	cfg.Test = test
-	net := signal.New(cfg.Test)
+	net := newNetwork(cfg.Test)
 	ctx, closeConn := context.WithCancel(context.Background())
 	t.Cleanup(closeConn)
 	b := bot.New(ctx, cfg, net)
-	for _, register := range append(slices.Clone(features), w.Extra...) {
+	for _, register := range append(enabled(), w.Extra...) {
 		if err := register(b); err != nil {
 			t.Fatal(err)
 		}

@@ -63,6 +63,8 @@ Each line has a journald priority, and every priority is always written:
 
 ```
 main.go, features.go    the main package at the module root: wiring, and one line per feature
+features_*.go           a feature a build tag can leave out (nocharts): a variable, nil when left out
+network_*.go            the chat network this build has (Signal; nosignal leaves the build with none, which fails)
 internal/signal/        the chat network, outside the core: its settings, the connection, decoding, sending (Markdown to text styles), names; only main imports it, and it imports bot
 internal/model/         the model client (OpenRouter or another chat completions API) and the tool loop
 internal/chats/         per-chat state: history, dedupe, mention names, the mailbox

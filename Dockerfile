@@ -4,6 +4,8 @@
 #   docker buildx imagetools inspect gcr.io/distroless/static-debian12:nonroot
 FROM golang:1.27.3-bookworm@sha256:d9b6a1beb9474adc2a1ce842573639b44b2a0dd49b6669f51d3821baf9ec37c9 AS build
 ARG VERSION=dev
+# Build tags that leave parts out, comma-separated, such as nocharts.
+ARG TAGS=""
 # Never download a toolchain: build with the one in this image.
 ENV CGO_ENABLED=0 GOTOOLCHAIN=local
 WORKDIR /src
@@ -14,7 +16,7 @@ RUN go mod download
 ENV GOPROXY=off
 COPY *.go ./
 COPY internal ./internal
-RUN go build -trimpath -ldflags "-s -w -X main.version=${VERSION}" -o /signalbot .
+RUN go build -trimpath -tags "${TAGS}" -ldflags "-s -w -X main.version=${VERSION}" -o /signalbot .
 # The bot's state directory, owned by the nonroot user. There is no shell in
 # the final image to make it, so it is made here and copied.
 RUN mkdir /data
