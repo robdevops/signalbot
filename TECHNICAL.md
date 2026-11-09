@@ -78,6 +78,7 @@ internal/feature/       the ports and shared types (the only part of the core fe
 internal/features/*     one package per feature
 internal/kit/*          code with two or more users and no bot knowledge
 internal/arch/          the guardrail tests and the sizes report
+cmd/signalctl/          a small client for signal-cli's daemon socket, for one-off chores such as blocking; not part of the bot
 ```
 
 - Core packages are concrete and call each other directly, with no interfaces between them. Files by role, no line limit.

@@ -15,6 +15,7 @@ internal/bot/           the decision, the prompt, the hooks; wires the core, and
 internal/feature/       the ports and shared types, command parsing, featuretest
 internal/features/*     one package per feature
 internal/kit/*          code with two or more users and no bot knowledge
+cmd/signalctl/          a small client for signal-cli's daemon socket, for one-off chores such as blocking; not part of the bot
 ```
 
 ## The port rule
