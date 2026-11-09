@@ -430,3 +430,34 @@ func TestQuoteMentionsLearned(t *testing.T) {
 		t.Fatalf("learned %v", learned)
 	}
 }
+
+// Deletes and edits count whoever the bot answers: a delete or edit from
+// someone not (or no longer) in SIGNAL_DM_USER_IDS forgets the original,
+// and keeps nothing new. A group admin's delete forgets the target's.
+func TestDeletesAndEditsFromAnyone(t *testing.T) {
+	captureLogs(t)
+	c := newClient("x", map[string]bool{aliceID: true}, nil)
+	c.id.Store(botID)
+	dm := feature.Chat{User: bobID}
+	del := parse(t, `{`+fromBob+`,"timestamp":300,"dataMessage":{"timestamp":300,"remoteDelete":{"targetTimestamp":100}}}`)
+	if r, ok := c.event(del); !ok || r != (bot.Deleted{Chat: dm, Sender: bobID, Sent: 100, At: math.MaxInt64}) {
+		t.Fatalf("delete from someone not allowed: %+v %v", r, ok)
+	}
+	edit := parse(t, `{`+fromBob+`,"timestamp":200,"editMessage":{"targetSentTimestamp":100,"dataMessage":{"timestamp":200,"message":"new words"}}}`)
+	if r, ok := c.event(edit); !ok || r != (bot.Deleted{Chat: dm, Sender: bobID, Sent: 100, At: 200}) {
+		t.Fatalf("edit from someone not allowed: %+v %v", r, ok)
+	}
+
+	c.recent.add("g:"+groupID, bobID, 100, []attachment{{ID: "a1", ContentType: "image/png", Size: 5}})
+	admin := parse(t, `{"sourceUuid":"`+aliceID+`","timestamp":400,"dataMessage":{"timestamp":400,`+inGroup+`,"adminDelete":{"targetAuthorUuid":"`+bobID+`","targetAuthor":"`+bobID+`","targetSentTimestamp":100,"targetTimestamp":100}}}`)
+	if r, ok := c.event(admin); !ok || r != (bot.Deleted{Chat: feature.Chat{GroupID: groupID}, Sender: bobID, Sent: 100, At: math.MaxInt64}) {
+		t.Fatalf("admin delete: %+v %v", r, ok)
+	}
+	if _, ok := c.recent.get("g:"+groupID, bobID, 100); ok {
+		t.Fatal("the admin-deleted message's attachments are remembered")
+	}
+	adminDM := parse(t, `{"sourceUuid":"`+aliceID+`","timestamp":400,"dataMessage":{"timestamp":400,"adminDelete":{"targetAuthorUuid":"`+bobID+`","targetSentTimestamp":100,"targetTimestamp":100}}}`)
+	if r, ok := c.event(adminDM); ok {
+		t.Fatalf("an admin delete outside a group: %+v", r)
+	}
+}

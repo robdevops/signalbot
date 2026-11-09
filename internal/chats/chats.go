@@ -294,7 +294,7 @@ func (s *Store[M]) Forget(key, id string, at int64) {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	c := s.get(key, true)
+	c := s.get(key, false) // a chat with no state holds nothing to forget, and nothing waits there
 	if c == nil {
 		return
 	}

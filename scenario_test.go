@@ -47,6 +47,13 @@ type incoming struct {
 	At          int64     // its timestamp; 0 picks the next
 	Edits       int64     // an edit of the message sent at this timestamp: signal-cli's editMessage
 	Deletes     int64     // a delete for everyone of the message sent at this timestamp, instead of text
+	AdminDelete *adminDelete
+}
+
+// adminDelete is a group admin deleting Author's message sent at Sent.
+type adminDelete struct {
+	Author string
+	Sent   int64
 }
 
 // reaction is an emoji put on the message its author sent at Sent.
@@ -146,6 +153,10 @@ func (m incoming) frame() string {
 	}
 	if m.Deletes != 0 {
 		data["remoteDelete"] = map[string]any{"targetTimestamp": m.Deletes, "timestamp": ts}
+	}
+	if a := m.AdminDelete; a != nil { // signal-cli 0.14's adminDelete
+		data["adminDelete"] = map[string]any{"targetAuthor": a.Author, "targetAuthorNumber": nil, "targetAuthorUuid": a.Author,
+			"targetSentTimestamp": a.Sent, "targetTimestamp": a.Sent}
 	}
 	if m.Attachments != nil {
 		data["attachments"] = attachmentsJSON(m.Attachments)
@@ -492,6 +503,36 @@ func TestScenarioDeletedQuoteLeavesHistory(t *testing.T) {
 			t.Fatalf("the deleted message is still in history: %q", h.lastRequest().contents())
 		}
 	}
+}
+
+// A group admin's delete of someone else's message removes it from history.
+func TestScenarioAdminDelete(t *testing.T) {
+	h := startBot(t, world{})
+	spam := inGroup("buy cheap watches here").by(idBob, "Bob")
+	spam.At = 1792622240008
+	h.ignored(spam)
+	h.ignored(inGroup("the moon is made of cheese"))
+	h.ignored(incoming{From: idAlice, Name: "Alice", Group: idGroup, AdminDelete: &adminDelete{Author: idBob, Sent: spam.At}})
+	h.ask(atBot("what do you think?"))
+	equal(t, "conversation", h.lastRequest().contents(),
+		[]string{"user: [Messages not addressed to you, for context only:]\nAlice: the moon is made of cheese", "user: Alice: what do you think?"})
+}
+
+// A delete in the DM of someone the bot doesn't answer changes nothing,
+// logs nothing, and leaves others' chats alone.
+func TestScenarioDeleteByUnlistedSender(t *testing.T) {
+	h := startBot(t, world{})
+	h.queue(modelReply{Text: "the first answer"})
+	h.ask(fromAlice("the first question"))
+	lines := len(h.logLines())
+	h.receive(incoming{From: idBob, Name: "Bob", Deletes: 1792622240009}.frame())
+	h.settle()
+	if got := h.logLines(); len(got) != lines {
+		t.Fatalf("logged %v", got[lines:])
+	}
+	h.ask(fromAlice("the second question"))
+	equal(t, "conversation", h.lastRequest().contents(),
+		[]string{"user: the first question", "assistant: the first answer", "user: the second question"})
 }
 
 // A message deleted while it waits for an earlier answer is never answered

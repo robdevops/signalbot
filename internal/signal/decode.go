@@ -44,6 +44,12 @@ type dataMessage struct {
 	RemoteDelete     *struct {
 		TargetTimestamp int64 `json:"targetTimestamp"` // the deleted message's timestamp
 	} `json:"remoteDelete"`
+	AdminDelete *struct { // a group admin deleting someone's message for everyone
+		TargetAuthor        string `json:"targetAuthor"`
+		TargetAuthorNumber  string `json:"targetAuthorNumber"`
+		TargetAuthorUUID    string `json:"targetAuthorUuid"`
+		TargetSentTimestamp int64  `json:"targetSentTimestamp"` // the deleted message's timestamp
+	} `json:"adminDelete"`
 }
 
 // allMentions is the message's mentions and its quote's.
@@ -192,12 +198,34 @@ func (c *Client) event(env *envelope) (bot.Received, bool) {
 		c.members.changed(chat.GroupID, c.person(env.SourceUUID, env.Source, env.SourceNumber, env.SourceName), self != "" && fromSelf(env, self))
 		return bot.GroupChanged{Chat: chat}, true
 	}
+	// Deletes and edits are honoured as the official Signal app would:
+	// from the author, or a group admin's delete, whoever the bot answers.
+	// SIGNAL_DM_USER_IDS says only who the bot answers, as message requests
+	// do in the app, so it never stops one. What the app refuses, signal-cli
+	// has already dropped: everything from a blocked person or group, a
+	// group message from a non-member, and an admin delete from a
+	// non-admin. Signal's time window needs no check, as history lasts 24
+	// hours, within it.
 	if rd := d.RemoteDelete; rd != nil { // deleted for everyone: forgotten here and in history
-		if rd.TargetTimestamp == 0 || chat.GroupID == "" && !isAllowed(env, c.allowed) { // a stranger's DM was never kept
+		if rd.TargetTimestamp == 0 {
 			return nil, false
 		}
 		c.recent.forget(chat.Key(), env.sender(), rd.TargetTimestamp)
 		return bot.Deleted{Chat: chat, Sender: env.sender(), Sent: rd.TargetTimestamp, At: math.MaxInt64}, true // every version goes
+	}
+	if ad := d.AdminDelete; ad != nil {
+		author := cmp.Or(ad.TargetAuthorUUID, ad.TargetAuthor, ad.TargetAuthorNumber)
+		if chat.GroupID == "" || author == "" || ad.TargetSentTimestamp == 0 {
+			return nil, false
+		}
+		c.recent.forget(chat.Key(), author, ad.TargetSentTimestamp)
+		return bot.Deleted{Chat: chat, Sender: author, Sent: ad.TargetSentTimestamp, At: math.MaxInt64}, true
+	}
+	if env.edited != 0 && chat.GroupID == "" && !isAllowed(env, c.allowed) {
+		// An edit from someone the bot doesn't answer, such as one removed
+		// from SIGNAL_DM_USER_IDS since: not answered or kept, but the
+		// original goes. From someone never allowed there is nothing to go.
+		return bot.Deleted{Chat: chat, Sender: env.sender(), Sent: env.Timestamp, At: env.edited}, true
 	}
 	if r := d.Reaction; r != nil {
 		return c.reacted(env, chat, r)

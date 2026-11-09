@@ -298,6 +298,13 @@ func TestForget(t *testing.T) {
 	if !s.Gone("k", "bob\x004", 4) || s.Gone("k", "bob\x004", 10) || s.Gone("k", "bob\x005", 4) || s.Gone("other", "bob\x004", 4) {
 		t.Fatal("Gone is wrong")
 	}
+	s.Forget("nobody", "bob\x004", 10)
+	s.mu.Lock()
+	_, made := s.chats["nobody"]
+	s.mu.Unlock()
+	if made {
+		t.Fatal("forgetting in a chat with no state made one")
+	}
 	s.Forget("k", "bob\x004", 5) // older than what's known: no change
 	if !s.Gone("k", "bob\x004", 9) {
 		t.Fatal("an older edit moved the cut back")
