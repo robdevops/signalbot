@@ -371,24 +371,29 @@ var urlPattern = regexp.MustCompile(`https?://\S+`)
 func (h *harness) receive(frame string) {
 	h.t.Helper()
 	type attachment struct{ Filename, ContentType string }
+	type data struct {
+		Message     string
+		Attachments []attachment
+		Quote       struct {
+			Text, Author, AuthorUUID string
+			Attachments              []attachment
+		}
+		Mentions []struct{ UUID, Number string }
+	}
 	var f struct {
 		Envelope struct {
 			Source, SourceUUID, SourceNumber, SourceName string
-			DataMessage                                  struct {
-				Message     string
-				Attachments []attachment
-				Quote       struct {
-					Text, Author, AuthorUUID string
-					Attachments              []attachment
-				}
-				Mentions []struct{ UUID, Number string }
-			}
+			DataMessage                                  data
+			EditMessage                                  struct{ DataMessage *data }
 		}
 	}
 	if err := json.Unmarshal([]byte(frame), &f); err != nil {
 		h.t.Fatalf("bad frame: %v", err)
 	}
 	e := f.Envelope
+	if d := e.EditMessage.DataMessage; d != nil {
+		e.DataMessage = *d
+	}
 	h.keepSecret(e.DataMessage.Message)
 	h.keepSecret(e.DataMessage.Quote.Text)
 	for _, a := range append(e.DataMessage.Attachments, e.DataMessage.Quote.Attachments...) {

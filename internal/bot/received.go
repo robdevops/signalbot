@@ -27,6 +27,13 @@ type Chatter struct{ Message feature.Message }
 // GroupChanged says only that a group's members, name or description changed.
 type GroupChanged struct{ Chat feature.Chat }
 
+// Deleted says the message sender sent at Sent was deleted for everyone.
+type Deleted struct {
+	Chat   feature.Chat
+	Sender string
+	Sent   int64
+}
+
 // Happened is an event: a reaction or a change in a group's members.
 type Happened struct{ Event feature.Event }
 
@@ -42,6 +49,7 @@ func (r Incoming) chat() feature.Chat     { return r.Chat }
 func (r Told) chat() feature.Chat         { return feature.Chat{User: r.User} }
 func (r Chatter) chat() feature.Chat      { return r.Message.Chat }
 func (r GroupChanged) chat() feature.Chat { return r.Chat }
+func (r Deleted) chat() feature.Chat      { return r.Chat }
 func (r Happened) chat() feature.Chat     { return r.Event.Chat }
 func (r Posted) chat() feature.Chat       { return r.Message.Chat }
 

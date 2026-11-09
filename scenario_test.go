@@ -44,6 +44,9 @@ type incoming struct {
 	Expires     int       // the chat's disappearing-messages timer, in seconds
 	Update      bool      // a group update: its members, name or description changed
 	Reaction    *reaction // a reaction to a message, instead of text
+	At          int64     // its timestamp; 0 picks the next
+	Edits       int64     // an edit of the message sent at this timestamp: signal-cli's editMessage
+	Deletes     int64     // a delete for everyone of the message sent at this timestamp, instead of text
 }
 
 // reaction is an emoji put on the message its author sent at Sent.
@@ -60,6 +63,7 @@ type atMention struct {
 
 type quoteOf struct {
 	Author, Text string
+	Mentions     []atMention
 	Attachments  []attached
 }
 
@@ -102,6 +106,9 @@ func attachmentsJSON(as []attached) []any {
 // frame is the message as the "params" of signal-cli's receive notification.
 func (m incoming) frame() string {
 	ts := 1792622246000 + timestamps.Add(1)
+	if m.At != 0 {
+		ts = m.At
+	}
 	data := map[string]any{"timestamp": ts, "message": nil, "expiresInSeconds": m.Expires, "isExpirationUpdate": false, "viewOnce": false}
 	if m.Text != "" {
 		data["message"] = m.Text
@@ -121,8 +128,19 @@ func (m incoming) frame() string {
 		data["mentions"] = mentions
 	}
 	if q := m.Quote; q != nil {
-		data["quote"] = map[string]any{"id": ts - 1, "author": q.Author, "authorNumber": nil, "authorUuid": q.Author, "text": q.Text,
+		quote := map[string]any{"id": ts - 1, "author": q.Author, "authorNumber": nil, "authorUuid": q.Author, "text": q.Text,
 			"attachments": attachmentsJSON(q.Attachments)}
+		if q.Mentions != nil {
+			var ms []any
+			for _, at := range q.Mentions {
+				ms = append(ms, map[string]any{"name": at.Name, "number": nil, "uuid": at.ID, "start": at.Start, "length": at.Length})
+			}
+			quote["mentions"] = ms
+		}
+		data["quote"] = quote
+	}
+	if m.Deletes != 0 {
+		data["remoteDelete"] = map[string]any{"targetTimestamp": m.Deletes, "timestamp": ts}
 	}
 	if m.Attachments != nil {
 		data["attachments"] = attachmentsJSON(m.Attachments)
@@ -134,9 +152,13 @@ func (m incoming) frame() string {
 		data["reaction"] = map[string]any{"emoji": r.Emoji, "targetAuthor": r.Author, "targetAuthorNumber": nil, "targetAuthorUuid": r.Author,
 			"targetSentTimestamp": r.Sent, "isRemove": r.Remove}
 	}
-	b, _ := json.Marshal(map[string]any{"account": idBot, "envelope": map[string]any{
-		"source": m.From, "sourceNumber": nil, "sourceUuid": m.From, "sourceName": m.Name, "sourceDevice": 1,
-		"timestamp": ts, "dataMessage": data}})
+	env := map[string]any{"source": m.From, "sourceNumber": nil, "sourceUuid": m.From, "sourceName": m.Name, "sourceDevice": 1,
+		"timestamp": ts, "serverReceivedTimestamp": ts + 50, "serverDeliveredTimestamp": ts + 60, "dataMessage": data}
+	if m.Edits != 0 { // signal-cli 0.14's editMessage: the new message, and no dataMessage
+		delete(env, "dataMessage")
+		env["editMessage"] = map[string]any{"targetSentTimestamp": m.Edits, "dataMessage": data}
+	}
+	b, _ := json.Marshal(map[string]any{"account": idBot, "envelope": env})
 	return string(b)
 }
 
@@ -405,6 +427,49 @@ func TestScenarioHistoryAcrossTurns(t *testing.T) {
 		[]string{"user: the first question", "assistant: the first answer", "user: the second question"})
 }
 
+// An edit that adds the bot's @mention is answered, and history holds the
+// message as it now reads, not as it was.
+func TestScenarioEditAddsMention(t *testing.T) {
+	h := startBot(t, world{})
+	orig := inGroup("whats the capitol of France")
+	orig.At = 1792622240001
+	h.ignored(orig)
+	edit := atBot("what's the capital of France?")
+	edit.Edits = orig.At
+	h.ask(edit)
+	equal(t, "conversation", h.lastRequest().contents(), []string{"user: Alice: what's the capital of France?"})
+	if _, ok := h.logged("received group chat (edit)"); !ok {
+		t.Fatal("the edit isn't logged as one")
+	}
+}
+
+// An edit of a message the bot answered is answered again, in place of the
+// original; the earlier reply stays.
+func TestScenarioEditAfterReply(t *testing.T) {
+	h := startBot(t, world{})
+	h.queue(modelReply{Text: "4"})
+	q := fromAlice("what is 2+2")
+	q.At = 1792622240002
+	h.ask(q)
+	edit := fromAlice("what is 3+3")
+	edit.Edits = q.At
+	h.ask(edit)
+	equal(t, "conversation", h.lastRequest().contents(), []string{"assistant: 4", "user: what is 3+3"})
+}
+
+// A message deleted for everyone leaves the bot's history.
+func TestScenarioDeleteForEveryone(t *testing.T) {
+	h := startBot(t, world{})
+	gone := inGroup("my password is hunter2")
+	gone.At = 1792622240003
+	h.ignored(gone)
+	h.ignored(inGroup("the moon is made of cheese"))
+	h.ignored(incoming{From: idAlice, Name: "Alice", Group: idGroup, Deletes: gone.At})
+	h.ask(atBot("what do you think?"))
+	equal(t, "conversation", h.lastRequest().contents(),
+		[]string{"user: [Messages not addressed to you, for context only:]\nAlice: the moon is made of cheese", "user: Alice: what do you think?"})
+}
+
 func TestScenarioHistoryIsPerChat(t *testing.T) {
 	h := startBot(t, world{})
 	h.ask(fromAlice("a private question"))
@@ -459,6 +524,18 @@ func TestScenarioQuoteOfSomeoneElse(t *testing.T) {
 	h.ask(m)
 	equal(t, "conversation", h.lastRequest().contents(),
 		[]string{`user: Alice: [Replying to a message by "Bob": "lunch at noon?"]` + "\nwhat is up"})
+}
+
+// A mention in the quoted message is a name, never U+FFFC; the bot's own
+// is dropped.
+func TestScenarioQuoteWithMention(t *testing.T) {
+	h := startBot(t, world{Contacts: map[string]string{idBob: "Bob"}})
+	m := atBot("what is up")
+	m.Quote = &quoteOf{Author: idBob, Text: "\uFFFC \uFFFC lunch at noon?",
+		Mentions: []atMention{{ID: idBot, Name: idBot, Start: 0, Length: 1}, {ID: idAlice, Name: "Alice", Start: 2, Length: 1}}}
+	h.ask(m)
+	equal(t, "conversation", h.lastRequest().contents(),
+		[]string{`user: Alice: [Replying to a message by "Bob": "@Alice lunch at noon?"]` + "\nwhat is up"})
 }
 
 func TestScenarioQuoteOfUnknownAuthorIsSomeone(t *testing.T) {

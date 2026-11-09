@@ -40,7 +40,8 @@ type Message struct {
 	Quote     *Quote        // the message it replies to, if any
 	Media     []Media       // its images, then the quoted message's, at most MaxPictures; then its files and the quoted message's, at most MaxFiles; then its sticker
 	Expires   time.Duration // the chat's disappearing-messages timer; 0 if off
-	Timestamp int64         // when it was sent, by the sender's clock, as the network names it; 0 for one the bot made, such as a scheduled post
+	Timestamp int64         // when it was sent, by the sender's clock, as the network names it; 0 for one the bot made, such as a scheduled post. An edit keeps the original's
+	Edit      bool          // an edit of the message sent at Timestamp, which it replaces
 	Addressed bool          // it mentions the bot, replies to it, or is a DM from an allowed sender
 }
 

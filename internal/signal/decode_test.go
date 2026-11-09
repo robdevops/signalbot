@@ -365,3 +365,48 @@ func TestReactions(t *testing.T) {
 		t.Errorf("logged %q", logs.String())
 	}
 }
+
+// Mentions in a quoted message are names, as in a message, never U+FFFC;
+// the bot's own is dropped.
+func TestQuoteMentions(t *testing.T) {
+	c := newClient("x", nil, nil)
+	e := parse(t, `{`+fromBob+`,"dataMessage":{"message":"and?",`+atBot+`,`+inGroup+`,"quote":{"authorUuid":"`+aliceID+`","text":"￼ ask ￼","mentions":[{"uuid":"`+botID+`","start":0,"length":1},{"uuid":"`+bobID+`","name":"Bob","start":6,"length":1}]}}}`)
+	if q := c.message(e, botID).Quote; q == nil || q.Text != "ask @Bob" {
+		t.Fatalf("quote %+v", q)
+	}
+}
+
+// An edit is the message as it now reads, named by the original's
+// timestamp, and adds nothing to recent; a delete for everyone forgets the
+// original's attachments and tells the core.
+func TestEditAndDelete(t *testing.T) {
+	captureLogs(t)
+	c := newClient("x", nil, nil)
+	c.id.Store(botID)
+	png := `"attachments":[{"contentType":"image/png","id":"a1","size":5}]`
+	orig := parse(t, `{`+fromBob+`,"timestamp":100,"dataMessage":{"message":"hi all",`+png+`,`+inGroup+`}}`)
+	if r, ok := c.event(orig); !ok {
+		t.Fatalf("original: %+v", r)
+	}
+	edit := parse(t, `{`+fromBob+`,"timestamp":200,"editMessage":{"targetSentTimestamp":100,"dataMessage":{"timestamp":200,"message":"￼ hi all",`+atBot+`,`+png+`,`+inGroup+`}}}`)
+	r, ok := c.event(edit)
+	in, isIn := r.(bot.Incoming)
+	if !ok || !isIn {
+		t.Fatalf("edit: %+v %v", r, ok)
+	}
+	m, ok := in.Load(context.Background(), func(string, string) {})
+	if !ok || m.Text != "hi all" || m.Timestamp != 100 || !m.Edit || !m.Addressed || m.Chat.GroupID != groupID {
+		t.Fatalf("edit message %+v", m)
+	}
+	if len(c.recent.order) != 1 {
+		t.Fatalf("recent holds %v", c.recent.order)
+	}
+	del := parse(t, `{`+fromBob+`,"timestamp":300,"dataMessage":{"timestamp":300,"remoteDelete":{"targetTimestamp":100},`+inGroup+`}}`)
+	r, ok = c.event(del)
+	if d, isDel := r.(bot.Deleted); !ok || !isDel || d != (bot.Deleted{Chat: feature.Chat{GroupID: groupID}, Sender: bobID, Sent: 100}) {
+		t.Fatalf("delete: %+v %v", r, ok)
+	}
+	if _, ok := c.recent.get("g:"+groupID, bobID, 100); ok || len(c.recent.order) != 0 {
+		t.Fatal("the deleted message's attachments are remembered")
+	}
+}

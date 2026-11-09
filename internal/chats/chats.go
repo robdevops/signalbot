@@ -38,7 +38,8 @@ var (
 type Entry struct {
 	Role    string // "user" or "assistant"
 	Content string
-	Context bool // a message not addressed to the bot, kept only as context
+	Context bool     // a message not addressed to the bot, kept only as context
+	Refs    []string // the messages it holds, as the network names them, so one deleted or edited can be forgotten
 	Expires time.Time
 }
 
@@ -264,6 +265,20 @@ func (s *Store[M]) Add(key string, start time.Time, disappearing time.Duration, 
 	}
 	c.history = h
 	s.tidy(key, c)
+}
+
+// Forget drops each entry holding the message ref, such as one deleted for
+// everyone or replaced by an edit. An entry merged from several messages
+// goes whole; the bot's replies stay.
+func (s *Store[M]) Forget(key, ref string) {
+	if ref == "" {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if c := s.get(key, false); c != nil {
+		c.history = slices.DeleteFunc(c.history, func(e Entry) bool { return slices.Contains(e.Refs, ref) })
+	}
 }
 
 func unexpired(h []Entry, now time.Time) []Entry {

@@ -28,6 +28,7 @@ const (
 	rankSeen     = 2 // a sender's name on a live message
 	rankGiven    = 3 // the person's own profile name
 	rankContact  = 4 // the account owner's name for the contact
+	rankNick     = 5 // the nickname the account owner gave them, which Signal shows over every other name
 )
 
 type rankedName struct {
@@ -53,16 +54,18 @@ type contact struct {
 	Number    string `json:"number"`
 	UUID      string `json:"uuid"`
 	Username  string `json:"username"`
+	NickName  string `json:"nickGivenName"`
 	GivenName string `json:"givenName"`
 	Profile   struct {
 		GivenName string `json:"givenName"`
 	} `json:"profile"`
 }
 
-// best is the contact's name: the account owner's name for them, then their
-// own profile name, then their username.
+// best is the contact's name: the account owner's nickname for them, then
+// their name for them, then the contact's own profile name, then their
+// username.
 func (k contact) best() rankedName {
-	for _, r := range []rankedName{{k.GivenName, rankContact}, {k.Profile.GivenName, rankGiven}, {k.Username, rankUsername}} {
+	for _, r := range []rankedName{{k.NickName, rankNick}, {k.GivenName, rankContact}, {k.Profile.GivenName, rankGiven}, {k.Username, rankUsername}} {
 		if r.name = txt.SafeName(r.name); r.name != "" {
 			return r
 		}

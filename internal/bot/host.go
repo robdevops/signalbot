@@ -174,7 +174,7 @@ func (b *Bot) delivered(msg feature.Message) {
 	}
 	msg.Addressed = true
 	if act := b.onMessage(b.ctx, msg); act != (feature.Action{}) || r.Mentioned {
-		b.respond(msg, act, prompt(msg))
+		b.respond(msg, act, prompt(msg), nil)
 		return
 	}
 	known := map[string]string{}

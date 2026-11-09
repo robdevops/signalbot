@@ -263,3 +263,25 @@ func TestFollowUps(t *testing.T) {
 		t.Error("count not cleared")
 	}
 }
+
+// Forget drops only the entries holding the message; a merged one goes
+// whole, and the bot's replies stay.
+func TestForget(t *testing.T) {
+	s := New(10, func([]string) {}, newSlots(1).spawn)
+	now := time.Now()
+	s.Add("k", now, 0,
+		Entry{Role: "user", Content: "a", Refs: []string{"alice\x001"}},
+		Entry{Role: "assistant", Content: "reply"},
+		Entry{Role: "user", Content: "b and c", Refs: []string{"bob\x002", "alice\x003"}},
+		Entry{Role: "user", Content: "d", Refs: []string{"bob\x004"}})
+	s.Forget("k", "alice\x003")
+	s.Forget("k", "")
+	s.Forget("other", "bob\x004")
+	var got []string
+	for _, e := range s.History("k") {
+		got = append(got, e.Content)
+	}
+	if !slices.Equal(got, []string{"a", "reply", "d"}) {
+		t.Fatalf("history %q", got)
+	}
+}

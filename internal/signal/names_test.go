@@ -24,6 +24,14 @@ func TestContactBest(t *testing.T) {
 	if r := k.best(); r.name != "Alice B" {
 		t.Errorf("the owner's name for the contact should win: %+v", r)
 	}
+	k.NickName = "Ally"
+	if r := k.best(); r != (rankedName{"Ally", rankNick}) {
+		t.Errorf("the owner's nickname should win: %+v", r)
+	}
+	json.Unmarshal([]byte(`[{"givenName":"Alice","nickGivenName":"Ally"}]`), &cs)
+	if r := cs[0].best(); r.name != "Ally" {
+		t.Errorf("nickGivenName: %+v", r)
+	}
 	if r := (contact{Username: "alice.1"}).best(); r != (rankedName{"alice.1", rankUsername}) {
 		t.Errorf("username: %+v", r)
 	}

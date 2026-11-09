@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -170,6 +171,8 @@ func (b *Bot) handle(r Received) {
 	switch r := r.(type) {
 	case GroupChanged:
 		b.chats.ForgetNames(r.Chat.Key())
+	case Deleted:
+		b.chats.Forget(r.Chat.Key(), ref(r.Sender, r.Sent))
 	case Chatter:
 		b.overhear(r.Message)
 	case Happened:
@@ -184,8 +187,37 @@ func (b *Bot) handle(r Received) {
 // overhear runs the OnMessage hooks for an unaddressed group message, and keeps
 // the Context one returns in history.
 func (b *Bot) overhear(msg feature.Message) {
+	b.replaced(msg)
 	if a := b.onMessage(b.ctx, msg); a.Context != "" && b.ai != nil { // with no model, nothing would read it
-		b.chats.Add(msg.Chat.Key(), b.now(), msg.Expires, chats.Entry{Role: "user", Content: a.Context, Context: true})
+		b.chats.Add(msg.Chat.Key(), b.now(), msg.Expires, chats.Entry{Role: "user", Content: a.Context, Context: true, Refs: refs(msg)})
+	}
+}
+
+// ref names a message in history by its sender and when it was sent; ""
+// for one the bot made.
+func ref(sender string, sent int64) string {
+	if sender == "" || sent == 0 {
+		return ""
+	}
+	return sender + "\x00" + strconv.FormatInt(sent, 10)
+}
+
+// refs names the messages in history, for an entry that holds them.
+func refs(msgs ...feature.Message) []string {
+	var out []string
+	for _, m := range msgs {
+		if r := ref(m.Sender, m.Timestamp); r != "" {
+			out = append(out, r)
+		}
+	}
+	return out
+}
+
+// replaced forgets the message an edit replaces, so history never holds
+// both versions.
+func (b *Bot) replaced(msg feature.Message) {
+	if msg.Edit {
+		b.chats.Forget(msg.Chat.Key(), ref(msg.Sender, msg.Timestamp))
 	}
 }
 
@@ -224,7 +256,7 @@ func (b *Bot) work(rs []Received) {
 		run := batch
 		batch = nil
 		if len(run) > 0 && !b.closing.Load() {
-			safely(func() { m, text := merge(run); b.respond(m, feature.Action{}, text) })
+			safely(func() { m, text := merge(run); b.respond(m, feature.Action{}, text, refs(run...)) })
 		}
 	}
 	alone := func(fn func()) {
@@ -261,7 +293,7 @@ func (b *Bot) work(rs []Received) {
 				alone(func() { b.overhear(msg) })
 			default:
 				if act := b.onMessage(b.ctx, msg); act != (feature.Action{}) {
-					alone(func() { b.respond(msg, act, prompt(msg)) })
+					alone(func() { b.respond(msg, act, prompt(msg), refs(msg)) })
 					return
 				}
 				if !fits(batch, msg) {
@@ -361,10 +393,14 @@ func (b *Bot) load(r Incoming) (feature.Message, bool) {
 	if !ok || !msg.Addressed {
 		return msg, ok // only one that arrived before the bot's ID was known can be unaddressed
 	}
+	edit := ""
+	if msg.Edit {
+		edit = " (edit)"
+	}
 	if msg.Chat.GroupID != "" {
-		logx.Infof("received group chat")
+		logx.Infof("received group chat%s", edit)
 	} else {
-		logx.Infof("received dm")
+		logx.Infof("received dm%s", edit)
 	}
 	// Neither a renamed sender nor two different photos are a repeat.
 	id := msg.Sender + "\x00" + msg.Name + "\x00" + msg.Text
@@ -375,6 +411,7 @@ func (b *Bot) load(r Incoming) (feature.Message, bool) {
 		logx.Debugf("ignored duplicate")
 		return msg, false
 	}
+	b.replaced(msg)
 	return msg, true
 }
 

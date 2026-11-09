@@ -24,6 +24,11 @@ type envelope struct {
 	SourceName   string       `json:"sourceName"`
 	Timestamp    int64        `json:"timestamp"`
 	DataMessage  *dataMessage `json:"dataMessage"`
+	EditMessage  *struct {
+		TargetSentTimestamp int64        `json:"targetSentTimestamp"` // the original's timestamp
+		DataMessage         *dataMessage `json:"dataMessage"`         // the message as it now reads
+	} `json:"editMessage"`
+	edit bool // made from an EditMessage: DataMessage is the edit, Timestamp the original's
 }
 
 type dataMessage struct {
@@ -35,6 +40,9 @@ type dataMessage struct {
 	Sticker          *sticker     `json:"sticker"`
 	Reaction         *reaction    `json:"reaction"`
 	ExpiresInSeconds int          `json:"expiresInSeconds"` // the disappearing-messages timer, 0 if off
+	RemoteDelete     *struct {
+		TargetTimestamp int64 `json:"targetTimestamp"` // the deleted message's timestamp
+	} `json:"remoteDelete"`
 }
 
 // reaction is an emoji put on a message, or taken back.
@@ -63,6 +71,7 @@ type quote struct {
 	Author      string       `json:"author"`
 	AuthorUUID  string       `json:"authorUuid"`
 	Text        string       `json:"text"`
+	Mentions    []mention    `json:"mentions"` // in Text, each a U+FFFC, as in a message
 	Attachments []attachment `json:"attachments"`
 }
 
@@ -156,6 +165,13 @@ func isAddressed(env *envelope, self string, allowed map[string]bool) bool {
 // event is env as the core gets it, decided on the reader goroutine without
 // calling the network; false if the core has nothing to do with it.
 func (c *Client) event(env *envelope) (bot.Received, bool) {
+	// An edit is the message as it now reads, named by the original's
+	// timestamp, which is how Signal names it (for a reaction or a quote).
+	if e := env.EditMessage; env.DataMessage == nil && e != nil && e.DataMessage != nil && e.TargetSentTimestamp != 0 {
+		edited := *env
+		edited.DataMessage, edited.Timestamp, edited.EditMessage, edited.edit = e.DataMessage, e.TargetSentTimestamp, nil, true
+		env = &edited
+	}
 	d := env.DataMessage
 	if d == nil {
 		return nil, false
@@ -167,10 +183,17 @@ func (c *Client) event(env *envelope) (bot.Received, bool) {
 		c.members.changed(chat.GroupID, c.person(env.SourceUUID, env.Source, env.SourceNumber, env.SourceName), self != "" && fromSelf(env, self))
 		return bot.GroupChanged{Chat: chat}, true
 	}
+	if rd := d.RemoteDelete; rd != nil { // deleted for everyone: forgotten here and in history
+		if rd.TargetTimestamp == 0 {
+			return nil, false
+		}
+		c.recent.forget(chat.Key(), env.sender(), rd.TargetTimestamp)
+		return bot.Deleted{Chat: chat, Sender: env.sender(), Sent: rd.TargetTimestamp}, true
+	}
 	if r := d.Reaction; r != nil {
 		return c.reacted(env, chat, r)
 	}
-	if chat.GroupID != "" || isAllowed(env, c.allowed) { // so a reply can fetch them
+	if !env.edit && (chat.GroupID != "" || isAllowed(env, c.allowed)) { // so a reply can fetch them; an edit keeps the original's
 		c.recent.add(chat.Key(), env.sender(), env.Timestamp, d.Attachments)
 	}
 	load := func(ctx context.Context, learn func(name, id string)) (feature.Message, bool) {
@@ -261,6 +284,7 @@ func (c *Client) message(env *envelope, self string) feature.Message {
 		Text:      c.text(d.Message, d.Mentions, self),
 		Expires:   time.Duration(d.ExpiresInSeconds) * time.Second,
 		Timestamp: env.Timestamp,
+		Edit:      env.edit,
 		Addressed: isAddressed(env, self, c.allowed),
 	}
 	var images, files []feature.Media
@@ -289,7 +313,7 @@ func (c *Client) message(env *envelope, self string) feature.Message {
 			}
 		}
 		add(quoted, true)
-		m.Quote = &feature.Quote{Text: q.Text, Author: c.name(q.AuthorUUID, q.Author), Bot: is(self, q.AuthorUUID, q.Author)}
+		m.Quote = &feature.Quote{Text: c.text(q.Text, q.Mentions, self), Author: c.name(q.AuthorUUID, q.Author), Bot: is(self, q.AuthorUUID, q.Author)}
 	}
 	m.Media = slices.Concat(images, files)
 	if s := d.Sticker; s != nil {
