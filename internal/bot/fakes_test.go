@@ -11,6 +11,7 @@ import (
 	"net/url"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -51,8 +52,9 @@ type fakeNet struct {
 	handle  func(Received)
 	sent    chan sent // what the bot sends, in order
 	mu      sync.Mutex
-	typing  int      // Typing calls
-	fetched []string // the media IDs fetched
+	typing  int          // Typing calls
+	fetched []string     // the media IDs fetched
+	sends   atomic.Int64 // Send calls, for their timestamps
 }
 
 type sent struct {
@@ -79,8 +81,10 @@ func (n *fakeNet) WaitID(ctx context.Context) string {
 	}
 }
 
-func (n *fakeNet) Send(chat feature.Chat, text string, images []feature.Picture, known map[string]string) {
+// Send returns one timestamp per call, counting up from 5000.
+func (n *fakeNet) Send(chat feature.Chat, text string, images []feature.Picture, known map[string]string) []int64 {
 	n.sent <- sent{chat, text, images, known}
+	return []int64{5000 + n.sends.Add(1)}
 }
 
 // React is sent as "react <emoji> to <sender>@<timestamp>".

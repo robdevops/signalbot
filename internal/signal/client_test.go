@@ -65,6 +65,7 @@ type fake struct {
 	mu    sync.Mutex
 	res   map[string]string // method: result JSON
 	reqs  []request
+	sends int // send requests answered, for their timestamps
 }
 
 type request struct {
@@ -111,6 +112,10 @@ func (f *fake) serve(c net.Conn) {
 		f.mu.Lock()
 		f.reqs = append(f.reqs, request{req.Method, req.Params})
 		res, ok := f.res[req.Method]
+		if !ok && req.Method == "send" { // as signal-cli does: the message's timestamp
+			f.sends++
+			res, ok = fmt.Sprintf(`{"timestamp":%d,"results":[{"type":"SUCCESS"}]}`, 1000+f.sends), true
+		}
 		f.mu.Unlock()
 		if ok {
 			fmt.Fprintf(c, `{"jsonrpc":"2.0","result":%s,"id":%s}`+"\n", res, req.ID)
@@ -247,7 +252,10 @@ func TestStalledWriteReconnects(t *testing.T) {
 		t.Fatal("no account")
 	}
 	sent := make(chan error)
-	go func() { sent <- c.send(feature.Chat{User: aliceID}, strings.Repeat("x", 8<<20), nil, nil, nil) }()
+	go func() {
+		_, err := c.send(feature.Chat{User: aliceID}, strings.Repeat("x", 8<<20), nil, nil, nil)
+		sent <- err
+	}()
 	receive(srv, `{"sourceUuid":"`+aliceID+`","dataMessage":{"message":"hi"}}`)
 	next(t, got)
 	if err := <-sent; err == nil {
@@ -271,7 +279,9 @@ func TestSendAndTyping(t *testing.T) {
 	run(t, c, f)
 	group, dm := feature.Chat{GroupID: groupID}, feature.Chat{User: aliceID}
 	png := []byte("\x89PNG\r\n\x1a\n")
-	c.Send(group, "@signalbot hi @Alice", []feature.Picture{{Data: png, Name: "NVDA vs AMD, 1 month"}, {Data: png}}, map[string]string{"alice": aliceID})
+	if ts := c.Send(group, "@signalbot hi @Alice", []feature.Picture{{Data: png, Name: "NVDA vs AMD, 1 month"}, {Data: png}}, map[string]string{"alice": aliceID}); !slices.Equal(ts, []int64{1001}) {
+		t.Fatalf("sent %v", ts)
+	}
 	c.Send(dm, "plain @Alice", nil, nil)
 	eventually(t, "two sends", func() bool { return len(f.calls("send")) == 2 })
 	s := f.calls("send")
@@ -448,9 +458,28 @@ func TestFilesStickersAndGroups(t *testing.T) {
 	}
 }
 
+// A send returns its timestamp; one not delivered to someone is logged,
+// and a split reply returns one timestamp per part.
+func TestSendResults(t *testing.T) {
+	logs := captureLogs(t)
+	f := newFake(t)
+	c := newClient(f.sock, nil, nil)
+	run(t, c, f)
+	if ts := c.Send(feature.Chat{User: aliceID}, strings.Repeat("word ", 500), nil, nil); len(ts) != 2 || ts[0] == ts[1] {
+		t.Fatalf("a split reply returned %v", ts)
+	}
+	f.set("send", `{"timestamp":77,"results":[{"type":"NETWORK_FAILURE"}]}`)
+	if ts := c.Send(feature.Chat{User: aliceID}, "hi", nil, nil); !slices.Equal(ts, []int64{77}) {
+		t.Fatalf("returned %v", ts)
+	}
+	if !strings.Contains(logs.String(), "signal-cli send not delivered: NETWORK_FAILURE") {
+		t.Fatalf("logged %q", logs.String())
+	}
+}
+
 func TestCallsFailWhenNotConnected(t *testing.T) {
 	c := newClient("x", nil, nil)
-	if err := c.send(feature.Chat{User: aliceID}, "hi", nil, nil, nil); err == nil {
+	if _, err := c.send(feature.Chat{User: aliceID}, "hi", nil, nil, nil); err == nil {
 		t.Error("send while not connected")
 	}
 	if _, err := c.groups(context.Background(), aliceID); err == nil {

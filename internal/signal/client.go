@@ -294,7 +294,8 @@ func (c *Client) dispatch(line []byte, handle func(bot.Received)) {
 	}
 }
 
-// unmatched logs the outcome of a fire-and-forget request, send or sendTyping.
+// unmatched logs the outcome of a fire-and-forget request: sendTyping or
+// sendReaction.
 func unmatched(m *rpcMsg) {
 	if m.Error != nil {
 		logx.Errorf("signal-cli request %s failed: %s", m.ID, txt.Clamp(m.Error.Message, 200))

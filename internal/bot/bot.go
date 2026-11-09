@@ -34,7 +34,9 @@ type Network interface {
 	// network can skip work for events nothing would read.
 	Watch(events bool)
 	WaitID(ctx context.Context) string
-	Send(chat feature.Chat, text string, pics []feature.Picture, known map[string]string)
+	// Send posts a reply, split as the network needs, and returns the
+	// timestamps of the messages sent, which name them for a later delete.
+	Send(chat feature.Chat, text string, pics []feature.Picture, known map[string]string) (sent []int64)
 	// React puts emoji on msg in chat, as a reaction from the bot.
 	React(chat feature.Chat, msg feature.Message, emoji string)
 	Typing(chat feature.Chat) (stop func())
@@ -173,7 +175,11 @@ func (b *Bot) handle(r Received) {
 	case GroupChanged:
 		b.chats.ForgetNames(r.Chat.Key())
 	case Deleted:
-		b.chats.Forget(r.Chat.Key(), ref(r.Sender, r.Sent), r.At)
+		sender := r.Sender
+		if r.Bot {
+			sender = botSender
+		}
+		b.chats.Forget(r.Chat.Key(), ref(sender, r.Sent), r.At)
 	case Chatter:
 		b.overhear(r.Message)
 	case Happened:
@@ -201,6 +207,21 @@ func ref(sender string, sent int64) string {
 		return ""
 	}
 	return sender + "\x00" + strconv.FormatInt(sent, 10)
+}
+
+// botSender names the bot's own messages in history: no network ID can be
+// it, so the core needn't know the account's.
+const botSender = "\x00bot"
+
+// botRefs names the messages the bot sent, by Send's timestamps.
+func botRefs(sent []int64) []chats.Ref {
+	var out []chats.Ref
+	for _, ts := range sent {
+		if id := ref(botSender, ts); id != "" {
+			out = append(out, chats.Ref{ID: id, At: ts})
+		}
+	}
+	return out
 }
 
 // version is when m was sent, or for an edit when it was edited.

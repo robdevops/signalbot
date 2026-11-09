@@ -125,6 +125,7 @@ type harness struct {
 	secrets   []string        // message and reply texts, which must never be logged
 	people    map[string]bool // names and IDs of everyone but the bot, logged only for a DM not allowed
 	sendsRead int             // sends returned by nextSend
+	sentAt    int64           // the timestamp signal-cli gave the last send
 
 	signalSock string // the fake signal-cli's socket
 	modelURL   string // the fake model API's base URL
@@ -291,7 +292,10 @@ func (h *harness) serveSignal(c net.Conn) {
 				h.write(c, fmt.Sprintf(`{"jsonrpc":"2.0","error":{"code":-1,"message":"Failed to send message"},"id":%s}`, req.ID))
 				continue
 			}
-			result = `{"timestamp":1,"results":[{"type":"SUCCESS"}]}`
+			h.mu.Lock()
+			h.sentAt = max(h.sentAt+1, 1792622250000) // each its own, as on Signal
+			result = fmt.Sprintf(`{"timestamp":%d,"results":[{"type":"SUCCESS"}]}`, h.sentAt)
+			h.mu.Unlock()
 		case "sendTyping":
 			result = `{"timestamp":1}`
 		default:
@@ -1042,4 +1046,32 @@ func skipWithout(t *testing.T, f func(feature.Host) error) {
 	if f == nil {
 		t.Skip("feature left out of this build")
 	}
+}
+
+// lastSentAt is the timestamp signal-cli gave the bot's last send.
+func (h *harness) lastSentAt() int64 {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.sentAt
+}
+
+// syncFrame is what signal-cli reports when the account, on a linked device,
+// deletes for everyone (or edits) its message sent at target: in group, or
+// in the DM with to.
+func syncFrame(group, to string, target int64, edit bool) string {
+	sent := map[string]any{"timestamp": target + 5000, "destination": nil, "destinationNumber": nil, "destinationUuid": nil}
+	if group != "" {
+		sent["groupInfo"] = map[string]any{"groupId": group, "groupName": "Test group", "revision": 12, "type": "DELIVER"}
+	} else {
+		sent["destination"], sent["destinationUuid"] = to, to
+	}
+	if edit {
+		sent["editMessage"] = map[string]any{"targetSentTimestamp": target, "dataMessage": map[string]any{"timestamp": target + 5000, "message": "edited on the phone"}}
+	} else {
+		sent["remoteDelete"] = map[string]any{"targetTimestamp": target}
+	}
+	b, _ := json.Marshal(map[string]any{"account": idBot, "envelope": map[string]any{
+		"source": idBot, "sourceNumber": nil, "sourceUuid": idBot, "sourceName": "Botty", "sourceDevice": 2,
+		"timestamp": target + 5000, "syncMessage": map[string]any{"sentMessage": sent}}})
+	return string(b)
 }

@@ -29,7 +29,25 @@ type envelope struct {
 		TargetSentTimestamp int64        `json:"targetSentTimestamp"` // the original's timestamp
 		DataMessage         *dataMessage `json:"dataMessage"`         // the message as it now reads
 	} `json:"editMessage"`
+	SyncMessage *struct {
+		SentMessage *syncSent `json:"sentMessage"`
+	} `json:"syncMessage"` // what the account did on a linked device
 	edited int64 // made from an EditMessage: when it was edited; DataMessage is the edit, Timestamp the original's
+}
+
+// syncSent is a message the account sent from a linked device: the parts
+// the bot reads, a delete or an edit of one of its messages.
+type syncSent struct {
+	Destination       string     `json:"destination"`
+	DestinationNumber string     `json:"destinationNumber"`
+	DestinationUUID   string     `json:"destinationUuid"`
+	GroupInfo         *groupInfo `json:"groupInfo"`
+	RemoteDelete      *struct {
+		TargetTimestamp int64 `json:"targetTimestamp"`
+	} `json:"remoteDelete"`
+	EditMessage *struct {
+		TargetSentTimestamp int64 `json:"targetSentTimestamp"`
+	} `json:"editMessage"`
 }
 
 type dataMessage struct {
@@ -189,7 +207,7 @@ func (c *Client) event(env *envelope) (bot.Received, bool) {
 	}
 	d := env.DataMessage
 	if d == nil {
-		return nil, false
+		return c.synced(env)
 	}
 	chat := env.chat()
 	if g := d.GroupInfo; g != nil && g.Type == "UPDATE" {
@@ -247,6 +265,36 @@ func (c *Client) event(env *envelope) (bot.Received, bool) {
 		return bot.Chatter{Message: c.message(env, self)}, true
 	}
 	return nil, false
+}
+
+// synced is a delete or edit the account made on a linked device, as the
+// core gets it: the bot's message it names leaves history, as the app on
+// that device would drop it. An edit drops it too, so history never holds
+// what the chat no longer shows. Anything else synced is nothing to the bot.
+func (c *Client) synced(env *envelope) (bot.Received, bool) {
+	s := env.SyncMessage
+	if s == nil || s.SentMessage == nil {
+		return nil, false
+	}
+	if self := c.self(); self != "" && !fromSelf(env, self) { // a sync is the account's own
+		return nil, false
+	}
+	m := s.SentMessage
+	var target int64
+	switch {
+	case m.RemoteDelete != nil:
+		target = m.RemoteDelete.TargetTimestamp
+	case m.EditMessage != nil:
+		target = m.EditMessage.TargetSentTimestamp
+	}
+	chat := feature.Chat{User: cmp.Or(m.DestinationUUID, m.Destination, m.DestinationNumber)}
+	if g := m.GroupInfo; g != nil && g.GroupID != "" {
+		chat = feature.Chat{GroupID: g.GroupID}
+	}
+	if target == 0 || chat == (feature.Chat{}) {
+		return nil, false
+	}
+	return bot.Deleted{Chat: chat, Bot: true, Sent: target, At: math.MaxInt64}, true
 }
 
 // reacted is a reaction as the core gets it: never the bot's own, nor one

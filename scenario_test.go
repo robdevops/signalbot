@@ -535,6 +535,35 @@ func TestScenarioDeleteByUnlistedSender(t *testing.T) {
 		[]string{"user: the first question", "assistant: the first answer", "user: the second question"})
 }
 
+// The account's owner deleting one of the bot's replies for everyone on a
+// linked device drops it from history, in a DM and in a group; the question
+// stays.
+func TestScenarioLinkedDeviceDeletesBotReply(t *testing.T) {
+	h := startBot(t, world{})
+	h.queue(modelReply{Text: "the secret is 42"})
+	h.ask(fromAlice("what is the secret?"))
+	h.receive(syncFrame("", idAlice, h.lastSentAt(), false))
+	h.ask(fromAlice("and now?"))
+	equal(t, "conversation", h.lastRequest().contents(), []string{"user: what is the secret?", "user: and now?"})
+
+	h.queue(modelReply{Text: "the group secret is 7"})
+	h.ask(atBot("what is the group secret?"))
+	h.receive(syncFrame(idGroup, "", h.lastSentAt(), false))
+	h.ask(atBot("and now?"))
+	equal(t, "conversation", h.lastRequest().contents(), []string{"user: Alice: what is the group secret?", "user: Alice: and now?"})
+}
+
+// An edit of the bot's reply from a linked device drops it too, so history
+// never holds what the chat no longer shows.
+func TestScenarioLinkedDeviceEditDropsBotReply(t *testing.T) {
+	h := startBot(t, world{})
+	h.queue(modelReply{Text: "the first answer"})
+	h.ask(fromAlice("the first question"))
+	h.receive(syncFrame("", idAlice, h.lastSentAt(), true))
+	h.ask(fromAlice("the second question"))
+	equal(t, "conversation", h.lastRequest().contents(), []string{"user: the first question", "user: the second question"})
+}
+
 // A message deleted while it waits for an earlier answer is never answered
 // or kept; one deleted while it is answered is answered but not kept.
 func TestScenarioDeleteWhileWaiting(t *testing.T) {

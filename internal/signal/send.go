@@ -1,6 +1,7 @@
 package signal
 
 import (
+	"context"
 	"encoding/base64"
 	"fmt"
 	"maps"
@@ -37,7 +38,7 @@ func (c *Client) Prompt() string {
 // the images on the first
 // message, each named after its Name or else image_<local time>. A failure
 // is logged, as is a message signal-cli says it could not deliver.
-func (c *Client) Send(chat feature.Chat, text string, pics []feature.Picture, known map[string]string) {
+func (c *Client) Send(chat feature.Chat, text string, pics []feature.Picture, known map[string]string) (sent []int64) {
 	if n := utf8.RuneCountInString(text); n > maxReply {
 		logx.Warnf("reply truncated from %d chars", n)
 	}
@@ -67,7 +68,7 @@ func (c *Client) Send(chat feature.Chat, text string, pics []feature.Picture, kn
 	if len(ps) == 0 {
 		if len(attachments) == 0 {
 			logx.Warnf("empty reply, nothing sent")
-			return
+			return nil
 		}
 		ps = []styled{{}}
 	}
@@ -76,11 +77,16 @@ func (c *Client) Send(chat feature.Chat, text string, pics []feature.Picture, kn
 			attachments = nil
 		}
 		text := string(part.text)
-		if err := c.send(chat, text, mentions(text, known), textStyles(part), attachments); err != nil {
+		ts, err := c.send(chat, text, mentions(text, known), textStyles(part), attachments)
+		if err != nil {
 			logx.Errorf("send failed: %v", err)
-			return
+			return sent
+		}
+		if ts != 0 {
+			sent = append(sent, ts)
 		}
 	}
+	return sent
 }
 
 // fileName is name made safe as a file name in a data URI: characters that
@@ -97,8 +103,10 @@ func fileName(name string) string {
 	return strings.TrimSpace(string(r[:min(len(r), 80)]))
 }
 
-// send posts one message.
-func (c *Client) send(chat feature.Chat, text string, mentions, styles, attachments []string) error {
+// send posts one message and returns its timestamp, which names it on
+// Signal (for a delete from a linked device), waiting up to a minute for
+// signal-cli; a recipient it wasn't delivered to is logged.
+func (c *Client) send(chat feature.Chat, text string, mentions, styles, attachments []string) (int64, error) {
 	p := target(chat)
 	p["message"] = text
 	if len(mentions) > 0 {
@@ -110,8 +118,28 @@ func (c *Client) send(chat feature.Chat, text string, mentions, styles, attachme
 	if len(attachments) > 0 {
 		p["attachments"] = attachments
 	}
-	return c.write(c.nextID.Add(1), "send", p)
+	ctx, cancel := context.WithTimeout(context.Background(), sendTimeout)
+	defer cancel()
+	var r struct {
+		Timestamp int64 `json:"timestamp"`
+		Results   []struct {
+			Type string `json:"type"`
+		} `json:"results"`
+	}
+	if err := c.call(ctx, "send", p, &r); err != nil {
+		return 0, err
+	}
+	for _, res := range r.Results {
+		if res.Type != "" && res.Type != "SUCCESS" {
+			logx.Warnf("signal-cli send not delivered: %s", txt.SafeName(res.Type))
+		}
+	}
+	return r.Timestamp, nil
 }
+
+// sendTimeout bounds one send: signal-cli answers once the message is out,
+// which takes longer with attachments.
+var sendTimeout = time.Minute
 
 // React puts emoji on msg, as a reaction from the bot.
 func (c *Client) React(chat feature.Chat, msg feature.Message, emoji string) {
