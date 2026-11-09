@@ -3,6 +3,7 @@ package signal
 import (
 	"context"
 	"encoding/json"
+	"math"
 	"reflect"
 	"strings"
 	"testing"
@@ -75,7 +76,7 @@ func TestMessageInGroup(t *testing.T) {
 	want := feature.Message{
 		Chat: feature.Chat{GroupID: groupID}, Sender: bobID, Name: "Bob",
 		Text:    "ask @Alice and [unnamed user] 🎉",
-		Quote:   &feature.Quote{Text: "earlier", Bot: true},
+		Quote:   &feature.Quote{Text: "earlier", Bot: true, Sender: botID},
 		Expires: time.Hour, Addressed: true,
 		Media: []feature.Media{{ID: "a1"}, {ID: "t1"},
 			{ID: "q1", Quoted: true}, {ID: "q2", Quoted: true}, {ID: "x", File: true, MIME: "text/plain", Size: 1}, {ID: "p:2", Sticker: true}},
@@ -383,11 +384,14 @@ func TestEditAndDelete(t *testing.T) {
 	captureLogs(t)
 	c := newClient("x", nil, nil)
 	c.id.Store(botID)
+	clock := time.Unix(1000, 0)
+	c.recent.now = func() time.Time { return clock }
 	png := `"attachments":[{"contentType":"image/png","id":"a1","size":5}]`
 	orig := parse(t, `{`+fromBob+`,"timestamp":100,"dataMessage":{"message":"hi all",`+png+`,`+inGroup+`}}`)
 	if r, ok := c.event(orig); !ok {
 		t.Fatalf("original: %+v", r)
 	}
+	clock = clock.Add(time.Hour)
 	edit := parse(t, `{`+fromBob+`,"timestamp":200,"editMessage":{"targetSentTimestamp":100,"dataMessage":{"timestamp":200,"message":"￼ hi all",`+atBot+`,`+png+`,`+inGroup+`}}}`)
 	r, ok := c.event(edit)
 	in, isIn := r.(bot.Incoming)
@@ -395,18 +399,34 @@ func TestEditAndDelete(t *testing.T) {
 		t.Fatalf("edit: %+v %v", r, ok)
 	}
 	m, ok := in.Load(context.Background(), func(string, string) {})
-	if !ok || m.Text != "hi all" || m.Timestamp != 100 || !m.Edit || !m.Addressed || m.Chat.GroupID != groupID {
+	if !ok || m.Text != "hi all" || m.Timestamp != 100 || m.Edited != 200 || !m.Addressed || m.Chat.GroupID != groupID {
 		t.Fatalf("edit message %+v", m)
 	}
-	if len(c.recent.order) != 1 {
-		t.Fatalf("recent holds %v", c.recent.order)
+	if e := c.recent.byKey[recentKey("g:"+groupID, bobID, 100)]; len(c.recent.order) != 1 || !e.at.Equal(time.Unix(1000, 0)) {
+		t.Fatalf("the edit touched recent: %v, at %v", c.recent.order, e.at)
 	}
 	del := parse(t, `{`+fromBob+`,"timestamp":300,"dataMessage":{"timestamp":300,"remoteDelete":{"targetTimestamp":100},`+inGroup+`}}`)
 	r, ok = c.event(del)
-	if d, isDel := r.(bot.Deleted); !ok || !isDel || d != (bot.Deleted{Chat: feature.Chat{GroupID: groupID}, Sender: bobID, Sent: 100}) {
+	if d, isDel := r.(bot.Deleted); !ok || !isDel || d != (bot.Deleted{Chat: feature.Chat{GroupID: groupID}, Sender: bobID, Sent: 100, At: math.MaxInt64}) {
 		t.Fatalf("delete: %+v %v", r, ok)
 	}
 	if _, ok := c.recent.get("g:"+groupID, bobID, 100); ok || len(c.recent.order) != 0 {
 		t.Fatal("the deleted message's attachments are remembered")
+	}
+}
+
+// Someone mentioned only in the quote is learned, so the model's @Name for
+// them becomes a mention.
+func TestQuoteMentionsLearned(t *testing.T) {
+	c := newClient("x", nil, nil)
+	c.names.replace([]contact{{UUID: aliceID, GivenName: "Carol"}})
+	e := parse(t, `{`+fromBob+`,"dataMessage":{"message":"and?",`+atBot+`,`+inGroup+`,"quote":{"authorUuid":"`+bobID+`","text":"￼ check","mentions":[{"uuid":"`+aliceID+`","number":"`+aliceID+`","name":"`+aliceID+`","start":0,"length":1}]}}}`)
+	if q := c.message(e, botID).Quote; q.Text != "@Carol check" {
+		t.Fatalf("quote %q", q.Text)
+	}
+	var learned []string
+	c.people(e, botID, func(name, id string) { learned = append(learned, name+" "+id) })
+	if !reflect.DeepEqual(learned, []string{"Bob " + bobID, "Carol " + aliceID}) {
+		t.Fatalf("learned %v", learned)
 	}
 }

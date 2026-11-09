@@ -27,11 +27,12 @@ type Chatter struct{ Message feature.Message }
 // GroupChanged says only that a group's members, name or description changed.
 type GroupChanged struct{ Chat feature.Chat }
 
-// Deleted says the message sender sent at Sent was deleted for everyone.
+// Deleted says the message sender sent at Sent was deleted for everyone,
+// at At.
 type Deleted struct {
-	Chat   feature.Chat
-	Sender string
-	Sent   int64
+	Chat     feature.Chat
+	Sender   string
+	Sent, At int64
 }
 
 // Happened is an event: a reaction or a change in a group's members.

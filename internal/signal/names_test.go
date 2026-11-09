@@ -256,3 +256,22 @@ func TestRedact(t *testing.T) {
 		}
 	}
 }
+
+// A nickname the owner set is the name a sender is shown by too, and the
+// names it hides stay known to Redact.
+func TestNicknameEverywhere(t *testing.T) {
+	c := newClient("x", nil, nil)
+	k := contact{UUID: aliceID, NickName: "Ally", GivenName: "Alice"}
+	k.Profile.GivenName = "Alicia"
+	c.names.replace([]contact{k})
+	if n := c.senderName(&envelope{SourceUUID: aliceID, SourceName: "Alice Smith"}); n != "Ally" {
+		t.Fatalf("sender shown as %q", n)
+	}
+	if n := c.senderName(&envelope{SourceUUID: bobID, SourceName: "Bob"}); n != "Bob" {
+		t.Fatalf("without a nickname, %q", n)
+	}
+	c.loadNames(context.Background(), &envelope{SourceUUID: aliceID, SourceName: "Alice Smith"})
+	if got := c.Redact("Ally, Alice and Bob"); got != "redacted, redacted and Bob" {
+		t.Fatalf("redacted %q", got)
+	}
+}

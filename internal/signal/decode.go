@@ -3,6 +3,7 @@ package signal
 import (
 	"cmp"
 	"context"
+	"math"
 	"slices"
 	"strconv"
 	"strings"
@@ -28,7 +29,7 @@ type envelope struct {
 		TargetSentTimestamp int64        `json:"targetSentTimestamp"` // the original's timestamp
 		DataMessage         *dataMessage `json:"dataMessage"`         // the message as it now reads
 	} `json:"editMessage"`
-	edit bool // made from an EditMessage: DataMessage is the edit, Timestamp the original's
+	edited int64 // made from an EditMessage: when it was edited; DataMessage is the edit, Timestamp the original's
 }
 
 type dataMessage struct {
@@ -43,6 +44,14 @@ type dataMessage struct {
 	RemoteDelete     *struct {
 		TargetTimestamp int64 `json:"targetTimestamp"` // the deleted message's timestamp
 	} `json:"remoteDelete"`
+}
+
+// allMentions is the message's mentions and its quote's.
+func (d *dataMessage) allMentions() []mention {
+	if d.Quote == nil {
+		return d.Mentions
+	}
+	return slices.Concat(d.Mentions, d.Quote.Mentions)
 }
 
 // reaction is an emoji put on a message, or taken back.
@@ -169,7 +178,7 @@ func (c *Client) event(env *envelope) (bot.Received, bool) {
 	// timestamp, which is how Signal names it (for a reaction or a quote).
 	if e := env.EditMessage; env.DataMessage == nil && e != nil && e.DataMessage != nil && e.TargetSentTimestamp != 0 {
 		edited := *env
-		edited.DataMessage, edited.Timestamp, edited.EditMessage, edited.edit = e.DataMessage, e.TargetSentTimestamp, nil, true
+		edited.DataMessage, edited.Timestamp, edited.EditMessage, edited.edited = e.DataMessage, e.TargetSentTimestamp, nil, cmp.Or(env.Timestamp, e.TargetSentTimestamp+1)
 		env = &edited
 	}
 	d := env.DataMessage
@@ -184,16 +193,16 @@ func (c *Client) event(env *envelope) (bot.Received, bool) {
 		return bot.GroupChanged{Chat: chat}, true
 	}
 	if rd := d.RemoteDelete; rd != nil { // deleted for everyone: forgotten here and in history
-		if rd.TargetTimestamp == 0 {
+		if rd.TargetTimestamp == 0 || chat.GroupID == "" && !isAllowed(env, c.allowed) { // a stranger's DM was never kept
 			return nil, false
 		}
 		c.recent.forget(chat.Key(), env.sender(), rd.TargetTimestamp)
-		return bot.Deleted{Chat: chat, Sender: env.sender(), Sent: rd.TargetTimestamp}, true
+		return bot.Deleted{Chat: chat, Sender: env.sender(), Sent: rd.TargetTimestamp, At: math.MaxInt64}, true // every version goes
 	}
 	if r := d.Reaction; r != nil {
 		return c.reacted(env, chat, r)
 	}
-	if !env.edit && (chat.GroupID != "" || isAllowed(env, c.allowed)) { // so a reply can fetch them; an edit keeps the original's
+	if env.edited == 0 && (chat.GroupID != "" || isAllowed(env, c.allowed)) { // so a reply can fetch them; an edit keeps the original's
 		c.recent.add(chat.Key(), env.sender(), env.Timestamp, d.Attachments)
 	}
 	load := func(ctx context.Context, learn func(name, id string)) (feature.Message, bool) {
@@ -280,11 +289,11 @@ func (c *Client) message(env *envelope, self string) feature.Message {
 	m := feature.Message{
 		Chat:      env.chat(),
 		Sender:    env.sender(),
-		Name:      txt.SafeName(env.SourceName),
+		Name:      c.senderName(env),
 		Text:      c.text(d.Message, d.Mentions, self),
 		Expires:   time.Duration(d.ExpiresInSeconds) * time.Second,
 		Timestamp: env.Timestamp,
-		Edit:      env.edit,
+		Edited:    env.edited,
 		Addressed: isAddressed(env, self, c.allowed),
 	}
 	var images, files []feature.Media
@@ -313,7 +322,8 @@ func (c *Client) message(env *envelope, self string) feature.Message {
 			}
 		}
 		add(quoted, true)
-		m.Quote = &feature.Quote{Text: c.text(q.Text, q.Mentions, self), Author: c.name(q.AuthorUUID, q.Author), Bot: is(self, q.AuthorUUID, q.Author)}
+		m.Quote = &feature.Quote{Text: c.text(q.Text, q.Mentions, self), Author: c.name(q.AuthorUUID, q.Author), Bot: is(self, q.AuthorUUID, q.Author),
+			Sender: cmp.Or(q.AuthorUUID, q.Author), Sent: q.ID}
 	}
 	m.Media = slices.Concat(images, files)
 	if s := d.Sticker; s != nil {
@@ -334,8 +344,8 @@ func (c *Client) people(env *envelope, self string, learn func(name, id string))
 			learn(name, id)
 		}
 	}
-	add(env.SourceName, env.SourceUUID)
-	for _, m := range env.DataMessage.Mentions {
+	add(c.senderName(env), env.SourceUUID)
+	for _, m := range env.DataMessage.allMentions() {
 		if m.Number != self {
 			add(c.resolve(m), m.UUID)
 		}

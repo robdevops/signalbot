@@ -4,6 +4,7 @@
 package bot
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -172,7 +173,7 @@ func (b *Bot) handle(r Received) {
 	case GroupChanged:
 		b.chats.ForgetNames(r.Chat.Key())
 	case Deleted:
-		b.chats.Forget(r.Chat.Key(), ref(r.Sender, r.Sent))
+		b.chats.Forget(r.Chat.Key(), ref(r.Sender, r.Sent), r.At)
 	case Chatter:
 		b.overhear(r.Message)
 	case Happened:
@@ -193,8 +194,8 @@ func (b *Bot) overhear(msg feature.Message) {
 	}
 }
 
-// ref names a message in history by its sender and when it was sent; ""
-// for one the bot made.
+// ref names a message in history by its sender and when it was first sent;
+// "" for one the bot made.
 func ref(sender string, sent int64) string {
 	if sender == "" || sent == 0 {
 		return ""
@@ -202,22 +203,38 @@ func ref(sender string, sent int64) string {
 	return sender + "\x00" + strconv.FormatInt(sent, 10)
 }
 
-// refs names the messages in history, for an entry that holds them.
-func refs(msgs ...feature.Message) []string {
-	var out []string
+// version is when m was sent, or for an edit when it was edited.
+func version(m feature.Message) int64 { return cmp.Or(m.Edited, m.Timestamp) }
+
+// refs names the messages in history, for an entry that holds them: each
+// message, and the one it quotes, whose text the entry holds too, so
+// deleting or editing that one drops the entry.
+func refs(msgs ...feature.Message) []chats.Ref {
+	var out []chats.Ref
 	for _, m := range msgs {
-		if r := ref(m.Sender, m.Timestamp); r != "" {
-			out = append(out, r)
+		if id := ref(m.Sender, m.Timestamp); id != "" {
+			out = append(out, chats.Ref{ID: id, At: version(m)})
+		}
+		if q := m.Quote; q != nil {
+			if id := ref(q.Sender, q.Sent); id != "" {
+				out = append(out, chats.Ref{ID: id, At: q.Sent})
+			}
 		}
 	}
 	return out
 }
 
-// replaced forgets the message an edit replaces, so history never holds
-// both versions.
+// gone reports whether m was deleted, or replaced by a later edit, since it
+// arrived.
+func (b *Bot) gone(m feature.Message) bool {
+	return b.chats.Gone(m.Chat.Key(), ref(m.Sender, m.Timestamp), version(m))
+}
+
+// replaced forgets the versions of the message an edit replaces, in history
+// and any still waiting, so history never holds two.
 func (b *Bot) replaced(msg feature.Message) {
-	if msg.Edit {
-		b.chats.Forget(msg.Chat.Key(), ref(msg.Sender, msg.Timestamp))
+	if msg.Edited != 0 {
+		b.chats.Forget(msg.Chat.Key(), ref(msg.Sender, msg.Timestamp), msg.Edited)
 	}
 }
 
@@ -253,7 +270,9 @@ func (b *Bot) post(r Received) {
 func (b *Bot) work(rs []Received) {
 	var batch []feature.Message
 	flush := func() {
-		run := batch
+		// One deleted, or replaced by an edit, since it arrived is left
+		// out, such as an original whose edit waited with it.
+		run := slices.DeleteFunc(batch, b.gone)
 		batch = nil
 		if len(run) > 0 && !b.closing.Load() {
 			safely(func() { m, text := merge(run); b.respond(m, feature.Action{}, text, refs(run...)) })
@@ -394,7 +413,7 @@ func (b *Bot) load(r Incoming) (feature.Message, bool) {
 		return msg, ok // only one that arrived before the bot's ID was known can be unaddressed
 	}
 	edit := ""
-	if msg.Edit {
+	if msg.Edited != 0 {
 		edit = " (edit)"
 	}
 	if msg.Chat.GroupID != "" {
@@ -406,6 +425,10 @@ func (b *Bot) load(r Incoming) (feature.Message, bool) {
 	id := msg.Sender + "\x00" + msg.Name + "\x00" + msg.Text
 	for _, m := range msg.Media {
 		id += fmt.Sprintf("\x00%s:%t", m.ID, m.Sticker)
+	}
+	if b.gone(msg) {
+		logx.Debugf("ignored a message deleted or edited before it was answered")
+		return msg, false
 	}
 	if b.chats.Repeat(key, id) {
 		logx.Debugf("ignored duplicate")

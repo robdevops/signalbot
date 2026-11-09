@@ -63,6 +63,7 @@ type atMention struct {
 
 type quoteOf struct {
 	Author, Text string
+	Sent         int64 // the quoted message's timestamp; 0 for one just before
 	Mentions     []atMention
 	Attachments  []attached
 }
@@ -128,7 +129,11 @@ func (m incoming) frame() string {
 		data["mentions"] = mentions
 	}
 	if q := m.Quote; q != nil {
-		quote := map[string]any{"id": ts - 1, "author": q.Author, "authorNumber": nil, "authorUuid": q.Author, "text": q.Text,
+		id := ts - 1
+		if q.Sent != 0 {
+			id = q.Sent
+		}
+		quote := map[string]any{"id": id, "author": q.Author, "authorNumber": nil, "authorUuid": q.Author, "text": q.Text,
 			"attachments": attachmentsJSON(q.Attachments)}
 		if q.Mentions != nil {
 			var ms []any
@@ -468,6 +473,83 @@ func TestScenarioDeleteForEveryone(t *testing.T) {
 	h.ask(atBot("what do you think?"))
 	equal(t, "conversation", h.lastRequest().contents(),
 		[]string{"user: [Messages not addressed to you, for context only:]\nAlice: the moon is made of cheese", "user: Alice: what do you think?"})
+}
+
+// A reply to the bot that quotes a message holds its text, so it goes from
+// history when the quoted message is deleted.
+func TestScenarioDeletedQuoteLeavesHistory(t *testing.T) {
+	h := startBot(t, world{})
+	secret := inGroup("my password is hunter2").by(idBob, "Bob")
+	secret.At = 1792622240007
+	h.ignored(secret)
+	m := atBot("is this safe?")
+	m.Quote = &quoteOf{Author: idBob, Text: "my password is hunter2", Sent: secret.At}
+	h.ask(m)
+	h.ignored(incoming{From: idBob, Name: "Bob", Group: idGroup, Deletes: secret.At})
+	h.ask(atBot("anything else?"))
+	for _, c := range h.lastRequest().contents() {
+		if strings.Contains(c, "hunter2") {
+			t.Fatalf("the deleted message is still in history: %q", h.lastRequest().contents())
+		}
+	}
+}
+
+// A message deleted while it waits for an earlier answer is never answered
+// or kept; one deleted while it is answered is answered but not kept.
+func TestScenarioDeleteWhileWaiting(t *testing.T) {
+	h := startBot(t, world{})
+	hold, release := h.hold()
+	h.queue(modelReply{Text: "first answer", Hold: hold})
+	h.receive(fromAlice("a slow question").frame())
+	h.waitRequests(1)
+	waiting := fromAlice("my password is hunter2")
+	waiting.At = 1792622240004
+	h.receive(waiting.frame())
+	h.receive(incoming{From: idAlice, Name: "Alice", Deletes: waiting.At}.frame())
+	release()
+	if s := h.nextSend(); s.Message != "first answer" {
+		t.Fatalf("sent %q", s.Message)
+	}
+	h.settle()
+	h.noMoreSends()
+	if n := len(h.requests()); n != 1 {
+		t.Fatalf("the deleted message was sent to the model: %d requests", n)
+	}
+
+	// Deleted while the model answers it: the answer goes, history keeps
+	// neither it nor the question.
+	hold2, release2 := h.hold()
+	h.queue(modelReply{Text: "an answer to a deleted question", Hold: hold2})
+	inFlight := fromAlice("my other password is swordfish")
+	inFlight.At = 1792622240005
+	h.receive(inFlight.frame())
+	h.waitRequests(2)
+	h.receive(incoming{From: idAlice, Name: "Alice", Deletes: inFlight.At}.frame())
+	release2()
+	h.nextSend()
+	h.ask(fromAlice("anything else?"))
+	equal(t, "conversation", h.lastRequest().contents(),
+		[]string{"user: a slow question", "assistant: first answer", "assistant: an answer to a deleted question", "user: anything else?"})
+}
+
+// An original and its edit that wait together are answered once, as edited.
+func TestScenarioEditWhileWaiting(t *testing.T) {
+	h := startBot(t, world{})
+	hold, release := h.hold()
+	h.queue(modelReply{Text: "first answer", Hold: hold})
+	h.receive(fromAlice("a slow question").frame())
+	h.waitRequests(1)
+	orig := fromAlice("what is 2+2")
+	orig.At = 1792622240006
+	h.receive(orig.frame())
+	edit := fromAlice("what is 3+3")
+	edit.Edits = orig.At
+	h.receive(edit.frame())
+	release()
+	h.nextSend()
+	h.nextSend()
+	equal(t, "conversation", h.lastRequest().contents(),
+		[]string{"user: a slow question", "assistant: first answer", "user: what is 3+3"})
 }
 
 func TestScenarioHistoryIsPerChat(t *testing.T) {

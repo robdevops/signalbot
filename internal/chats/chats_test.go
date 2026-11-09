@@ -264,24 +264,42 @@ func TestFollowUps(t *testing.T) {
 	}
 }
 
-// Forget drops only the entries holding the message; a merged one goes
-// whole, and the bot's replies stay.
+// Forget drops the versions of a message before its time, now and when
+// added later, and a merged entry goes whole; the bot's replies stay, and
+// Gone says which versions are gone.
 func TestForget(t *testing.T) {
 	s := New(10, func([]string) {}, newSlots(1).spawn)
 	now := time.Now()
-	s.Add("k", now, 0,
-		Entry{Role: "user", Content: "a", Refs: []string{"alice\x001"}},
-		Entry{Role: "assistant", Content: "reply"},
-		Entry{Role: "user", Content: "b and c", Refs: []string{"bob\x002", "alice\x003"}},
-		Entry{Role: "user", Content: "d", Refs: []string{"bob\x004"}})
-	s.Forget("k", "alice\x003")
-	s.Forget("k", "")
-	s.Forget("other", "bob\x004")
-	var got []string
-	for _, e := range s.History("k") {
-		got = append(got, e.Content)
+	contents := func() []string {
+		var got []string
+		for _, e := range s.History("k") {
+			got = append(got, e.Content)
+		}
+		return got
 	}
-	if !slices.Equal(got, []string{"a", "reply", "d"}) {
-		t.Fatalf("history %q", got)
+	s.Add("k", now, 0,
+		Entry{Role: "user", Content: "a", Refs: []Ref{{"alice\x001", 1}}},
+		Entry{Role: "assistant", Content: "reply"},
+		Entry{Role: "user", Content: "b and c", Refs: []Ref{{"bob\x002", 2}, {"alice\x003", 3}}},
+		Entry{Role: "user", Content: "d", Refs: []Ref{{"bob\x004", 4}}})
+	s.Forget("k", "alice\x003", 1<<62) // deleted
+	s.Forget("k", "", 1<<62)
+	if got := contents(); !slices.Equal(got, []string{"a", "reply", "d"}) {
+		t.Fatalf("after a delete %q", got)
+	}
+	// An edit made at 10 replaces version 4 and is kept itself; a version
+	// still being answered when it came is dropped when added.
+	s.Forget("k", "bob\x004", 10)
+	s.Add("k", now, 0, Entry{Role: "user", Content: "d, as first sent", Refs: []Ref{{"bob\x004", 4}}},
+		Entry{Role: "user", Content: "d, edited", Refs: []Ref{{"bob\x004", 10}}})
+	if got := contents(); !slices.Equal(got, []string{"a", "reply", "d, edited"}) {
+		t.Fatalf("after an edit %q", got)
+	}
+	if !s.Gone("k", "bob\x004", 4) || s.Gone("k", "bob\x004", 10) || s.Gone("k", "bob\x005", 4) || s.Gone("other", "bob\x004", 4) {
+		t.Fatal("Gone is wrong")
+	}
+	s.Forget("k", "bob\x004", 5) // older than what's known: no change
+	if !s.Gone("k", "bob\x004", 9) {
+		t.Fatal("an older edit moved the cut back")
 	}
 }

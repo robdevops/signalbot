@@ -42,6 +42,7 @@ type names struct {
 	mu          sync.Mutex
 	byID        map[string]rankedName
 	numbers     map[string]string // ACI to phone number, where both are known
+	aliases     map[string]string // ID to another name they go by, below byID's, so Redact knows it too
 	refreshedAt time.Time         // when a load was last tried
 	loadedAt    time.Time         // when one last worked
 	minRefresh  time.Duration
@@ -65,12 +66,21 @@ type contact struct {
 // their name for them, then the contact's own profile name, then their
 // username.
 func (k contact) best() rankedName {
-	for _, r := range []rankedName{{k.NickName, rankNick}, {k.GivenName, rankContact}, {k.Profile.GivenName, rankGiven}, {k.Username, rankUsername}} {
-		if r.name = txt.SafeName(r.name); r.name != "" {
-			return r
-		}
+	if rs := k.ranked(); len(rs) > 0 {
+		return rs[0]
 	}
 	return rankedName{}
+}
+
+// ranked is the contact's names, best first, blank ones left out.
+func (k contact) ranked() []rankedName {
+	var out []rankedName
+	for _, r := range []rankedName{{k.NickName, rankNick}, {k.GivenName, rankContact}, {k.Profile.GivenName, rankGiven}, {k.Username, rankUsername}} {
+		if r.name = txt.SafeName(r.name); r.name != "" {
+			out = append(out, r)
+		}
+	}
+	return out
 }
 
 // learn records r, unless it is blank, as the name of the person with this
@@ -78,9 +88,17 @@ func (k contact) best() rankedName {
 // caller holds n.mu.
 func (n *names) learn(r rankedName, aci, number string) {
 	for _, id := range []string{aci, number} {
-		if id != "" && r.name != "" && r.rank >= n.byID[id].rank {
+		switch {
+		case id == "" || r.name == "":
+		case r.rank >= n.byID[id].rank:
 			makeRoom(n.byID, id)
 			n.byID[id] = r
+		case r.name != n.byID[id].name && n.aliases[id] == "":
+			if n.aliases == nil {
+				n.aliases = map[string]string{}
+			}
+			makeRoom(n.aliases, id)
+			n.aliases[id] = r.name
 		}
 	}
 	if aci != "" && number != "" {
@@ -116,11 +134,23 @@ func (n *names) lookup(ids ...string) rankedName {
 func (n *names) replace(cs []contact) {
 	n.mu.Lock()
 	defer n.mu.Unlock()
-	n.byID, n.numbers = map[string]rankedName{}, map[string]string{}
+	n.byID, n.numbers, n.aliases = map[string]rankedName{}, map[string]string{}, nil
 	for _, k := range cs {
-		n.learn(k.best(), k.UUID, k.Number)
+		n.learn(k.best(), k.UUID, k.Number)                      // with no name, still their number
+		for _, r := range k.ranked()[min(1, len(k.ranked())):] { // the next becomes an alias
+			n.learn(r, k.UUID, k.Number)
+		}
 	}
 	n.loadedAt = time.Now()
+}
+
+// senderName is the name env's sender is shown by: the nickname the account
+// owner gave them, as Signal shows it, else the name signal-cli sent.
+func (c *Client) senderName(env *envelope) string {
+	if r := c.names.lookup(env.SourceUUID, env.SourceNumber); r.rank == rankNick {
+		return r.name
+	}
+	return txt.SafeName(env.SourceName)
 }
 
 // name is the best name known for a person by any of their IDs, or "".
@@ -137,6 +167,11 @@ func (c *Client) Redact(s string) string {
 	for id, n := range c.names.byID {
 		if id != self && id != c.names.numbers[self] && utf8.RuneCountInString(n.name) >= 2 {
 			known = append(known, n.name)
+		}
+	}
+	for id, a := range c.names.aliases {
+		if id != self && id != c.names.numbers[self] && utf8.RuneCountInString(a) >= 2 {
+			known = append(known, a)
 		}
 	}
 	c.names.mu.Unlock()
@@ -216,7 +251,7 @@ func (c *Client) loadNames(ctx context.Context, env *envelope) {
 	n.mu.Unlock()
 	need := c.name(self) == ""
 	if d := env.DataMessage; d != nil {
-		for _, m := range d.Mentions {
+		for _, m := range d.allMentions() {
 			need = need || m.UUID != self && m.Number != self &&
 				(stale || n.lookup(m.UUID, m.Number).rank < rankSeen && mentionName(m) == "")
 		}

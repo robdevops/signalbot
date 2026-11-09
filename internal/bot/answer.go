@@ -60,7 +60,7 @@ const (
 // is the message as the model sees it, prompt(msg) for one message; tools
 // are offered by msg.Text alone, what was typed, never a sender's name or a
 // quote. refs names the messages answered, for history (see Forget).
-func (b *Bot) respond(msg feature.Message, act feature.Action, text string, refs []string) {
+func (b *Bot) respond(msg feature.Message, act feature.Action, text string, refs []chats.Ref) {
 	switch {
 	case act.Answer != "":
 		b.net.Send(msg.Chat, act.Answer, nil, b.chats.Names(msg.Chat.Key()))
