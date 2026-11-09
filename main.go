@@ -14,7 +14,6 @@ import (
 	"github.com/robdevops/signalbot/internal/bot"
 	"github.com/robdevops/signalbot/internal/config"
 	"github.com/robdevops/signalbot/internal/kit/logx"
-	"github.com/robdevops/signalbot/internal/signal"
 )
 
 // version is set at build time: go build -ldflags "-X main.version=v1.2.3"
@@ -37,7 +36,7 @@ func main() {
 	logx.Noticef("signalbot %s starting", buildVersion())
 	cfg := config.Load()
 	cfg.Version = buildVersion()
-	net := signal.New(cfg.Test)
+	net := newNetwork(cfg.Test)
 	sigCtx, stop := ossignal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	// Work outlives the shutdown signal, so replies being written can still
@@ -45,7 +44,7 @@ func main() {
 	ctx, closeConn := context.WithCancel(context.Background())
 	defer closeConn()
 	b := bot.New(ctx, cfg, net)
-	for _, register := range features {
+	for _, register := range enabled() {
 		if err := register(b); err != nil {
 			logx.Critf("config error: %v", err)
 			os.Exit(1)

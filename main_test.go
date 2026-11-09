@@ -12,7 +12,7 @@ func TestFeaturesRegister(t *testing.T) {
 	var logs logx.Buffer
 	defer logx.SetOutput(&logs, &logs, false)()
 	h := featuretest.New()
-	for _, register := range features {
+	for _, register := range enabled() {
 		if err := register(h); err != nil {
 			t.Fatal(err)
 		}

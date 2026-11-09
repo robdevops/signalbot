@@ -21,6 +21,14 @@ jobs:
         run: test -z "$(gofmt -l .)" || { gofmt -l .; exit 1; }
       - run: go vet ./...
       - run: go test -race ./...
+      - name: build tags
+        run: |
+          go vet -tags nocharts ./...
+          go test -tags nocharts .
+          if go build -tags nosignal -o /dev/null . 2> /tmp/nosignal.txt; then
+            echo "a build with no chat network should fail"; exit 1
+          fi
+          grep -q this_build_has_no_chat_network /tmp/nosignal.txt || { cat /tmp/nosignal.txt; exit 1; }
       - name: memory at real size, too slow under -race
         run: go test -run AtRealSize ./internal/kit/img/
       - name: sizes

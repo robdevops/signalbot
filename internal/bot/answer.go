@@ -59,8 +59,8 @@ const (
 // without its tool's data. text
 // is the message as the model sees it, prompt(msg) for one message; tools
 // are offered by msg.Text alone, what was typed, never a sender's name or a
-// quote.
-func (b *Bot) respond(msg feature.Message, act feature.Action, text string) {
+// quote. refs names the messages answered, for history (see Forget).
+func (b *Bot) respond(msg feature.Message, act feature.Action, text string, refs []chats.Ref) {
 	switch {
 	case act.Answer != "":
 		b.net.Send(msg.Chat, act.Answer, nil, b.chats.Names(msg.Chat.Key()))
@@ -146,7 +146,7 @@ func (b *Bot) respond(msg feature.Message, act feature.Action, text string) {
 	// can't be reacted to.
 	if len(reply.Pictures) == 0 && msg.Timestamp != 0 && txt.SingleEmoji(reply.Text) {
 		emoji := strings.TrimSpace(reply.Text)
-		b.chats.Add(key, start, msg.Expires, chats.Entry{Role: "user", Content: strings.TrimSpace(t.kept)},
+		b.chats.Add(key, start, msg.Expires, chats.Entry{Role: "user", Content: strings.TrimSpace(t.kept), Refs: refs},
 			chats.Entry{Role: "assistant", Content: "[reacted " + emoji + "]"})
 		logx.Infof("reacting instead of replying")
 		b.net.React(msg.Chat, msg, emoji)
@@ -156,7 +156,7 @@ func (b *Bot) respond(msg feature.Message, act feature.Action, text string) {
 	if len(captions) > 0 {
 		reply.Text, sent = "", strings.Join(captions, "\n")
 	}
-	b.chats.Add(key, start, msg.Expires, chats.Entry{Role: "user", Content: strings.TrimSpace(t.kept)},
+	b.chats.Add(key, start, msg.Expires, chats.Entry{Role: "user", Content: strings.TrimSpace(t.kept), Refs: refs},
 		chats.Entry{Role: "assistant", Content: notes + reply.Text})
 	b.net.Send(msg.Chat, sent, reply.Pictures, b.chats.Names(key))
 }

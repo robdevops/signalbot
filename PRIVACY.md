@@ -27,6 +27,8 @@ Every request to OpenRouter tells it to use only model providers that do not col
 
 - **With no model, no history at all.** The bot keeps no messages, not even group context, since nothing would read them.
 - **History lives in memory only.** It is kept per chat, up to `HISTORY_MAX` messages and 500 chats, for at most 24 hours, or until a shorter disappearing-messages timer runs out. A restart clears it, and the bot never writes it to disk. In groups it holds messages not addressed to the bot too (their text only), unless `GROUP_CONTEXT=false`. Photos are not kept at all: the history notes that one was sent, and the bot fetches a photo from signal-cli only while answering a message that includes it.
+- **Deletes and edits.** The bot honours deletes and edits as the Signal app does: from whoever wrote the message, even someone no longer allowed to DM the bot, and a group admin's delete of anyone's message. As in the app, a blocked person's deletes don't reach it, since signal-cli drops everything from them. A message deleted for everyone is dropped from the bot's history, along with any turn that quoted it, and its attachments from the recent ones below. If it is still waiting to be answered it is never sent to the model; if the model is answering it at that moment, the answer is sent but neither is kept. An edited message replaces the original in history the same way: the bot keeps only the message as it now reads. The bot's own replies stay until they expire.
+- **View-once photos and files** sent to the bot are shown to the model like any other, and remembered as below like any other attachment: the bot is a participant, and sees what it is sent.
 - **No swap or core dumps.** The included systemd unit and Docker command forbid both, so history cannot reach disk that way.
 - **Memory is freed, not wiped.** An expired message is dropped and Go's garbage collector reclaims its memory, but the bytes may linger until overwritten, and someone with root access to the host could read them from the running process.
 - **What features save, on disk.** Features save state only through the core, one file each in the state directory (`/var/lib/private/signalbot`), so everything the bot keeps on disk is listed here.
@@ -39,7 +41,7 @@ Every request to OpenRouter tells it to use only model providers that do not col
 
 Every level, debug included, is always written; there is no setting to turn any of it down.
 
-- **A message addressed to the bot:** "received group chat" or "received dm", with no name, ID or text; after the answer, a line with the time taken, tokens used and cost (when the API reports it), again with no name or ID, or "reacting instead of replying" when the answer is a reaction.
+- **A message addressed to the bot:** "received group chat" or "received dm" ("(edit)" after it for an edit), with no name, ID or text; after the answer, a line with the time taken, tokens used and cost (when the API reports it), again with no name or ID, or "reacting instead of replying" when the answer is a reaction.
 - **Never the text of any message,** nor errors that quote one.
 - **A message not addressed to the bot:** nothing, not even a note that it arrived.
 - **Reactions and changes in a group's members:** nothing. They are passed to features that ask for them (who reacted, with what, to whose message; who joined or left), never logged, kept or shown to the model. With no such feature, they are dropped as they arrive.

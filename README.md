@@ -121,6 +121,25 @@ docker logs -f signalbot
 
 Logs go to journald where the host has it, otherwise to Docker's rotating `local` driver; `docker logs` reads both. Under journald, `journalctl CONTAINER_NAME=signalbot -p err` shows warnings and errors.
 
+### Build without charts
+
+Charts and their fonts can be left out of the binary (about 0.7 MB of 10 MB) with a build tag: `go build -tags nocharts`, or for Docker, add `TAGS=nocharts` after `sudo` in the build command above. To stop files reaching the model without rebuilding, set `FILES=off` instead (see [Configuration](docs/CONFIGURATION.md)).
+
+### Block someone, or other signal-cli chores
+
+While the bot runs, signal-cli's daemon owns the account, so `signal-cli` itself can't be run alongside it. `signalctl` sends one request over the same socket the bot uses (`SIGNALCLI_SOCKET`):
+
+```
+go run ./cmd/signalctl block +15551234567 group:Z3JvdXA=
+go run ./cmd/signalctl unblock +15551234567
+go run ./cmd/signalctl blocked
+go run ./cmd/signalctl call listGroups '{"detailed":true}'
+```
+
+With Docker, it is in the image: `docker exec signalbot /signalctl blocked`. Under systemd, run it as a user that can reach the socket (anyone on TCP; the `signal-cli` group for the [Unix socket](docs/SOCKET.md)), for example `sudo -u signal-cli SIGNALCLI_SOCKET=/run/signal-cli/socket ./signalctl blocked`.
+
+A block is Signal's own, as on a phone: signal-cli drops everything from that person or group from then on, including their deletes of messages the bot already holds, and the block syncs to linked devices. `call` sends any method in signal-cli's [JSON-RPC docs](https://github.com/AsamK/signal-cli/blob/master/man/signal-cli-jsonrpc.5.adoc). The daemon also sends signalctl's connection the messages it receives; signalctl skips them unread, so it never prints anyone's text.
+
 ### Test
 
 Add the bot's account to a group and @mention it, reply to one of its messages, or DM it from an allowed sender. Send it `/intro` or `/help` to see its introduction.

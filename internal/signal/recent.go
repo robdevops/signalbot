@@ -1,6 +1,7 @@
 package signal
 
 import (
+	"slices"
 	"strconv"
 	"sync"
 	"time"
@@ -50,6 +51,18 @@ func (r *recent) add(chat, author string, ts int64, as []attachment) {
 	}
 	r.byKey[key] = recentEntry{r.clock(), as}
 	r.prune()
+}
+
+// forget drops the attachments of the message by author at ts in chat,
+// deleted for everyone.
+func (r *recent) forget(chat, author string, ts int64) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	key := recentKey(chat, author, ts)
+	if _, ok := r.byKey[key]; ok {
+		delete(r.byKey, key)
+		r.order = slices.DeleteFunc(r.order, func(k string) bool { return k == key })
+	}
 }
 
 // prune drops the oldest beyond recentMax, and any older than recentAge,

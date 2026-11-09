@@ -44,6 +44,16 @@ type incoming struct {
 	Expires     int       // the chat's disappearing-messages timer, in seconds
 	Update      bool      // a group update: its members, name or description changed
 	Reaction    *reaction // a reaction to a message, instead of text
+	At          int64     // its timestamp; 0 picks the next
+	Edits       int64     // an edit of the message sent at this timestamp: signal-cli's editMessage
+	Deletes     int64     // a delete for everyone of the message sent at this timestamp, instead of text
+	AdminDelete *adminDelete
+}
+
+// adminDelete is a group admin deleting Author's message sent at Sent.
+type adminDelete struct {
+	Author string
+	Sent   int64
 }
 
 // reaction is an emoji put on the message its author sent at Sent.
@@ -60,6 +70,8 @@ type atMention struct {
 
 type quoteOf struct {
 	Author, Text string
+	Sent         int64 // the quoted message's timestamp; 0 for one just before
+	Mentions     []atMention
 	Attachments  []attached
 }
 
@@ -102,6 +114,9 @@ func attachmentsJSON(as []attached) []any {
 // frame is the message as the "params" of signal-cli's receive notification.
 func (m incoming) frame() string {
 	ts := 1792622246000 + timestamps.Add(1)
+	if m.At != 0 {
+		ts = m.At
+	}
 	data := map[string]any{"timestamp": ts, "message": nil, "expiresInSeconds": m.Expires, "isExpirationUpdate": false, "viewOnce": false}
 	if m.Text != "" {
 		data["message"] = m.Text
@@ -121,8 +136,27 @@ func (m incoming) frame() string {
 		data["mentions"] = mentions
 	}
 	if q := m.Quote; q != nil {
-		data["quote"] = map[string]any{"id": ts - 1, "author": q.Author, "authorNumber": nil, "authorUuid": q.Author, "text": q.Text,
+		id := ts - 1
+		if q.Sent != 0 {
+			id = q.Sent
+		}
+		quote := map[string]any{"id": id, "author": q.Author, "authorNumber": nil, "authorUuid": q.Author, "text": q.Text,
 			"attachments": attachmentsJSON(q.Attachments)}
+		if q.Mentions != nil {
+			var ms []any
+			for _, at := range q.Mentions {
+				ms = append(ms, map[string]any{"name": at.Name, "number": nil, "uuid": at.ID, "start": at.Start, "length": at.Length})
+			}
+			quote["mentions"] = ms
+		}
+		data["quote"] = quote
+	}
+	if m.Deletes != 0 {
+		data["remoteDelete"] = map[string]any{"targetTimestamp": m.Deletes, "timestamp": ts}
+	}
+	if a := m.AdminDelete; a != nil { // signal-cli 0.14's adminDelete
+		data["adminDelete"] = map[string]any{"targetAuthor": a.Author, "targetAuthorNumber": nil, "targetAuthorUuid": a.Author,
+			"targetSentTimestamp": a.Sent, "targetTimestamp": a.Sent}
 	}
 	if m.Attachments != nil {
 		data["attachments"] = attachmentsJSON(m.Attachments)
@@ -134,9 +168,13 @@ func (m incoming) frame() string {
 		data["reaction"] = map[string]any{"emoji": r.Emoji, "targetAuthor": r.Author, "targetAuthorNumber": nil, "targetAuthorUuid": r.Author,
 			"targetSentTimestamp": r.Sent, "isRemove": r.Remove}
 	}
-	b, _ := json.Marshal(map[string]any{"account": idBot, "envelope": map[string]any{
-		"source": m.From, "sourceNumber": nil, "sourceUuid": m.From, "sourceName": m.Name, "sourceDevice": 1,
-		"timestamp": ts, "dataMessage": data}})
+	env := map[string]any{"source": m.From, "sourceNumber": nil, "sourceUuid": m.From, "sourceName": m.Name, "sourceDevice": 1,
+		"timestamp": ts, "serverReceivedTimestamp": ts + 50, "serverDeliveredTimestamp": ts + 60, "dataMessage": data}
+	if m.Edits != 0 { // signal-cli 0.14's editMessage: the new message, and no dataMessage
+		delete(env, "dataMessage")
+		env["editMessage"] = map[string]any{"targetSentTimestamp": m.Edits, "dataMessage": data}
+	}
+	b, _ := json.Marshal(map[string]any{"account": idBot, "envelope": env})
 	return string(b)
 }
 
@@ -405,6 +443,156 @@ func TestScenarioHistoryAcrossTurns(t *testing.T) {
 		[]string{"user: the first question", "assistant: the first answer", "user: the second question"})
 }
 
+// An edit that adds the bot's @mention is answered, and history holds the
+// message as it now reads, not as it was.
+func TestScenarioEditAddsMention(t *testing.T) {
+	h := startBot(t, world{})
+	orig := inGroup("whats the capitol of France")
+	orig.At = 1792622240001
+	h.ignored(orig)
+	edit := atBot("what's the capital of France?")
+	edit.Edits = orig.At
+	h.ask(edit)
+	equal(t, "conversation", h.lastRequest().contents(), []string{"user: Alice: what's the capital of France?"})
+	if _, ok := h.logged("received group chat (edit)"); !ok {
+		t.Fatal("the edit isn't logged as one")
+	}
+}
+
+// An edit of a message the bot answered is answered again, in place of the
+// original; the earlier reply stays.
+func TestScenarioEditAfterReply(t *testing.T) {
+	h := startBot(t, world{})
+	h.queue(modelReply{Text: "4"})
+	q := fromAlice("what is 2+2")
+	q.At = 1792622240002
+	h.ask(q)
+	edit := fromAlice("what is 3+3")
+	edit.Edits = q.At
+	h.ask(edit)
+	equal(t, "conversation", h.lastRequest().contents(), []string{"assistant: 4", "user: what is 3+3"})
+}
+
+// A message deleted for everyone leaves the bot's history.
+func TestScenarioDeleteForEveryone(t *testing.T) {
+	h := startBot(t, world{})
+	gone := inGroup("my password is hunter2")
+	gone.At = 1792622240003
+	h.ignored(gone)
+	h.ignored(inGroup("the moon is made of cheese"))
+	h.ignored(incoming{From: idAlice, Name: "Alice", Group: idGroup, Deletes: gone.At})
+	h.ask(atBot("what do you think?"))
+	equal(t, "conversation", h.lastRequest().contents(),
+		[]string{"user: [Messages not addressed to you, for context only:]\nAlice: the moon is made of cheese", "user: Alice: what do you think?"})
+}
+
+// A reply to the bot that quotes a message holds its text, so it goes from
+// history when the quoted message is deleted.
+func TestScenarioDeletedQuoteLeavesHistory(t *testing.T) {
+	h := startBot(t, world{})
+	secret := inGroup("my password is hunter2").by(idBob, "Bob")
+	secret.At = 1792622240007
+	h.ignored(secret)
+	m := atBot("is this safe?")
+	m.Quote = &quoteOf{Author: idBob, Text: "my password is hunter2", Sent: secret.At}
+	h.ask(m)
+	h.ignored(incoming{From: idBob, Name: "Bob", Group: idGroup, Deletes: secret.At})
+	h.ask(atBot("anything else?"))
+	for _, c := range h.lastRequest().contents() {
+		if strings.Contains(c, "hunter2") {
+			t.Fatalf("the deleted message is still in history: %q", h.lastRequest().contents())
+		}
+	}
+}
+
+// A group admin's delete of someone else's message removes it from history.
+func TestScenarioAdminDelete(t *testing.T) {
+	h := startBot(t, world{})
+	spam := inGroup("buy cheap watches here").by(idBob, "Bob")
+	spam.At = 1792622240008
+	h.ignored(spam)
+	h.ignored(inGroup("the moon is made of cheese"))
+	h.ignored(incoming{From: idAlice, Name: "Alice", Group: idGroup, AdminDelete: &adminDelete{Author: idBob, Sent: spam.At}})
+	h.ask(atBot("what do you think?"))
+	equal(t, "conversation", h.lastRequest().contents(),
+		[]string{"user: [Messages not addressed to you, for context only:]\nAlice: the moon is made of cheese", "user: Alice: what do you think?"})
+}
+
+// A delete in the DM of someone the bot doesn't answer changes nothing,
+// logs nothing, and leaves others' chats alone.
+func TestScenarioDeleteByUnlistedSender(t *testing.T) {
+	h := startBot(t, world{})
+	h.queue(modelReply{Text: "the first answer"})
+	h.ask(fromAlice("the first question"))
+	lines := len(h.logLines())
+	h.receive(incoming{From: idBob, Name: "Bob", Deletes: 1792622240009}.frame())
+	h.settle()
+	if got := h.logLines(); len(got) != lines {
+		t.Fatalf("logged %v", got[lines:])
+	}
+	h.ask(fromAlice("the second question"))
+	equal(t, "conversation", h.lastRequest().contents(),
+		[]string{"user: the first question", "assistant: the first answer", "user: the second question"})
+}
+
+// A message deleted while it waits for an earlier answer is never answered
+// or kept; one deleted while it is answered is answered but not kept.
+func TestScenarioDeleteWhileWaiting(t *testing.T) {
+	h := startBot(t, world{})
+	hold, release := h.hold()
+	h.queue(modelReply{Text: "first answer", Hold: hold})
+	h.receive(fromAlice("a slow question").frame())
+	h.waitRequests(1)
+	waiting := fromAlice("my password is hunter2")
+	waiting.At = 1792622240004
+	h.receive(waiting.frame())
+	h.receive(incoming{From: idAlice, Name: "Alice", Deletes: waiting.At}.frame())
+	release()
+	if s := h.nextSend(); s.Message != "first answer" {
+		t.Fatalf("sent %q", s.Message)
+	}
+	h.settle()
+	h.noMoreSends()
+	if n := len(h.requests()); n != 1 {
+		t.Fatalf("the deleted message was sent to the model: %d requests", n)
+	}
+
+	// Deleted while the model answers it: the answer goes, history keeps
+	// neither it nor the question.
+	hold2, release2 := h.hold()
+	h.queue(modelReply{Text: "an answer to a deleted question", Hold: hold2})
+	inFlight := fromAlice("my other password is swordfish")
+	inFlight.At = 1792622240005
+	h.receive(inFlight.frame())
+	h.waitRequests(2)
+	h.receive(incoming{From: idAlice, Name: "Alice", Deletes: inFlight.At}.frame())
+	release2()
+	h.nextSend()
+	h.ask(fromAlice("anything else?"))
+	equal(t, "conversation", h.lastRequest().contents(),
+		[]string{"user: a slow question", "assistant: first answer", "assistant: an answer to a deleted question", "user: anything else?"})
+}
+
+// An original and its edit that wait together are answered once, as edited.
+func TestScenarioEditWhileWaiting(t *testing.T) {
+	h := startBot(t, world{})
+	hold, release := h.hold()
+	h.queue(modelReply{Text: "first answer", Hold: hold})
+	h.receive(fromAlice("a slow question").frame())
+	h.waitRequests(1)
+	orig := fromAlice("what is 2+2")
+	orig.At = 1792622240006
+	h.receive(orig.frame())
+	edit := fromAlice("what is 3+3")
+	edit.Edits = orig.At
+	h.receive(edit.frame())
+	release()
+	h.nextSend()
+	h.nextSend()
+	equal(t, "conversation", h.lastRequest().contents(),
+		[]string{"user: a slow question", "assistant: first answer", "user: what is 3+3"})
+}
+
 func TestScenarioHistoryIsPerChat(t *testing.T) {
 	h := startBot(t, world{})
 	h.ask(fromAlice("a private question"))
@@ -459,6 +647,18 @@ func TestScenarioQuoteOfSomeoneElse(t *testing.T) {
 	h.ask(m)
 	equal(t, "conversation", h.lastRequest().contents(),
 		[]string{`user: Alice: [Replying to a message by "Bob": "lunch at noon?"]` + "\nwhat is up"})
+}
+
+// A mention in the quoted message is a name, never U+FFFC; the bot's own
+// is dropped.
+func TestScenarioQuoteWithMention(t *testing.T) {
+	h := startBot(t, world{Contacts: map[string]string{idBob: "Bob"}})
+	m := atBot("what is up")
+	m.Quote = &quoteOf{Author: idBob, Text: "\uFFFC \uFFFC lunch at noon?",
+		Mentions: []atMention{{ID: idBot, Name: idBot, Start: 0, Length: 1}, {ID: idAlice, Name: "Alice", Start: 2, Length: 1}}}
+	h.ask(m)
+	equal(t, "conversation", h.lastRequest().contents(),
+		[]string{`user: Alice: [Replying to a message by "Bob": "@Alice lunch at noon?"]` + "\nwhat is up"})
 }
 
 func TestScenarioQuoteOfUnknownAuthorIsSomeone(t *testing.T) {
@@ -879,6 +1079,7 @@ func TestScenarioModelNotListed(t *testing.T) {
 // OpenRouter's web search is left out with a warning. A photo goes to the
 // model as an image.
 func TestScenarioOtherProvider(t *testing.T) {
+	skipWithout(t, chartsFeature) // its prompt or intro names charts
 	h := startBot(t, world{OtherProvider: true, Vision: true})
 	if s := h.ask(atBot("what is up")); s.Message != "ok" || s.GroupID != idGroup {
 		t.Fatalf("sent %+v", s)
@@ -952,6 +1153,7 @@ func TestScenarioOtherProviderRejectsImages(t *testing.T) {
 // request without them is rejected too, the tools were the problem: images
 // come back on for the third request, which is answered, and stay on.
 func TestScenarioOtherProviderRejectsToolsWithImages(t *testing.T) {
+	skipWithout(t, chartsFeature) // its prompt or intro names charts
 	h := startBot(t, world{OtherProvider: true})
 	bad := modelReply{Status: 400, Body: `{"error":{"message":"tools are not supported"}}`}
 	h.queue(bad, bad)
@@ -1075,6 +1277,7 @@ func TestScenarioSystemPromptLayering(t *testing.T) {
 }
 
 func TestScenarioIntroPlaceholders(t *testing.T) {
+	skipWithout(t, chartsFeature) // its prompt or intro names charts
 	h := startBot(t, world{Env: map[string]string{"INTRO": `yo, {name} here on {model} with {tools}; "quoted"` + "\nnext line"}})
 	h.ask(fromAlice("introduce yourself"))
 	want := `If asked to introduce yourself, reply with exactly this text and nothing else: "yo, Botty here on test-model with **web search**\n\n**charts**: line, pie; \"quoted\"\nnext line"`
@@ -1323,6 +1526,31 @@ func TestScenarioPrivateLookingLinkIsNotFetched(t *testing.T) {
 }
 
 // --- files ---------------------------------------------------------------------------
+
+// With FILES off, a PDF is never fetched: the model is told only that it
+// was attached, and history keeps the same note.
+func TestScenarioFilesOff(t *testing.T) {
+	h := startBot(t, world{Env: map[string]string{"FILES": "off"}, Attachments: map[string][]byte{"doc1": []byte("%PDF-1.7 quarterly results")}})
+	m := fromAlice("what does this say?")
+	m.Attachments = []attached{{ID: "doc1", Type: "application/pdf", Name: "q3.pdf", Size: 26}}
+	if s := h.ask(m); s.Message != "ok" {
+		t.Fatalf("sent %q", s.Message)
+	}
+	if n := len(h.callsTo("getAttachment")); n != 0 {
+		t.Fatalf("%d getAttachment calls", n)
+	}
+	note := `[file "q3.pdf" attached, but reading files is turned off]`
+	if last := h.lastRequest().last(); !strings.Contains(last.Content, note) || last.Files != nil {
+		t.Fatalf("model got %q with %v", last.Content, last.Files)
+	}
+	if _, ok := h.logged("files: off (FILES)"); !ok {
+		t.Fatal("not logged at start")
+	}
+	h.ask(fromAlice("and the total?"))
+	if first := h.lastRequest().Messages[0]; !strings.Contains(first.Content, note) {
+		t.Fatalf("history kept %q", first.Content)
+	}
+}
 
 // A PDF alone in a DM is answered: it goes to the model as a file, read by
 // OpenRouter's OCR for a model that can't read files itself, and history
@@ -1647,6 +1875,7 @@ func TestScenarioStickerWithoutVision(t *testing.T) {
 // --- /intro and chat commands ----------------------------------------------------------
 
 func TestScenarioExampleWithoutModel(t *testing.T) {
+	skipWithout(t, chartsFeature) // its prompt or intro names charts
 	h := startBot(t, world{})
 	s := h.ask(atBot("/intro"))
 	// /intro sends INTRO, the same text the model gives when asked to
@@ -1680,6 +1909,7 @@ func TestScenarioExampleWithoutModel(t *testing.T) {
 }
 
 func TestScenarioBotWithoutProfileNameIsSignalbot(t *testing.T) {
+	skipWithout(t, chartsFeature) // its prompt or intro names charts
 	h := startBot(t, world{NoBotName: true, MCP: true})
 	if s := h.ask(fromAlice("/intro")); !strings.HasPrefix(s.Message, "hi, I'm signalbot, your open source assistant running test-model.\n\nI respond to @signalbot and replies to my messages.\n\nTools:\nweb search\n\ncharts: line, pie\n\nstocks MCP: get_quote, price_chart, /quote\n\nweather MCP: get_forecast, /forecast\n\n") {
 		t.Fatalf("sent %q", s.Message)
@@ -1826,6 +2056,7 @@ func hasChartTool(r modelRequest) bool { return slices.Contains(r.Tools, "make_c
 // The chart tool is offered when a message asks for a chart, and for the 2
 // replies after one that asked for or drew one; only in that chat.
 func TestScenarioChartToolOffering(t *testing.T) {
+	skipWithout(t, chartsFeature)
 	h := startBot(t, world{})
 	for i, step := range []struct {
 		text  string
@@ -1859,6 +2090,7 @@ func TestScenarioChartToolOffering(t *testing.T) {
 // A chart is sent captioned with its title in place of the model's text, and
 // the history notes that it was sent, in place of that text too.
 func TestScenarioChartReply(t *testing.T) {
+	skipWithout(t, chartsFeature)
 	h := startBot(t, world{})
 	h.queue(modelReply{Tool: "make_chart", Args: chartArgs}, modelReply{Text: "Done"})
 	s := h.ask(fromAlice("chart NVDA vs AMD for a month"))
@@ -1874,6 +2106,7 @@ func TestScenarioChartReply(t *testing.T) {
 
 // When a chat's history is erased, its chart follow-ups end with it.
 func TestScenarioErasedHistoryEndsChartFollowUps(t *testing.T) {
+	skipWithout(t, chartsFeature)
 	var clock skewed
 	h := startBot(t, world{Now: clock.now})
 	m := fromAlice("chart NVDA for 3 months")
@@ -1906,6 +2139,7 @@ func pieTool(r modelRequest) string {
 // A pie chart is offered on "pie" or "donut", and sent like a line chart:
 // captioned with its title, and noted in the history.
 func TestScenarioPieChartReply(t *testing.T) {
+	skipWithout(t, chartsFeature)
 	h := startBot(t, world{})
 	h.ask(atBot("show the budget as a pie"))
 	tool := pieTool(h.lastRequest())
@@ -1951,6 +2185,7 @@ func golden(t *testing.T, name, got string) {
 // Every feature on: web search, the chart tool offered, two MCP servers with
 // tools and chat commands, group context.
 func TestScenarioGoldenPromptFull(t *testing.T) {
+	skipWithout(t, chartsFeature)
 	h := startBot(t, world{Vision: true, MCP: true})
 	h.ignored(inGroup("the moon is made of cheese"))
 	h.ask(atBot("chart AAPL against the S&P 500 for a year"))

@@ -26,6 +26,7 @@ const (
 	maxQueue  = 4   // messages waiting in one chat's mailbox
 	maxNames  = 256 // names per chat
 	maxRecent = 64  // message keys per chat
+	maxGone   = 64  // deleted or edited messages remembered per chat, for ones still waiting
 )
 
 var (
@@ -38,8 +39,17 @@ var (
 type Entry struct {
 	Role    string // "user" or "assistant"
 	Content string
-	Context bool // a message not addressed to the bot, kept only as context
+	Context bool  // a message not addressed to the bot, kept only as context
+	Refs    []Ref // the messages it holds, so one deleted or edited can be forgotten
 	Expires time.Time
+}
+
+// Ref names a message in history: ID by its sender and when it was first
+// sent, At the version held (when it was sent, or for an edit when it was
+// edited), so an edit forgets only the versions before it.
+type Ref struct {
+	ID string
+	At int64
 }
 
 // Store is every chat's state, with mailboxes of M.
@@ -59,6 +69,7 @@ type chat[M any] struct {
 	recent    map[string]time.Time // message key -> when seen
 	names     map[string]string    // lowercased name -> ID; "" if ambiguous
 	followUps map[int]int          // tool group -> replies left
+	gone      map[string]int64     // message ID -> versions before this are deleted or replaced
 	queue     []M                  // waiting for the worker
 	busy      bool                 // a worker is running
 }
@@ -139,6 +150,9 @@ func (s *Store[M]) tidy(key string, c *chat[M]) {
 	}
 	if len(c.history) == 0 {
 		c.history, c.names, c.followUps = nil, nil, nil
+		if !c.busy && len(c.queue) == 0 {
+			c.gone = nil // nothing waits that a delete or edit could still catch
+		}
 		for k, t := range c.recent {
 			if now.Sub(t) >= window {
 				delete(c.recent, k)
@@ -256,6 +270,9 @@ func (s *Store[M]) Add(key string, start time.Time, disappearing time.Duration, 
 	}
 	h := unexpired(c.history, s.now())
 	for _, e := range entries {
+		if goneFrom(c.gone, e) { // deleted or edited while it was answered
+			continue
+		}
 		e.Expires = expires
 		h = append(h, e)
 	}
@@ -264,6 +281,53 @@ func (s *Store[M]) Add(key string, start time.Time, disappearing time.Duration, 
 	}
 	c.history = h
 	s.tidy(key, c)
+}
+
+// Forget drops the versions of message id before at, from history and
+// from what is added later: one deleted for everyone (at after every
+// version), or replaced by an edit made at at. A message still waiting or
+// being answered is caught when its entry is added; see Gone. An entry
+// merged from several messages goes whole; the bot's replies stay.
+func (s *Store[M]) Forget(key, id string, at int64) {
+	if id == "" {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	c := s.get(key, false) // a chat with no state holds nothing to forget, and nothing waits there
+	if c == nil {
+		return
+	}
+	if at <= c.gone[id] {
+		return
+	}
+	if c.gone == nil {
+		c.gone = map[string]int64{}
+	}
+	if len(c.gone) >= maxGone {
+		for k := range c.gone {
+			delete(c.gone, k)
+			break
+		}
+	}
+	c.gone[id] = at
+	c.history = slices.DeleteFunc(c.history, func(e Entry) bool { return goneFrom(c.gone, e) })
+	s.tidy(key, c)
+}
+
+// Gone reports whether the version of message id at at was deleted or
+// replaced by an edit, so it is not answered or kept.
+func (s *Store[M]) Gone(key, id string, at int64) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	c := s.get(key, false)
+	return c != nil && id != "" && at < c.gone[id]
+}
+
+// goneFrom reports whether e holds a version gone says is deleted or
+// replaced.
+func goneFrom(gone map[string]int64, e Entry) bool {
+	return slices.ContainsFunc(e.Refs, func(r Ref) bool { return r.At < gone[r.ID] })
 }
 
 func unexpired(h []Entry, now time.Time) []Entry {

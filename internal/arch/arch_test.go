@@ -90,7 +90,7 @@ func TestNoFeatureWordsInTheCore(t *testing.T) {
 	for _, p := range goFiles(t) {
 		core := under(p, "internal") || path.Dir(p) == "."
 		scenario := strings.HasPrefix(p, "scenario_")
-		if !core || scenario || under(p, "internal/features") || under(p, "internal/arch") || p == "features.go" {
+		if !core || scenario || under(p, "internal/features") || under(p, "internal/arch") || p == "features.go" || strings.HasPrefix(p, "features_") {
 			continue
 		}
 		data, err := os.ReadFile(root + "/" + p)

@@ -24,6 +24,14 @@ func TestContactBest(t *testing.T) {
 	if r := k.best(); r.name != "Alice B" {
 		t.Errorf("the owner's name for the contact should win: %+v", r)
 	}
+	k.NickName = "Ally"
+	if r := k.best(); r != (rankedName{"Ally", rankNick}) {
+		t.Errorf("the owner's nickname should win: %+v", r)
+	}
+	json.Unmarshal([]byte(`[{"givenName":"Alice","nickGivenName":"Ally"}]`), &cs)
+	if r := cs[0].best(); r.name != "Ally" {
+		t.Errorf("nickGivenName: %+v", r)
+	}
 	if r := (contact{Username: "alice.1"}).best(); r != (rankedName{"alice.1", rankUsername}) {
 		t.Errorf("username: %+v", r)
 	}
@@ -246,5 +254,24 @@ func TestRedact(t *testing.T) {
 		if got := c.Redact(in); got != want {
 			t.Errorf("Redact(%q) = %q, want %q", in, got, want)
 		}
+	}
+}
+
+// A nickname the owner set is the name a sender is shown by too, and the
+// names it hides stay known to Redact.
+func TestNicknameEverywhere(t *testing.T) {
+	c := newClient("x", nil, nil)
+	k := contact{UUID: aliceID, NickName: "Ally", GivenName: "Alice"}
+	k.Profile.GivenName = "Alicia"
+	c.names.replace([]contact{k})
+	if n := c.senderName(&envelope{SourceUUID: aliceID, SourceName: "Alice Smith"}); n != "Ally" {
+		t.Fatalf("sender shown as %q", n)
+	}
+	if n := c.senderName(&envelope{SourceUUID: bobID, SourceName: "Bob"}); n != "Bob" {
+		t.Fatalf("without a nickname, %q", n)
+	}
+	c.loadNames(context.Background(), &envelope{SourceUUID: aliceID, SourceName: "Alice Smith"})
+	if got := c.Redact("Ally, Alice and Bob"); got != "redacted, redacted and Bob" {
+		t.Fatalf("redacted %q", got)
 	}
 }
