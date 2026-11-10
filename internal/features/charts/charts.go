@@ -114,6 +114,10 @@ func themeFor(d darkHours) *theme {
 // Register offers the chart tools on h, and sends a chart alone with its
 // caption.
 func Register(h feature.Host) error {
+	if !txt.Bool(h.Env("CHARTS", ""), true) { // off, such as for a charts MCP server of one's own
+		logx.Infof("charts: off (CHARTS)")
+		return nil
+	}
 	mode := darkMode(h)
 	h.OfferTools(feature.ToolGroup{
 		Names:    []string{"**charts**: line, pie"},

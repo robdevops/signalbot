@@ -2118,6 +2118,19 @@ func TestScenarioChartToolOffering(t *testing.T) {
 
 // A chart is sent captioned with its title in place of the model's text, and
 // the history notes that it was sent, in place of that text too.
+// With CHARTS=no the chart tools are never offered, even when asked for a chart.
+func TestScenarioChartsOff(t *testing.T) {
+	skipWithout(t, chartsFeature)
+	h := startBot(t, world{Env: map[string]string{"CHARTS": "no"}})
+	h.ask(atBot("chart NVDA for a month"))
+	if hasChartTool(h.lastRequest()) {
+		t.Fatal("chart tool offered with CHARTS=no")
+	}
+	if _, ok := h.logged("charts: off (CHARTS)"); !ok {
+		t.Fatal("not logged at start")
+	}
+}
+
 func TestScenarioChartReply(t *testing.T) {
 	skipWithout(t, chartsFeature)
 	h := startBot(t, world{})

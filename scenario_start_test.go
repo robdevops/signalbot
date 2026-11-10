@@ -19,7 +19,7 @@ import (
 // starts with all of them cleared.
 var settingNames = []string{"SIGNALCLI_SOCKET", "MODEL_API_URL", "MODEL_API_KEY", "MODEL", "MODEL_SEARCH", "MODEL_REASONING",
 	"SIGNAL_DM_USER_IDS", "MODEL_SYSTEM_PROMPT", "INTRO", "MAX_CONCURRENCY", "HISTORY_MAX", "TOOL_LINGER_ROUNDS",
-	"MCP_CONFIG", "GROUP_CONTEXT", "FILES", "JOURNAL_STREAM"}
+	"MCP_CONFIG", "GROUP_CONTEXT", "FILES", "CHARTS", "JOURNAL_STREAM"}
 
 // startBot starts the bot in w, connected to its fakes, and returns once it
 // has connected and loaded its contacts. Everything it started is drained

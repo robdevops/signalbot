@@ -82,7 +82,7 @@ func TestChartsToolGroup(t *testing.T) {
 	if d := tool(t, h, "make_pie_chart").Description; !strings.Contains(d, "donut") {
 		t.Errorf("pie description %q", d)
 	}
-	if r := h.EnvRead(); len(r) != 1 || r[0] != "DARKMODE" {
+	if r := h.EnvRead(); len(r) != 2 || r[0] != "CHARTS" || r[1] != "DARKMODE" {
 		t.Errorf("read %v", r)
 	}
 }
