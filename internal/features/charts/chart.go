@@ -62,7 +62,7 @@ var dualAxisToolSchema = json.RawMessage(`{
     "mode": {"type": "string", "enum": ["value", "change"], "description": "value (default): plot the values as given, e.g. a population, a price or rainfall. change: plot each series as % change from its first point; use it when the question is about performance, growth or return, for one series or several, and whenever series differ in scale"},
     "unit": {"type": "string", "description": "Prefix for values in value mode, e.g. \"$\""},
     "invert": {"type": "boolean", "description": "Draw this axis upside down: higher values lower"},
-    "show_change": {"type": "boolean", "description": "Value mode only: also label each line's last value with its % change from its first point over the chart's period. Set it for prices, indexes, revenue, populations and other amounts where a % change means something; for a stock or fund price, always. Not for temperatures, rates or values already in %. Change mode already shows it."}
+    "show_change": {"type": "boolean", "description": "Value mode: each line's last value is labelled with its % change over the chart's period (default true), as for a price, index, revenue or population. Set false where a % change means nothing: temperatures, rates, or values already in %."}
   }}}
 }`)
 
@@ -120,10 +120,11 @@ type chartAxis struct {
 	Mode   string `json:"mode"` // "change" or "value"
 	Unit   string `json:"unit"`
 	Invert bool   `json:"invert"`
-	// ShowChange labels each line's last value with its % change over the
-	// period, in value mode; the model decides, as only it knows whether a
-	// % change of the numbers means anything.
-	ShowChange bool `json:"show_change"`
+	// ShowChange, unless false, labels each line's last value with its %
+	// change over the period, in value mode. On unless the model turns it
+	// off, as models leave optional settings unset; only it knows when a %
+	// change of the numbers means nothing (a temperature, a rate).
+	ShowChange *bool `json:"show_change"`
 
 	used        bool // a series is on it
 	lo, hi      float64
@@ -299,11 +300,11 @@ func (a *chartAxis) format(v float64, decimals int) string {
 }
 
 // change is pts' % change from first to last, signed, such as "-22.1%", if
-// the axis shows it: in value mode with ShowChange, and from a first value
-// above 0, as a change from zero or less means nothing; else "".
+// the axis shows it: in value mode unless ShowChange is false, and from a
+// first value above 0, as a change from zero or less means nothing; else "".
 func (a *chartAxis) change(pts []chartPoint) string {
 	first, last := pts[0].Value, pts[len(pts)-1].Value
-	if a.Mode == "change" || !a.ShowChange || first <= 0 {
+	if a.Mode == "change" || a.ShowChange != nil && !*a.ShowChange || first <= 0 {
 		return ""
 	}
 	pct := (last - first) / first * 100
