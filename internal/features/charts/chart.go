@@ -96,7 +96,8 @@ const (
 	chartToolDescription = "Draw a line chart of one or more series over time, on one Y axis, and attach it to your reply as an image. " +
 		"Choose the axis mode by what the chart is meant to show, for one series as much as several: change, which draws each series as % change from its first point, " +
 		"when the question is about performance, growth or return (how a stock did this year, NVDA vs AMD, a company's revenue growth) or the series differ in scale; " +
-		"value, the numbers as given, when the level itself matters (a price, a population, rainfall, temperatures). " + chartBody
+		"value, the numbers as given, when the level itself matters (a price, a population, rainfall, temperatures). " +
+		"A value chart labels each line with its % change over the period; set show_change false on its axis for temperatures, rates or values already in %. " + chartBody
 	dualAxisToolDescription = "Draw a line chart of one or more series over time on two Y axes, left and right, and attach it to your reply as an image. " +
 		"Use it only because the user asked for a second axis; otherwise use " + chartTool + ". " + chartBody
 )
