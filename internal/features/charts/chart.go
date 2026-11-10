@@ -61,7 +61,8 @@ var dualAxisToolSchema = json.RawMessage(`{
     "title": {"type": "string", "description": "Axis title, e.g. \"Price ($)\" or \"Rainfall (mm)\"; required on both axes when both are used"},
     "mode": {"type": "string", "enum": ["value", "change"], "description": "value (default): plot the values as given, e.g. a population, a price or rainfall. change: plot each series as % change from its first point; use it when the question is about performance, growth or return, for one series or several, and whenever series differ in scale"},
     "unit": {"type": "string", "description": "Prefix for values in value mode, e.g. \"$\""},
-    "invert": {"type": "boolean", "description": "Draw this axis upside down: higher values lower"}
+    "invert": {"type": "boolean", "description": "Draw this axis upside down: higher values lower"},
+    "show_change": {"type": "boolean", "description": "Value mode only: also label each line's last value with its % change from its first point over the chart's period. Set it for prices, indexes, revenue, populations and other amounts where a % change means something; for a stock or fund price, always. Not for temperatures, rates or values already in %. Change mode already shows it."}
   }}}
 }`)
 
@@ -119,6 +120,10 @@ type chartAxis struct {
 	Mode   string `json:"mode"` // "change" or "value"
 	Unit   string `json:"unit"`
 	Invert bool   `json:"invert"`
+	// ShowChange labels each line's last value with its % change over the
+	// period, in value mode; the model decides, as only it knows whether a
+	// % change of the numbers means anything.
+	ShowChange bool `json:"show_change"`
 
 	used        bool // a series is on it
 	lo, hi      float64
@@ -293,6 +298,21 @@ func (a *chartAxis) format(v float64, decimals int) string {
 	return sign + a.Unit + commas(fmt.Sprintf("%.*f", decimals, v))
 }
 
+// change is pts' % change from first to last, signed, such as "-22.1%", if
+// the axis shows it: in value mode with ShowChange, and from a first value
+// above 0, as a change from zero or less means nothing; else "".
+func (a *chartAxis) change(pts []chartPoint) string {
+	first, last := pts[0].Value, pts[len(pts)-1].Value
+	if a.Mode == "change" || !a.ShowChange || first <= 0 {
+		return ""
+	}
+	pct := (last - first) / first * 100
+	if math.Abs(pct) < 0.05 {
+		pct = 0 // no "-0.0%"
+	}
+	return fmt.Sprintf("%+.1f%%", pct)
+}
+
 // layout fits the axis to its series' values, plus 5% padding (and zero, in
 // change mode), between pixel rows top and bottom; only the round ticks
 // inside that range are kept.
@@ -334,7 +354,12 @@ func (a *chartAxis) y(v float64) float64 {
 func (s *chartSpec) summary() string {
 	var parts []string
 	for _, sr := range s.Series {
-		parts = append(parts, sr.Name+" "+s.axisOf(sr).format(sr.Points[len(sr.Points)-1].Value, 1))
+		a := s.axisOf(sr)
+		part := sr.Name + " " + a.format(sr.Points[len(sr.Points)-1].Value, 1)
+		if c := a.change(sr.Points); c != "" {
+			part += " (" + c + " over the period)"
+		}
+		parts = append(parts, part)
 	}
 	return chartNote + "Final values: " + strings.Join(parts, ", ") + "."
 }
@@ -828,8 +853,12 @@ func drawLines(cv *canvas, s *chartSpec, px func(time.Time) float64, top, bottom
 			cv.line(c, 1.5, lastX, ends[i], right+20, ends[i], labelX, labels[i])
 		}
 		cv.rect(c, labelX, labels[i]-6, 12, 12)
-		cv.text(labelFace, th.title, labelX+18, labels[i]+7, 0,
-			sr.Name+"  "+s.axisOf(sr).format(sr.Points[len(sr.Points)-1].Value, 1))
+		a := s.axisOf(sr)
+		label := sr.Name + "  " + a.format(sr.Points[len(sr.Points)-1].Value, 1)
+		if c := a.change(sr.Points); c != "" {
+			label += "  " + c
+		}
+		cv.text(labelFace, th.title, labelX+18, labels[i]+7, 0, label)
 	}
 }
 
@@ -902,9 +931,17 @@ func drawArea(cv *canvas, s *chartSpec, px func(time.Time) float64, bottom, left
 	cv.fill(c, circle(x, y, 5.5))
 	valueFace := face(chartFonts.bold, 20)
 	defer valueFace.Close()
-	y = min(max(y, 100), bottom-14) // keep both lines inside the image
+	change := a.change(pts) // on a line of its own: beside the value it would run off the edge
+	below := 0.0
+	if change != "" {
+		below = 24
+	}
+	y = min(max(y, 100), bottom-14-below) // keep every line inside the image
 	cv.text(valueFace, c, x+14, y-2, 0, a.format(last.Value, decimals))
-	cv.text(markFace, th.muted, x+14, y+20, 0, last.t.Format("2 Jan 2006"))
+	if change != "" {
+		cv.text(valueFace, c, x+14, y+22, 0, change)
+	}
+	cv.text(markFace, th.muted, x+14, y+20+below, 0, last.t.Format("2 Jan 2006"))
 }
 
 // textWidth is how wide s is in pixels in face f.

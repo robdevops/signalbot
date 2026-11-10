@@ -3,6 +3,7 @@ package charts
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"image"
 	"image/color"
 	"image/png"
@@ -599,5 +600,71 @@ func TestChartSourceClamp(t *testing.T) {
 	}
 	if c, _ := parseChart(dualAxisTool, true, `{"source":"  Yahoo Finance ",`+sampleChart()[1:]); c.Source != "Yahoo Finance" {
 		t.Fatalf("source %q", c.Source)
+	}
+}
+
+// A value chart with show_change labels each line's period change; off by
+// default, in change mode or from a start of 0 or less, it shows none.
+func TestShowChange(t *testing.T) {
+	t.Parallel()
+	pts := func(a, b float64) []chartPoint { return []chartPoint{{Value: a}, {Value: b}} }
+	on := &chartAxis{Mode: "value", ShowChange: true}
+	for _, tc := range []struct {
+		a     *chartAxis
+		first float64
+		last  float64
+		want  string
+	}{
+		{on, 229.28, 178.67, "-22.1%"},
+		{on, 100, 105, "+5.0%"},
+		{on, 100, 99.99, "+0.0%"},
+		{on, 0, 5, ""},
+		{on, -2, 5, ""},
+		{&chartAxis{Mode: "value"}, 100, 105, ""},
+		{&chartAxis{Mode: "change", ShowChange: true}, 0, 5, ""},
+	} {
+		if got := tc.a.change(pts(tc.first, tc.last)); got != tc.want {
+			t.Errorf("%+v %v→%v: %q, want %q", *tc.a, tc.first, tc.last, got, tc.want)
+		}
+	}
+
+	for _, tool := range []struct {
+		name string
+		dual bool
+		axis string
+	}{{chartTool, false, `"y_axis":{"show_change":true}`}, {dualAxisTool, true, `"axes":{"left":{"show_change":true}}`}} {
+		s, err := parseChart(tool.name, tool.dual, `{"title":"NVDA, 1 month",`+tool.axis+`,"series":[{"name":"NVDA","points":[{"date":"2026-10-09","value":229.28},{"date":"2026-11-09","value":178.67}]}]}`)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := s.summary(); got != chartNote+"Final values: NVDA 178.7 (-22.1% over the period)." {
+			t.Fatalf("%s: summary %q", tool.name, got)
+		}
+	}
+	s, _ := parseChart(chartTool, false, `{"title":"T","series":[{"name":"A","points":[{"date":"2026-10-09","value":1},{"date":"2026-11-09","value":2}]}]}`)
+	if s.left.ShowChange || strings.Contains(s.summary(), "period") {
+		t.Fatal("shown without asking")
+	}
+
+	// Drawn, alone and beside another line, in both themes.
+	for _, args := range []string{
+		strings.Replace(areaSample(22, false), `"mode":"value"`, `"mode":"value","show_change":true`, 1),
+		`{"title":"NVDA vs AMD, 1 month","axes":{"left":{"unit":"$","show_change":true}},"series":[` +
+			`{"name":"NVDA","points":[{"date":"2026-10-09","value":229.28},{"date":"2026-11-09","value":178.67}]},` +
+			`{"name":"AMD","points":[{"date":"2026-10-09","value":160.1},{"date":"2026-11-09","value":171.3}]}]}`,
+	} {
+		s, err := parseChart(dualAxisTool, true, args)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, th := range []*theme{lightTheme, darkTheme} {
+			data, err := renderChart(s, th)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if dir := os.Getenv("CHART_CHANGE"); dir != "" && th == lightTheme {
+				os.WriteFile(filepath.Join(dir, "change-"+fmt.Sprint(len(s.Series))+".png"), data, 0o644)
+			}
+		}
 	}
 }
