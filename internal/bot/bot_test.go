@@ -260,9 +260,8 @@ func TestDisappearingHistory(t *testing.T) {
 	m.Expires = time.Second
 	h.ask(m)
 	key := "g:" + groupID
-	if len(h.b.chats.History(key)) != 2 || len(h.b.chats.Names(key)) == 0 {
-		t.Fatal("nothing kept")
-	}
+	// Kept once the reply is sent, which is just after the send is seen.
+	h.eventually("history to be kept", func() bool { return len(h.b.chats.History(key)) == 2 && len(h.b.chats.Names(key)) > 0 })
 	h.eventually("history to expire", func() bool { return len(h.b.chats.History(key)) == 0 && len(h.b.chats.Names(key)) == 0 })
 }
 

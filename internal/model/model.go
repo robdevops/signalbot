@@ -182,16 +182,16 @@ func encoded(prefix string, data []byte) string {
 // logRequest logs one request of a reply at debug level, so the journal
 // shows what each tool round cost, and whether OpenRouter returned
 // annotations (such as a parsed PDF) and they were sent back, which keeps
-// a PDF from being parsed and paid for again, and whether the provider
-// searched the web, which runs on its side and so gets no tool line. No
+// a PDF from being parsed and paid for again, and whether a server tool
+// ran, which the provider runs on its side and so gets no tool line. No
 // content.
 func logRequest(round int, a answer, sentBack bool) {
 	cost := "no cost reported"
 	if a.costed {
 		cost = fmt.Sprintf("$%.4f", a.cost)
 	}
-	logx.Debugf("request %d: tokens in/out %d/%d, %s, annotations returned: %s, sent back: %s, websearch used: %s",
-		round, a.input, a.output, cost, yesNo(a.annotations != nil), yesNo(sentBack), yesNo(a.searched))
+	logx.Debugf("request %d: tokens in/out %d/%d, %s, annotations returned: %s, sent back: %s, server tools used: %s",
+		round, a.input, a.output, cost, yesNo(a.annotations != nil), yesNo(sentBack), yesNo(a.serverTools))
 }
 
 func yesNo(b bool) string {
@@ -240,7 +240,7 @@ type answer struct {
 	input, cached, output int
 	cost                  float64
 	costed                bool // the API reported the cost
-	searched              bool // the provider searched the web for it: a url_citation, or a web search request in its usage
+	serverTools           bool // a server tool ran for it: a page it found cited (url_citation), or a use counted in its usage
 }
 
 // Ask asks the model and returns its reply. When the model calls function
@@ -414,12 +414,10 @@ func (c *Client) request(ctx context.Context, msgs []message, tools []any, choic
 			} `json:"message"`
 		} `json:"choices"`
 		Usage struct {
-			PromptTokens     int      `json:"prompt_tokens"`
-			CompletionTokens int      `json:"completion_tokens"`
-			Cost             *float64 `json:"cost"` // OpenRouter's
-			ServerToolUse    struct {
-				WebSearchRequests int `json:"web_search_requests"`
-			} `json:"server_tool_use"`
+			PromptTokens        int            `json:"prompt_tokens"`
+			CompletionTokens    int            `json:"completion_tokens"`
+			Cost                *float64       `json:"cost"`            // OpenRouter's
+			ServerToolUse       map[string]int `json:"server_tool_use"` // uses of each server tool
 			PromptTokensDetails struct {
 				CachedTokens int `json:"cached_tokens"`
 			} `json:"prompt_tokens_details"`
@@ -429,7 +427,10 @@ func (c *Client) request(ctx context.Context, msgs []message, tools []any, choic
 		return answer{}, errors.New("malformed response") // not the error: it can quote the body
 	}
 	a := answer{input: r.Usage.PromptTokens, cached: r.Usage.PromptTokensDetails.CachedTokens,
-		output: r.Usage.CompletionTokens, costed: r.Usage.Cost != nil, searched: r.Usage.ServerToolUse.WebSearchRequests > 0}
+		output: r.Usage.CompletionTokens, costed: r.Usage.Cost != nil}
+	for _, n := range r.Usage.ServerToolUse {
+		a.serverTools = a.serverTools || n > 0
+	}
 	if a.costed {
 		a.cost = *r.Usage.Cost
 	}
@@ -441,7 +442,7 @@ func (c *Client) request(ctx context.Context, msgs []message, tools []any, choic
 			var notes []struct{ Type string }
 			json.Unmarshal(an, &notes) // other shapes are just not citations
 			for _, n := range notes {
-				a.searched = a.searched || n.Type == "url_citation" // a page a web search found, cited
+				a.serverTools = a.serverTools || n.Type == "url_citation" // a page a server tool found, cited
 			}
 		}
 	}
