@@ -20,24 +20,23 @@ import (
 )
 
 const (
-	// maxChars is Signal's limit for one message; replies are split at it.
-	maxChars = 2000
-	// maxReply caps a whole reply, so one request can't fan out into
-	// hundreds of messages.
-	maxReply  = 4 * maxChars
+	// maxReply caps a reply. Past 2,000 bytes, signal-cli sends the rest as
+	// a long-text attachment, as Signal's apps do, shown behind "Read more",
+	// so a reply is always one message.
+	maxReply  = 8000
 	truncated = " […truncated]"
 )
 
 // Prompt is Signal's line in the system prompt.
 func (c *Client) Prompt() string {
-	return fmt.Sprintf("This is a Signal chat. Never exceed %d characters, which is Signal's limit for one message.", maxChars)
+	return "This is a Signal chat. Past about 2000 characters, a message shows only its start until the reader taps Read more, so put the answer first."
 }
 
-// Send posts text to chat as parts makes it, with each @Name in known
-// (lowercased name to ID), and in a group the bot's own @name, made a real mention, and
-// the images on the first
-// message, each named after its Name or else image_<local time>. A failure
-// is logged, as is a message signal-cli says it could not deliver.
+// Send posts text to chat as one message, as prepare makes it, with each
+// @Name in known (lowercased name to ID), and in a group the bot's own
+// @name, made a real mention, and with the images, each named after its
+// Name or else image_<local time>. A failure is logged, as is a message
+// signal-cli says it could not deliver.
 func (c *Client) Send(chat feature.Chat, text string, pics []feature.Picture, known map[string]string) (sent []int64) {
 	if n := utf8.RuneCountInString(text); n > maxReply {
 		logx.Warnf("reply truncated from %d chars", n)
@@ -56,7 +55,7 @@ func (c *Client) Send(chat feature.Chat, text string, pics []feature.Picture, kn
 		attachments = append(attachments, fmt.Sprintf("data:%s;filename=%s.%s;base64,%s",
 			mime, name, strings.TrimPrefix(mime, "image/"), base64.StdEncoding.EncodeToString(p.Data)))
 	}
-	ps := parts(text, c.BotName())
+	msg, ok := prepare(text, c.BotName())
 	if id := c.self(); id != "" && chat.GroupID != "" { // in a group, "@" and its own name mentions the bot
 		k := maps.Clone(known)
 		if k == nil {
@@ -65,26 +64,18 @@ func (c *Client) Send(chat feature.Chat, text string, pics []feature.Picture, kn
 		k[txt.SafeName(c.BotName())] = id
 		known = k
 	}
-	if len(ps) == 0 {
-		if len(attachments) == 0 {
-			logx.Warnf("empty reply, nothing sent")
-			return nil
-		}
-		ps = []styled{{}}
+	if !ok && len(attachments) == 0 {
+		logx.Warnf("empty reply, nothing sent")
+		return nil
 	}
-	for i, part := range ps {
-		if i > 0 {
-			attachments = nil
-		}
-		text := string(part.text)
-		ts, err := c.send(chat, text, mentions(text, known), textStyles(part), attachments)
-		if err != nil {
-			logx.Errorf("send failed: %v", err)
-			return sent
-		}
-		if ts != 0 {
-			sent = append(sent, ts)
-		}
+	body := string(msg.text)
+	ts, err := c.send(chat, body, mentions(body, known), textStyles(msg), attachments)
+	if err != nil {
+		logx.Errorf("send failed: %v", err)
+		return nil
+	}
+	if ts != 0 {
+		sent = append(sent, ts)
 	}
 	return sent
 }
@@ -185,54 +176,29 @@ func (c *Client) Typing(chat feature.Chat) (stop func()) {
 	})
 }
 
-// parts turns a reply into the messages to send: its Markdown converted,
+// prepare turns a reply into the message to send: its Markdown converted,
 // without a leading @ and the bot's own name (an echo of how it was
-// addressed; elsewhere it is a mention), capped as a whole at maxReply, and
-// split at Signal's limit, preferring a line break and then a space. A style
-// carries on across a split.
-func parts(reply, self string) []styled {
+// addressed; elsewhere it is a mention), trimmed and capped at maxReply;
+// false if nothing is left.
+func prepare(reply, self string) (styled, bool) {
 	s := markdown(reply)
 	if sp := findAt(s.text, map[string]string{txt.SafeName(self): ""}); len(sp) > 0 && strings.TrimSpace(string(s.text[:sp[0].start])) == "" {
 		s.text, s.style = s.text[sp[0].end:], s.style[sp[0].end:]
 	}
+	start, end := 0, len(s.text)
+	for start < end && unicode.IsSpace(s.text[start]) {
+		start++
+	}
+	for end > start && unicode.IsSpace(s.text[end-1]) {
+		end--
+	}
+	s.text, s.style = s.text[start:end:end], s.style[start:end:end]
 	if len(s.text) > maxReply {
 		n := maxReply - utf8.RuneCountInString(truncated)
-		s.text, s.style = s.text[:n], s.style[:n]
+		s.text, s.style = s.text[:n:n], s.style[:n:n]
 		s.add([]rune(truncated), 0)
 	}
-	var out []styled
-	r, st := s.text, s.style
-	for {
-		for len(r) > 0 && unicode.IsSpace(r[0]) {
-			r, st = r[1:], st[1:]
-		}
-		if len(r) == 0 {
-			return out
-		}
-		end := min(len(r), maxChars)
-		if end < len(r) {
-			if i := lastIndex(r[:end], '\n'); i > 0 {
-				end = i
-			} else if i := lastIndex(r[:end], ' '); i > maxChars/2 {
-				end = i
-			}
-		}
-		n := end
-		for unicode.IsSpace(r[n-1]) {
-			n--
-		}
-		out = append(out, styled{r[:n:n], st[:n:n]})
-		r, st = r[end:], st[end:]
-	}
-}
-
-func lastIndex(r []rune, want rune) int {
-	for i, v := range slices.Backward(r) {
-		if v == want {
-			return i
-		}
-	}
-	return -1
+	return s, len(s.text) > 0
 }
 
 // span is one "@name" in a text, as rune indices [start, end).

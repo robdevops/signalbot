@@ -156,11 +156,10 @@ func (b *Bot) respond(msg feature.Message, act feature.Action, text string, refs
 	if len(captions) > 0 {
 		reply.Text, sent = "", strings.Join(captions, "\n")
 	}
-	// Sent first, so the reply's entry carries the timestamps that name it,
-	// for a delete from the account's linked device.
-	ts := b.net.Send(msg.Chat, sent, reply.Pictures, b.chats.Names(key))
+	p := b.pending()
 	b.chats.Add(key, start, msg.Expires, chats.Entry{Role: "user", Content: strings.TrimSpace(t.kept), Refs: refs},
-		chats.Entry{Role: "assistant", Content: notes + reply.Text, Refs: botRefs(ts)})
+		chats.Entry{Role: "assistant", Content: notes + reply.Text, Refs: []chats.Ref{p}})
+	b.sendKept(key, p, msg.Chat, sent, reply.Pictures, b.chats.Names(key))
 }
 
 // turn is what one request for a message carries.

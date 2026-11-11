@@ -181,8 +181,9 @@ func (b *Bot) delivered(msg feature.Message) {
 	for _, m := range r.Members {
 		chats.Claim(known, m.Name, m.ID)
 	}
-	ts := b.net.Send(msg.Chat, msg.Text, nil, known)
+	p := b.pending()
 	if b.ai != nil { // with no model, nothing would read it
-		b.chats.Add(key, b.now(), msg.Expires, chats.Entry{Role: "user", Content: cmp.Or(msg.Name, "someone") + ": " + msg.Text, Context: true, Refs: botRefs(ts)})
+		b.chats.Add(key, b.now(), msg.Expires, chats.Entry{Role: "user", Content: cmp.Or(msg.Name, "someone") + ": " + msg.Text, Context: true, Refs: []chats.Ref{p}})
 	}
+	b.sendKept(key, p, msg.Chat, msg.Text, nil, known)
 }

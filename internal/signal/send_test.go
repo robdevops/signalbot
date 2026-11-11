@@ -2,35 +2,33 @@ package signal
 
 import (
 	"fmt"
-	"reflect"
 	"strings"
 	"testing"
 
 	"github.com/robdevops/signalbot/internal/feature"
 )
 
-// A long reply is split, a huge one capped with a warning, the attachments
-// go with the first message, and an empty reply or a failed send is logged.
-func TestSendSplitsAndCaps(t *testing.T) {
+// A long reply is one message, as signal-cli sends what is past 2,000
+// bytes as a long-text attachment; a huge one is capped with a warning; the
+// attachments go with it; an empty reply or a failed send is logged.
+func TestSendOneMessageAndCaps(t *testing.T) {
 	logs := captureLogs(t)
 	f := newFake(t)
 	c := newClient(f.sock, nil, nil)
 	run(t, c, f)
 	dm := feature.Chat{User: aliceID}
-	c.Send(dm, strings.Repeat("z ", 3*maxChars), []feature.Picture{{Data: []byte("PNG")}}, nil)
-	eventually(t, "four sends", func() bool { return len(f.calls("send")) == 4 })
-	for i, s := range f.calls("send") {
-		if (s["attachments"] != nil) != (i == 0) {
-			t.Errorf("send %d attachments %v", i, s["attachments"])
-		}
+	c.Send(dm, strings.Repeat("z ", 6000), []feature.Picture{{Data: []byte("PNG")}}, nil)
+	eventually(t, "a send", func() bool { return len(f.calls("send")) == 1 })
+	if s := f.calls("send")[0]; s["attachments"] == nil || len([]rune(s["message"].(string))) != maxReply || !strings.HasSuffix(s["message"].(string), "[…truncated]") {
+		t.Errorf("send %d chars, attachments %v", len([]rune(fmt.Sprint(s["message"]))), s["attachments"] != nil)
 	}
 	if !strings.Contains(logs.String(), "reply truncated from 12000 chars") {
 		t.Errorf("logs %q", logs)
 	}
 	c.Send(dm, " ", nil, nil)
 	c.Send(dm, "", []feature.Picture{{Data: []byte("PNG")}}, nil)
-	eventually(t, "the pictures alone", func() bool { return len(f.calls("send")) == 5 })
-	if s := f.calls("send")[4]; s["message"] != "" || s["attachments"] == nil {
+	eventually(t, "the pictures alone", func() bool { return len(f.calls("send")) == 2 })
+	if s := f.calls("send")[1]; s["message"] != "" || s["attachments"] == nil {
 		t.Errorf("pictures sent as %v", s)
 	}
 	newClient("x", nil, nil).Send(dm, "secret words", nil, nil)
@@ -39,86 +37,23 @@ func TestSendSplitsAndCaps(t *testing.T) {
 	}
 }
 
-func TestMentions(t *testing.T) {
-	known := map[string]string{"alice": "u-a", "alice smith": "u-as", "bob": "u-b", "bob_2": "u-b2", "ambiguous": ""}
-	for _, tc := range []struct {
-		text string
-		want []string
-	}{
-		{"no mentions here", nil},
-		{"Hi @Alice!", []string{"3:6:u-a"}},
-		{"hi @alice", []string{"3:6:u-a"}},
-		{"hi @Alice Smith, ok", []string{"3:12:u-as"}},
-		{"hi @Alicia", nil},
-		{"mail me@Alice", nil},
-		{"\U0001F389 @Alice!", []string{"3:6:u-a"}},
-		{"@Bob and @bob_2", []string{"0:4:u-b", "9:6:u-b2"}},
-		{"hi @Ambiguous and @Bob", []string{"18:4:u-b"}},
-	} {
-		if got := mentions(tc.text, known); !reflect.DeepEqual(got, tc.want) {
-			t.Errorf("%q: got %v, want %v", tc.text, got, tc.want)
-		}
-	}
-	if got := mentions("@Alice", nil); got != nil {
-		t.Errorf("no names: %v", got)
-	}
-}
-
-func TestStrip(t *testing.T) {
-	for _, tc := range []struct {
-		text, want string
-		found      bool
-	}{
-		{"@Bot hi", "hi", true},
-		{"hi @bot, ok", "hi , ok", true},
-		{"hi @signalbot", "hi", true},
-		{"ask @Bot and @Bot again", "ask and again", true},
-		{"hi @Botty", "hi @Botty", false},
-		{"mail me@Bot", "mail me@Bot", false},
-	} {
-		rs := []rune(tc.text)
-		got, found := strip(styled{rs, make([]uint8, len(rs))}, "Bot", "signalbot")
-		if string(got.text) != tc.want || found != tc.found {
-			t.Errorf("%q: %q %v", tc.text, string(got.text), found)
-		}
-	}
-}
-
-// texts is the text of each part.
-func texts(ps []styled) []string {
-	var out []string
-	for _, p := range ps {
-		out = append(out, string(p.text))
-	}
-	return out
-}
-
-func TestParts(t *testing.T) {
-	if got := texts(parts("@Bot hi @Alice", "Bot")); !reflect.DeepEqual(got, []string{"hi @Alice"}) {
+func TestPrepare(t *testing.T) {
+	text := func(reply string) string { m, _ := prepare(reply, "Bot"); return string(m.text) }
+	if got := text("@Bot hi @Alice"); got != "hi @Alice" {
 		t.Errorf("got %q", got)
 	}
-	if got := texts(parts("I respond to @Bot and @Alice", "Bot")); !reflect.DeepEqual(got, []string{"I respond to @Bot and @Alice"}) {
+	if got := text("I respond to @Bot and @Alice"); got != "I respond to @Bot and @Alice" {
 		t.Errorf("a self-mention not at the start stays: %q", got)
 	}
-	if got := parts("  ", "Bot"); got != nil {
-		t.Errorf("blank: %q", texts(got))
+	if _, ok := prepare("  \n ", "Bot"); ok {
+		t.Error("blank is something")
 	}
 	long := strings.Repeat("word ", 300) + "\n" + strings.Repeat("x", 1500)
-	got := texts(parts(long, "Bot"))
-	if len(got) != 2 || got[0] != strings.TrimSpace(strings.Repeat("word ", 300)) || got[1] != strings.Repeat("x", 1500) {
-		t.Errorf("split at the line break: %d parts", len(got))
+	if got := text(long); got != strings.TrimSpace(long) {
+		t.Errorf("a long reply changed: %d runes", len([]rune(got)))
 	}
-	got = texts(parts(strings.Repeat("y", 3*maxChars), "Bot"))
-	if len(got) != 3 || len([]rune(got[0])) != maxChars {
-		t.Errorf("hard split: %d parts", len(got))
-	}
-	got = texts(parts(strings.Repeat("z ", 3*maxChars), "Bot"))
-	total := 0
-	for _, p := range got {
-		total += len([]rune(p))
-	}
-	if len(got) != 4 || total > maxReply || !strings.HasSuffix(got[3], "[…truncated]") {
-		t.Errorf("capped: %d parts, %d chars, ends %q", len(got), total, fmt.Sprint(got[len(got)-1][max(0, len(got[len(got)-1])-20):]))
+	if got := text(strings.Repeat("z ", 6000)); len([]rune(got)) != maxReply || !strings.HasSuffix(got, "[…truncated]") {
+		t.Errorf("capped: %d runes", len([]rune(got)))
 	}
 }
 

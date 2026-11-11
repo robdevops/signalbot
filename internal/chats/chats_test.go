@@ -310,3 +310,22 @@ func TestForget(t *testing.T) {
 		t.Fatal("an older edit moved the cut back")
 	}
 }
+
+// Retag swaps a placeholder ref for the refs it stands for, in every entry
+// holding it, and leaves the rest.
+func TestRetag(t *testing.T) {
+	s := New(10, func([]string) {}, newSlots(1).spawn)
+	s.Add("k", time.Now(), 0,
+		Entry{Role: "user", Content: "q", Refs: []Ref{{"alice\\x001", 1}}},
+		Entry{Role: "assistant", Content: "a", Refs: []Ref{{"pending\\x001", 0}}})
+	s.Retag("k", "pending\\x001", []Ref{{"bot\\x0010", 10}, {"bot\\x0011", 11}})
+	s.Retag("none", "pending\\x001", []Ref{{"x", 1}})
+	h := s.History("k")
+	if !slices.Equal(h[0].Refs, []Ref{{"alice\\x001", 1}}) || !slices.Equal(h[1].Refs, []Ref{{"bot\\x0010", 10}, {"bot\\x0011", 11}}) {
+		t.Fatalf("refs %v, %v", h[0].Refs, h[1].Refs)
+	}
+	s.Forget("k", "bot\\x0011", 1<<62)
+	if h := s.History("k"); len(h) != 1 || h[0].Content != "q" {
+		t.Fatalf("forgetting a retagged ref left %v", h)
+	}
+}

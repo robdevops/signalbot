@@ -61,27 +61,20 @@ func TestMarkdown(t *testing.T) {
 	}
 }
 
-// Styles survive the own-@name stripping, and a style across a split
-// carries on into the next part, rebased and clipped to each.
-func TestPartsKeepStyles(t *testing.T) {
-	ps := parts("@Bot **hi** @Alice", "Bot")
-	if got := texts(ps); !reflect.DeepEqual(got, []string{"hi @Alice"}) {
-		t.Fatalf("got %q", got)
+// Styles survive the own-@name stripping and the trimming, and a long
+// reply stays one message with its styles whole.
+func TestPrepareKeepsStyles(t *testing.T) {
+	m, ok := prepare("@Bot **hi** @Alice", "Bot")
+	if !ok || string(m.text) != "hi @Alice" {
+		t.Fatalf("got %q", string(m.text))
 	}
-	if got := textStyles(ps[0]); !reflect.DeepEqual(got, []string{"0:2:BOLD"}) {
+	if got := textStyles(m); !reflect.DeepEqual(got, []string{"0:2:BOLD"}) {
 		t.Errorf("styles %v", got)
 	}
-	long := "**" + strings.Repeat("a ", maxChars/2-3) + "\U0001F389 split here** after"
-	ps = parts(long, "Bot")
-	if len(ps) != 2 {
-		t.Fatalf("%d parts", len(ps))
-	}
-	first, second := textStyles(ps[0]), textStyles(ps[1])
-	if n := len(ps[0].text); !reflect.DeepEqual(first, []string{"0:" + strconv.Itoa(n+1) + ":BOLD"}) { // the emoji is two units
-		t.Errorf("first part %v (%d runes)", first, n)
-	}
-	if string(ps[1].text) != "split here after" || !reflect.DeepEqual(second, []string{"0:10:BOLD"}) {
-		t.Errorf("second part %q %v", string(ps[1].text), second)
+	long := "**" + strings.Repeat("a ", 1500) + "\U0001F389 past the old limit** after"
+	m, _ = prepare(long, "Bot")
+	if n := len(m.text); !strings.HasSuffix(string(m.text), "limit after") || !reflect.DeepEqual(textStyles(m), []string{"0:" + strconv.Itoa(n-len(" after")+1) + ":BOLD"}) { // the emoji is two units
+		t.Errorf("long: %d runes, styles %v", n, textStyles(m))
 	}
 }
 

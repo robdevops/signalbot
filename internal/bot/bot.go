@@ -59,6 +59,7 @@ type Member struct{ Name, ID string }
 
 // Bot is the core, and the Host features register on.
 type Bot struct {
+	sends      atomic.Int64 // pending refs made, each its own
 	cfg        *config.Config
 	net        Network
 	ai         *model.Client // nil with no model
@@ -212,6 +213,20 @@ func ref(sender string, sent int64) string {
 // botSender names the bot's own messages in history: no network ID can be
 // it, so the core needn't know the account's.
 const botSender = "\x00bot"
+
+// pending is a ref no message has, held by an entry for what the bot is
+// about to send until Send says what to call it; each is its own.
+func (b *Bot) pending() chats.Ref {
+	return chats.Ref{ID: botSender + "\x00pending\x00" + strconv.FormatInt(b.sends.Add(1), 10)}
+}
+
+// sendKept sends text to chat, after entries were kept holding ref p, then
+// names them by what was sent, so a delete from a linked device finds them.
+// History is kept first so a message arriving while the send is out lands
+// after the turn, not before it.
+func (b *Bot) sendKept(key string, p chats.Ref, chat feature.Chat, text string, pics []feature.Picture, known map[string]string) {
+	b.chats.Retag(key, p.ID, botRefs(b.net.Send(chat, text, pics, known)))
+}
 
 // botRefs names the messages the bot sent, by Send's timestamps.
 func botRefs(sent []int64) []chats.Ref {

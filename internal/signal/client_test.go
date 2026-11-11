@@ -458,15 +458,15 @@ func TestFilesStickersAndGroups(t *testing.T) {
 	}
 }
 
-// A send returns its timestamp; one not delivered to someone is logged,
-// and a split reply returns one timestamp per part.
+// A send returns its timestamp, a long reply's too, as it is one message;
+// one not delivered to someone is logged.
 func TestSendResults(t *testing.T) {
 	logs := captureLogs(t)
 	f := newFake(t)
 	c := newClient(f.sock, nil, nil)
 	run(t, c, f)
-	if ts := c.Send(feature.Chat{User: aliceID}, strings.Repeat("word ", 500), nil, nil); len(ts) != 2 || ts[0] == ts[1] {
-		t.Fatalf("a split reply returned %v", ts)
+	if ts := c.Send(feature.Chat{User: aliceID}, strings.Repeat("word ", 500), nil, nil); len(ts) != 1 {
+		t.Fatalf("a long reply returned %v", ts)
 	}
 	f.set("send", `{"timestamp":77,"results":[{"type":"NETWORK_FAILURE"}]}`)
 	if ts := c.Send(feature.Chat{User: aliceID}, "hi", nil, nil); !slices.Equal(ts, []int64{77}) {

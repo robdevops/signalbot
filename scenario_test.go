@@ -907,29 +907,27 @@ func TestScenarioOwnNameTwiceIsLinked(t *testing.T) {
 	}
 }
 
-func TestScenarioLongReplyIsSplit(t *testing.T) {
+// A long reply is one message: signal-cli sends what is past 2,000 bytes
+// as a long-text attachment, shown behind Read more.
+func TestScenarioLongReplyIsOneMessage(t *testing.T) {
 	h := startBot(t, world{})
 	long := strings.TrimSpace(strings.Repeat("word ", 500))
 	h.queue(modelReply{Text: long})
 	h.receive(fromAlice("tell me a long story").frame())
-	a, b := h.nextSend(), h.nextSend()
-	h.noMoreSends()
-	if utf8.RuneCountInString(a.Message) > 2000 || utf8.RuneCountInString(b.Message) > 2000 || a.Message+" "+b.Message != long {
-		t.Fatalf("split into %d and %d runes", utf8.RuneCountInString(a.Message), utf8.RuneCountInString(b.Message))
+	if s := h.nextSend(); s.Message != long {
+		t.Fatalf("sent %d runes", utf8.RuneCountInString(s.Message))
 	}
+	h.noMoreSends()
 }
 
 func TestScenarioHugeReplyIsCapped(t *testing.T) {
 	h := startBot(t, world{})
 	h.queue(modelReply{Text: strings.Repeat("spam ", 5000)})
 	h.receive(fromAlice("tell me a very long story").frame())
-	var parts []sentMsg
-	for range 4 {
-		parts = append(parts, h.nextSend())
-	}
+	s := h.nextSend()
 	h.noMoreSends()
-	if last := parts[3].Message; !strings.HasSuffix(last, "[…truncated]") {
-		t.Fatalf("the last part does not say it was cut: %q", last[max(0, len(last)-40):])
+	if n := utf8.RuneCountInString(s.Message); n != 8000 || !strings.HasSuffix(s.Message, "[…truncated]") {
+		t.Fatalf("sent %d runes, ending %q", n, s.Message[max(0, len(s.Message)-40):])
 	}
 	if l, ok := h.logged("truncated"); !ok || l.Pri != 4 {
 		t.Fatalf("no warning: %v", h.logLines())
