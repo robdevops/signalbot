@@ -574,11 +574,32 @@ func TestAnnotationsSentBack(t *testing.T) {
 	}
 	// Each request is logged at debug level with what it cost and whether
 	// annotations came back and went back, never the content.
-	for _, want := range []string{"request 1: tokens in/out 10/2, no cost reported, annotations returned: yes, sent back: no",
-		"request 2: tokens in/out 20/3, $0.0020, annotations returned: no, sent back: yes"} {
+	for _, want := range []string{"request 1: tokens in/out 10/2, no cost reported, annotations returned: yes, sent back: no, websearch used: no",
+		"request 2: tokens in/out 20/3, $0.0020, annotations returned: no, sent back: yes, websearch used: no"} {
 		if !strings.Contains(logs.String(), want) {
 			t.Errorf("log %q, want %q", logs.String(), want)
 		}
+	}
+}
+
+// A reply that cites a page, or whose usage counts a web search, is logged
+// as one that searched the web, which runs on the provider's side and so
+// has no tool line.
+func TestWebSearchLogged(t *testing.T) {
+	for _, tc := range []struct{ name, body, want string }{
+		{"citation", `{"choices":[{"message":{"content":"ok","annotations":[{"type":"url_citation","url_citation":{"url":"https://example.com/"}}]}}],"usage":{"prompt_tokens":5,"completion_tokens":1}}`, "websearch used: yes"},
+		{"usage", `{"choices":[{"message":{"content":"ok"}}],"usage":{"prompt_tokens":5,"completion_tokens":1,"server_tool_use":{"web_search_requests":2}}}`, "websearch used: yes"},
+		{"none", `{"choices":[{"message":{"content":"ok"}}],"usage":{"prompt_tokens":5,"completion_tokens":1}}`, "websearch used: no"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c, _, logs := start(t, served{body: tc.body})
+			if _, err := c.Ask(context.Background(), Request{Text: "hi"}); err != nil {
+				t.Fatal(err)
+			}
+			if !strings.Contains(logs.String(), tc.want) || strings.Contains(logs.String(), "example.com") {
+				t.Fatalf("log %q, want %q", logs.String(), tc.want)
+			}
+		})
 	}
 }
 
