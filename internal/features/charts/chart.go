@@ -161,7 +161,9 @@ func axisShorthand(arguments string) string {
 		return arguments
 	}
 	changed := false
-	if t, ok := m["y_axis"].(string); ok {
+	// A string holding a JSON object is the axis sent as text, which
+	// decodeArgs unwraps; only a plain string is a title.
+	if t, ok := m["y_axis"].(string); ok && !json.Valid([]byte(t)) {
 		m["y_axis"], changed = map[string]any{"title": t}, true
 	}
 	if axes, ok := m["axes"].(map[string]any); ok {
@@ -304,15 +306,57 @@ func (a *chartAxis) format(v float64, decimals int) string {
 // the axis shows it: in value mode unless ShowChange is false, and from a
 // first value above 0, as a change from zero or less means nothing; else "".
 func (a *chartAxis) change(pts []chartPoint) string {
-	first, last := pts[0].Value, pts[len(pts)-1].Value
-	if a.Mode == "change" || a.ShowChange != nil && !*a.ShowChange || first <= 0 {
+	if a.Mode == "change" {
 		return ""
 	}
-	pct := (last - first) / first * 100
-	if math.Abs(pct) < 0.05 {
-		pct = 0 // no "-0.0%"
+	pct, ok := a.periodChange(pts)
+	if !ok {
+		return ""
 	}
 	return fmt.Sprintf("%+.1f%%", pct)
+}
+
+// periodChange is pts' % change over the chart, rounded to one decimal
+// with no -0, if the axis shows it: in change mode the last point, which
+// is already the change; in value mode as for change.
+func (a *chartAxis) periodChange(pts []chartPoint) (float64, bool) {
+	first, last := pts[0].Value, pts[len(pts)-1].Value
+	var pct float64
+	switch {
+	case a.ShowChange != nil && !*a.ShowChange:
+		return 0, false
+	case a.Mode == "change":
+		pct = last
+	case first <= 0:
+		return 0, false
+	default:
+		pct = (last - first) / first * 100
+	}
+	pct = math.Round(pct*10) / 10
+	if pct == 0 {
+		pct = 0 // no "-0.0%"
+	}
+	return pct, true
+}
+
+// headline is a single series' change over the chart for its subtitle and
+// caption, such as "▼ 15.2%" in the line's colour (down, as it fell), or ""
+// for several series or no change to show; up says whether it rose.
+func (s *chartSpec) headline() (text string, up bool) {
+	if len(s.Series) != 1 {
+		return "", true
+	}
+	pts := s.Series[0].Points
+	up = pts[len(pts)-1].Value >= pts[0].Value
+	pct, ok := s.left.periodChange(pts)
+	if !ok {
+		return "", up
+	}
+	arrow := "▲"
+	if !up {
+		arrow = "▼"
+	}
+	return fmt.Sprintf("%s %.1f%%", arrow, math.Abs(pct)), up
 }
 
 // layout fits the axis to its series' values, plus 5% padding (and zero, in
@@ -658,7 +702,7 @@ const sourceDescription = "Where the data came from, e.g. the site or tool; fill
 // newCanvas is a blank chart in theme th with its title and subtitle drawn,
 // and its source, if any, small at the bottom left, below the date labels
 // and the legend.
-func newCanvas(th *theme, title, subtitle, source string) *canvas {
+func newCanvas(th *theme, title, subtitle string, subColor color.RGBA, source string) *canvas {
 	cv := &canvas{img: image.NewRGBA(image.Rect(0, 0, width, height)), th: th}
 	stddraw.Draw(cv.img, cv.img.Bounds(), image.NewUniform(th.bg), image.Point{}, stddraw.Src) // whole pixels: no need to rasterize
 	titleFace, subFace := face(chartFonts.bold, 34), face(chartFonts.regular, 22)
@@ -666,7 +710,7 @@ func newCanvas(th *theme, title, subtitle, source string) *canvas {
 	defer subFace.Close()
 	cv.text(titleFace, th.title, 38, 46, 0, title)
 	if subtitle != "" {
-		cv.text(subFace, th.muted, 38, 80, 0, subtitle)
+		cv.text(subFace, subColor, 38, 80, 0, fitText(subFace, subtitle, width-2*38))
 	}
 	if source != "" {
 		f := face(chartFonts.regular, 16)
@@ -768,7 +812,19 @@ func drawChart(s *chartSpec, th *theme) *canvas {
 	case single:
 		right = 1140 // room for the current value beside the end dot
 	}
-	cv := newCanvas(th, s.Title, s.Subtitle, s.Source)
+	// One series: the subtitle in the line's colour, led by its change.
+	sub, subColor := s.Subtitle, th.muted
+	if single {
+		head, up := s.headline()
+		subColor = th.up
+		if !up {
+			subColor = th.down
+		}
+		if head != "" {
+			sub = strings.TrimSpace(head + "   " + sub)
+		}
+	}
+	cv := newCanvas(th, s.Title, sub, subColor, s.Source)
 	axisFace, axisTitleFace := face(chartFonts.regular, 24), face(chartFonts.regular, 18)
 	defer axisFace.Close()
 	defer axisTitleFace.Close()

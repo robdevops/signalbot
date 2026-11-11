@@ -2,6 +2,7 @@ package charts
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"image"
@@ -668,5 +669,50 @@ func TestShowChange(t *testing.T) {
 				os.WriteFile(filepath.Join(dir, "change-"+fmt.Sprint(len(s.Series))+".png"), data, 0o644)
 			}
 		}
+	}
+}
+
+// A single series' change leads its subtitle, with an arrow, and replaces
+// the subtitle in the caption; several series, or none to show, keep both
+// as given.
+func TestHeadline(t *testing.T) {
+	t.Parallel()
+	one := func(axis, a, b string) string {
+		return `{"title":"NVDA, 1 month","subtitle":"Daily close",` + axis + `"series":[{"name":"NVDA","points":[{"date":"2026-10-09","value":` + a + `},{"date":"2026-11-09","value":` + b + `}]}]}`
+	}
+	for _, c := range []struct {
+		args, head, caption string
+		up                  bool
+	}{
+		{one(``, "229.28", "178.67"), "▼ 22.1%", "NVDA, 1 month ▼ 22.1%", false},
+		{one(``, "100", "105"), "▲ 5.0%", "NVDA, 1 month ▲ 5.0%", true},
+		{one(`"y_axis":{"show_change":false},`, "100", "105"), "", "NVDA, 1 month — Daily close", true},
+		{one(`"y_axis":{"mode":"change"},`, "100", "120"), "▲ 20.0%", "NVDA, 1 month ▲ 20.0%", true},
+		{`{"title":"A vs B","series":[{"name":"A","points":[{"date":"2026-10-09","value":1},{"date":"2026-11-09","value":2}]},{"name":"B","points":[{"date":"2026-10-09","value":1},{"date":"2026-11-09","value":3}]}]}`, "", "A vs B", true},
+	} {
+		s, err := parseChart(chartTool, false, c.args)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if head, up := s.headline(); head != c.head || up != c.up {
+			t.Errorf("%s: headline %q up=%v", c.args, head, up)
+		}
+		_, pics, err := lineChart(darkHours{}, chartTool, false)(context.Background(), c.args)
+		if err != nil || len(pics) != 1 || pics[0].Caption != c.caption {
+			t.Errorf("%s: caption %+v %v", c.args, pics, err)
+		}
+	}
+}
+
+// An axis sent as a string holding its JSON is the axis, not its title.
+func TestAxisAsJSONString(t *testing.T) {
+	t.Parallel()
+	pts := `"series":[{"name":"A","points":[{"date":"2026-10-09","value":1},{"date":"2026-11-09","value":2}]}]`
+	s, err := parseChart(chartTool, false, `{"title":"T","y_axis":"{\"mode\": \"value\", \"show_change\": true}",`+pts+`}`)
+	if err != nil || s.left.Title != "" || s.left.Mode != "value" {
+		t.Fatalf("got %+v, %v", s.left, err)
+	}
+	if s, _ := parseChart(chartTool, false, `{"title":"T","y_axis":"Price",`+pts+`}`); s.left.Title != "Price" {
+		t.Fatalf("a plain title: %+v", s.left)
 	}
 }
