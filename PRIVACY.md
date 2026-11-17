@@ -58,10 +58,21 @@ Logs go to the journal or Docker's log driver and are kept as long as your setti
 
 In a group, signal-cli passes every message to the bot, which checks each one for whether it is addressed to it. Messages not addressed to it are never logged and never answered. Their text, with the sender's display name, is kept in that group's history as context, the same way and for the same time as everything else there, unless `GROUP_CONTEXT=false`, in which case they are dropped on the spot. In DMs, the bot answers only the IDs listed in `SIGNAL_DM_USER_IDS`.
 
+## Telegram
+
+On Telegram (`TELEGRAM_BOT_TOKEN` set) the above holds, with these differences:
+
+- **Not end-to-end encrypted.** Telegram's servers see every message in a bot's chats, and every reply. Telegram's own policy applies to them.
+- **Deletes don't reach the bot.** The Bot API never tells a bot a message was deleted, so a deleted message stays in the bot's history until it expires (at most a day, or the chat's auto-delete timer). An edit does reach it, and replaces the original as on Signal.
+- **What the bot sees.** With privacy mode on (the default), a group sends the bot only messages addressed to it, so it keeps no group context. With privacy mode off, or as an admin, it gets every message, kept as context as above.
+- **Names and groups.** The Bot API has no contact list or member list. The bot keeps, in memory, the names of people it has seen post and the groups it has seen, and asks Telegram whether someone is still in a group when it needs to; a restart clears them.
+- **Photos and files** are fetched from Telegram's servers by file ID, only while answering the message that has them.
+- **The token** is in every request's URL; the bot takes it out of every error before logging it.
+
 ## What this does not cover
 
 - **The provider.** Once a message is sent, the model provider's retention, logging and sub-processors apply.
-- **End-to-end encryption.** Signal's encryption protects messages between people. The bot is a participant: signal-cli decrypts what it receives, and what it answers goes to the provider. People in a chat should know the bot is there.
+- **End-to-end encryption.** On Signal, its encryption protects messages between people. The bot is a participant: signal-cli decrypts what it receives, and what it answers goes to the provider. People in a chat should know the bot is there.
 - **signal-cli's own data.** The account keys and whatever else signal-cli stores sit in its data directory, which the bot does not read. Keep it private (see the [README](README.md#prerequisites)).
 - **Anyone on the host, with the default TCP connection.** signal-cli listens on `127.0.0.1:7583`, and any local user or process can connect to it and read or send messages as the Signal account. On a shared host, use signal-cli's [Unix socket](docs/SOCKET.md), which only a Unix group can use; then anyone in that `signal-cli` group (not a Signal group) can drive the account, so keep it to just the bot.
 - **The host.** Root users can read process memory, and log backups keep what the logs contain.

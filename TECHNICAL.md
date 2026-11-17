@@ -77,8 +77,9 @@ Two diagrams: [how the parts communicate](docs/architecture.svg) and [one messag
 ```
 main.go, features.go    the main package at the module root: wiring, and one line per feature
 features_*.go           a feature a build tag can leave out (nocharts): a variable, nil when left out
-network_*.go            the chat network this build has (Signal; nosignal leaves the build with none, which fails)
-internal/signal/        the chat network, outside the core: its settings, the connection, decoding, sending (Markdown to text styles), names; only main imports it, and it imports bot
+network*.go             the chat networks this build has, and the choice of one by setting (nosignal, notelegram; both leave none, which fails)
+internal/signal/        a chat network, outside the core: its settings, the connection, decoding, sending (Markdown to text styles), names; only main imports it, and it imports bot
+internal/telegram/      the other: Telegram's Bot API by long polling, on the standard library; the same rules as internal/signal
 internal/model/         the model client (OpenRouter or another chat completions API) and the tool loop
 internal/chats/         per-chat state: history, dedupe, mention names, the mailbox
 internal/timers/        one-shot timers
@@ -92,14 +93,14 @@ cmd/signalctl/          a small client for signal-cli's daemon socket, for one-o
 ```
 
 - Core packages are concrete and call each other directly, with no interfaces between them. Files by role, no line limit.
-- **The network seam.** The bot reaches Signal only through `bot.Network`; `*signal.Client` implements it, only main imports `internal/signal`, and the interface exists for the bot's in-memory test fake. The network depends on the core, never the reverse: `internal/signal` imports `internal/bot` for `Received`, which sits next to `Network`. The core's prompt names no network: Signal's line, that a long message shows only its start until Read more, comes from `Network.Prompt`, and the golden prompts pin it.
+- **The network seam.** The bot reaches its chat network only through `bot.Network`; `*signal.Client` and `*telegram.Client` implement it, one process runs one (`TELEGRAM_BOT_TOKEN` set chooses Telegram, and `SIGNALCLI_SOCKET` set too is an error), only main imports them, and the interface exists for the bot's in-memory test fake. The network depends on the core, never the reverse: `internal/signal` imports `internal/bot` for `Received`, which sits next to `Network`. The core's prompt names no network: Signal's line, that a long message shows only its start until Read more, comes from `Network.Prompt`, and the golden prompts pin it.
 - **`bot.Received`** is what the network hands the core, and what a chat's mailbox holds: one of the kinds above, `Told`, or `Posted`, a message a feature delivers. Features never see one, so it isn't in `internal/feature`. `Network.Delivered(ctx, msg)` returns a `Ready` and ok: the message with its sender's name and without the bot's @name, `Mentioned` if that was there, and in a group its `Members` (name and ID), which the core claims into the names a post links.
 - **`Send` returns what it sent.** It waits for signal-cli's answer to each `send` (up to a minute; attachments take longer) and returns the messages' timestamps, which the core keeps with the reply in history so a delete from the account's linked device can find it. A reply is added to history before it is sent, holding a placeholder ref, and `chats.Store.Retag` swaps in the timestamps once `Send` returns, so a message that arrives while the send is out lands after the turn in history, not before it; a recipient it wasn't delivered to is logged as each send returns.
 - **Why `Send` takes the names to link.** The chat's `@Name`-to-ID map is per-chat state, so it lives in `internal/chats` with the rest: learned from the names the model was shown, cleared on a group change, gone when the history goes, and with one rule for a name two people claim (`chats.Claim`). The network keeps no per-chat state, and only the core knows which map a send needs: the chat's for a reply, the group's members for a delivered post. So `Send` takes it as an argument rather than the network keeping a copy.
 - **Why the caption rule is the core's.** When a reply's pictures have captions, the core sends those in place of the model's text, and history keeps only the pictures' notes. It decides what history keeps, which is core state, and it happens after the model answers, where no port reaches; a feature doing it would need a fourth stage for this alone. `Picture.Caption` is generic (any tool's picture may have one), so the rule stays a few lines in the core.
 - `Message`, `Media`, `Picture` and the port types are defined once, in `internal/feature`, and the core uses them directly: nothing is copied or converted.
 - **Picture file names.** A `Picture`'s `Name` is the file name it is sent with, without the extension: a chart's title, or `line_`/`pie_` and the local time (`pie_20261101-223115`) if the title has no letter or digit. The network makes it safe (Signal drops `/\:*?"<>|;,` and control characters and cuts it to 80 characters), and names a picture with none `image_<local time>`, adding `_2`, `_3` for further pictures in the same message.
-- Kit holds what both the core and features use: `logx`, `txt`, `img` and `httpx`. It gains a package only when a second user appears, and never imports the core.
+- Kit holds what both the core and features use: `logx`, `txt`, `img` and `httpx`; and `mdstyle`, the Markdown-to-styled-text both networks send with, in UTF-16 units. It gains a package only when a second user appears, and never imports the core.
 
 ## Lifecycle and ports
 
@@ -290,6 +291,18 @@ What it reads is checked against signal-cli 0.14.10's JSON schemas: from each `r
 On TCP anyone with a login or a process on the host can connect and control or spy on the Signal account (PRIVACY RISK); the systemd unit needs nothing more, and Docker (`compose.yaml`) runs on the host's network to reach its `127.0.0.1`. The Unix socket limits it to a Unix group only the bot joins (`SupplementaryGroups=signal-cli`, or Docker's `group_add`), with signal-cli's data directory kept at `0700` so the bot, in signal-cli's group, can't read the keys: the setup, and why each part matters, is in [docs/SOCKET.md](docs/SOCKET.md).
 
 Either way the bot's keys stay out of reach: it runs as a different user from signal-cli, the data directory is mode `0700`, and `ProtectHome=yes` hides `/home`, where signal-cli keeps its data by default (`~/.local/share/signal-cli`). Data kept elsewhere, such as `/var/lib/signal-cli`, relies on the directory mode alone; add it to `InaccessiblePaths=` in the unit to hide it outright.
+
+## What the bot needs from Telegram
+
+Only the Bot API, at `TELEGRAM_API_URL`, over HTTPS (TLS 1.3, `kit/httpx`). At start it calls `getMe` for its ID, name and username, and `deleteWebhook`, since a webhook makes `getUpdates` fail; then it long-polls `getUpdates` (50s), asking for `message`, `edited_message` and `my_chat_member`, and `message_reaction` and `chat_member` when a feature has an event hook. A failed poll backs off from 1s to 32s; a 429 waits its `retry_after`. Updates are handled one at a time on the polling goroutine, as Signal's frames are.
+
+- **Addressed:** in a DM, a sender in `TELEGRAM_DM_USER_IDS`; in a group, a `mention` of the bot's @username, a `text_mention` of it, a reply to one of its messages, or a `bot_command` at the start without another bot's `@suffix`. The mention and the suffix are taken out of the text. An unlisted DM's edit is passed on as a delete of the original, so history never keeps a message the sender couldn't have had answered.
+- **Message IDs:** `Message.Timestamp` holds Telegram's `message_id`, which reactions, replies and edits name; Telegram's IDs are per chat, as the core's keys are.
+- **Expiry:** the chat's `message_auto_delete_time` from `getChat`, asked once per chat.
+- **Deletes:** the Bot API never reports them, so history keeps a deleted message until it expires.
+- **Sending:** Markdown becomes text and `entities` (bold, italic, strikethrough, code, `pre` for a block, spoiler, `text_link` for `[text](url)`, and `text_mention` for a known `@Name`), with offsets in UTF-16 units. A reply is cut at 4,096 units, at a line break or space past halfway, and capped at 8,000 characters in all; if Telegram refuses the entities, the text is sent without them. Pictures go first, by `sendPhoto` or `sendMediaGroup`, with the reply as the caption when it fits in 1,024. A reaction Telegram refuses is sent as a message.
+- **Names and groups:** the Bot API lists neither contacts nor members, so the adapter keeps, in memory, the names it has seen, and per group the people seen posting; `Delivered`'s `Members` are those plus `getChatAdministrators`, and `Groups(user)` is the groups it has seen, checked with `getChatMember`. A restart forgets them.
+- **The token** is in every URL; `scrub` takes it out of every error, and a test fails if one reaches the log.
 
 ---
 

@@ -1,6 +1,6 @@
 # signalbot
 
-A small, [privacy-conscious](PRIVACY.md) chat bot that connects to a running [signal-cli](https://github.com/AsamK/signal-cli) daemon and answers using a model from [OpenRouter](https://openrouter.ai) or a [compatible provider](docs/MODELS.md).
+A small, [privacy-conscious](PRIVACY.md) chat bot for Signal, through a running [signal-cli](https://github.com/AsamK/signal-cli) daemon, or for [Telegram](#telegram), that answers using a model from [OpenRouter](https://openrouter.ai) or a [compatible provider](docs/MODELS.md).
 
 - [Features](#features)
 - [Use cases](#use-cases)
@@ -9,6 +9,7 @@ A small, [privacy-conscious](PRIVACY.md) chat bot that connects to a running [si
   - [Configuration](#configuration)
   - [Install as a systemd service](#install-as-a-systemd-service)
   - [Install as a Docker container](#install-as-a-docker-container)
+  - [Telegram](#telegram)
   - [Test](#test)
 - [Docs](#docs)
 
@@ -121,9 +122,9 @@ docker logs -f signalbot
 
 Logs go to journald where the host has it, otherwise to Docker's rotating `local` driver; `docker logs` reads both. Under journald, `journalctl CONTAINER_NAME=signalbot -p err` shows warnings and errors.
 
-### Build without charts
+### Build without charts, Signal or Telegram
 
-Charts and their fonts can be left out of the binary (about 0.7 MB of 10 MB) with a build tag: `go build -tags nocharts`, or for Docker, add `TAGS=nocharts` after `sudo` in the build command above. To stop files reaching the model without rebuilding, set `FILES=off` instead (see [Configuration](docs/CONFIGURATION.md)).
+Charts and their fonts can be left out of the binary (about 0.7 MB of 10 MB) with a build tag: `go build -tags nocharts`, or for Docker, add `TAGS=nocharts` after `sudo` in the build command above. Likewise `nosignal` or `notelegram` leaves out a chat network, and tags combine with commas (`-tags nocharts,notelegram`); leaving out both networks fails to build. To stop files reaching the model without rebuilding, set `FILES=off` instead (see [Configuration](docs/CONFIGURATION.md)).
 
 ### Block someone, or other signal-cli chores
 
@@ -139,6 +140,19 @@ go run ./cmd/signalctl call listGroups '{"detailed":true}'
 With Docker, it is in the image: `docker exec signalbot /signalctl blocked`. Under systemd, run it as a user that can reach the socket (anyone on TCP; the `signal-cli` group for the [Unix socket](docs/SOCKET.md)), for example `sudo -u signal-cli SIGNALCLI_SOCKET=/run/signal-cli/socket ./signalctl blocked`.
 
 A block is Signal's own, as on a phone: signal-cli drops everything from that person or group from then on, including their deletes of messages the bot already holds, and the block syncs to linked devices. `call` sends any method in signal-cli's [JSON-RPC docs](https://github.com/AsamK/signal-cli/blob/master/man/signal-cli-jsonrpc.5.adoc). The daemon also sends signalctl's connection the messages it receives; signalctl skips them unread, so it never prints anyone's text.
+
+### Telegram
+
+The same bot can answer on Telegram instead, talking to Telegram's Bot API directly (long polling, so it needs no public address). A bot answers on one network: to run on both, run two, each with its own config and state directory.
+
+1. In Telegram, message [@BotFather](https://t.me/BotFather), send `/newbot`, and copy the token it gives you.
+2. In `/etc/signalbot.env`, set `TELEGRAM_BOT_TOKEN` to the token, and `TELEGRAM_DM_USER_IDS` to the user IDs allowed to DM the bot (a user can find theirs by messaging a bot such as [@userinfobot](https://t.me/userinfobot)). Leave `SIGNALCLI_SOCKET` unset. The token is a password: anyone with it controls the bot.
+3. Install as above, skipping signal-cli and its socket.
+4. Add the bot to a group and @mention it, or reply to one of its messages.
+
+**Privacy mode.** By default Telegram sends a bot in a group only the messages addressed to it, so the bot has no group context. To give it the conversation, send BotFather `/setprivacy` and choose Disable, then remove the bot from the group and add it again; or make it a group admin. As admin it also sees reactions and members joining and leaving.
+
+Telegram differs from Signal in a few ways: bot chats are not end-to-end encrypted, the Bot API never tells a bot about deleted messages, and a reply is capped at 4,096 characters a message. See [PRIVACY.md](PRIVACY.md#telegram).
 
 ### Test
 
