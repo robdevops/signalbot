@@ -67,7 +67,7 @@ func (c *Client) Send(ch feature.Chat, text string, pics []feature.Picture, know
 	defer cancel()
 	note := func(msgID int64) {
 		sent = append(sent, msgID)
-		c.noteSent(chatID(ch), msgID)
+		c.noteSent(c.dest(ch).chat, msgID) // at a group's new ID, if the send found it moved
 	}
 	if len(pics) > 0 {
 		var caption *mdstyle.Text

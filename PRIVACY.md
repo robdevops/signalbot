@@ -67,7 +67,7 @@ On Telegram (`TELEGRAM_BOT_TOKEN` set) the above holds, with these differences:
 - **What the bot sees.** With privacy mode on (the default), a group sends the bot only messages addressed to it, so it keeps no group context. With privacy mode off, or as an admin, it gets every message, kept as context as above.
 - **Names and groups.** The Bot API has no contact list or member list. The bot keeps, in memory, the names of people it has seen post and the groups it has seen, and asks Telegram whether someone is still in a group when it needs to; a restart clears them.
 - **Photos and files** are fetched from Telegram's servers by file ID, only while answering the message that has them.
-- **Who can add it.** Anyone can add a Telegram bot to a group, so the bot leaves a group added by anyone not in `TELEGRAM_DM_USER_IDS`, before reading anything there.
+- **Who it answers in groups.** Anyone can add a Telegram bot to a group, so the bot answers in a group only while someone in `TELEGRAM_DM_USER_IDS` is a member, and leaves one where no one is. Until it has checked, a stranger's group can briefly reach it: such messages are never answered, and chatter is dropped once the check is done.
 - **Topics.** In a group with topics, each topic keeps its own history.
 - **The token** is in every request's URL; the bot takes it out of every error before logging it.
 

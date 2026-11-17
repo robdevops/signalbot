@@ -45,14 +45,17 @@ type Client struct {
 	once     sync.Once
 	watch    atomic.Bool // the core has an event hook
 
-	mu     sync.Mutex
-	people map[string]string            // user ID to name, as last seen
-	chats  map[string]map[string]string // group ID to the IDs and names seen there
-	groups map[string]string            // group ID to title, for the groups the bot is in
-	timers map[string]time.Duration     // chat ID to its auto-delete timer
-	moved  map[string]string            // a group's old chat ID to its new one, after it became a supergroup
-	sent   map[string]bool              // "chat/message" for messages the bot sent lately
-	sentQ  []string                     // sent's keys, oldest first
+	mu       sync.Mutex
+	people   map[string]string            // user ID to name, as last seen
+	chats    map[string]map[string]string // group ID to the IDs and names seen there
+	groups   map[string]string            // group ID to title, for the groups the bot is in
+	timers   map[string]time.Duration     // chat ID to its auto-delete timer
+	moved    map[string]string            // a group's old chat ID to its new one, after it became a supergroup
+	topics   map[string]map[string]bool   // group ID to the topic chats seen in it
+	gate     map[string]gateState         // group ID to whether the bot answers there, until when
+	checking map[string]bool              // groups being checked in the background
+	sent     map[string]bool              // "chat/message" for messages the bot sent lately
+	sentQ    []string                     // sent's keys, oldest first
 
 	test *config.Test // nil in production
 }
@@ -68,9 +71,9 @@ func New(test *config.Test) *Client {
 		allowed[id] = true
 	}
 	if len(allowed) == 0 {
-		logx.Warnf("DMs are off, and no one can add the bot to a group: TELEGRAM_DM_USER_IDS is empty; it answers only in groups it is already in")
+		logx.Warnf("the bot answers no one: TELEGRAM_DM_USER_IDS is empty, so DMs are off, and it answers in a group only while someone listed there is a member")
 	} else {
-		logx.Noticef("DMs and adding the bot to groups: allowed from %d IDs (TELEGRAM_DM_USER_IDS)", len(allowed))
+		logx.Noticef("DMs: allowed from %d IDs (TELEGRAM_DM_USER_IDS); groups: answered while one of them is a member", len(allowed))
 	}
 	return newClient(config.Env("TELEGRAM_API_URL", "https://api.telegram.org"), config.Env("TELEGRAM_BOT_TOKEN", ""), allowed, test)
 }
@@ -79,7 +82,7 @@ func newClient(base, token string, allowed map[string]bool, test *config.Test) *
 	return &Client{base: strings.TrimRight(base, "/"), token: token, allowed: allowed, http: httpx.Client(8),
 		backoff: time.Second, typing: 4 * time.Second, known: make(chan struct{}),
 		people: map[string]string{}, chats: map[string]map[string]string{}, groups: map[string]string{},
-		timers: map[string]time.Duration{}, moved: map[string]string{}, sent: map[string]bool{}, test: test}
+		timers: map[string]time.Duration{}, moved: map[string]string{}, topics: map[string]map[string]bool{}, gate: map[string]gateState{}, checking: map[string]bool{}, sent: map[string]bool{}, test: test}
 }
 
 // scrub is err with the token taken out of its text: Go's URL errors
@@ -223,8 +226,10 @@ func (c *Client) Run(ctx context.Context, handle func(bot.Received)) {
 		}
 	}()
 	for ctx.Err() == nil {
-		asked = offset
 		ups, err := c.poll(ctx, offset)
+		if err == nil {
+			asked = offset // a poll that failed may not have reached Telegram
+		}
 		if err != nil {
 			if ctx.Err() != nil {
 				return
@@ -247,7 +252,7 @@ func (c *Client) Run(ctx context.Context, handle func(bot.Received)) {
 			offset = max(offset, u.UpdateID+1)
 			func() {
 				defer logx.Recover("reading an update")
-				if r, ok := c.event(u); ok {
+				for _, r := range c.events(u) {
 					handle(r)
 				}
 			}()

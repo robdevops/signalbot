@@ -58,7 +58,7 @@ type call struct {
 func newFake(t *testing.T) *fakeAPI {
 	f := &fakeAPI{t: t, results: map[string]string{
 		"getMe":         `{"id":777000,"is_bot":true,"first_name":"Botty","username":"botty_bot"}`,
-		"deleteWebhook": `true`, "sendMessage": `{"message_id":500}`, "sendChatAction": `true`,
+		"deleteWebhook": `true`, "sendMessage": `{"message_id":500}`, "sendChatAction": `true`, "getChatMember": `{"status":"member"}`,
 		"getChat": `{"id":-1001234567890,"type":"supergroup","message_auto_delete_time":86400}`,
 	}, errs: map[string]string{}, files: map[string][]byte{}}
 	f.srv = httptest.NewServer(http.HandlerFunc(f.serve))
@@ -225,7 +225,7 @@ func TestAddressing(t *testing.T) {
 // A message as the core sees it: sender, name, other people's text
 // mentions as @Name (learned), the quote, photos, files and a sticker.
 func TestMessage(t *testing.T) {
-	c := connected(newFake(t).client())
+	c := connected(newFake(t).client("1111111"))
 	u := parse(t, `{"update_id":1,"message":{"message_id":42,`+fromA+`,`+inGroup+`,"caption":"@botty_bot ask Bob 🎉 about this","caption_entities":[`+
 		`{"type":"mention","offset":0,"length":10},{"type":"text_mention","offset":15,"length":3,"user":{"id":2222222,"first_name":"Bob"}}],`+
 		`"photo":[{"file_id":"small","file_size":1000},{"file_id":"big","file_size":90000},{"file_id":"huge","file_size":99999999}],`+
@@ -479,6 +479,7 @@ func TestEvents(t *testing.T) {
 		t.Fatal("an event with no hook")
 	}
 	c.Watch(true)
+	c.groupAllowed(context.Background(), groupS)             // Alice is in it
 	c.Send(feature.Chat{GroupID: groupS}, "hello", nil, nil) // message 500, the bot's
 	r, _ := c.event(parse(t, `{"update_id":2,"message_reaction":{`+inGroup+`,"message_id":500,"user":{"id":1111111,"first_name":"Alice"},"old_reaction":[{"type":"emoji","emoji":"👍"}],"new_reaction":[]}}`))
 	e := r.(bot.Happened).Event
@@ -495,28 +496,58 @@ func TestEvents(t *testing.T) {
 	}
 }
 
-// Anyone can add a bot to a group of their own, so the bot leaves a group
-// it is added to by someone not listed, and never lists it.
-func TestAddedByStranger(t *testing.T) {
+// Anyone can add a bot to a group of their own, so the bot answers in a
+// group only while someone listed is a member, and leaves one where no one
+// is: when it is added there, or a message arrives, however it got in.
+func TestStrangersGroup(t *testing.T) {
+	captureLogs(t)
 	f := newFake(t)
+	f.results["getChatMember"] = `{"status":"left"}`
 	c := connected(f.client("1111111"))
 	if _, ok := c.event(parse(t, `{"update_id":1,"my_chat_member":{`+inGroup+`,"from":{"id":2222222,"first_name":"Bob"},"old_chat_member":{"status":"left"},"new_chat_member":{"status":"member","user":{"id":777000}}}}`)); ok {
 		t.Fatal("handed on")
 	}
-	deadline := time.Now().Add(5 * time.Second)
-	for len(f.callsTo("leaveChat")) == 0 && time.Now().Before(deadline) {
-		time.Sleep(5 * time.Millisecond)
-	}
-	if l := f.callsTo("leaveChat"); len(l) != 1 || l[0].Params["chat_id"] != groupS {
+	waitCalls(t, f, "leaveChat", 1)
+	if l := f.callsTo("leaveChat"); l[0].Params["chat_id"] != groupS {
 		t.Fatalf("leaveChat %v", l)
 	}
-	f.results["getChatMember"] = `{"status":"member"}`
-	if gs, _ := c.Groups(context.Background(), "2222222"); len(gs) != 0 {
-		t.Fatalf("listed %v", gs)
+	// Still there, as the leave failed: an addressed message isn't
+	// answered, and chatter isn't kept.
+	r, ok := c.event(parse(t, `{"update_id":2,"message":{"message_id":3,"from":{"id":2222222,"first_name":"Bob"},`+inGroup+`,"text":"@botty_bot hi","entities":[{"type":"mention","offset":0,"length":10}]}}`))
+	if !ok {
+		t.Fatal("not handed on: checked in its slot")
 	}
-	r, ok := c.event(parse(t, `{"update_id":2,"my_chat_member":{`+inGroup+`,"from":{"id":1111111,"first_name":"Alice"},"old_chat_member":{"status":"left"},"new_chat_member":{"status":"member","user":{"id":777000}}}}`))
-	if _, isGC := r.(bot.GroupChanged); !ok || !isGC || len(f.callsTo("leaveChat")) != 1 {
-		t.Fatalf("added by a listed user: %T %v, %d leaves", r, ok, len(f.callsTo("leaveChat")))
+	if _, ok := r.(bot.Incoming).Load(context.Background(), func(string, string) {}); ok {
+		t.Fatal("answered in a stranger's group")
+	}
+	if _, ok := c.event(parse(t, `{"update_id":3,"message":{"message_id":4,"from":{"id":2222222,"first_name":"Bob"},`+inGroup+`,"text":"chatter"}}`)); ok {
+		t.Fatal("chatter kept")
+	}
+	if n := len(f.callsTo("leaveChat")); n != 1 {
+		t.Fatalf("%d leaves within ten minutes", n)
+	}
+	// A restriction outlasts leaving: restricted and not a member is out.
+	c.gate = map[string]gateState{}
+	f.results["getChatMember"] = `{"status":"restricted","is_member":false}`
+	if c.groupAllowed(context.Background(), groupS) {
+		t.Fatal("a restricted non-member counted")
+	}
+	// Added by a listed user: answered at once, with no check.
+	r, ok = c.event(parse(t, `{"update_id":4,"my_chat_member":{`+inGroup+`,"from":{"id":1111111,"first_name":"Alice"},"old_chat_member":{"status":"restricted","is_member":false},"new_chat_member":{"status":"member","user":{"id":777000}}}}`))
+	if _, isGC := r.(bot.GroupChanged); !ok || !isGC {
+		t.Fatalf("added by a listed user: %T %v", r, ok)
+	}
+	if allowed, known := c.gated(groupS); !allowed || !known {
+		t.Fatal("not answered after a listed user added it")
+	}
+}
+
+func waitCalls(t *testing.T, f *fakeAPI, method string, n int) {
+	t.Helper()
+	for end := time.Now().Add(5 * time.Second); len(f.callsTo(method)) < n; time.Sleep(5 * time.Millisecond) {
+		if time.Now().After(end) {
+			t.Fatalf("%d %s calls, want %d", len(f.callsTo(method)), method, n)
+		}
 	}
 }
 
@@ -587,7 +618,7 @@ func TestReactRefused(t *testing.T) {
 // reply goes to the topic.
 func TestTopics(t *testing.T) {
 	f := newFake(t)
-	c := connected(f.client())
+	c := connected(f.client("1111111"))
 	r, _ := c.event(parse(t, `{"update_id":1,"message":{"message_id":20,"message_thread_id":7,"is_topic_message":true,`+fromA+`,`+inGroup+
 		`,"text":"@botty_bot hi","entities":[{"type":"mention","offset":0,"length":10}],"reply_to_message":{"message_id":7,"from":{"id":3333333,"first_name":"Carol"},`+inGroup+`,"forum_topic_created":{"name":"Support"}}}}`))
 	in, ok := r.(bot.Incoming)
@@ -647,5 +678,18 @@ func TestRunConfirmsOnStop(t *testing.T) {
 	polls := f.callsTo("getUpdates")
 	if last := polls[len(polls)-1].Params; len(polls) != 2 || last["offset"] != float64(6) || last["timeout"] != float64(0) {
 		t.Fatalf("polls %v", polls)
+	}
+}
+
+// Someone leaving a forum group changes each of its topics, as each is a
+// chat of its own with its own names.
+func TestTopicsGroupChanged(t *testing.T) {
+	f := newFake(t)
+	c := connected(f.client())
+	c.events(parse(t, `{"update_id":1,"message":{"message_id":20,"message_thread_id":7,"is_topic_message":true,`+fromA+`,`+inGroup+`,"text":"hi"}}`))
+	rs := c.events(parse(t, `{"update_id":2,"message":{"message_id":21,`+fromA+`,`+inGroup+`,"left_chat_member":{"id":2222222,"first_name":"Bob"}}}`))
+	want := []bot.Received{bot.GroupChanged{Chat: feature.Chat{GroupID: groupS}}, bot.GroupChanged{Chat: feature.Chat{GroupID: groupS + "/7"}}}
+	if !reflect.DeepEqual(rs, want) {
+		t.Fatalf("got %v", rs)
 	}
 }

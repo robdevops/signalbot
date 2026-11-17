@@ -3,6 +3,7 @@ package telegram
 import (
 	"cmp"
 	"context"
+	"maps"
 	"regexp"
 	"slices"
 	"strconv"
@@ -113,20 +114,25 @@ type reactionUpd struct {
 }
 
 type memberUpd struct {
-	Chat chat                    `json:"chat"`
-	From user                    `json:"from"`
-	Old  struct{ Status string } `json:"old_chat_member"`
-	New  struct {
-		Status string `json:"status"`
-		User   user   `json:"user"`
+	Chat chat `json:"chat"`
+	From user `json:"from"`
+	Old  struct {
+		Status   string `json:"status"`
+		IsMember bool   `json:"is_member"` // a restricted member's
+	} `json:"old_chat_member"`
+	New struct {
+		Status   string `json:"status"`
+		IsMember bool   `json:"is_member"`
+		User     user   `json:"user"`
 	} `json:"new_chat_member"`
 }
 
 func id(n int64) string { return strconv.FormatInt(n, 10) }
 
-// in reports whether a member's status is in the chat.
-func in(status string) bool {
-	return status == "creator" || status == "administrator" || status == "member" || status == "restricted"
+// in reports whether a member's status is in the chat: a restricted
+// member's only if is_member says so, as a restriction outlasts leaving.
+func in(status string, isMember bool) bool {
+	return status == "creator" || status == "administrator" || status == "member" || status == "restricted" && isMember
 }
 
 // chatOf is the chat m was posted in: its group, or a DM with its sender. A
@@ -150,7 +156,25 @@ func nameOf(u *user) string {
 	return txt.SafeName(strings.TrimSpace(u.FirstName + " " + u.LastName))
 }
 
-// event is u as the core gets it, decided without calling the network;
+// events is u as the core gets it: event's, and a group's change for each
+// of its topics too, as each is a chat of its own.
+func (c *Client) events(u update) []bot.Received {
+	r, ok := c.event(u)
+	if !ok {
+		return nil
+	}
+	out := []bot.Received{r}
+	if gc, isGC := r.(bot.GroupChanged); isGC && !strings.Contains(gc.Chat.GroupID, "/") {
+		c.mu.Lock()
+		for t := range c.topics[gc.Chat.GroupID] {
+			out = append(out, bot.GroupChanged{Chat: feature.Chat{GroupID: t}})
+		}
+		c.mu.Unlock()
+	}
+	return out
+}
+
+// event is u as the core gets it, decided without waiting on the network;
 // false if the core has nothing to do with it.
 func (c *Client) event(u update) (bot.Received, bool) {
 	switch {
@@ -182,10 +206,11 @@ func (c *Client) received(m *message, edited int64) (bot.Received, bool) {
 			c.migrated(id(m.Chat.ID), id(m.MigrateTo))
 			return bot.GroupChanged{Chat: ch}, true
 		}
-		c.seen(id(m.Chat.ID), m)
+		c.seen(id(m.Chat.ID), ch.GroupID, m)
+		c.checkGroup(id(m.Chat.ID)) // leave a stranger's group without waiting to be asked
 	}
 	if len(m.NewMembers) > 0 || m.LeftMember != nil {
-		return bot.GroupChanged{Chat: ch}, true // forget the names it links to
+		return bot.GroupChanged{Chat: feature.Chat{GroupID: id(m.Chat.ID)}}, true // forget the names it links to
 	}
 	if self == "" || id(m.From.ID) == self {
 		return nil, false
@@ -213,6 +238,9 @@ func (c *Client) received(m *message, edited int64) (bot.Received, bool) {
 			return c.load(ctx, m, msg, learn)
 		}}, true
 	case ch.GroupID != "":
+		if ok, known := c.gated(id(m.Chat.ID)); known && !ok {
+			return nil, false
+		}
 		return bot.Chatter{Message: msg}, true
 	}
 	return nil, false
@@ -221,6 +249,10 @@ func (c *Client) received(m *message, edited int64) (bot.Received, bool) {
 // load completes an addressed message in its slot: the chat's auto-delete
 // timer, and the names it shows the model, for @Name in the reply.
 func (c *Client) load(ctx context.Context, m *message, msg feature.Message, learn func(name, id string)) (feature.Message, bool) {
+	if msg.Chat.GroupID != "" && !c.groupAllowed(ctx, id(m.Chat.ID)) {
+		logx.Infof("message ignored: no one in TELEGRAM_DM_USER_IDS is in that group")
+		return msg, false
+	}
 	msg.Expires = c.timer(ctx, m.Chat.ID)
 	if msg.Chat.GroupID != "" {
 		if n := nameOf(m.From); n != "" {
@@ -392,15 +424,25 @@ func (c *Client) usernameOf() string { u, _ := c.username.Load().(string); retur
 // maxGroups caps the groups the client remembers.
 const maxGroups = 1000
 
-// seen notes a group, its title, and who posted there, for Groups,
-// Delivered's members and Redact.
-func (c *Client) seen(group string, m *message) {
+// seen notes a group, its title, the topic chat the message is in, and who
+// posted there, for Groups, Delivered's members and Redact.
+func (c *Client) seen(group, chatGroup string, m *message) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if _, ok := c.groups[group]; !ok && len(c.groups) >= maxGroups {
 		return
 	}
 	c.groups[group] = txt.SafeName(m.Chat.Title)
+	if chatGroup != group {
+		ts := c.topics[group]
+		if ts == nil {
+			ts = map[string]bool{}
+			c.topics[group] = ts
+		}
+		if len(ts) < 200 {
+			ts[chatGroup] = true
+		}
+	}
 	people := c.chats[group]
 	if people == nil {
 		people = map[string]string{}
@@ -417,6 +459,11 @@ func (c *Client) migrated(from, to string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.moved[from] = to
+	if g, ok := c.gate[from]; ok {
+		c.gate[to] = g
+		delete(c.gate, from)
+	}
+	delete(c.topics, from) // a basic group has none
 	if t, ok := c.groups[from]; ok {
 		c.groups[to] = t
 		delete(c.groups, from)
@@ -427,28 +474,28 @@ func (c *Client) migrated(from, to string) {
 	}
 }
 
-// botMembership is the bot added to a group or removed from one. Anyone can
-// add a bot to a group of their own, so the bot leaves a group it is added
-// to by someone not in TELEGRAM_DM_USER_IDS.
+// botMembership is the bot added to a group or removed from one. Added by
+// someone listed, it says so; by anyone else, it checks the group, and
+// leaves it if no one listed is there.
 func (c *Client) botMembership(u *memberUpd) (bot.Received, bool) {
 	if u.Chat.Type == "private" || u.Chat.Type == "channel" {
 		return nil, false
 	}
 	g := id(u.Chat.ID)
-	added := in(u.New.Status) && !in(u.Old.Status)
+	now := in(u.New.Status, u.New.IsMember)
+	added := now && !in(u.Old.Status, u.Old.IsMember)
+	c.mu.Lock()
+	delete(c.gate, g) // who is there may have changed: ask again
+	if added && c.allowed[id(u.From.ID)] {
+		c.gate[g] = gateState{ok: true, until: time.Now().Add(time.Hour)}
+	}
+	c.mu.Unlock()
 	if added && !c.allowed[id(u.From.ID)] {
-		logx.Noticef("left a group %s added the bot to: not in TELEGRAM_DM_USER_IDS (add this ID to allow it)", id(u.From.ID))
-		go func() {
-			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-			defer cancel()
-			if err := c.call(ctx, "leaveChat", map[string]string{"chat_id": g}, nil); err != nil {
-				logx.Warnf("telegram leaveChat failed: %v", err)
-			}
-		}()
+		c.checkGroup(g)
 		return nil, false
 	}
 	c.mu.Lock()
-	if in(u.New.Status) {
+	if now {
 		if _, ok := c.groups[g]; ok || len(c.groups) < maxGroups {
 			c.groups[g] = txt.SafeName(u.Chat.Title)
 		}
@@ -469,11 +516,16 @@ func (c *Client) membership(u *memberUpd) (bot.Received, bool) {
 	if u.Chat.Type == "private" || u.Chat.Type == "channel" || id(u.New.User.ID) == c.selfID() {
 		return nil, false
 	}
+	if ok, _ := c.gated(id(u.Chat.ID)); !ok {
+		c.checkGroup(id(u.Chat.ID))
+		return nil, false
+	}
 	p, ms := c.person(&u.New.User), &feature.Members{}
+	was, is := in(u.Old.Status, u.Old.IsMember), in(u.New.Status, u.New.IsMember)
 	switch {
-	case in(u.New.Status) && !in(u.Old.Status):
+	case is && !was:
 		ms.Joined = []feature.Person{p}
-	case !in(u.New.Status) && in(u.Old.Status):
+	case !is && was:
 		ms.Left = []feature.Person{p}
 	default:
 		return nil, false
@@ -497,6 +549,9 @@ func (c *Client) reacted(u *reactionUpd) (bot.Received, bool) {
 		if ch = (feature.Chat{User: id(u.Chat.ID)}); !c.allowed[id(u.User.ID)] {
 			return nil, false
 		}
+	} else if ok, _ := c.gated(ch.GroupID); !ok {
+		c.checkGroup(ch.GroupID)
+		return nil, false
 	}
 	emoji, removed := "", false
 	for _, r := range u.New {
@@ -550,14 +605,13 @@ func (c *Client) Delivered(ctx context.Context, msg feature.Message) (bot.Ready,
 	c.mu.Unlock()
 	var r bot.Ready
 	if msg.Chat.GroupID != "" {
-		g := chatID(msg.Chat)
-		c.mu.Lock()
-		if to, ok := c.moved[g]; ok {
-			g = to
-		}
-		c.mu.Unlock()
+		g := c.dest(msg.Chat).chat
 		if !c.member(wait, g, msg.Sender) {
 			logx.Infof("delivered message dropped: its sender is not in the group")
+			return bot.Ready{}, false
+		}
+		if g = c.dest(msg.Chat).chat; !c.groupAllowed(wait, g) { // at its new ID, if it moved
+			logx.Infof("delivered message dropped: no one in TELEGRAM_DM_USER_IDS is in the group")
 			return bot.Ready{}, false
 		}
 		var admins []struct{ User user }
@@ -599,17 +653,130 @@ func (c *Client) Delivered(ctx context.Context, msg feature.Message) (bot.Ready,
 	return r, true
 }
 
-// member reports whether user is in group, by getChatMember.
+// member reports whether user is in group, by getChatMember, logging a
+// failure.
 func (c *Client) member(ctx context.Context, group, user string) bool {
+	there, err := c.isMember(ctx, group, user)
+	if err != nil {
+		logx.Warnf("telegram getChatMember failed: %v", err)
+	}
+	return there
+}
+
+// isMember asks getChatMember whether user is in group, at the group's new
+// ID if it became a supergroup.
+func (c *Client) isMember(ctx context.Context, group, user string) (bool, error) {
 	var m struct {
 		Status   string `json:"status"`
-		IsMember bool   `json:"is_member"` // a restricted member's
+		IsMember bool   `json:"is_member"`
 	}
-	if err := c.call(ctx, "getChatMember", map[string]string{"chat_id": group, "user_id": user}, &m); err != nil {
-		logx.Warnf("telegram getChatMember failed: %v", err)
+	params := map[string]string{"chat_id": group, "user_id": user}
+	err := c.retrying(ctx, group, func(to string) {
+		params["chat_id"] = to
+		c.migrated(group, to)
+	}, func() error { return c.call(ctx, "getChatMember", params, &m) })
+	return err == nil && in(m.Status, m.IsMember), err
+}
+
+// gateState is whether the bot answers in a group, until when, and when it
+// last tried to leave.
+type gateState struct {
+	ok          bool
+	until, left time.Time
+}
+
+// gated is what the bot last learned of whether it answers in group, and
+// whether that is still current.
+func (c *Client) gated(group string) (ok, known bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	g, found := c.gate[group]
+	if !found || time.Now().After(g.until) {
+		return false, false
+	}
+	return g.ok, true
+}
+
+// groupAllowed reports whether the bot answers in group: only while someone
+// in TELEGRAM_DM_USER_IDS is a member, since anyone can add a bot to a group
+// of their own. The answer is kept an hour, or ten minutes if no; with no,
+// the bot leaves the group, at most once in that time.
+func (c *Client) groupAllowed(ctx context.Context, group string) bool {
+	if ok, known := c.gated(group); known {
+		return ok
+	}
+	ids := slices.Sorted(maps.Keys(c.allowed))
+	if len(ids) == 0 {
 		return false
 	}
-	return in(m.Status) && (m.Status != "restricted" || m.IsMember)
+	ok, sure := false, true
+	for _, u := range ids {
+		there, err := c.isMember(ctx, group, u)
+		if err != nil {
+			sure = false
+			continue
+		}
+		if there {
+			ok = true
+			break
+		}
+	}
+	group = c.dest(feature.Chat{GroupID: group}).chat // at its new ID, if it moved
+	ttl := time.Hour
+	switch {
+	case ok:
+	case sure:
+		ttl = 10 * time.Minute
+	default:
+		ttl = time.Minute
+		logx.Warnf("telegram: couldn't check who is in a group; not answering there for now")
+	}
+	c.mu.Lock()
+	g := c.gate[group]
+	leave := !ok && sure && time.Since(g.left) > 10*time.Minute
+	g.ok, g.until = ok, time.Now().Add(ttl)
+	if leave {
+		g.left = time.Now()
+	}
+	if _, found := c.gate[group]; found || len(c.gate) < 2*maxGroups {
+		c.gate[group] = g
+	}
+	c.mu.Unlock()
+	if leave {
+		logx.Noticef("leaving a group no one in TELEGRAM_DM_USER_IDS is in")
+		if err := c.call(ctx, "leaveChat", map[string]string{"chat_id": group}, nil); err != nil {
+			logx.Warnf("telegram leaveChat failed: %v", err)
+		}
+	}
+	return ok
+}
+
+// checkGroup runs groupAllowed in the background, so the bot leaves a group
+// it shouldn't be in without waiting for someone to address it.
+func (c *Client) checkGroup(group string) {
+	if _, known := c.gated(group); known || len(c.allowed) == 0 {
+		return
+	}
+	c.mu.Lock()
+	busy := c.checking[group]
+	if !busy && len(c.checking) < maxGroups {
+		c.checking[group] = true
+	}
+	c.mu.Unlock()
+	if busy {
+		return
+	}
+	go func() {
+		defer func() {
+			c.mu.Lock()
+			delete(c.checking, group)
+			c.mu.Unlock()
+		}()
+		defer logx.Recover("checking a group")
+		ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+		defer cancel()
+		c.groupAllowed(ctx, group)
+	}()
 }
 
 // Groups lists the groups the bot shares with user, among those it has
