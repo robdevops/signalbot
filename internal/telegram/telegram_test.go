@@ -693,3 +693,48 @@ func TestTopicsGroupChanged(t *testing.T) {
 		t.Fatalf("got %v", rs)
 	}
 }
+
+// When someone leaves, the bot asks again whether a listed user is still
+// there, rather than answering on what it knew.
+func TestLeaverRechecks(t *testing.T) {
+	captureLogs(t)
+	f := newFake(t)
+	c := connected(f.client("1111111"))
+	c.event(parse(t, `{"update_id":1,"my_chat_member":{`+inGroup+`,"from":{"id":1111111,"first_name":"Alice"},"old_chat_member":{"status":"left"},"new_chat_member":{"status":"member","user":{"id":777000}}}}`))
+	f.mu.Lock()
+	f.results["getChatMember"] = `{"status":"kicked"}`
+	f.mu.Unlock()
+	c.event(parse(t, `{"update_id":2,"message":{"message_id":5,"from":{"id":2222222,"first_name":"Bob"},`+inGroup+`,"left_chat_member":{"id":1111111,"first_name":"Alice"}}}`))
+	waitCalls(t, f, "leaveChat", 1)
+	r, _ := c.event(parse(t, `{"update_id":3,"message":{"message_id":6,"from":{"id":2222222,"first_name":"Bob"},`+inGroup+`,"text":"@botty_bot hi","entities":[{"type":"mention","offset":0,"length":10}]}}`))
+	if _, ok := r.(bot.Incoming).Load(context.Background(), func(string, string) {}); ok {
+		t.Fatal("answered after the listed user left")
+	}
+}
+
+// With no one listed, every group is a no: the bot leaves, and keeps no
+// chatter once it knows.
+func TestNoOneListed(t *testing.T) {
+	captureLogs(t)
+	f := newFake(t)
+	c := connected(f.client())
+	c.event(parse(t, `{"update_id":1,"message":{"message_id":5,`+fromA+`,`+inGroup+`,"text":"hi"}}`))
+	waitCalls(t, f, "leaveChat", 1)
+	if _, ok := c.event(parse(t, `{"update_id":2,"message":{"message_id":6,`+fromA+`,`+inGroup+`,"text":"more"}}`)); ok {
+		t.Fatal("chatter kept")
+	}
+}
+
+// An event in a group the bot answers in still arrives after what it knew
+// is out of date, and the group is checked again.
+func TestEventsAfterExpiry(t *testing.T) {
+	f := newFake(t)
+	c := connected(f.client("1111111"))
+	c.Watch(true)
+	c.gate[groupS] = gateState{ok: true, until: time.Now().Add(-time.Minute)}
+	r, ok := c.event(parse(t, `{"update_id":1,"message_reaction":{`+inGroup+`,"message_id":9,"user":{"id":1111111,"first_name":"Alice"},"old_reaction":[],"new_reaction":[{"type":"emoji","emoji":"👍"}]}}`))
+	if _, isH := r.(bot.Happened); !ok || !isH {
+		t.Fatalf("got %T %v", r, ok)
+	}
+	waitCalls(t, f, "getChatMember", 1)
+}

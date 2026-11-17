@@ -209,6 +209,9 @@ func (c *Client) received(m *message, edited int64) (bot.Received, bool) {
 		c.seen(id(m.Chat.ID), ch.GroupID, m)
 		c.checkGroup(id(m.Chat.ID)) // leave a stranger's group without waiting to be asked
 	}
+	if m.LeftMember != nil {
+		c.recheck(id(m.Chat.ID)) // a listed user may have been the one there
+	}
 	if len(m.NewMembers) > 0 || m.LeftMember != nil {
 		return bot.GroupChanged{Chat: feature.Chat{GroupID: id(m.Chat.ID)}}, true // forget the names it links to
 	}
@@ -516,12 +519,14 @@ func (c *Client) membership(u *memberUpd) (bot.Received, bool) {
 	if u.Chat.Type == "private" || u.Chat.Type == "channel" || id(u.New.User.ID) == c.selfID() {
 		return nil, false
 	}
-	if ok, _ := c.gated(id(u.Chat.ID)); !ok {
-		c.checkGroup(id(u.Chat.ID))
-		return nil, false
-	}
 	p, ms := c.person(&u.New.User), &feature.Members{}
 	was, is := in(u.Old.Status, u.Old.IsMember), in(u.New.Status, u.New.IsMember)
+	if was && !is {
+		c.recheck(id(u.Chat.ID))
+	}
+	if !c.answers(id(u.Chat.ID)) {
+		return nil, false
+	}
 	switch {
 	case is && !was:
 		ms.Joined = []feature.Person{p}
@@ -549,8 +554,7 @@ func (c *Client) reacted(u *reactionUpd) (bot.Received, bool) {
 		if ch = (feature.Chat{User: id(u.Chat.ID)}); !c.allowed[id(u.User.ID)] {
 			return nil, false
 		}
-	} else if ok, _ := c.gated(ch.GroupID); !ok {
-		c.checkGroup(ch.GroupID)
+	} else if !c.answers(ch.GroupID) {
 		return nil, false
 	}
 	emoji, removed := "", false
@@ -705,10 +709,7 @@ func (c *Client) groupAllowed(ctx context.Context, group string) bool {
 	if ok, known := c.gated(group); known {
 		return ok
 	}
-	ids := slices.Sorted(maps.Keys(c.allowed))
-	if len(ids) == 0 {
-		return false
-	}
+	ids := slices.Sorted(maps.Keys(c.allowed)) // none: a definite no
 	ok, sure := false, true
 	for _, u := range ids {
 		there, err := c.isMember(ctx, group, u)
@@ -751,10 +752,32 @@ func (c *Client) groupAllowed(ctx context.Context, group string) bool {
 	return ok
 }
 
+// answers is for events, which come without a slot to check in: whether
+// the bot answers in group, by what it last learned, even if that is out of
+// date, which it then checks again. Never checked, no.
+func (c *Client) answers(group string) bool {
+	c.mu.Lock()
+	g, found := c.gate[group]
+	c.mu.Unlock()
+	if !found || time.Now().After(g.until) {
+		c.checkGroup(group)
+	}
+	return found && g.ok
+}
+
+// recheck forgets whether the bot answers in group, and checks again, as
+// someone left it.
+func (c *Client) recheck(group string) {
+	c.mu.Lock()
+	delete(c.gate, group)
+	c.mu.Unlock()
+	c.checkGroup(group)
+}
+
 // checkGroup runs groupAllowed in the background, so the bot leaves a group
 // it shouldn't be in without waiting for someone to address it.
 func (c *Client) checkGroup(group string) {
-	if _, known := c.gated(group); known || len(c.allowed) == 0 {
+	if _, known := c.gated(group); known {
 		return
 	}
 	c.mu.Lock()

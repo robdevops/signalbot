@@ -71,7 +71,7 @@ func New(test *config.Test) *Client {
 		allowed[id] = true
 	}
 	if len(allowed) == 0 {
-		logx.Warnf("the bot answers no one: TELEGRAM_DM_USER_IDS is empty, so DMs are off, and it answers in a group only while someone listed there is a member")
+		logx.Warnf("the bot answers no one: TELEGRAM_DM_USER_IDS is empty, so DMs are off, and it answers in a group only while someone listed is a member, so it leaves every group")
 	} else {
 		logx.Noticef("DMs: allowed from %d IDs (TELEGRAM_DM_USER_IDS); groups: answered while one of them is a member", len(allowed))
 	}
