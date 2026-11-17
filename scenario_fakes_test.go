@@ -1,3 +1,5 @@
+//go:build !nosignal
+
 package main
 
 // The fakes behind the behaviour scenarios, and the harness API the scenarios

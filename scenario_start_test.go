@@ -1,3 +1,5 @@
+//go:build !nosignal
+
 package main
 
 // startBot wires the bot to the scenario fakes, as main does. It is the only

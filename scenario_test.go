@@ -1,3 +1,5 @@
+//go:build !nosignal
+
 package main
 
 // Behaviour scenarios: messages in on a fake signal-cli, then what the bot

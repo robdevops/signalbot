@@ -25,10 +25,12 @@ jobs:
         run: |
           go vet -tags nocharts ./...
           go test -tags nocharts .
-          if go build -tags nosignal -o /dev/null . 2> /tmp/nosignal.txt; then
+          go vet -tags nosignal ./... && go test -tags nosignal ./...
+          go vet -tags notelegram ./... && go test -tags notelegram ./...
+          if go build -tags nosignal,notelegram -o /dev/null . 2> /tmp/nonet.txt; then
             echo "a build with no chat network should fail"; exit 1
           fi
-          grep -q this_build_has_no_chat_network /tmp/nosignal.txt || { cat /tmp/nosignal.txt; exit 1; }
+          grep -q this_build_has_no_chat_network /tmp/nonet.txt || { cat /tmp/nonet.txt; exit 1; }
       - name: memory at real size, too slow under -race
         run: go test -run AtRealSize ./internal/kit/img/
       - name: sizes

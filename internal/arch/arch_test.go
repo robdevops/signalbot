@@ -67,12 +67,12 @@ func TestImports(t *testing.T) {
 				ok = under(imp, "internal/feature") || under(imp, "internal/kit") || under(imp, own)
 			case under(dir, "internal/feature"):
 				ok = under(imp, "internal/feature") || under(imp, "internal/kit")
-			case under(dir, "internal/signal"):
+			case under(dir, "internal/signal"), under(dir, "internal/telegram"):
 				ok = under(imp, "internal/feature") || under(imp, "internal/kit") || imp == "internal/config" || imp == "internal/bot"
 			case under(dir, "internal/kit"), dir == "internal/config":
 				ok = under(imp, "internal/kit")
 			default:
-				ok = dir == "." || !under(imp, "internal/features") && !under(imp, "internal/signal")
+				ok = dir == "." || !under(imp, "internal/features") && !under(imp, "internal/signal") && !under(imp, "internal/telegram")
 			}
 			if !ok {
 				t.Errorf("%s imports %s", p, imp)
