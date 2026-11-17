@@ -6,16 +6,15 @@ import (
 	"fmt"
 	"maps"
 	"net/http"
-	"slices"
 	"strings"
 	"sync"
 	"time"
 	"unicode"
-	"unicode/utf16"
 	"unicode/utf8"
 
 	"github.com/robdevops/signalbot/internal/feature"
 	"github.com/robdevops/signalbot/internal/kit/logx"
+	"github.com/robdevops/signalbot/internal/kit/mdstyle"
 	"github.com/robdevops/signalbot/internal/kit/txt"
 )
 
@@ -68,7 +67,7 @@ func (c *Client) Send(chat feature.Chat, text string, pics []feature.Picture, kn
 		logx.Warnf("empty reply, nothing sent")
 		return nil
 	}
-	body := string(msg.text)
+	body := string(msg.Runes)
 	ts, err := c.send(chat, body, mentions(body, known), textStyles(msg), attachments)
 	if err != nil {
 		logx.Errorf("send failed: %v", err)
@@ -180,63 +179,25 @@ func (c *Client) Typing(chat feature.Chat) (stop func()) {
 // without a leading @ and the bot's own name (an echo of how it was
 // addressed; elsewhere it is a mention), trimmed and capped at maxReply;
 // false if nothing is left.
-func prepare(reply, self string) (styled, bool) {
-	s := markdown(reply)
-	if sp := findAt(s.text, map[string]string{txt.SafeName(self): ""}); len(sp) > 0 && strings.TrimSpace(string(s.text[:sp[0].start])) == "" {
-		s.text, s.style = s.text[sp[0].end:], s.style[sp[0].end:]
+func prepare(reply, self string) (mdstyle.Text, bool) {
+	s := mdstyle.Parse(reply, false)
+	if sp := mdstyle.FindAt(s.Runes, map[string]string{txt.SafeName(self): ""}); len(sp) > 0 && strings.TrimSpace(string(s.Runes[:sp[0].Start])) == "" {
+		s.Runes, s.Styles = s.Runes[sp[0].End:], s.Styles[sp[0].End:]
 	}
-	start, end := 0, len(s.text)
-	for start < end && unicode.IsSpace(s.text[start]) {
+	start, end := 0, len(s.Runes)
+	for start < end && unicode.IsSpace(s.Runes[start]) {
 		start++
 	}
-	for end > start && unicode.IsSpace(s.text[end-1]) {
+	for end > start && unicode.IsSpace(s.Runes[end-1]) {
 		end--
 	}
-	s.text, s.style = s.text[start:end:end], s.style[start:end:end]
-	if len(s.text) > maxReply {
+	s.Runes, s.Styles = s.Runes[start:end:end], s.Styles[start:end:end]
+	if len(s.Runes) > maxReply {
 		n := maxReply - utf8.RuneCountInString(truncated)
-		s.text, s.style = s.text[:n:n], s.style[:n:n]
-		s.add([]rune(truncated), 0)
+		s.Runes, s.Styles = s.Runes[:n:n], s.Styles[:n:n]
+		s.Add([]rune(truncated), 0)
 	}
-	return s, len(s.text) > 0
-}
-
-// span is one "@name" in a text, as rune indices [start, end).
-type span struct {
-	start, end int
-	id         string
-}
-
-// findAt finds "@name" for each name in known (name to ID). Matching
-// ignores case, tries the longest name first, and sits on word boundaries.
-func findAt(rs []rune, known map[string]string) []span {
-	names := slices.DeleteFunc(slices.Collect(maps.Keys(known)), func(name string) bool { return name == "" })
-	slices.SortFunc(names, func(a, b string) int { return utf8.RuneCountInString(b) - utf8.RuneCountInString(a) })
-	var out []span
-	for i := 0; i < len(rs); i++ {
-		if rs[i] != '@' || (i > 0 && wordRune(rs[i-1])) {
-			continue
-		}
-		for _, name := range names {
-			end := i + 1 + utf8.RuneCountInString(name)
-			if end > len(rs) || (end < len(rs) && wordRune(rs[end])) || strings.ToLower(string(rs[i+1:end])) != strings.ToLower(name) {
-				continue
-			}
-			out = append(out, span{i, end, known[name]})
-			i = end - 1
-			break
-		}
-	}
-	return out
-}
-
-// utf16At is the UTF-16 offset of each rune of rs, and then of its end.
-func utf16At(rs []rune) []int {
-	u := make([]int, len(rs)+1)
-	for i, r := range rs {
-		u[i+1] = u[i] + utf16.RuneLen(r)
-	}
-	return u
+	return s, len(s.Runes) > 0
 }
 
 // mentions is the signal-cli mentions ("start:length:uuid", in UTF-16
@@ -244,11 +205,11 @@ func utf16At(rs []rune) []int {
 // ID). An ambiguous name, with no ID, stays plain text.
 func mentions(text string, known map[string]string) []string {
 	rs := []rune(text)
-	u := utf16At(rs)
+	u := mdstyle.UTF16At(rs)
 	var out []string
-	for _, s := range findAt(rs, known) {
-		if s.id != "" {
-			out = append(out, fmt.Sprintf("%d:%d:%s", u[s.start], u[s.end]-u[s.start], s.id))
+	for _, s := range mdstyle.FindAt(rs, known) {
+		if s.ID != "" {
+			out = append(out, fmt.Sprintf("%d:%d:%s", u[s.Start], u[s.End]-u[s.Start], s.ID))
 		}
 	}
 	return out
@@ -256,31 +217,31 @@ func mentions(text string, known map[string]string) []string {
 
 // strip removes "@name" for each of names, without leaving a double space,
 // and reports whether it found one.
-func strip(s styled, names ...string) (styled, bool) {
+func strip(s mdstyle.Text, names ...string) (mdstyle.Text, bool) {
 	known := map[string]string{} // findAt needs only the names
 	for _, n := range names {
 		known[txt.SafeName(n)] = ""
 	}
-	spans := findAt(s.text, known)
+	spans := mdstyle.FindAt(s.Runes, known)
 	if len(spans) == 0 {
 		return s, false
 	}
-	var out styled
+	var out mdstyle.Text
 	pos := 0
 	for _, sp := range spans {
-		out.text = append(out.text, s.text[pos:sp.start]...)
-		out.style = append(out.style, s.style[pos:sp.start]...)
-		pos = sp.end
-		if pos < len(s.text) && s.text[pos] == ' ' && (len(out.text) == 0 || out.text[len(out.text)-1] == ' ') {
+		out.Runes = append(out.Runes, s.Runes[pos:sp.Start]...)
+		out.Styles = append(out.Styles, s.Styles[pos:sp.Start]...)
+		pos = sp.End
+		if pos < len(s.Runes) && s.Runes[pos] == ' ' && (len(out.Runes) == 0 || out.Runes[len(out.Runes)-1] == ' ') {
 			pos++
 		}
 	}
-	out.text, out.style = append(out.text, s.text[pos:]...), append(out.style, s.style[pos:]...)
-	for len(out.text) > 0 && unicode.IsSpace(out.text[0]) {
-		out.text, out.style = out.text[1:], out.style[1:]
+	out.Runes, out.Styles = append(out.Runes, s.Runes[pos:]...), append(out.Styles, s.Styles[pos:]...)
+	for len(out.Runes) > 0 && unicode.IsSpace(out.Runes[0]) {
+		out.Runes, out.Styles = out.Runes[1:], out.Styles[1:]
 	}
-	for n := len(out.text); n > 0 && unicode.IsSpace(out.text[n-1]); n-- {
-		out.text, out.style = out.text[:n-1], out.style[:n-1]
+	for n := len(out.Runes); n > 0 && unicode.IsSpace(out.Runes[n-1]); n-- {
+		out.Runes, out.Styles = out.Runes[:n-1], out.Styles[:n-1]
 	}
 	return out, true
 }

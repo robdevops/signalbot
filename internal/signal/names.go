@@ -9,10 +9,10 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
-	"unicode"
 	"unicode/utf8"
 
 	"github.com/robdevops/signalbot/internal/kit/logx"
+	"github.com/robdevops/signalbot/internal/kit/mdstyle"
 	"github.com/robdevops/signalbot/internal/kit/txt"
 )
 
@@ -196,7 +196,7 @@ func redactWord(s, w string) string {
 		_, size := utf8.DecodeRuneInString(s[i:])
 		before, _ := utf8.DecodeLastRuneInString(s[:i])
 		after, _ := utf8.DecodeRuneInString(s[i+len(w):])
-		if strings.EqualFold(s[i:i+len(w)], w) && !wordRune(before) && !wordRune(after) { // at an end, RuneError
+		if strings.EqualFold(s[i:i+len(w)], w) && !mdstyle.WordRune(before) && !mdstyle.WordRune(after) { // at an end, RuneError
 			b.WriteString(s[last:i])
 			b.WriteString("redacted")
 			i += len(w)
@@ -207,8 +207,6 @@ func redactWord(s, w string) string {
 	}
 	return b.String() + s[last:]
 }
-
-func wordRune(r rune) bool { return unicode.IsLetter(r) || unicode.IsDigit(r) || r == '_' }
 
 // number is the phone number of the person with ACI aci, from the contact
 // list or a message they sent, or "".

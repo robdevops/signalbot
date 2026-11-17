@@ -38,7 +38,7 @@ func TestSendOneMessageAndCaps(t *testing.T) {
 }
 
 func TestPrepare(t *testing.T) {
-	text := func(reply string) string { m, _ := prepare(reply, "Bot"); return string(m.text) }
+	text := func(reply string) string { m, _ := prepare(reply, "Bot"); return string(m.Runes) }
 	if got := text("@Bot hi @Alice"); got != "hi @Alice" {
 		t.Errorf("got %q", got)
 	}

@@ -2,6 +2,7 @@ package signal
 
 import (
 	"fmt"
+	"github.com/robdevops/signalbot/internal/kit/mdstyle"
 	"reflect"
 	"strconv"
 	"strings"
@@ -51,8 +52,8 @@ func TestMarkdown(t *testing.T) {
 		{"\U0001F389 **yay** \U0001F389", "\U0001F389 yay \U0001F389", []string{"3:3:BOLD"}},
 		{"**\U0001F389**", "\U0001F389", []string{"0:2:BOLD"}},
 	} {
-		s := markdown(tc.md)
-		if got := string(s.text); got != tc.text {
+		s := mdstyle.Parse(tc.md, false)
+		if got := string(s.Runes); got != tc.text {
 			t.Errorf("%q: text %q, want %q", tc.md, got, tc.text)
 		}
 		if got := textStyles(s); !reflect.DeepEqual(got, tc.styles) {
@@ -65,15 +66,15 @@ func TestMarkdown(t *testing.T) {
 // reply stays one message with its styles whole.
 func TestPrepareKeepsStyles(t *testing.T) {
 	m, ok := prepare("@Bot **hi** @Alice", "Bot")
-	if !ok || string(m.text) != "hi @Alice" {
-		t.Fatalf("got %q", string(m.text))
+	if !ok || string(m.Runes) != "hi @Alice" {
+		t.Fatalf("got %q", string(m.Runes))
 	}
 	if got := textStyles(m); !reflect.DeepEqual(got, []string{"0:2:BOLD"}) {
 		t.Errorf("styles %v", got)
 	}
 	long := "**" + strings.Repeat("a ", 1500) + "\U0001F389 past the old limit** after"
 	m, _ = prepare(long, "Bot")
-	if n := len(m.text); !strings.HasSuffix(string(m.text), "limit after") || !reflect.DeepEqual(textStyles(m), []string{"0:" + strconv.Itoa(n-len(" after")+1) + ":BOLD"}) { // the emoji is two units
+	if n := len(m.Runes); !strings.HasSuffix(string(m.Runes), "limit after") || !reflect.DeepEqual(textStyles(m), []string{"0:" + strconv.Itoa(n-len(" after")+1) + ":BOLD"}) { // the emoji is two units
 		t.Errorf("long: %d runes, styles %v", n, textStyles(m))
 	}
 }

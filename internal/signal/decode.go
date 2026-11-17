@@ -14,6 +14,7 @@ import (
 	"github.com/robdevops/signalbot/internal/feature"
 	"github.com/robdevops/signalbot/internal/kit/img"
 	"github.com/robdevops/signalbot/internal/kit/logx"
+	"github.com/robdevops/signalbot/internal/kit/mdstyle"
 	"github.com/robdevops/signalbot/internal/kit/txt"
 )
 
@@ -492,8 +493,8 @@ func (c *Client) Delivered(ctx context.Context, msg feature.Message) (bot.Ready,
 		}
 	}
 	rs := []rune(msg.Text)
-	s, mentioned := strip(styled{rs, make([]uint8, len(rs))}, c.BotName(), defaultName)
-	msg.Text, r.Mentioned = string(s.text), mentioned
+	s, mentioned := strip(mdstyle.Text{Runes: rs, Styles: make([]mdstyle.Style, len(rs))}, c.BotName(), defaultName)
+	msg.Text, r.Mentioned = string(s.Runes), mentioned
 	r.Message = msg
 	return r, true
 }
