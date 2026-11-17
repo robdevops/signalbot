@@ -67,18 +67,19 @@ func (c *Client) Send(ch feature.Chat, text string, pics []feature.Picture, know
 	defer cancel()
 	note := func(msgID int64) {
 		sent = append(sent, msgID)
-		c.noteSent(ch, msgID)
+		c.noteSent(chatID(ch), msgID)
 	}
 	if len(pics) > 0 {
 		var caption *mdstyle.Text
 		if u := mdstyle.UTF16At(t.Runes); u[len(t.Runes)] <= maxCaption && len(t.Runes) > 0 {
 			c := t
-			caption, t = &c, mdstyle.Text{}
+			caption = &c
 		}
 		ids, err := c.sendPhotos(ctx, ch, pics, caption, known)
 		if err != nil {
-			logx.Errorf("send failed: %v", err)
-			return sent
+			logx.Errorf("send failed: pictures: %v", err) // the text still goes
+		} else if caption != nil {
+			t = mdstyle.Text{}
 		}
 		for _, i := range ids {
 			note(i)
@@ -91,12 +92,14 @@ func (c *Client) Send(ch feature.Chat, text string, pics []feature.Picture, know
 	}
 	for _, p := range parts {
 		var m sentMsg
-		params := map[string]any{"chat_id": target(ch), "text": string(p.Runes), "entities": entities(p, known)}
-		err := c.call(ctx, "sendMessage", params, &m)
-		var ae *apiError
-		if errors.As(err, &ae) && ae.Code == 400 && strings.Contains(strings.ToLower(ae.Desc), "entit") {
+		d := c.dest(ch)
+		params := d.params(map[string]any{"text": string(p.Runes), "entities": entities(p, known)})
+		send := func() error { return c.call(ctx, "sendMessage", params, &m) }
+		move := func(to string) { params["chat_id"] = to }
+		err := c.retrying(ctx, d.chat, move, send)
+		if refusedEntities(err) {
 			delete(params, "entities") // Telegram refused them: the text alone
-			err = c.call(ctx, "sendMessage", params, &m)
+			err = c.retrying(ctx, d.chat, move, send)
 		}
 		if err != nil {
 			logx.Errorf("send failed: %v", err)
@@ -107,10 +110,60 @@ func (c *Client) Send(ch feature.Chat, text string, pics []feature.Picture, know
 	return sent
 }
 
-// target is the chat_id to send to: a group's, or the user's for a DM.
-func target(ch feature.Chat) string {
+// refusedEntities reports whether err is Telegram refusing a message's
+// entities, so it can go without them.
+func refusedEntities(err error) bool {
+	var ae *apiError
+	return errors.As(err, &ae) && ae.Code == 400 && strings.Contains(strings.ToLower(ae.Desc), "entit")
+}
+
+// dest is where a chat's messages go: its chat_id, and in a forum
+// supergroup the topic, message_thread_id.
+type dest struct {
+	chat   string
+	thread int64
+}
+
+// dest is ch's destination: a DM's user, or a group's ID, with its topic
+// after a slash if it has one, at its new ID if it became a supergroup.
+func (c *Client) dest(ch feature.Chat) dest {
+	if ch.GroupID == "" {
+		return dest{chat: ch.User}
+	}
+	base, topic, _ := strings.Cut(ch.GroupID, "/")
+	n, _ := strconv.ParseInt(topic, 10, 64)
+	c.mu.Lock()
+	if to, ok := c.moved[base]; ok {
+		base = to
+	}
+	c.mu.Unlock()
+	return dest{chat: base, thread: n}
+}
+
+// params is p with the destination's chat_id and topic.
+func (d dest) params(p map[string]any) map[string]any {
+	p["chat_id"] = d.chat
+	if d.thread != 0 {
+		p["message_thread_id"] = d.thread
+	}
+	return p
+}
+
+// fields is f, a multipart form's, with the destination's chat_id and topic.
+func (d dest) fields(f map[string]string) map[string]string {
+	f["chat_id"] = d.chat
+	if d.thread != 0 {
+		f["message_thread_id"] = strconv.FormatInt(d.thread, 10)
+	}
+	return f
+}
+
+// chatID is ch's Telegram chat, without a topic: message IDs are unique
+// within it.
+func chatID(ch feature.Chat) string {
 	if ch.GroupID != "" {
-		return ch.GroupID
+		base, _, _ := strings.Cut(ch.GroupID, "/")
+		return base
 	}
 	return ch.User
 }
@@ -150,60 +203,77 @@ func utf16Slice(rs []rune, u []int, start, n int) []rune {
 }
 
 // sendPhotos sends pics, one as a photo or several as an album, with
-// caption on the first, and returns the IDs of the messages sent.
+// caption on the first, without its entities if Telegram refuses them, and
+// returns the IDs of the messages sent.
 func (c *Client) sendPhotos(ctx context.Context, ch feature.Chat, pics []feature.Picture, caption *mdstyle.Text, known map[string]string) ([]int64, error) {
 	pics = pics[:min(len(pics), 10)] // an album's limit
 	files := map[string][]byte{}
 	for i, p := range pics {
 		files["p"+strconv.Itoa(i)] = p.Data
 	}
-	capFields := func() (string, string) {
-		if caption == nil {
-			return "", "[]"
-		}
-		ents := entities(*caption, known)
-		if ents == nil {
-			ents = []outEntity{}
-		}
-		e, _ := json.Marshal(ents)
-		return string(caption.Runes), string(e)
-	}
-	text, ents := capFields()
-	if len(pics) == 1 {
-		var m sentMsg
-		err := c.upload(ctx, "sendPhoto", map[string]string{"chat_id": target(ch), "photo": "attach://p0", "caption": text, "caption_entities": ents}, files, &m)
-		return []int64{m.MessageID}, err
-	}
-	media := make([]map[string]any, len(pics))
-	for i := range pics {
-		media[i] = map[string]any{"type": "photo", "media": "attach://p" + strconv.Itoa(i)}
-	}
+	ents := []outEntity{}
 	if caption != nil {
-		media[0]["caption"], media[0]["caption_entities"] = text, json.RawMessage(ents)
+		ents = append(ents, entities(*caption, known)...)
 	}
-	mj, _ := json.Marshal(media)
-	var ms []sentMsg
-	if err := c.upload(ctx, "sendMediaGroup", map[string]string{"chat_id": target(ch), "media": string(mj)}, files, &ms); err != nil {
+	ids, err := c.sendPhotosOnce(ctx, ch, pics, files, caption, ents)
+	if caption != nil && len(ents) > 0 && refusedEntities(err) {
+		ids, err = c.sendPhotosOnce(ctx, ch, pics, files, caption, []outEntity{})
+	}
+	return ids, err
+}
+
+func (c *Client) sendPhotosOnce(ctx context.Context, ch feature.Chat, pics []feature.Picture, files map[string][]byte, caption *mdstyle.Text, ents []outEntity) ([]int64, error) {
+	text := ""
+	if caption != nil {
+		text = string(caption.Runes)
+	}
+	ej, _ := json.Marshal(ents)
+	d := c.dest(ch)
+	var fields map[string]string
+	var out any
+	var one sentMsg
+	var album []sentMsg
+	method := "sendPhoto"
+	if len(pics) == 1 {
+		fields, out = d.fields(map[string]string{"photo": "attach://p0", "caption": text, "caption_entities": string(ej)}), &one
+	} else {
+		media := make([]map[string]any, len(pics))
+		for i := range pics {
+			media[i] = map[string]any{"type": "photo", "media": "attach://p" + strconv.Itoa(i)}
+		}
+		if caption != nil {
+			media[0]["caption"], media[0]["caption_entities"] = text, json.RawMessage(ej)
+		}
+		mj, _ := json.Marshal(media)
+		method, fields, out = "sendMediaGroup", d.fields(map[string]string{"media": string(mj)}), &album
+	}
+	err := c.retrying(ctx, d.chat, func(to string) { fields["chat_id"] = to }, func() error { return c.upload(ctx, method, fields, files, out) })
+	if err != nil {
 		return nil, err
 	}
+	if len(pics) == 1 {
+		return []int64{one.MessageID}, nil
+	}
 	var ids []int64
-	for _, m := range ms {
+	for _, m := range album {
 		ids = append(ids, m.MessageID)
 	}
 	return ids, nil
 }
 
 // React puts emoji on msg, as a reaction from the bot. Telegram allows only
-// some emoji as reactions, so one it refuses is sent as a message instead.
+// some emoji as reactions, so one it refuses as such is sent as a message
+// instead.
 func (c *Client) React(ch feature.Chat, msg feature.Message, emoji string) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	err := c.call(ctx, "setMessageReaction", map[string]any{"chat_id": target(ch), "message_id": msg.Timestamp,
+	d := c.dest(ch)
+	err := c.call(ctx, "setMessageReaction", map[string]any{"chat_id": d.chat, "message_id": msg.Timestamp,
 		"reaction": []map[string]string{{"type": "emoji", "emoji": emoji}}}, nil)
 	var ae *apiError
 	switch {
 	case err == nil:
-	case errors.As(err, &ae) && ae.Code == 400:
+	case errors.As(err, &ae) && ae.Code == 400 && strings.Contains(ae.Desc, "REACTION_INVALID"):
 		c.Send(ch, emoji, nil, nil)
 	default:
 		logx.Errorf("reaction failed: %v", err)
@@ -217,7 +287,7 @@ func (c *Client) Typing(ch feature.Chat) (stop func()) {
 	send := func() {
 		tctx, tcancel := context.WithTimeout(ctx, 10*time.Second)
 		defer tcancel()
-		if err := c.call(tctx, "sendChatAction", map[string]string{"chat_id": target(ch), "action": "typing"}, nil); err != nil && ctx.Err() == nil {
+		if err := c.call(tctx, "sendChatAction", c.dest(ch).params(map[string]any{"action": "typing"}), nil); err != nil && ctx.Err() == nil {
 			logx.Debugf("telegram typing failed: %v", err)
 		}
 	}

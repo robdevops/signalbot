@@ -72,6 +72,10 @@ type sticker struct {
 
 type message struct {
 	MessageID       int64                  `json:"message_id"`
+	ThreadID        int64                  `json:"message_thread_id"`
+	IsTopic         bool                   `json:"is_topic_message"`
+	TopicCreated    *struct{}              `json:"forum_topic_created"`
+	MigrateTo       int64                  `json:"migrate_to_chat_id"`
 	From            *user                  `json:"from"`
 	Chat            chat                   `json:"chat"`
 	Date            int64                  `json:"date"`
@@ -125,10 +129,15 @@ func in(status string) bool {
 	return status == "creator" || status == "administrator" || status == "member" || status == "restricted"
 }
 
-// chatOf is the chat m was posted in: its group, or a DM with its sender.
+// chatOf is the chat m was posted in: its group, or a DM with its sender. A
+// forum's topic is a chat of its own, "group/topic", as it is a
+// conversation of its own.
 func chatOf(m *message) feature.Chat {
 	if m.Chat.Type == "private" {
 		return feature.Chat{User: id(m.Chat.ID)}
+	}
+	if m.IsTopic && m.ThreadID != 0 {
+		return feature.Chat{GroupID: id(m.Chat.ID) + "/" + id(m.ThreadID)}
 	}
 	return feature.Chat{GroupID: id(m.Chat.ID)}
 }
@@ -169,12 +178,11 @@ func (c *Client) received(m *message, edited int64) (bot.Received, bool) {
 	}
 	ch, self := chatOf(m), c.selfID()
 	if ch.GroupID != "" {
-		c.seen(ch.GroupID, m)
-	}
-	if t := m.TimerChanged; t != nil {
-		c.mu.Lock()
-		c.timers[id(m.Chat.ID)] = time.Duration(t.Time) * time.Second
-		c.mu.Unlock()
+		if m.MigrateTo != 0 { // the group became a supergroup, with a new ID
+			c.migrated(id(m.Chat.ID), id(m.MigrateTo))
+			return bot.GroupChanged{Chat: ch}, true
+		}
+		c.seen(id(m.Chat.ID), m)
 	}
 	if len(m.NewMembers) > 0 || m.LeftMember != nil {
 		return bot.GroupChanged{Chat: ch}, true // forget the names it links to
@@ -188,6 +196,13 @@ func (c *Client) received(m *message, edited int64) (bot.Received, bool) {
 		}
 		logx.Infof("%s ignored because not in TELEGRAM_DM_USER_IDS (add this ID to allow DMs)", id(m.From.ID))
 		return nil, false
+	}
+	if t := m.TimerChanged; t != nil {
+		c.mu.Lock()
+		if _, ok := c.timers[id(m.Chat.ID)]; ok || len(c.timers) < 10000 {
+			c.timers[id(m.Chat.ID)] = time.Duration(t.Time) * time.Second
+		}
+		c.mu.Unlock()
 	}
 	msg := c.message(m, edited)
 	switch {
@@ -242,7 +257,9 @@ func (c *Client) timer(ctx context.Context, chatID int64) time.Duration {
 	}
 	t = time.Duration(full.Time) * time.Second
 	c.mu.Lock()
-	c.timers[id(chatID)] = t
+	if len(c.timers) < 10000 {
+		c.timers[id(chatID)] = t
+	}
 	c.mu.Unlock()
 	return t
 }
@@ -284,7 +301,8 @@ func (c *Client) message(m *message, edited int64) feature.Message {
 		}
 	}
 	add(m, false)
-	if r := m.ReplyTo; r != nil {
+	if r := m.ReplyTo; r != nil && r.TopicCreated == nil { // in a topic, every message replies to the one that made it
+
 		qt := cmp.Or(r.Text, r.Caption)
 		if m.Quote != nil && m.Quote.Text != "" {
 			qt = m.Quote.Text // the part quoted
@@ -371,14 +389,18 @@ func (c *Client) text(s string, ents []entity) (string, bool) {
 
 func (c *Client) usernameOf() string { u, _ := c.username.Load().(string); return u }
 
+// maxGroups caps the groups the client remembers.
+const maxGroups = 1000
+
 // seen notes a group, its title, and who posted there, for Groups,
 // Delivered's members and Redact.
 func (c *Client) seen(group string, m *message) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if len(c.groups) < 1000 {
-		c.groups[group] = txt.SafeName(m.Chat.Title)
+	if _, ok := c.groups[group]; !ok && len(c.groups) >= maxGroups {
+		return
 	}
+	c.groups[group] = txt.SafeName(m.Chat.Title)
 	people := c.chats[group]
 	if people == nil {
 		people = map[string]string{}
@@ -389,16 +411,47 @@ func (c *Client) seen(group string, m *message) {
 	}
 }
 
-// botMembership is the bot added to a group or removed from one.
+// migrated moves what the client knows of a group to its new ID, after it
+// became a supergroup.
+func (c *Client) migrated(from, to string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.moved[from] = to
+	if t, ok := c.groups[from]; ok {
+		c.groups[to] = t
+		delete(c.groups, from)
+	}
+	if p, ok := c.chats[from]; ok {
+		c.chats[to] = p
+		delete(c.chats, from)
+	}
+}
+
+// botMembership is the bot added to a group or removed from one. Anyone can
+// add a bot to a group of their own, so the bot leaves a group it is added
+// to by someone not in TELEGRAM_DM_USER_IDS.
 func (c *Client) botMembership(u *memberUpd) (bot.Received, bool) {
 	if u.Chat.Type == "private" || u.Chat.Type == "channel" {
 		return nil, false
 	}
 	g := id(u.Chat.ID)
 	added := in(u.New.Status) && !in(u.Old.Status)
+	if added && !c.allowed[id(u.From.ID)] {
+		logx.Noticef("left a group %s added the bot to: not in TELEGRAM_DM_USER_IDS (add this ID to allow it)", id(u.From.ID))
+		go func() {
+			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
+			if err := c.call(ctx, "leaveChat", map[string]string{"chat_id": g}, nil); err != nil {
+				logx.Warnf("telegram leaveChat failed: %v", err)
+			}
+		}()
+		return nil, false
+	}
 	c.mu.Lock()
 	if in(u.New.Status) {
-		c.groups[g] = txt.SafeName(u.Chat.Title)
+		if _, ok := c.groups[g]; ok || len(c.groups) < maxGroups {
+			c.groups[g] = txt.SafeName(u.Chat.Title)
+		}
 	} else {
 		delete(c.groups, g)
 		delete(c.chats, g)
@@ -439,7 +492,7 @@ func (c *Client) reacted(u *reactionUpd) (bot.Received, bool) {
 	if u.User == nil || id(u.User.ID) == c.selfID() {
 		return nil, false
 	}
-	ch := feature.Chat{GroupID: id(u.Chat.ID)}
+	ch := feature.Chat{GroupID: id(u.Chat.ID)} // a topic's reaction doesn't say which topic
 	if u.Chat.Type == "private" {
 		if ch = (feature.Chat{User: id(u.Chat.ID)}); !c.allowed[id(u.User.ID)] {
 			return nil, false
@@ -461,7 +514,7 @@ func (c *Client) reacted(u *reactionUpd) (bot.Received, bool) {
 	if emoji == "" {
 		return nil, false
 	}
-	byBot := c.sentByBot(ch, u.MessageID)
+	byBot := c.sentByBot(id(u.Chat.ID), u.MessageID)
 	author := ""
 	if byBot {
 		author = c.selfID()
@@ -496,7 +549,13 @@ func (c *Client) Delivered(ctx context.Context, msg feature.Message) (bot.Ready,
 	msg.Name = cmp.Or(msg.Name, c.people[msg.Sender])
 	c.mu.Unlock()
 	var r bot.Ready
-	if g := msg.Chat.GroupID; g != "" {
+	if msg.Chat.GroupID != "" {
+		g := chatID(msg.Chat)
+		c.mu.Lock()
+		if to, ok := c.moved[g]; ok {
+			g = to
+		}
+		c.mu.Unlock()
 		if !c.member(wait, g, msg.Sender) {
 			logx.Infof("delivered message dropped: its sender is not in the group")
 			return bot.Ready{}, false
@@ -615,17 +674,17 @@ func redactWord(s, w string) string {
 
 // sentByBot reports whether the bot sent the message, among those it sent
 // lately.
-func (c *Client) sentByBot(ch feature.Chat, msgID int64) bool {
+func (c *Client) sentByBot(chat string, msgID int64) bool {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	return c.sent[ch.Key()+"/"+id(msgID)]
+	return c.sent[chat+"/"+id(msgID)]
 }
 
 // noteSent remembers a message the bot sent, at most the last 2000.
-func (c *Client) noteSent(ch feature.Chat, msgID int64) {
+func (c *Client) noteSent(chat string, msgID int64) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	k := ch.Key() + "/" + id(msgID)
+	k := chat + "/" + id(msgID)
 	c.sent[k] = true
 	if c.sentQ = append(c.sentQ, k); len(c.sentQ) > 2000 {
 		delete(c.sent, c.sentQ[0])

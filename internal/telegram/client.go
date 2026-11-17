@@ -50,6 +50,7 @@ type Client struct {
 	chats  map[string]map[string]string // group ID to the IDs and names seen there
 	groups map[string]string            // group ID to title, for the groups the bot is in
 	timers map[string]time.Duration     // chat ID to its auto-delete timer
+	moved  map[string]string            // a group's old chat ID to its new one, after it became a supergroup
 	sent   map[string]bool              // "chat/message" for messages the bot sent lately
 	sentQ  []string                     // sent's keys, oldest first
 
@@ -67,9 +68,9 @@ func New(test *config.Test) *Client {
 		allowed[id] = true
 	}
 	if len(allowed) == 0 {
-		logx.Warnf("DMs are off: TELEGRAM_DM_USER_IDS is empty; the bot answers only in groups")
+		logx.Warnf("DMs are off, and no one can add the bot to a group: TELEGRAM_DM_USER_IDS is empty; it answers only in groups it is already in")
 	} else {
-		logx.Noticef("DMs: allowed from %d IDs (TELEGRAM_DM_USER_IDS)", len(allowed))
+		logx.Noticef("DMs and adding the bot to groups: allowed from %d IDs (TELEGRAM_DM_USER_IDS)", len(allowed))
 	}
 	return newClient(config.Env("TELEGRAM_API_URL", "https://api.telegram.org"), config.Env("TELEGRAM_BOT_TOKEN", ""), allowed, test)
 }
@@ -78,7 +79,7 @@ func newClient(base, token string, allowed map[string]bool, test *config.Test) *
 	return &Client{base: strings.TrimRight(base, "/"), token: token, allowed: allowed, http: httpx.Client(8),
 		backoff: time.Second, typing: 4 * time.Second, known: make(chan struct{}),
 		people: map[string]string{}, chats: map[string]map[string]string{}, groups: map[string]string{},
-		timers: map[string]time.Duration{}, sent: map[string]bool{}, test: test}
+		timers: map[string]time.Duration{}, moved: map[string]string{}, sent: map[string]bool{}, test: test}
 }
 
 // scrub is err with the token taken out of its text: Go's URL errors
@@ -94,7 +95,8 @@ func (c *Client) scrub(err error) error {
 type apiError struct {
 	Code       int
 	Desc       string
-	RetryAfter int // seconds, for a 429
+	RetryAfter int   // seconds, for a 429
+	MigrateTo  int64 // the chat's new ID, when a group became a supergroup
 }
 
 func (e *apiError) Error() string { return fmt.Sprintf("telegram: %d %s", e.Code, e.Desc) }
@@ -146,14 +148,15 @@ func (c *Client) post(ctx context.Context, method, ctype string, body io.Reader,
 		ErrorCode   int             `json:"error_code"`
 		Description string          `json:"description"`
 		Parameters  struct {
-			RetryAfter int `json:"retry_after"`
+			RetryAfter int   `json:"retry_after"`
+			MigrateTo  int64 `json:"migrate_to_chat_id"`
 		} `json:"parameters"`
 	}
 	if err := json.NewDecoder(io.LimitReader(resp.Body, 8<<20)).Decode(&r); err != nil {
 		return fmt.Errorf("telegram: %s: bad response (status %d)", method, resp.StatusCode)
 	}
 	if !r.OK {
-		return &apiError{Code: r.ErrorCode, Desc: r.Description, RetryAfter: r.Parameters.RetryAfter}
+		return &apiError{Code: r.ErrorCode, Desc: r.Description, RetryAfter: r.Parameters.RetryAfter, MigrateTo: r.Parameters.MigrateTo}
 	}
 	if out == nil {
 		return nil
@@ -209,8 +212,18 @@ func (c *Client) Run(ctx context.Context, handle func(bot.Received)) {
 		}
 	}
 	backoff = c.backoff
-	var offset int64
+	var offset, asked int64 // the next update wanted, and the offset last sent, which confirmed those before it
+	defer func() {
+		if offset > asked { // handled but unconfirmed: confirm them, or a restart gets them again
+			cctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			if err := c.call(cctx, "getUpdates", map[string]any{"offset": offset, "timeout": 0, "limit": 1}, nil); err != nil {
+				logx.Warnf("telegram: confirming the last updates failed: %v", err)
+			}
+		}
+	}()
 	for ctx.Err() == nil {
+		asked = offset
 		ups, err := c.poll(ctx, offset)
 		if err != nil {
 			if ctx.Err() != nil {
@@ -280,6 +293,38 @@ func (c *Client) poll(ctx context.Context, offset int64) ([]update, error) {
 	var ups []update
 	err := c.call(ctx, "getUpdates", map[string]any{"offset": offset, "timeout": int(pollWait.Seconds()), "allowed_updates": kinds}, &ups)
 	return ups, err
+}
+
+// retrying runs a send, again after a 429's wait if it ends before ctx
+// does, and again at a group's new ID if it became a supergroup, at most
+// three times in all. move is given the new chat ID.
+func (c *Client) retrying(ctx context.Context, from string, move func(chatID string), send func() error) error {
+	var err error
+	for range 3 {
+		var ae *apiError
+		if err = send(); !errors.As(err, &ae) {
+			return err
+		}
+		switch {
+		case ae.MigrateTo != 0:
+			to := strconv.FormatInt(ae.MigrateTo, 10)
+			c.mu.Lock()
+			c.moved[from] = to
+			c.mu.Unlock()
+			move(to)
+		case ae.RetryAfter > 0:
+			wait := time.Duration(ae.RetryAfter) * time.Second
+			if d, ok := ctx.Deadline(); ok && time.Until(d) < wait {
+				return err
+			}
+			if !sleep(ctx, wait) {
+				return err
+			}
+		default:
+			return err
+		}
+	}
+	return err
 }
 
 // sleep waits d, and reports false if ctx ended first.

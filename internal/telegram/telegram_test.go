@@ -494,3 +494,158 @@ func TestEvents(t *testing.T) {
 		t.Fatalf("joined %+v", e)
 	}
 }
+
+// Anyone can add a bot to a group of their own, so the bot leaves a group
+// it is added to by someone not listed, and never lists it.
+func TestAddedByStranger(t *testing.T) {
+	f := newFake(t)
+	c := connected(f.client("1111111"))
+	if _, ok := c.event(parse(t, `{"update_id":1,"my_chat_member":{`+inGroup+`,"from":{"id":2222222,"first_name":"Bob"},"old_chat_member":{"status":"left"},"new_chat_member":{"status":"member","user":{"id":777000}}}}`)); ok {
+		t.Fatal("handed on")
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for len(f.callsTo("leaveChat")) == 0 && time.Now().Before(deadline) {
+		time.Sleep(5 * time.Millisecond)
+	}
+	if l := f.callsTo("leaveChat"); len(l) != 1 || l[0].Params["chat_id"] != groupS {
+		t.Fatalf("leaveChat %v", l)
+	}
+	f.results["getChatMember"] = `{"status":"member"}`
+	if gs, _ := c.Groups(context.Background(), "2222222"); len(gs) != 0 {
+		t.Fatalf("listed %v", gs)
+	}
+	r, ok := c.event(parse(t, `{"update_id":2,"my_chat_member":{`+inGroup+`,"from":{"id":1111111,"first_name":"Alice"},"old_chat_member":{"status":"left"},"new_chat_member":{"status":"member","user":{"id":777000}}}}`))
+	if _, isGC := r.(bot.GroupChanged); !ok || !isGC || len(f.callsTo("leaveChat")) != 1 {
+		t.Fatalf("added by a listed user: %T %v, %d leaves", r, ok, len(f.callsTo("leaveChat")))
+	}
+}
+
+// When the pictures fail, the reply's text still goes; a caption whose
+// entities Telegram refuses goes without them.
+func TestSendPicturesFail(t *testing.T) {
+	captureLogs(t)
+	f := newFake(t)
+	f.results["sendPhoto"] = `{"message_id":601}`
+	c := connected(f.client())
+	png := []byte("\x89PNG\r\n\x1a\nxx")
+	f.errs["sendPhoto"] = `{"ok":false,"error_code":400,"description":"Bad Request: PHOTO_INVALID_DIMENSIONS"}`
+	if ids := c.Send(feature.Chat{User: "1111111"}, "**the** caption", []feature.Picture{{Data: png}}, nil); !reflect.DeepEqual(ids, []int64{500}) {
+		t.Fatalf("ids %v", ids)
+	}
+	if s := f.callsTo("sendMessage"); len(s) != 1 || s[0].Params["text"] != "the caption" {
+		t.Fatalf("text %v", s)
+	}
+	f.errs["sendPhoto"] = `{"ok":false,"error_code":400,"description":"Bad Request: can't parse entities"}`
+	if ids := c.Send(feature.Chat{User: "1111111"}, "**the** caption", []feature.Picture{{Data: png}}, nil); !reflect.DeepEqual(ids, []int64{601}) {
+		t.Fatalf("ids %v", ids)
+	}
+	ph := f.callsTo("sendPhoto")
+	if len(ph) != 3 || ph[2].Params["caption"] != "the caption" || ph[2].Params["caption_entities"] != "[]" || len(f.callsTo("sendMessage")) != 1 {
+		t.Fatalf("photos %v", ph)
+	}
+}
+
+// A send Telegram rate-limits is sent again after the wait it names; one to
+// a group that became a supergroup goes to its new ID, as do later ones.
+func TestSendRetries(t *testing.T) {
+	captureLogs(t)
+	f := newFake(t)
+	c := connected(f.client())
+	f.errs["sendMessage"] = `{"ok":false,"error_code":429,"description":"Too Many Requests","parameters":{"retry_after":1}}`
+	start := time.Now()
+	if ids := c.Send(feature.Chat{GroupID: groupS}, "hi", nil, nil); !reflect.DeepEqual(ids, []int64{500}) || time.Since(start) < time.Second {
+		t.Fatalf("ids %v after %s", ids, time.Since(start))
+	}
+	f.errs["sendMessage"] = `{"ok":false,"error_code":400,"description":"Bad Request: group chat was upgraded to a supergroup chat","parameters":{"migrate_to_chat_id":-1009999999999}}`
+	c.Send(feature.Chat{GroupID: "-4444444"}, "one", nil, nil)
+	c.Send(feature.Chat{GroupID: "-4444444"}, "two", nil, nil)
+	var to []any
+	for _, s := range f.callsTo("sendMessage")[2:] {
+		to = append(to, s.Params["chat_id"])
+	}
+	if !reflect.DeepEqual(to, []any{"-4444444", "-1009999999999", "-1009999999999"}) {
+		t.Fatalf("sent to %v", to)
+	}
+}
+
+// A refusal other than of the emoji, such as of a deleted message, sends
+// nothing in its place.
+func TestReactRefused(t *testing.T) {
+	captureLogs(t)
+	f := newFake(t)
+	c := connected(f.client())
+	msg := feature.Message{Chat: feature.Chat{User: "1111111"}, Timestamp: 42}
+	f.errs["setMessageReaction"] = `{"ok":false,"error_code":400,"description":"Bad Request: message to react not found"}`
+	c.React(msg.Chat, msg, "👍")
+	if s := f.callsTo("sendMessage"); len(s) != 0 {
+		t.Fatalf("sent %v", s)
+	}
+}
+
+// In a forum, a topic is a chat of its own: a message there is from
+// "group/topic", isn't a quote of the message that made the topic, and the
+// reply goes to the topic.
+func TestTopics(t *testing.T) {
+	f := newFake(t)
+	c := connected(f.client())
+	r, _ := c.event(parse(t, `{"update_id":1,"message":{"message_id":20,"message_thread_id":7,"is_topic_message":true,`+fromA+`,`+inGroup+
+		`,"text":"@botty_bot hi","entities":[{"type":"mention","offset":0,"length":10}],"reply_to_message":{"message_id":7,"from":{"id":3333333,"first_name":"Carol"},`+inGroup+`,"forum_topic_created":{"name":"Support"}}}}`))
+	in, ok := r.(bot.Incoming)
+	if !ok || in.Chat.GroupID != groupS+"/7" {
+		t.Fatalf("got %T %+v", r, r)
+	}
+	m, _ := in.Load(context.Background(), func(string, string) {})
+	if m.Quote != nil || m.Text != "hi" {
+		t.Fatalf("message %+v", m)
+	}
+	c.Send(in.Chat, "hello", nil, nil)
+	if s := f.callsTo("sendMessage")[0].Params; s["chat_id"] != groupS || s["message_thread_id"] != float64(7) {
+		t.Fatalf("sent %v", s)
+	}
+	f.results["getChatMember"] = `{"status":"member"}`
+	if gs, _ := c.Groups(context.Background(), "1111111"); len(gs) != 1 || gs[0].ID != groupS {
+		t.Fatalf("groups %v", gs)
+	}
+	if _, ok := c.Delivered(context.Background(), feature.Message{Chat: in.Chat, Sender: "1111111", Text: "x"}); !ok {
+		t.Fatal("not delivered in a topic")
+	}
+	if p := f.callsTo("getChatMember"); p[len(p)-1].Params["chat_id"] != groupS {
+		t.Fatalf("getChatMember %v", p[len(p)-1].Params)
+	}
+}
+
+// A group that became a supergroup is forgotten under its old ID and known
+// under its new one.
+func TestMigration(t *testing.T) {
+	f := newFake(t)
+	c := connected(f.client())
+	c.event(parse(t, `{"update_id":1,"message":{"message_id":1,`+fromA+`,"chat":{"id":-4444444,"type":"group","title":"Old"},"text":"hi"}}`))
+	r, _ := c.event(parse(t, `{"update_id":2,"message":{"message_id":2,`+fromA+`,"chat":{"id":-4444444,"type":"group","title":"Old"},"migrate_to_chat_id":-1009999999999}}`))
+	if gc, ok := r.(bot.GroupChanged); !ok || gc.Chat.GroupID != "-4444444" {
+		t.Fatalf("got %T %v", r, r)
+	}
+	f.results["getChatMember"] = `{"status":"member"}`
+	if gs, _ := c.Groups(context.Background(), "1111111"); len(gs) != 1 || gs[0].ID != "-1009999999999" {
+		t.Fatalf("groups %v", gs)
+	}
+	c.Send(feature.Chat{GroupID: "-4444444"}, "scheduled", nil, nil)
+	if s := f.callsTo("sendMessage")[0].Params; s["chat_id"] != "-1009999999999" {
+		t.Fatalf("sent to %v", s["chat_id"])
+	}
+}
+
+// Updates handled when the bot stops are confirmed before it goes, so a
+// restart doesn't get them again.
+func TestRunConfirmsOnStop(t *testing.T) {
+	f := newFake(t)
+	f.batches = [][]any{{
+		map[string]any{"update_id": 5, "message": json.RawMessage(`{"message_id":1,` + fromA + `,` + inDM + `,"text":"hi"}`)},
+	}}
+	c := f.client("1111111")
+	ctx, cancel := context.WithCancel(context.Background())
+	c.Run(ctx, func(bot.Received) { cancel() }) // stops while handling
+	polls := f.callsTo("getUpdates")
+	if last := polls[len(polls)-1].Params; len(polls) != 2 || last["offset"] != float64(6) || last["timeout"] != float64(0) {
+		t.Fatalf("polls %v", polls)
+	}
+}
