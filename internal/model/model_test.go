@@ -3,6 +3,7 @@ package model
 import (
 	"context"
 	"crypto/tls"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -10,6 +11,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -633,5 +635,72 @@ func TestRetryDelay(t *testing.T) {
 	}
 	if c := New(&config.Config{Test: &config.Test{RetryDelay: time.Millisecond}}); c.retry != time.Millisecond {
 		t.Fatalf("hook ignored: %v", c.retry)
+	}
+}
+
+// An image is made at OpenRouter's images endpoint, from providers that
+// don't collect the data, and what it cost counts toward the reply that
+// asked for it.
+func TestImage(t *testing.T) {
+	var logs logx.Buffer
+	t.Cleanup(logx.SetOutput(&logs, &logs, false))
+	png := []byte("\x89PNG\r\n\x1a\nfake")
+	var mu sync.Mutex
+	var chat int
+	var imageBody map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		mu.Lock()
+		defer mu.Unlock()
+		switch r.URL.Path {
+		case "/images":
+			json.Unmarshal(b, &imageBody)
+			if string(b) == "" || r.Header.Get("Authorization") != "Bearer or-key" {
+				w.WriteHeader(401)
+				return
+			}
+			if p, _ := imageBody["prompt"].(string); p == "refuse" {
+				w.WriteHeader(400)
+				io.WriteString(w, `{"error":{"code":400,"message":"Your request was rejected by the safety system"}}`)
+				return
+			}
+			fmt.Fprintf(w, `{"created":1,"data":[{"b64_json":%q}],"usage":{"cost":0.04}}`, base64.StdEncoding.EncodeToString(png))
+		case "/chat/completions":
+			chat++
+			if chat == 1 {
+				io.WriteString(w, calls("draw").body)
+				return
+			}
+			io.WriteString(w, text("done").body)
+		}
+	}))
+	t.Cleanup(srv.Close)
+	c := client(t, srv.URL, true)
+	var got []byte
+	draw := feature.Tool{Name: "draw", Run: func(ctx context.Context, _ string) (string, []feature.Picture, error) {
+		data, err := c.Image(ctx, feature.ImageRequest{Model: "openai/gpt-image-2", Prompt: "a red panda", AspectRatio: "16:9", Quality: "medium"})
+		got = data
+		return "made", nil, err
+	}}
+	r, err := c.Ask(context.Background(), Request{Text: "draw a red panda", Tools: []feature.Tool{draw}})
+	if err != nil || string(got) != string(png) {
+		t.Fatalf("got %q, %v", got, err)
+	}
+	if r.Cost < 0.0429 || r.Cost > 0.0431 || !r.Costed {
+		t.Errorf("cost %v", r.Cost)
+	}
+	want := map[string]any{"model": "openai/gpt-image-2", "prompt": "a red panda", "aspect_ratio": "16:9", "quality": "medium", "n": float64(1),
+		"output_format": "png", "provider": map[string]any{"data_collection": "deny"}}
+	if !reflect.DeepEqual(imageBody, want) {
+		t.Errorf("image request %v", imageBody)
+	}
+	if l := logs.String(); !strings.Contains(l, "$0.043") || strings.Contains(l, "red panda") {
+		t.Errorf("logged %q", l)
+	}
+	if _, err := c.Image(context.Background(), feature.ImageRequest{Model: "m", Prompt: "refuse"}); err == nil || !strings.Contains(err.Error(), "status 400: Your request was rejected by the safety system") {
+		t.Errorf("refusal: %v", err)
+	}
+	if _, err := client(t, srv.URL, false).Image(context.Background(), feature.ImageRequest{Model: "m", Prompt: "x"}); err == nil {
+		t.Error("made an image on another API")
 	}
 }

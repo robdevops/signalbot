@@ -3,6 +3,7 @@ package bot
 import (
 	"cmp"
 	"context"
+	"errors"
 	"fmt"
 	"slices"
 	"strings"
@@ -91,8 +92,17 @@ func (b *Bot) Info() feature.Info {
 		Images: b.images.Load(), Audio: b.audio.Load(), PDFs: b.files.Load(), CallsTools: b.callsTools.Load(), Tools: b.toolNames(false), Intro: b.intro(false), IntroDM: b.intro(true)}
 	if b.ai == nil {
 		info.Model = ""
+	} else {
+		info.MakesImage = b.ai.ReportsCost() // OpenRouter's API, which has an images endpoint
 	}
 	return info
+}
+
+func (b *Bot) GenerateImage(ctx context.Context, r feature.ImageRequest) ([]byte, error) {
+	if b.ai == nil {
+		return nil, errors.New("no model")
+	}
+	return b.ai.Image(ctx, r)
 }
 
 func (b *Bot) Go(fn func(context.Context)) {

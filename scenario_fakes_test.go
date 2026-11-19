@@ -118,10 +118,11 @@ type harness struct {
 	calls     []rpcCall         // every request the bot made to signal-cli
 	contacts  map[string]string // the contact list, by id
 	failSends bool
-	replies   []modelReply   // queued model replies; then "ok"
-	reqs      []modelRequest // every chat completions request
-	lists     int            // model list requests
-	mcpCalls  []string       // "server/tool arguments" for every MCP tool call
+	replies   []modelReply     // queued model replies; then "ok"
+	reqs      []modelRequest   // every chat completions request
+	imageReqs []map[string]any // every image request
+	lists     int              // model list requests
+	mcpCalls  []string         // "server/tool arguments" for every MCP tool call
 	logs      []logLine
 	partial   []byte          // a log line still being written
 	secrets   []string        // message and reply texts, which must never be logged
@@ -631,6 +632,15 @@ func (h *harness) startModel() {
 			return
 		}
 		body, _ := io.ReadAll(r.Body)
+		if strings.HasSuffix(r.URL.Path, "/images") { // OpenRouter's image endpoint
+			var req map[string]any
+			json.Unmarshal(body, &req)
+			h.mu.Lock()
+			h.imageReqs = append(h.imageReqs, req)
+			h.mu.Unlock()
+			fmt.Fprintf(w, `{"created":1,"data":[{"b64_json":%q}],"usage":{"cost":0.04}}`, base64.StdEncoding.EncodeToString(scenarioPNG()))
+			return
+		}
 		h.mu.Lock()
 		h.reqs = append(h.reqs, parseModelRequest(body))
 		n := len(h.reqs)

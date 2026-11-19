@@ -1309,7 +1309,7 @@ func TestScenarioIntroPlaceholders(t *testing.T) {
 	skipWithout(t, chartsFeature) // its prompt or intro names charts
 	h := startBot(t, world{Env: map[string]string{"INTRO": `yo, {name} here on {model} with {tools}; "quoted"` + "\nnext line"}})
 	h.ask(fromAlice("introduce yourself"))
-	want := `If asked to introduce yourself, reply with exactly this text and nothing else: "yo, Botty here on test-model with **web search**\n\n**charts**: line, pie; \"quoted\"\nnext line"`
+	want := `If asked to introduce yourself, reply with exactly this text and nothing else: "yo, Botty here on test-model with **web search**\n\n**charts**: line, pie\n\n**images**: drawings, art, diagrams; \"quoted\"\nnext line"`
 	if p := h.lastRequest().System; !strings.HasSuffix(p, "\n"+want) {
 		t.Fatalf("system prompt %q", p)
 	}
@@ -1910,7 +1910,7 @@ func TestScenarioExampleWithoutModel(t *testing.T) {
 	// /intro sends INTRO, the same text the model gives when asked to
 	// introduce itself. In a group it leaves out /schedule, which is made
 	// only in a DM.
-	want := "hi, I'm Botty, your open source assistant running test-model.\n\nI respond to @Botty and replies to my messages.\n\nTools:\nweb search\n\ncharts: line, pie\n\n" +
+	want := "hi, I'm Botty, your open source assistant running test-model.\n\nI respond to @Botty and replies to my messages.\n\nTools:\nweb search\n\ncharts: line, pie\n\nimages: drawings, art, diagrams\n\n" +
 		"https://github.com/robdevops/signalbot/blob/main/README.md\n\nThis message did not use the model."
 	if s.Message != want || s.GroupID != idGroup {
 		t.Fatalf("sent %q", s.Message)
@@ -1920,7 +1920,8 @@ func TestScenarioExampleWithoutModel(t *testing.T) {
 	equal(t, "mentions", s.Mentions, []string{strconv.Itoa(at) + ":6:" + idBot})
 	// The tool labels and the name are Markdown, so they arrive in bold and italic.
 	equal(t, "styles", s.Styles, []string{strconv.Itoa(strings.Index(want, "web search")) + ":10:BOLD",
-		strconv.Itoa(strings.Index(want, "charts")) + ":6:BOLD", strconv.Itoa(strings.Index(want, "Botty")) + ":5:ITALIC"})
+		strconv.Itoa(strings.Index(want, "charts")) + ":6:BOLD", strconv.Itoa(strings.Index(want, "images")) + ":6:BOLD",
+		strconv.Itoa(strings.Index(want, "Botty")) + ":5:ITALIC"})
 	if s := h.ask(atBot("/help")); s.Message != want {
 		t.Fatalf("/help sent %q", s.Message)
 	}
@@ -1940,7 +1941,7 @@ func TestScenarioExampleWithoutModel(t *testing.T) {
 func TestScenarioBotWithoutProfileNameIsSignalbot(t *testing.T) {
 	skipWithout(t, chartsFeature) // its prompt or intro names charts
 	h := startBot(t, world{NoBotName: true, MCP: true})
-	if s := h.ask(fromAlice("/intro")); !strings.HasPrefix(s.Message, "hi, I'm signalbot, your open source assistant running test-model.\n\nI respond to @signalbot and replies to my messages.\n\nTools:\nweb search\n\ncharts: line, pie\n\nstocks MCP: get_quote, price_chart, /quote\n\nweather MCP: get_forecast, /forecast\n\n") {
+	if s := h.ask(fromAlice("/intro")); !strings.HasPrefix(s.Message, "hi, I'm signalbot, your open source assistant running test-model.\n\nI respond to @signalbot and replies to my messages.\n\nTools:\nweb search\n\ncharts: line, pie\n\nimages: drawings, art, diagrams\n\nstocks MCP: get_quote, price_chart, /quote\n\nweather MCP: get_forecast, /forecast\n\n") {
 		t.Fatalf("sent %q", s.Message)
 	}
 }
@@ -2419,4 +2420,45 @@ func soon() time.Time {
 		at = at.Add(time.Second)
 	}
 	return at
+}
+
+// --- images ------------------------------------------------------------------------------
+
+// Asked for a drawing, the model is offered the image tool; the picture is
+// made at OpenRouter's images endpoint with the default model and quality,
+// sent with the model's words, its cost counted with the reply's, and the
+// history notes the prompt it was made from.
+func TestScenarioImageReply(t *testing.T) {
+	h := startBot(t, world{})
+	h.ask(fromAlice("what time is it"))
+	if slices.Contains(h.lastRequest().Tools, "make_image") {
+		t.Fatal("the image tool offered unasked")
+	}
+	h.queue(modelReply{Tool: "make_image", Args: `{"prompt":"a watercolour fox in the snow","aspect_ratio":"3:2","title":"Snow fox"}`}, modelReply{Text: "Here's your fox."})
+	s := h.ask(fromAlice("draw me a fox in the snow"))
+	if s.Message != "Here's your fox." || len(s.Attachments) != 1 || !strings.HasPrefix(s.Attachments[0], "data:image/png;filename=Snow fox.png;base64,") {
+		t.Fatalf("sent %q with %v", s.Message, len(s.Attachments))
+	}
+	h.mu.Lock()
+	imgs := slices.Clone(h.imageReqs)
+	h.mu.Unlock()
+	if len(imgs) != 1 || imgs[0]["model"] != "openai/gpt-image-2" || imgs[0]["prompt"] != "a watercolour fox in the snow" ||
+		imgs[0]["aspect_ratio"] != "3:2" || imgs[0]["quality"] != "medium" {
+		t.Fatalf("image requests %v", imgs)
+	}
+	if _, ok := h.logged("reply", "$0.043"); !ok { // 0.001 + 0.002 for the two requests, and the picture's 0.04
+		t.Fatalf("the picture's cost isn't in the reply's: %v", h.logLines())
+	}
+	h.ask(fromAlice("thanks"))
+	equal(t, "conversation", h.lastRequest().contents(), []string{"user: what time is it", "assistant: ok", "user: draw me a fox in the snow",
+		"assistant: [sent a picture made from the prompt: a watercolour fox in the snow]\nHere's your fox.", "user: thanks"})
+}
+
+// With IMAGE_MODEL=off the tool is never offered.
+func TestScenarioImagesOff(t *testing.T) {
+	h := startBot(t, world{Env: map[string]string{"IMAGE_MODEL": "off"}})
+	h.ask(fromAlice("draw me a fox"))
+	if slices.Contains(h.lastRequest().Tools, "make_image") {
+		t.Fatal("offered with IMAGE_MODEL=off")
+	}
 }

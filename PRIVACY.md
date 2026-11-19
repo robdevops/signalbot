@@ -19,6 +19,8 @@ When a message that addresses the bot has a link, or replies to one with a link,
 
 Charts are drawn on the bot's own machine from the numbers the model passes in; nothing extra leaves it.
 
+When asked for a picture, the model writes a prompt for the image model, which can quote anything above, such as a name or what someone said. The prompt goes to OpenRouter's images endpoint, with the same `data_collection: deny` request, and on to the image model's provider (OpenAI's, for GPT Image 2). The picture comes back to the bot and is sent to the chat; the bot keeps only a note of the prompt in history, as above, and logs neither.
+
 With MCP tools configured, the model may call them. A call sends the arguments the model wrote, which can quote anything above, to that tool's MCP server, and the tool's result goes to the model's API with the next request.
 
 Every request to OpenRouter tells it to use only model providers that do not collect data (`data_collection: deny`). That is a request the bot cannot check or enforce, so read OpenRouter's policy and the model provider's. Other APIs get no such request, since it is OpenRouter's own; read their data policy. A local server, such as Ollama on the same machine, keeps everything on it.

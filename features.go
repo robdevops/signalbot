@@ -4,6 +4,7 @@ import (
 	"github.com/robdevops/signalbot/internal/feature"
 	"github.com/robdevops/signalbot/internal/features/files"
 	"github.com/robdevops/signalbot/internal/features/groupctx"
+	"github.com/robdevops/signalbot/internal/features/imagegen"
 	"github.com/robdevops/signalbot/internal/features/intro"
 	"github.com/robdevops/signalbot/internal/features/links"
 	"github.com/robdevops/signalbot/internal/features/mcp"
@@ -24,8 +25,9 @@ var features = []func(feature.Host) error{
 	vision.Register,
 	files.Register,
 	links.Register,
-	chartsFeature, // after websearch, for the tools line; build tag nocharts
-	mcp.Register,  // after websearch and charts, for the tools line
+	chartsFeature,     // after websearch, for the tools line; build tag nocharts
+	imagegen.Register, // after charts, for the tools line
+	mcp.Register,      // after websearch and charts, for the tools line
 	schedule.Register,
 }
 

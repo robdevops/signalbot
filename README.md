@@ -16,7 +16,7 @@ A small, [privacy-conscious](PRIVACY.md) chat bot for Signal, through a running 
 ## Features
 
 - Responds to @mentions, replies to its messages, and DMs from whitelisted contacts
-- Tools: web search, line and pie charts, and your own [MCP connectors](docs/FILES_LINKS_TOOLS_MCP.md#mcp-connectors)
+- Tools: web search, line and pie charts, [pictures](docs/FILES_LINKS_TOOLS_MCP.md#images) (drawings, art, diagrams) with GPT Image 2, and your own [MCP connectors](docs/FILES_LINKS_TOOLS_MCP.md#mcp-connectors)
 - [`/schedule`](docs/SCHEDULING.md) a message or command, once or repeating
 - Understands [files](docs/FILES_LINKS_TOOLS_MCP.md#files) (PDFs, text and code, Word, Excel and PowerPoint) and the [pages you link to](docs/FILES_LINKS_TOOLS_MCP.md#links), and if the model supports it, images, stickers, voice notes and other audio
 - Typing indicators, reactions, stickers, @mentions and replies
@@ -164,7 +164,7 @@ Add the bot's account to a group and @mention it, reply to one of its messages, 
 
 - [Configuration](docs/CONFIGURATION.md)
 - [Unix socket](docs/SOCKET.md)
-- [Files, Links, Tools, and MCP connectors](docs/FILES_LINKS_TOOLS_MCP.md)
+- [Files, Links, Images, Tools, and MCP connectors](docs/FILES_LINKS_TOOLS_MCP.md)
 - [Language models](docs/MODELS.md)
 - [Scheduling](docs/SCHEDULING.md)
 - [Troubleshooting](docs/TROUBLESHOOTING.md)

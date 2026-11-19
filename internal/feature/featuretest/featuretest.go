@@ -17,14 +17,15 @@ import (
 // Host records what a feature registers and lets a test drive it. Set its
 // exported fields before the feature registers.
 type Host struct {
-	Settings map[string]string                              // what Env reads
-	Bot      feature.Info                                   // what Info returns
-	Fetch    func(m feature.Message, i int) ([]byte, error) // what Media returns; nil fails
-	Shared   []feature.Group                                // what Groups returns
-	TimerErr error                                          // if set, At fails with it, as the core does at its cap
-	Redactor func(string) string                            // what Redact does; nil leaves text as it is
-	StoreErr error                                          // if set, Store fails with it, as the core does with no usable state directory
-	Unusable bool                                           // if set, OfferTools drops a group with tools, as the core does when the API can run none
+	Settings map[string]string                                           // what Env reads
+	Bot      feature.Info                                                // what Info returns
+	Fetch    func(m feature.Message, i int) ([]byte, error)              // what Media returns; nil fails
+	Image    func(context.Context, feature.ImageRequest) ([]byte, error) // what GenerateImage returns; nil fails
+	Shared   []feature.Group                                             // what Groups returns
+	TimerErr error                                                       // if set, At fails with it, as the core does at its cap
+	Redactor func(string) string                                         // what Redact does; nil leaves text as it is
+	StoreErr error                                                       // if set, Store fails with it, as the core does with no usable state directory
+	Unusable bool                                                        // if set, OfferTools drops a group with tools, as the core does when the API can run none
 
 	mu        sync.Mutex
 	read      []string
@@ -157,6 +158,14 @@ func (h *Host) Env(key, def string) string {
 }
 
 func (h *Host) Info() feature.Info { return h.Bot }
+
+// GenerateImage returns what Image does; nil fails.
+func (h *Host) GenerateImage(ctx context.Context, r feature.ImageRequest) ([]byte, error) {
+	if h.Image == nil {
+		return nil, errors.New("no image")
+	}
+	return h.Image(ctx, r)
+}
 
 // Store opens a saved state as the core does, in the directory
 // Settings["STATE_DIRECTORY"] names (the working directory if unset): each
