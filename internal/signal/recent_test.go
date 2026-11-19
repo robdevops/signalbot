@@ -80,3 +80,25 @@ func TestQuotedOriginals(t *testing.T) {
 		t.Error("a stranger's DM was remembered")
 	}
 }
+
+// Pictures the bot sent are held, content and all, up to recentBytes: the
+// oldest go first, and a delete frees its bytes.
+func TestRecentSentPictures(t *testing.T) {
+	var r recent
+	big := make([]byte, recentBytes/3)
+	for i := range int64(4) {
+		r.add("u:x", "bot", i+1, []attachment{{ID: fmt.Sprintf("sent:%d:0", i+1), ContentType: "image/png", Size: len(big), data: big}})
+	}
+	if _, ok := r.sent("sent:1:0"); ok {
+		t.Fatal("the oldest kept past the cap")
+	}
+	for _, id := range []string{"sent:2:0", "sent:3:0", "sent:4:0"} {
+		if d, ok := r.sent(id); !ok || len(d) != len(big) {
+			t.Fatalf("%s not held", id)
+		}
+	}
+	r.forget("u:x", "bot", 4)
+	if _, ok := r.sent("sent:4:0"); ok || r.bytes != 2*len(big) {
+		t.Fatalf("after a delete: %d bytes held", r.bytes)
+	}
+}

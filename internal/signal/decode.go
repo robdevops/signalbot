@@ -115,6 +115,7 @@ type attachment struct {
 	ID          string      `json:"id"`
 	Size        int         `json:"size"`
 	Thumbnail   *attachment `json:"thumbnail"`
+	data        []byte      // a picture the bot sent, which recent holds
 }
 
 type sticker struct {
@@ -295,6 +296,7 @@ func (c *Client) synced(env *envelope) (bot.Received, bool) {
 	if target == 0 || chat == (feature.Chat{}) {
 		return nil, false
 	}
+	c.recent.forget(chat.Key(), c.self(), target)
 	return bot.Deleted{Chat: chat, Bot: true, Sent: target, At: math.MaxInt64}, true
 }
 

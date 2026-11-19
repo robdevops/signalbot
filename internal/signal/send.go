@@ -41,6 +41,7 @@ func (c *Client) Send(chat feature.Chat, text string, pics []feature.Picture, kn
 		logx.Warnf("reply truncated from %d chars", n)
 	}
 	var attachments []string
+	var kept []attachment // for a reply that quotes them: signal-cli would give it thumbnails
 	stamp := time.Now().Format("20060102-150405")
 	for i, p := range pics { // with the extension their type gives
 		name := fileName(p.Name)
@@ -53,6 +54,7 @@ func (c *Client) Send(chat feature.Chat, text string, pics []feature.Picture, kn
 		mime := http.DetectContentType(p.Data)
 		attachments = append(attachments, fmt.Sprintf("data:%s;filename=%s.%s;base64,%s",
 			mime, name, strings.TrimPrefix(mime, "image/"), base64.StdEncoding.EncodeToString(p.Data)))
+		kept = append(kept, attachment{ContentType: mime, Filename: name + "." + strings.TrimPrefix(mime, "image/"), Size: len(p.Data), data: p.Data})
 	}
 	msg, ok := prepare(text, c.BotName())
 	if id := c.self(); id != "" && chat.GroupID != "" { // in a group, "@" and its own name mentions the bot
@@ -75,6 +77,12 @@ func (c *Client) Send(chat feature.Chat, text string, pics []feature.Picture, kn
 	}
 	if ts != 0 {
 		sent = append(sent, ts)
+		if self := c.self(); self != "" && len(kept) > 0 {
+			for i := range kept {
+				kept[i].ID = fmt.Sprintf("%s%d:%d", sentPrefix, ts, i)
+			}
+			c.recent.add(chat.Key(), self, ts, kept)
+		}
 	}
 	return sent
 }

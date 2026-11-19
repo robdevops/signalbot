@@ -2462,3 +2462,41 @@ func TestScenarioImagesOff(t *testing.T) {
 		t.Fatal("offered with IMAGE_MODEL=off")
 	}
 }
+
+// A reply quoting a picture the bot sent shows the model the picture
+// itself, not the quote's thumbnail: signal-cli has no copy of what the bot
+// sent, so the bot keeps one for a day.
+func TestScenarioQuotedBotPictureIsTheOriginal(t *testing.T) {
+	skipWithout(t, chartsFeature)
+	h := startBot(t, world{Vision: true})
+	h.queue(modelReply{Tool: "make_chart", Args: chartArgs}, modelReply{Text: "Done"})
+	s := h.ask(fromAlice("chart NVDA vs AMD for a month"))
+	if len(s.Attachments) != 1 {
+		t.Fatalf("sent %d attachments", len(s.Attachments))
+	}
+	_, sentB64, _ := strings.Cut(s.Attachments[0], ";base64,")
+	chartAt := h.lastSentAt()
+	q := fromAlice("is this accurate?")
+	q.Quote = &quoteOf{Author: idBot, Sent: chartAt, Attachments: []attached{{Type: "image/png", Thumb: &attached{ID: "thumb-bot.png", Type: "image/png", Size: 500}}}}
+	h.ask(q)
+	for _, c := range h.callsTo("getAttachment") {
+		if c["id"] == "thumb-bot.png" {
+			t.Fatal("fetched the thumbnail")
+		}
+	}
+	last := h.lastRequest().last()
+	if len(last.Images) != 1 {
+		t.Fatalf("model got %d images", len(last.Images))
+	}
+	if _, got, _ := strings.Cut(last.Images[0], ";base64,"); got != sentB64 {
+		t.Fatalf("model got another image (%d chars of base64, sent %d)", len(got), len(sentB64))
+	}
+	// Deleted from a linked device, it is gone: the thumbnail again.
+	h.receive(syncFrame("", idAlice, chartAt, false))
+	q2 := fromAlice("and now?")
+	q2.Quote = q.Quote
+	h.ask(q2)
+	if c := h.callsTo("getAttachment"); len(c) == 0 || c[len(c)-1]["id"] != "thumb-bot.png" {
+		t.Fatalf("after the delete, fetched %v", c)
+	}
+}
