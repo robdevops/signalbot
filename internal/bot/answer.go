@@ -22,7 +22,8 @@ const (
 	// line between them; MODEL_SYSTEM_PROMPT is added to them.
 	basePrompt = "You are a helpful assistant in a chat. Reply in Markdown. " +
 		"Aim for a single line. Two or three sentences at the very most, and only when asked for detail. " +
-		"If a message needs no answer, such as thanks, reply with a single emoji; it is sent as a reaction. A question or a request always gets words. " +
+		"If a message needs no answer, such as thanks, reply with a single emoji; it is sent as a reaction. " +
+		"A question or a request always gets words, or a tool's result, never an emoji alone, even when it starts with news. " +
 		// Earlier messages include, in a group, others' talk not addressed
 		// to the bot, which it otherwise tends to answer all at once.
 		"Earlier messages are the conversation so far, not questions for you: " +
@@ -90,6 +91,7 @@ func (b *Bot) respond(msg feature.Message, act feature.Action, text string, refs
 	var offered []int
 	var err error
 	imagesOff := false // by this turn
+	nudge := ""        // added to the message when it is asked again for a lone emoji
 	for {
 		if act.ToolChoice != "" && !b.callsTools.Load() {
 			stop()
@@ -104,7 +106,7 @@ func (b *Bot) respond(msg feature.Message, act feature.Action, text string, refs
 		reply, err = b.ai.Ask(b.ctx, model.Request{
 			System:     b.system(offered, msg.Chat.GroupID == ""),
 			History:    contextBlocks(b.chats.History(key)),
-			Text:       strings.TrimSpace(t.asked),
+			Text:       strings.TrimSpace(t.asked) + nudge,
 			Images:     t.images,
 			Files:      t.files,
 			Tools:      tools,
@@ -114,6 +116,13 @@ func (b *Bot) respond(msg feature.Message, act feature.Action, text string, refs
 			b.budget.add(key, reply.Cost)
 		}
 		off, again := b.fallBack(err, imagesOff)
+		if err == nil && nudge == "" && b.ignoredRequest(offered, msg, reply) {
+			// The words that offered a tool ask for something, so a lone
+			// emoji would leave the request unanswered: once more, told so.
+			logx.Infof("a lone emoji for a message that matched a tool's words; asking again")
+			nudge = "\n" + askedForMore
+			continue
+		}
 		if !again {
 			break
 		}
@@ -160,6 +169,22 @@ func (b *Bot) respond(msg feature.Message, act feature.Action, text string, refs
 	b.chats.Add(key, start, msg.Expires, chats.Entry{Role: "user", Content: strings.TrimSpace(t.kept), Refs: refs},
 		chats.Entry{Role: "assistant", Content: notes + reply.Text, Refs: []chats.Ref{p}})
 	b.sendKept(key, p, msg.Chat, sent, reply.Pictures, b.chats.Names(key))
+}
+
+// askedForMore is added to a message asked again after the model answered
+// it with a lone emoji though its words offered a tool.
+const askedForMore = "[This message asks you for something: answer it in words, or with a tool if one fits, not with an emoji alone.]"
+
+// ignoredRequest reports whether reply is a lone emoji, with no tool used,
+// to a message whose own words offered a tool group with keywords: a
+// request the emoji would leave unanswered.
+func (b *Bot) ignoredRequest(offered []int, msg feature.Message, reply model.Reply) bool {
+	if len(reply.Pictures) > 0 || len(reply.ToolsUsed) > 0 || !txt.SingleEmoji(reply.Text) {
+		return false
+	}
+	return slices.ContainsFunc(offered, func(i int) bool {
+		return b.groups[i].Keywords != nil && b.groups[i].Keywords.MatchString(msg.Text)
+	})
 }
 
 // turn is what one request for a message carries.

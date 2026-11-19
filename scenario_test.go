@@ -2500,3 +2500,37 @@ func TestScenarioQuotedBotPictureIsTheOriginal(t *testing.T) {
 		t.Fatalf("after the delete, fetched %v", c)
 	}
 }
+
+// A lone emoji for a message whose words offered a tool is no answer to
+// it: the model is asked once more, told the message asks for something,
+// and its answer is sent. A lone emoji to thanks is still a reaction.
+func TestScenarioLoneEmojiForARequestIsAskedAgain(t *testing.T) {
+	h := startBot(t, world{})
+	h.queue(modelReply{Text: "🛰️"}, modelReply{Text: "Here it is."})
+	s := h.ask(atBot("today voyager 1 reached one light day from earth. diagram this to scale"))
+	if s.Message != "Here it is." || len(h.callsTo("sendReaction")) != 0 {
+		t.Fatalf("sent %q, %d reactions", s.Message, len(h.callsTo("sendReaction")))
+	}
+	reqs := h.requests()
+	if len(reqs) != 2 || !strings.HasSuffix(reqs[1].last().Content, "\n[This message asks you for something: answer it in words, or with a tool if one fits, not with an emoji alone.]") {
+		t.Fatalf("%d requests, the last %q", len(reqs), reqs[len(reqs)-1].last().Content)
+	}
+	if !slices.Contains(reqs[0].Tools, "make_image") {
+		t.Fatal("the image tool was not offered")
+	}
+	// Asked again, a second emoji is let be: a reaction, not a third request.
+	h.queue(modelReply{Text: "👍"}, modelReply{Text: "👍"})
+	h.receive(atBot("draw it again").frame())
+	h.waitFor("the reaction", func() bool { return len(h.callsTo("sendReaction")) == 1 })
+	h.settle()
+	if n := len(h.requests()); n != 4 {
+		t.Fatalf("%d requests", n)
+	}
+	h.queue(modelReply{Text: "🙏"})
+	h.receive(atBot("thanks!").frame())
+	h.waitFor("the second reaction", func() bool { return len(h.callsTo("sendReaction")) == 2 })
+	h.settle()
+	if n := len(h.requests()); n != 5 {
+		t.Fatalf("thanks was asked %d times", len(h.requests())-4)
+	}
+}
