@@ -63,9 +63,10 @@ var schema = json.RawMessage(`{"type":"object","properties":{` +
 const (
 	technicalBrief = "A picture that teaches, so it must be accurate: draw exactly what is described, and nothing that contradicts it. " +
 		"Keep any style the description asks for, but never at the cost of accuracy; if it names none, use a clean, uncluttered layout " +
-		"with room around each part, consistent line weights and high contrast."
+		"with room around each part, consistent line weights and high contrast. " +
+		"Draw each thing once; things too close to tell apart at the picture's scale share one mark and one label, with an inset if they must be shown apart."
 	textRules = "Text: only the words given above (labels, any title or caption), spelled exactly, each short, large and legible, " +
-		"a label placed next to what it names with a leader line if needed. No other text, no placeholder text, no invented numbers or values. " +
+		"a label placed next to what it names with a leader line if needed, and each label exactly once. No other text, no placeholder text, no invented numbers or values. " +
 		"Every arrow points exactly as described."
 )
 
