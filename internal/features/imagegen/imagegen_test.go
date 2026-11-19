@@ -109,6 +109,9 @@ func TestRun(t *testing.T) {
 	if err != nil || len(pics) != 1 || !strings.Contains(out, "attached") {
 		t.Fatalf("%q %v %v", out, pics, err)
 	}
+	if !strings.Contains(logs.String(), "image asked: no kind, 0 requirements, 16:9") || strings.Contains(logs.String(), "fox") {
+		t.Errorf("log %q", logs.String())
+	}
 	if got != (feature.ImageRequest{Model: "x/painter", Prompt: "a fox in the snow", AspectRatio: "16:9", Quality: "high"}) {
 		t.Errorf("asked %+v", got)
 	}
