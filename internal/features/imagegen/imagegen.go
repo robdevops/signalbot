@@ -31,7 +31,7 @@ var wantsImage = regexp.MustCompile(`(?i)\b(draw(s|n|ing|ings)?|drew|sketch(es|e
 	`illustrat(e|es|ed|ing|ion|ions)|art(s|work|works|istic)?|diagrams?|images?|pictures?|pics?|photos?|photo-?realistic|` +
 	`logos?|icons?|posters?|banners?|graphics?|memes?|avatars?|pfps?|stickers?|selfies?|` +
 	`cartoons?|comics?|portraits?|wallpapers?|render(s|ed|ing)?|watercolou?rs?|anime|clip\s?art|infographics?|mock-?ups?|` +
-	`flow\s?-?charts?|org(ani[sz]ation(al)?)?\s+charts?|gantt|mind\s?-?maps?|visuali[sz](e|es|ed|ing|ation|ations))\b`)
+	`cut-?aways?|cross-?sections?|schematics?|exploded\s+views?|blueprints?|flow\s?-?charts?|org(ani[sz]ation(al)?)?\s+charts?|gantt|mind\s?-?maps?|visuali[sz](e|es|ed|ing|ation|ations))\b`)
 
 // ratios are the aspect ratios the model may ask for.
 var ratios = []string{"1:1", "3:2", "2:3", "16:9", "9:16", "4:3", "3:4"}
@@ -60,10 +60,12 @@ var schema = json.RawMessage(`{"type":"object","properties":{` +
 // technicalBrief opens a technical picture's prompt, and textRules close
 // it: image models favour looks over accuracy unless told otherwise.
 const (
-	technicalBrief = "An accurate technical illustration that teaches. Correctness matters more than decoration: draw exactly what is described, " +
-		"and nothing that contradicts it. Clean, uncluttered layout with room around each part, consistent line weights, high contrast."
-	textRules = "Text: only the labels given, spelled exactly, each short, large and legible, placed next to what it names with a leader line if needed. " +
-		"No other text, no placeholder text, no invented numbers or values. Every arrow points exactly as described."
+	technicalBrief = "A picture that teaches, so it must be accurate: draw exactly what is described, and nothing that contradicts it. " +
+		"Keep any style the description asks for, but never at the cost of accuracy; if it names none, use a clean, uncluttered layout " +
+		"with room around each part, consistent line weights and high contrast."
+	textRules = "Text: only the words given above (labels, any title or caption), spelled exactly, each short, large and legible, " +
+		"a label placed next to what it names with a leader line if needed. No other text, no placeholder text, no invented numbers or values. " +
+		"Every arrow points exactly as described."
 )
 
 // maxRequirements caps the requirements, and maxRequirement each one, in

@@ -56,7 +56,8 @@ func TestRegister(t *testing.T) {
 	for _, s := range []string{"draw me a cat", "a diagram of the water cycle", "make an image of a fox", "paint a sunset",
 		"pixel art of a castle", "a logo for my bakery", "sketch a house", "an illustration of a dragon", "Draw it",
 		"make me a photo of a cat", "a photorealistic dog", "make a meme", "a new pfp", "a banner for my site", "make a flow chart of signup",
-		"a flowchart", "an org chart for the team", "a gantt chart", "a mind map of ideas", "visualise the solar system"} {
+		"a flowchart", "an org chart for the team", "a gantt chart", "a mind map of ideas", "visualise the solar system",
+		"show me a cutaway of a jet engine", "a cross-section of a vinyl groove", "a schematic of a 555 timer", "an exploded view of a gearbox", "a blueprint of my shed"} {
 		if !g[0].Keywords.MatchString(s) {
 			t.Errorf("not offered for %q", s)
 		}
