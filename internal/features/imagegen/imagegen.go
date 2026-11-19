@@ -28,8 +28,10 @@ const (
 // wantsImage matches a message that asks for a picture made, so the image
 // tool is offered only then, and for the replies that follow.
 var wantsImage = regexp.MustCompile(`(?i)\b(draw(s|n|ing|ings)?|drew|sketch(es|ed|ing)?|doodles?|paint(s|ed|ing|ings)?|` +
-	`illustrat(e|es|ed|ing|ion|ions)|art(s|work|works|istic)?|diagrams?|images?|pictures?|pics?|logos?|icons?|posters?|` +
-	`cartoons?|comics?|portraits?|wallpapers?|render(s|ed|ing)?|watercolou?rs?|anime|clip\s?art|infographics?|mock-?ups?)\b`)
+	`illustrat(e|es|ed|ing|ion|ions)|art(s|work|works|istic)?|diagrams?|images?|pictures?|pics?|photos?|photo-?realistic|` +
+	`logos?|icons?|posters?|banners?|graphics?|memes?|avatars?|pfps?|stickers?|selfies?|` +
+	`cartoons?|comics?|portraits?|wallpapers?|render(s|ed|ing)?|watercolou?rs?|anime|clip\s?art|infographics?|mock-?ups?|` +
+	`flow\s?-?charts?|org(ani[sz]ation(al)?)?\s+charts?|gantt|mind\s?-?maps?|visuali[sz](e|es|ed|ing|ation|ations))\b`)
 
 // ratios are the aspect ratios the model may ask for.
 var ratios = []string{"1:1", "3:2", "2:3", "16:9", "9:16", "4:3", "3:4"}
@@ -39,6 +41,7 @@ const description = "Make a picture from a text prompt with an image model, and 
 	"not to describe or explain one, and not for a chart of data, which the chart tools draw from the numbers. " +
 	"Write the prompt in full, as the image model sees nothing else: the subject, the style, the composition, the colours and the mood, " +
 	"and any text to appear in the picture, exactly. For a diagram, name every box, label and arrow and how they connect. " +
+	"Make one picture per call, and at most 4 in a reply. It can't see or change a picture the user sent: it only makes a new one from your words. " +
 	"After it is made, reply in one short sentence, or not at all: don't describe the picture back."
 
 var schema = json.RawMessage(`{"type":"object","properties":{` +
@@ -123,7 +126,8 @@ func run(h feature.Host, model, quality string) func(context.Context, string) (s
 func reason(err error) string {
 	s := strings.ToLower(err.Error())
 	switch {
-	case strings.Contains(s, "status 400") && (strings.Contains(s, "safety") || strings.Contains(s, "moderat") || strings.Contains(s, "policy")):
+	case (strings.Contains(s, "status 400") || strings.Contains(s, "status 403")) &&
+		(strings.Contains(s, "safety") || strings.Contains(s, "moderat") || strings.Contains(s, "policy") || strings.Contains(s, "flagged")):
 		return "the image service refused the prompt under its content policy"
 	case strings.Contains(s, "status 402"):
 		return "the account is out of credit"

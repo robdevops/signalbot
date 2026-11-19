@@ -91,7 +91,7 @@ func oneAxis(dual json.RawMessage) json.RawMessage {
 }
 
 const (
-	chartBody = "Use it when a chart would help, e.g. to show a trend or compare series. Pass the raw values: an axis shows them as given unless its mode is change, which computes the % change for you. " +
+	chartBody = "Use it when a chart of numbers would help, e.g. to show a trend or compare series; not for a diagram such as a flowchart, org chart or mind map. Pass the raw values: an axis shows them as given unless its mode is change, which computes the % change for you. " +
 		"The chart is sent alone with its title as the caption, so write no other text: it would be discarded."
 	chartToolDescription = "Draw a line chart of one or more series over time, on one Y axis, and attach it to your reply as an image. " +
 		"Choose the axis mode by what the chart is meant to show, for one series as much as several: change, which draws each series as % change from its first point, " +

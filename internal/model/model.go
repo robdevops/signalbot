@@ -246,7 +246,8 @@ type answer struct {
 
 // Ask asks the model and returns its reply. When the model calls function
 // tools it runs them and asks again, up to maxRounds requests in budget,
-// keeping up to MaxPictures pictures from them. The tokens of every request
+// keeping up to MaxPictures pictures from them; if a later request fails,
+// the pictures are the reply. The tokens of every request
 // are summed and logged, with the cost when the API reports it.
 func (c *Client) Ask(ctx context.Context, r Request) (Reply, error) {
 	ctx, cancel := context.WithTimeout(ctx, budget)
@@ -292,6 +293,13 @@ func (c *Client) Ask(ctx context.Context, r Request) (Reply, error) {
 		reply.Cost, reply.Costed = total.cost, total.costed // what was spent, even on the way to an error
 		if err == nil {
 			logRequest(round, a, slices.ContainsFunc(msgs, func(m message) bool { return m.Annotations != nil }))
+		}
+		if err != nil && len(reply.Pictures) > 0 && round > 1 {
+			// Pictures a tool made, perhaps at a cost, go out without the
+			// model's words rather than not at all.
+			logx.Warnf("model request %d failed after a tool made pictures; sending them alone: %v", round, err)
+			reply.Text = ""
+			return reply, nil
 		}
 		if err != nil {
 			return reply, err

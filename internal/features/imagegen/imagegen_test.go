@@ -54,7 +54,9 @@ func TestRegister(t *testing.T) {
 		t.Errorf("log %q", logs.String())
 	}
 	for _, s := range []string{"draw me a cat", "a diagram of the water cycle", "make an image of a fox", "paint a sunset",
-		"pixel art of a castle", "a logo for my bakery", "sketch a house", "turn this into anime", "an illustration of a dragon", "Draw it"} {
+		"pixel art of a castle", "a logo for my bakery", "sketch a house", "an illustration of a dragon", "Draw it",
+		"make me a photo of a cat", "a photorealistic dog", "make a meme", "a new pfp", "a banner for my site", "make a flow chart of signup",
+		"a flowchart", "an org chart for the team", "a gantt chart", "a mind map of ideas", "visualise the solar system"} {
 		if !g[0].Keywords.MatchString(s) {
 			t.Errorf("not offered for %q", s)
 		}
@@ -136,6 +138,7 @@ func TestRunFails(t *testing.T) {
 	for e, want := range map[string]string{
 		"status 400: Your request was rejected by the safety system": "content policy",
 		"status 402: Insufficient credits":                           "out of credit",
+		"status 403: Your input was flagged for moderation":          "content policy",
 		"status 500: secret upstream detail":                         "the image service failed",
 	} {
 		fail = errors.New(e)

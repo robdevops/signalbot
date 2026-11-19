@@ -704,3 +704,18 @@ func TestImage(t *testing.T) {
 		t.Error("made an image on another API")
 	}
 }
+
+// A picture a tool made goes out, alone, when the request after it fails.
+func TestPicturesKeptOnLaterFailure(t *testing.T) {
+	c, _, logs := start(t, calls("draw"), served{status: 500, body: `{"error":{"message":"upstream"}}`})
+	draw := feature.Tool{Name: "draw", Run: func(context.Context, string) (string, []feature.Picture, error) {
+		return "made", []feature.Picture{{Data: []byte("png")}}, nil
+	}}
+	r, err := c.Ask(context.Background(), Request{Text: "draw", Tools: []feature.Tool{draw}})
+	if err != nil || len(r.Pictures) != 1 || r.Text != "" {
+		t.Fatalf("got %+v, %v", r, err)
+	}
+	if !strings.Contains(logs.String(), "sending them alone") {
+		t.Errorf("logged %q", logs.String())
+	}
+}
