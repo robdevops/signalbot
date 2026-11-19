@@ -24,7 +24,9 @@ func TestGoldenPromptNoFeatures(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, tools := range []bool{false, true} {
-		h := start(t, options{tools: tools})
+		h := start(t, options{tools: tools, cfg: func(c *config.Config) {
+			c.Test.Now = func() time.Time { return time.Date(2026, 11, 19, 12, 0, 0, 0, time.FixedZone("AEDT", 11*3600)) }
+		}})
 		r, _ := h.ask(atBot("how did AAPL do against the S&P 500 this year?"))
 		if got := system(r); got != string(want) {
 			t.Fatalf("tools %v: system prompt\n got  %q\n want %q", tools, got, want)
@@ -260,9 +262,8 @@ func TestDisappearingHistory(t *testing.T) {
 	m.Expires = time.Second
 	h.ask(m)
 	key := "g:" + groupID
-	if len(h.b.chats.History(key)) != 2 || len(h.b.chats.Names(key)) == 0 {
-		t.Fatal("nothing kept")
-	}
+	// Kept once the reply is sent, which is just after the send is seen.
+	h.eventually("history to be kept", func() bool { return len(h.b.chats.History(key)) == 2 && len(h.b.chats.Names(key)) > 0 })
 	h.eventually("history to expire", func() bool { return len(h.b.chats.History(key)) == 0 && len(h.b.chats.Names(key)) == 0 })
 }
 

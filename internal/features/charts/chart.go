@@ -61,7 +61,8 @@ var dualAxisToolSchema = json.RawMessage(`{
     "title": {"type": "string", "description": "Axis title, e.g. \"Price ($)\" or \"Rainfall (mm)\"; required on both axes when both are used"},
     "mode": {"type": "string", "enum": ["value", "change"], "description": "value (default): plot the values as given, e.g. a population, a price or rainfall. change: plot each series as % change from its first point; use it when the question is about performance, growth or return, for one series or several, and whenever series differ in scale"},
     "unit": {"type": "string", "description": "Prefix for values in value mode, e.g. \"$\""},
-    "invert": {"type": "boolean", "description": "Draw this axis upside down: higher values lower"}
+    "invert": {"type": "boolean", "description": "Draw this axis upside down: higher values lower"},
+    "show_change": {"type": "boolean", "description": "Value mode: each line's last value is labelled with its % change over the chart's period (default true), as for a price, index, revenue or population. Set false where a % change means nothing: temperatures, rates, or values already in %."}
   }}}
 }`)
 
@@ -90,12 +91,13 @@ func oneAxis(dual json.RawMessage) json.RawMessage {
 }
 
 const (
-	chartBody = "Use it when a chart would help, e.g. to show a trend or compare series. Pass the raw values: an axis shows them as given unless its mode is change, which computes the % change for you. " +
+	chartBody = "Use it when a chart of numbers would help, e.g. to show a trend or compare series; not for a diagram such as a flowchart, org chart or mind map. Pass the raw values: an axis shows them as given unless its mode is change, which computes the % change for you. " +
 		"The chart is sent alone with its title as the caption, so write no other text: it would be discarded."
 	chartToolDescription = "Draw a line chart of one or more series over time, on one Y axis, and attach it to your reply as an image. " +
 		"Choose the axis mode by what the chart is meant to show, for one series as much as several: change, which draws each series as % change from its first point, " +
 		"when the question is about performance, growth or return (how a stock did this year, NVDA vs AMD, a company's revenue growth) or the series differ in scale; " +
-		"value, the numbers as given, when the level itself matters (a price, a population, rainfall, temperatures). " + chartBody
+		"value, the numbers as given, when the level itself matters (a price, a population, rainfall, temperatures). " +
+		"A value chart labels each line with its % change over the period; set show_change false on its axis for temperatures, rates or values already in %. " + chartBody
 	dualAxisToolDescription = "Draw a line chart of one or more series over time on two Y axes, left and right, and attach it to your reply as an image. " +
 		"Use it only because the user asked for a second axis; otherwise use " + chartTool + ". " + chartBody
 )
@@ -119,6 +121,11 @@ type chartAxis struct {
 	Mode   string `json:"mode"` // "change" or "value"
 	Unit   string `json:"unit"`
 	Invert bool   `json:"invert"`
+	// ShowChange, unless false, labels each line's last value with its %
+	// change over the period, in value mode. On unless the model turns it
+	// off, as models leave optional settings unset; only it knows when a %
+	// change of the numbers means nothing (a temperature, a rate).
+	ShowChange *bool `json:"show_change"`
 
 	used        bool // a series is on it
 	lo, hi      float64
@@ -154,7 +161,9 @@ func axisShorthand(arguments string) string {
 		return arguments
 	}
 	changed := false
-	if t, ok := m["y_axis"].(string); ok {
+	// A string holding a JSON object is the axis sent as text, which
+	// decodeArgs unwraps; only a plain string is a title.
+	if t, ok := m["y_axis"].(string); ok && !json.Valid([]byte(t)) {
 		m["y_axis"], changed = map[string]any{"title": t}, true
 	}
 	if axes, ok := m["axes"].(map[string]any); ok {
@@ -293,6 +302,63 @@ func (a *chartAxis) format(v float64, decimals int) string {
 	return sign + a.Unit + commas(fmt.Sprintf("%.*f", decimals, v))
 }
 
+// change is pts' % change from first to last, signed, such as "-22.1%", if
+// the axis shows it: in value mode unless ShowChange is false, and from a
+// first value above 0, as a change from zero or less means nothing; else "".
+func (a *chartAxis) change(pts []chartPoint) string {
+	if a.Mode == "change" {
+		return ""
+	}
+	pct, ok := a.periodChange(pts)
+	if !ok {
+		return ""
+	}
+	return fmt.Sprintf("%+.1f%%", pct)
+}
+
+// periodChange is pts' % change over the chart, rounded to one decimal
+// with no -0, if the axis shows it: in change mode the last point, which
+// is already the change; in value mode as for change.
+func (a *chartAxis) periodChange(pts []chartPoint) (float64, bool) {
+	first, last := pts[0].Value, pts[len(pts)-1].Value
+	var pct float64
+	switch {
+	case a.ShowChange != nil && !*a.ShowChange:
+		return 0, false
+	case a.Mode == "change":
+		pct = last
+	case first <= 0:
+		return 0, false
+	default:
+		pct = (last - first) / first * 100
+	}
+	pct = math.Round(pct*10) / 10
+	if pct == 0 {
+		pct = 0 // no "-0.0%"
+	}
+	return pct, true
+}
+
+// headline is a single series' change over the chart for its subtitle and
+// caption, such as "▼ 15.2%" in the line's colour (down, as it fell), or ""
+// for several series or no change to show; up says whether it rose.
+func (s *chartSpec) headline() (text string, up bool) {
+	if len(s.Series) != 1 {
+		return "", true
+	}
+	pts := s.Series[0].Points
+	up = pts[len(pts)-1].Value >= pts[0].Value
+	pct, ok := s.left.periodChange(pts)
+	if !ok {
+		return "", up
+	}
+	arrow := "▲"
+	if !up {
+		arrow = "▼"
+	}
+	return fmt.Sprintf("%s %.1f%%", arrow, math.Abs(pct)), up
+}
+
 // layout fits the axis to its series' values, plus 5% padding (and zero, in
 // change mode), between pixel rows top and bottom; only the round ticks
 // inside that range are kept.
@@ -334,7 +400,12 @@ func (a *chartAxis) y(v float64) float64 {
 func (s *chartSpec) summary() string {
 	var parts []string
 	for _, sr := range s.Series {
-		parts = append(parts, sr.Name+" "+s.axisOf(sr).format(sr.Points[len(sr.Points)-1].Value, 1))
+		a := s.axisOf(sr)
+		part := sr.Name + " " + a.format(sr.Points[len(sr.Points)-1].Value, 1)
+		if c := a.change(sr.Points); c != "" {
+			part += " (" + c + " over the period)"
+		}
+		parts = append(parts, part)
 	}
 	return chartNote + "Final values: " + strings.Join(parts, ", ") + "."
 }
@@ -631,7 +702,7 @@ const sourceDescription = "Where the data came from, e.g. the site or tool; fill
 // newCanvas is a blank chart in theme th with its title and subtitle drawn,
 // and its source, if any, small at the bottom left, below the date labels
 // and the legend.
-func newCanvas(th *theme, title, subtitle, source string) *canvas {
+func newCanvas(th *theme, title, subtitle string, subColor color.RGBA, source string) *canvas {
 	cv := &canvas{img: image.NewRGBA(image.Rect(0, 0, width, height)), th: th}
 	stddraw.Draw(cv.img, cv.img.Bounds(), image.NewUniform(th.bg), image.Point{}, stddraw.Src) // whole pixels: no need to rasterize
 	titleFace, subFace := face(chartFonts.bold, 34), face(chartFonts.regular, 22)
@@ -639,7 +710,7 @@ func newCanvas(th *theme, title, subtitle, source string) *canvas {
 	defer subFace.Close()
 	cv.text(titleFace, th.title, 38, 46, 0, title)
 	if subtitle != "" {
-		cv.text(subFace, th.muted, 38, 80, 0, subtitle)
+		cv.text(subFace, subColor, 38, 80, 0, fitText(subFace, subtitle, width-2*38))
 	}
 	if source != "" {
 		f := face(chartFonts.regular, 16)
@@ -741,7 +812,19 @@ func drawChart(s *chartSpec, th *theme) *canvas {
 	case single:
 		right = 1140 // room for the current value beside the end dot
 	}
-	cv := newCanvas(th, s.Title, s.Subtitle, s.Source)
+	// One series: the subtitle in the line's colour, led by its change.
+	sub, subColor := s.Subtitle, th.muted
+	if single {
+		head, up := s.headline()
+		subColor = th.up
+		if !up {
+			subColor = th.down
+		}
+		if head != "" {
+			sub = strings.TrimSpace(head + "   " + sub)
+		}
+	}
+	cv := newCanvas(th, s.Title, sub, subColor, s.Source)
 	axisFace, axisTitleFace := face(chartFonts.regular, 24), face(chartFonts.regular, 18)
 	defer axisFace.Close()
 	defer axisTitleFace.Close()
@@ -828,8 +911,12 @@ func drawLines(cv *canvas, s *chartSpec, px func(time.Time) float64, top, bottom
 			cv.line(c, 1.5, lastX, ends[i], right+20, ends[i], labelX, labels[i])
 		}
 		cv.rect(c, labelX, labels[i]-6, 12, 12)
-		cv.text(labelFace, th.title, labelX+18, labels[i]+7, 0,
-			sr.Name+"  "+s.axisOf(sr).format(sr.Points[len(sr.Points)-1].Value, 1))
+		a := s.axisOf(sr)
+		label := sr.Name + "  " + a.format(sr.Points[len(sr.Points)-1].Value, 1)
+		if c := a.change(sr.Points); c != "" {
+			label += "  " + c
+		}
+		cv.text(labelFace, th.title, labelX+18, labels[i]+7, 0, label)
 	}
 }
 
@@ -902,9 +989,17 @@ func drawArea(cv *canvas, s *chartSpec, px func(time.Time) float64, bottom, left
 	cv.fill(c, circle(x, y, 5.5))
 	valueFace := face(chartFonts.bold, 20)
 	defer valueFace.Close()
-	y = min(max(y, 100), bottom-14) // keep both lines inside the image
+	change := a.change(pts) // on a line of its own: beside the value it would run off the edge
+	below := 0.0
+	if change != "" {
+		below = 24
+	}
+	y = min(max(y, 100), bottom-14-below) // keep every line inside the image
 	cv.text(valueFace, c, x+14, y-2, 0, a.format(last.Value, decimals))
-	cv.text(markFace, th.muted, x+14, y+20, 0, last.t.Format("2 Jan 2006"))
+	if change != "" {
+		cv.text(valueFace, c, x+14, y+22, 0, change)
+	}
+	cv.text(markFace, th.muted, x+14, y+20+below, 0, last.t.Format("2 Jan 2006"))
 }
 
 // textWidth is how wide s is in pixels in face f.

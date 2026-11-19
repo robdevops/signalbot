@@ -36,7 +36,11 @@ func main() {
 	logx.Noticef("signalbot %s starting", buildVersion())
 	cfg := config.Load()
 	cfg.Version = buildVersion()
-	net := newNetwork(cfg.Test)
+	net, err := newNetwork(cfg.Test)
+	if err != nil {
+		logx.Critf("config error: %v", err)
+		os.Exit(1)
+	}
 	sigCtx, stop := ossignal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	// Work outlives the shutdown signal, so replies being written can still

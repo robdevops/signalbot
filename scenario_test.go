@@ -1,3 +1,5 @@
+//go:build !nosignal
+
 package main
 
 // Behaviour scenarios: messages in on a fake signal-cli, then what the bot
@@ -535,6 +537,35 @@ func TestScenarioDeleteByUnlistedSender(t *testing.T) {
 		[]string{"user: the first question", "assistant: the first answer", "user: the second question"})
 }
 
+// The account's owner deleting one of the bot's replies for everyone on a
+// linked device drops it from history, in a DM and in a group; the question
+// stays.
+func TestScenarioLinkedDeviceDeletesBotReply(t *testing.T) {
+	h := startBot(t, world{})
+	h.queue(modelReply{Text: "the secret is 42"})
+	h.ask(fromAlice("what is the secret?"))
+	h.receive(syncFrame("", idAlice, h.lastSentAt(), false))
+	h.ask(fromAlice("and now?"))
+	equal(t, "conversation", h.lastRequest().contents(), []string{"user: what is the secret?", "user: and now?"})
+
+	h.queue(modelReply{Text: "the group secret is 7"})
+	h.ask(atBot("what is the group secret?"))
+	h.receive(syncFrame(idGroup, "", h.lastSentAt(), false))
+	h.ask(atBot("and now?"))
+	equal(t, "conversation", h.lastRequest().contents(), []string{"user: Alice: what is the group secret?", "user: Alice: and now?"})
+}
+
+// An edit of the bot's reply from a linked device drops it too, so history
+// never holds what the chat no longer shows.
+func TestScenarioLinkedDeviceEditDropsBotReply(t *testing.T) {
+	h := startBot(t, world{})
+	h.queue(modelReply{Text: "the first answer"})
+	h.ask(fromAlice("the first question"))
+	h.receive(syncFrame("", idAlice, h.lastSentAt(), true))
+	h.ask(fromAlice("the second question"))
+	equal(t, "conversation", h.lastRequest().contents(), []string{"user: the first question", "user: the second question"})
+}
+
 // A message deleted while it waits for an earlier answer is never answered
 // or kept; one deleted while it is answered is answered but not kept.
 func TestScenarioDeleteWhileWaiting(t *testing.T) {
@@ -878,29 +909,27 @@ func TestScenarioOwnNameTwiceIsLinked(t *testing.T) {
 	}
 }
 
-func TestScenarioLongReplyIsSplit(t *testing.T) {
+// A long reply is one message: signal-cli sends what is past 2,000 bytes
+// as a long-text attachment, shown behind Read more.
+func TestScenarioLongReplyIsOneMessage(t *testing.T) {
 	h := startBot(t, world{})
 	long := strings.TrimSpace(strings.Repeat("word ", 500))
 	h.queue(modelReply{Text: long})
 	h.receive(fromAlice("tell me a long story").frame())
-	a, b := h.nextSend(), h.nextSend()
-	h.noMoreSends()
-	if utf8.RuneCountInString(a.Message) > 2000 || utf8.RuneCountInString(b.Message) > 2000 || a.Message+" "+b.Message != long {
-		t.Fatalf("split into %d and %d runes", utf8.RuneCountInString(a.Message), utf8.RuneCountInString(b.Message))
+	if s := h.nextSend(); s.Message != long {
+		t.Fatalf("sent %d runes", utf8.RuneCountInString(s.Message))
 	}
+	h.noMoreSends()
 }
 
 func TestScenarioHugeReplyIsCapped(t *testing.T) {
 	h := startBot(t, world{})
 	h.queue(modelReply{Text: strings.Repeat("spam ", 5000)})
 	h.receive(fromAlice("tell me a very long story").frame())
-	var parts []sentMsg
-	for range 4 {
-		parts = append(parts, h.nextSend())
-	}
+	s := h.nextSend()
 	h.noMoreSends()
-	if last := parts[3].Message; !strings.HasSuffix(last, "[…truncated]") {
-		t.Fatalf("the last part does not say it was cut: %q", last[max(0, len(last)-40):])
+	if n := utf8.RuneCountInString(s.Message); n != 8000 || !strings.HasSuffix(s.Message, "[…truncated]") {
+		t.Fatalf("sent %d runes, ending %q", n, s.Message[max(0, len(s.Message)-40):])
 	}
 	if l, ok := h.logged("truncated"); !ok || l.Pri != 4 {
 		t.Fatalf("no warning: %v", h.logLines())
@@ -1271,7 +1300,7 @@ func TestScenarioSystemPromptLayering(t *testing.T) {
 	h := startBot(t, world{Env: map[string]string{"MODEL_SYSTEM_PROMPT": "Talk like a pirate."}})
 	h.ask(fromAlice("what is up"))
 	p := h.lastRequest().System
-	if !strings.HasPrefix(p, "You are a helpful assistant in a chat. ") || !strings.Contains(p, " This is a Signal chat. ") || !strings.Contains(p, "\nTalk like a pirate.\nIf asked to introduce yourself") {
+	if !strings.HasPrefix(p, "You are a helpful assistant in a chat. ") || !strings.Contains(p, " This is a Signal chat. ") || !strings.Contains(p, "\nTalk like a pirate.\nToday is ") {
 		t.Fatalf("system prompt %q", p)
 	}
 }
@@ -1280,7 +1309,7 @@ func TestScenarioIntroPlaceholders(t *testing.T) {
 	skipWithout(t, chartsFeature) // its prompt or intro names charts
 	h := startBot(t, world{Env: map[string]string{"INTRO": `yo, {name} here on {model} with {tools}; "quoted"` + "\nnext line"}})
 	h.ask(fromAlice("introduce yourself"))
-	want := `If asked to introduce yourself, reply with exactly this text and nothing else: "yo, Botty here on test-model with **web search**\n\n**charts**: line, pie; \"quoted\"\nnext line"`
+	want := `If asked to introduce yourself, reply with exactly this text and nothing else: "yo, Botty here on test-model with **web search**\n\n**charts**: line, pie\n\n**images**: drawings, art, diagrams; \"quoted\"\nnext line"`
 	if p := h.lastRequest().System; !strings.HasSuffix(p, "\n"+want) {
 		t.Fatalf("system prompt %q", p)
 	}
@@ -1881,7 +1910,7 @@ func TestScenarioExampleWithoutModel(t *testing.T) {
 	// /intro sends INTRO, the same text the model gives when asked to
 	// introduce itself. In a group it leaves out /schedule, which is made
 	// only in a DM.
-	want := "hi, I'm Botty, your open source assistant running test-model.\n\nI respond to @Botty and replies to my messages.\n\nTools:\nweb search\n\ncharts: line, pie\n\n" +
+	want := "hi, I'm Botty, your open source assistant running test-model.\n\nI respond to @Botty and replies to my messages.\n\nTools:\nweb search\n\ncharts: line, pie\n\nimages: drawings, art, diagrams\n\n" +
 		"https://github.com/robdevops/signalbot/blob/main/README.md\n\nThis message did not use the model."
 	if s.Message != want || s.GroupID != idGroup {
 		t.Fatalf("sent %q", s.Message)
@@ -1891,7 +1920,8 @@ func TestScenarioExampleWithoutModel(t *testing.T) {
 	equal(t, "mentions", s.Mentions, []string{strconv.Itoa(at) + ":6:" + idBot})
 	// The tool labels and the name are Markdown, so they arrive in bold and italic.
 	equal(t, "styles", s.Styles, []string{strconv.Itoa(strings.Index(want, "web search")) + ":10:BOLD",
-		strconv.Itoa(strings.Index(want, "charts")) + ":6:BOLD", strconv.Itoa(strings.Index(want, "Botty")) + ":5:ITALIC"})
+		strconv.Itoa(strings.Index(want, "charts")) + ":6:BOLD", strconv.Itoa(strings.Index(want, "images")) + ":6:BOLD",
+		strconv.Itoa(strings.Index(want, "Botty")) + ":5:ITALIC"})
 	if s := h.ask(atBot("/help")); s.Message != want {
 		t.Fatalf("/help sent %q", s.Message)
 	}
@@ -1911,7 +1941,7 @@ func TestScenarioExampleWithoutModel(t *testing.T) {
 func TestScenarioBotWithoutProfileNameIsSignalbot(t *testing.T) {
 	skipWithout(t, chartsFeature) // its prompt or intro names charts
 	h := startBot(t, world{NoBotName: true, MCP: true})
-	if s := h.ask(fromAlice("/intro")); !strings.HasPrefix(s.Message, "hi, I'm signalbot, your open source assistant running test-model.\n\nI respond to @signalbot and replies to my messages.\n\nTools:\nweb search\n\ncharts: line, pie\n\nstocks MCP: get_quote, price_chart, /quote\n\nweather MCP: get_forecast, /forecast\n\n") {
+	if s := h.ask(fromAlice("/intro")); !strings.HasPrefix(s.Message, "hi, I'm signalbot, your open source assistant running test-model.\n\nI respond to @signalbot and replies to my messages.\n\nTools:\nweb search\n\ncharts: line, pie\n\nimages: drawings, art, diagrams\n\nstocks MCP: get_quote, price_chart, /quote\n\nweather MCP: get_forecast, /forecast\n\n") {
 		t.Fatalf("sent %q", s.Message)
 	}
 }
@@ -2089,6 +2119,19 @@ func TestScenarioChartToolOffering(t *testing.T) {
 
 // A chart is sent captioned with its title in place of the model's text, and
 // the history notes that it was sent, in place of that text too.
+// With CHARTS=no the chart tools are never offered, even when asked for a chart.
+func TestScenarioChartsOff(t *testing.T) {
+	skipWithout(t, chartsFeature)
+	h := startBot(t, world{Env: map[string]string{"CHARTS": "no"}})
+	h.ask(atBot("chart NVDA for a month"))
+	if hasChartTool(h.lastRequest()) {
+		t.Fatal("chart tool offered with CHARTS=no")
+	}
+	if _, ok := h.logged("charts: off (CHARTS)"); !ok {
+		t.Fatal("not logged at start")
+	}
+}
+
 func TestScenarioChartReply(t *testing.T) {
 	skipWithout(t, chartsFeature)
 	h := startBot(t, world{})
@@ -2184,9 +2227,14 @@ func golden(t *testing.T, name, got string) {
 
 // Every feature on: web search, the chart tool offered, two MCP servers with
 // tools and chat commands, group context.
+// goldenNow is the clock of the golden prompts, which say today's date.
+func goldenNow() time.Time {
+	return time.Date(2026, 11, 19, 12, 0, 0, 0, time.FixedZone("AEDT", 11*3600))
+}
+
 func TestScenarioGoldenPromptFull(t *testing.T) {
 	skipWithout(t, chartsFeature)
-	h := startBot(t, world{Vision: true, MCP: true})
+	h := startBot(t, world{Vision: true, MCP: true, Now: goldenNow})
 	h.ignored(inGroup("the moon is made of cheese"))
 	h.ask(atBot("chart AAPL against the S&P 500 for a year"))
 	golden(t, "prompt_full.txt", h.lastRequest().System)
@@ -2209,7 +2257,7 @@ func TestScenarioScheduleInIntroOnlyInDM(t *testing.T) {
 
 // A model that can't call tools: {tools} is "none" and there is no tools line.
 func TestScenarioGoldenPromptNoFeatures(t *testing.T) {
-	h := startBot(t, world{NoTools: true})
+	h := startBot(t, world{NoTools: true, Now: goldenNow})
 	h.ask(atBot("chart AAPL against the S&P 500 for a year"))
 	golden(t, "prompt_notools.txt", h.lastRequest().System)
 }
@@ -2377,4 +2425,117 @@ func soon() time.Time {
 		at = at.Add(time.Second)
 	}
 	return at
+}
+
+// --- images ------------------------------------------------------------------------------
+
+// Asked for a drawing, the model is offered the image tool; the picture is
+// made at OpenRouter's images endpoint with the default model and quality,
+// sent with the model's words, its cost counted with the reply's, and the
+// history notes the prompt it was made from.
+func TestScenarioImageReply(t *testing.T) {
+	h := startBot(t, world{})
+	h.ask(fromAlice("what time is it"))
+	if slices.Contains(h.lastRequest().Tools, "make_image") {
+		t.Fatal("the image tool offered unasked")
+	}
+	h.queue(modelReply{Tool: "make_image", Args: `{"prompt":"a watercolour fox in the snow","aspect_ratio":"3:2","title":"Snow fox"}`}, modelReply{Text: "Here's your fox."})
+	s := h.ask(fromAlice("draw me a fox in the snow"))
+	if s.Message != "Here's your fox." || len(s.Attachments) != 1 || !strings.HasPrefix(s.Attachments[0], "data:image/png;filename=Snow fox.png;base64,") {
+		t.Fatalf("sent %q with %v", s.Message, len(s.Attachments))
+	}
+	h.mu.Lock()
+	imgs := slices.Clone(h.imageReqs)
+	h.mu.Unlock()
+	if len(imgs) != 1 || imgs[0]["model"] != "openai/gpt-image-2" || imgs[0]["prompt"] != "a watercolour fox in the snow" ||
+		imgs[0]["aspect_ratio"] != "3:2" || imgs[0]["quality"] != "medium" {
+		t.Fatalf("image requests %v", imgs)
+	}
+	if _, ok := h.logged("reply", "$0.043"); !ok { // 0.001 + 0.002 for the two requests, and the picture's 0.04
+		t.Fatalf("the picture's cost isn't in the reply's: %v", h.logLines())
+	}
+	h.ask(fromAlice("thanks"))
+	equal(t, "conversation", h.lastRequest().contents(), []string{"user: what time is it", "assistant: ok", "user: draw me a fox in the snow",
+		"assistant: [sent a picture made from the prompt: a watercolour fox in the snow]\nHere's your fox.", "user: thanks"})
+}
+
+// With IMAGE_MODEL=off the tool is never offered.
+func TestScenarioImagesOff(t *testing.T) {
+	h := startBot(t, world{Env: map[string]string{"IMAGE_MODEL": "off"}})
+	h.ask(fromAlice("draw me a fox"))
+	if slices.Contains(h.lastRequest().Tools, "make_image") {
+		t.Fatal("offered with IMAGE_MODEL=off")
+	}
+}
+
+// A reply quoting a picture the bot sent shows the model the picture
+// itself, not the quote's thumbnail: signal-cli has no copy of what the bot
+// sent, so the bot keeps one for a day.
+func TestScenarioQuotedBotPictureIsTheOriginal(t *testing.T) {
+	skipWithout(t, chartsFeature)
+	h := startBot(t, world{Vision: true})
+	h.queue(modelReply{Tool: "make_chart", Args: chartArgs}, modelReply{Text: "Done"})
+	s := h.ask(fromAlice("chart NVDA vs AMD for a month"))
+	if len(s.Attachments) != 1 {
+		t.Fatalf("sent %d attachments", len(s.Attachments))
+	}
+	_, sentB64, _ := strings.Cut(s.Attachments[0], ";base64,")
+	chartAt := h.lastSentAt()
+	q := fromAlice("is this accurate?")
+	q.Quote = &quoteOf{Author: idBot, Sent: chartAt, Attachments: []attached{{Type: "image/png", Thumb: &attached{ID: "thumb-bot.png", Type: "image/png", Size: 500}}}}
+	h.ask(q)
+	for _, c := range h.callsTo("getAttachment") {
+		if c["id"] == "thumb-bot.png" {
+			t.Fatal("fetched the thumbnail")
+		}
+	}
+	last := h.lastRequest().last()
+	if len(last.Images) != 1 {
+		t.Fatalf("model got %d images", len(last.Images))
+	}
+	if _, got, _ := strings.Cut(last.Images[0], ";base64,"); got != sentB64 {
+		t.Fatalf("model got another image (%d chars of base64, sent %d)", len(got), len(sentB64))
+	}
+	// Deleted from a linked device, it is gone: the thumbnail again.
+	h.receive(syncFrame("", idAlice, chartAt, false))
+	q2 := fromAlice("and now?")
+	q2.Quote = q.Quote
+	h.ask(q2)
+	if c := h.callsTo("getAttachment"); len(c) == 0 || c[len(c)-1]["id"] != "thumb-bot.png" {
+		t.Fatalf("after the delete, fetched %v", c)
+	}
+}
+
+// A lone emoji for a message whose words offered a tool is no answer to
+// it: the model is asked once more, told the message asks for something,
+// and its answer is sent. A lone emoji to thanks is still a reaction.
+func TestScenarioLoneEmojiForARequestIsAskedAgain(t *testing.T) {
+	h := startBot(t, world{})
+	h.queue(modelReply{Text: "🛰️"}, modelReply{Text: "Here it is."})
+	s := h.ask(atBot("today voyager 1 reached one light day from earth. diagram this to scale"))
+	if s.Message != "Here it is." || len(h.callsTo("sendReaction")) != 0 {
+		t.Fatalf("sent %q, %d reactions", s.Message, len(h.callsTo("sendReaction")))
+	}
+	reqs := h.requests()
+	if len(reqs) != 2 || !strings.HasSuffix(reqs[1].last().Content, "\n[This message asks you for something: answer it in words, or with a tool if one fits, not with an emoji alone.]") {
+		t.Fatalf("%d requests, the last %q", len(reqs), reqs[len(reqs)-1].last().Content)
+	}
+	if !slices.Contains(reqs[0].Tools, "make_image") {
+		t.Fatal("the image tool was not offered")
+	}
+	// Asked again, a second emoji is let be: a reaction, not a third request.
+	h.queue(modelReply{Text: "👍"}, modelReply{Text: "👍"})
+	h.receive(atBot("draw it again").frame())
+	h.waitFor("the reaction", func() bool { return len(h.callsTo("sendReaction")) == 1 })
+	h.settle()
+	if n := len(h.requests()); n != 4 {
+		t.Fatalf("%d requests", n)
+	}
+	h.queue(modelReply{Text: "🙏"})
+	h.receive(atBot("thanks!").frame())
+	h.waitFor("the second reaction", func() bool { return len(h.callsTo("sendReaction")) == 2 })
+	h.settle()
+	if n := len(h.requests()); n != 5 {
+		t.Fatalf("thanks was asked %d times", len(h.requests())-4)
+	}
 }

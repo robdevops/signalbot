@@ -15,6 +15,7 @@ import (
 	"net/url"
 	"slices"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/robdevops/signalbot/internal/chats"
@@ -182,14 +183,16 @@ func encoded(prefix string, data []byte) string {
 // logRequest logs one request of a reply at debug level, so the journal
 // shows what each tool round cost, and whether OpenRouter returned
 // annotations (such as a parsed PDF) and they were sent back, which keeps
-// a PDF from being parsed and paid for again. No content.
+// a PDF from being parsed and paid for again, and whether a server tool
+// ran, which the provider runs on its side and so gets no tool line. No
+// content.
 func logRequest(round int, a answer, sentBack bool) {
 	cost := "no cost reported"
 	if a.costed {
 		cost = fmt.Sprintf("$%.4f", a.cost)
 	}
-	logx.Debugf("request %d: tokens in/out %d/%d, %s, annotations returned: %s, sent back: %s",
-		round, a.input, a.output, cost, yesNo(a.annotations != nil), yesNo(sentBack))
+	logx.Debugf("request %d: tokens in/out %d/%d, %s, annotations returned: %s, sent back: %s, server tools used: %s",
+		round, a.input, a.output, cost, yesNo(a.annotations != nil), yesNo(sentBack), yesNo(a.serverTools))
 }
 
 func yesNo(b bool) string {
@@ -238,15 +241,19 @@ type answer struct {
 	input, cached, output int
 	cost                  float64
 	costed                bool // the API reported the cost
+	serverTools           bool // a server tool ran for it: a page it found cited (url_citation), or a use counted in its usage
 }
 
 // Ask asks the model and returns its reply. When the model calls function
 // tools it runs them and asks again, up to maxRounds requests in budget,
-// keeping up to MaxPictures pictures from them. The tokens of every request
+// keeping up to MaxPictures pictures from them; if a later request fails,
+// the pictures are the reply. The tokens of every request
 // are summed and logged, with the cost when the API reports it.
 func (c *Client) Ask(ctx context.Context, r Request) (Reply, error) {
 	ctx, cancel := context.WithTimeout(ctx, budget)
 	defer cancel()
+	tools := &spend{}
+	ctx = context.WithValue(ctx, spendKey{}, tools) // what tools spend through the API, such as on images
 	start := time.Now()
 	msgs := []message{{Role: "system", Content: r.System}}
 	for _, e := range r.History {
@@ -254,7 +261,7 @@ func (c *Client) Ask(ctx context.Context, r Request) (Reply, error) {
 	}
 	msgs = append(msgs, message{Role: "user", Content: r.Text, Images: r.Images, Files: r.Files})
 	pdf := slices.ContainsFunc(r.Files, func(f feature.File) bool { return audioFormat(f.MIME) == "" })
-	tools, defs := map[string]feature.Tool{}, []any{}
+	offered, defs := map[string]feature.Tool{}, []any{}
 	for _, t := range r.Tools {
 		if t.Server != "" {
 			defs = append(defs, map[string]string{"type": t.Server})
@@ -266,10 +273,10 @@ func (c *Client) Ask(ctx context.Context, r Request) (Reply, error) {
 		}
 		defs = append(defs, map[string]any{"type": "function", "function": map[string]any{
 			"name": t.Name, "description": t.Description, "parameters": schema}})
-		tools[t.Name] = t
+		offered[t.Name] = t
 	}
 	choice := ""
-	if _, ok := tools[r.ToolChoice]; ok {
+	if _, ok := offered[r.ToolChoice]; ok {
 		choice = r.ToolChoice
 	}
 
@@ -280,11 +287,19 @@ func (c *Client) Ask(ctx context.Context, r Request) (Reply, error) {
 		if round == 1 {
 			err = c.rejected(err, len(r.Images) > 0, len(r.Files) > 0, len(defs) > 0)
 		}
-		total.input, total.cached, total.output, total.cost = total.input+a.input, total.cached+a.cached, total.output+a.output, total.cost+a.cost
-		total.costed = total.costed || a.costed
+		spent, costed := tools.take()
+		total.input, total.cached, total.output, total.cost = total.input+a.input, total.cached+a.cached, total.output+a.output, total.cost+a.cost+spent
+		total.costed = total.costed || a.costed || costed
 		reply.Cost, reply.Costed = total.cost, total.costed // what was spent, even on the way to an error
 		if err == nil {
 			logRequest(round, a, slices.ContainsFunc(msgs, func(m message) bool { return m.Annotations != nil }))
+		}
+		if err != nil && len(reply.Pictures) > 0 && round > 1 {
+			// Pictures a tool made, perhaps at a cost, go out without the
+			// model's words rather than not at all.
+			logx.Warnf("model request %d failed after a tool made pictures; sending them alone: %v", round, err)
+			reply.Text = ""
+			return reply, nil
 		}
 		if err != nil {
 			return reply, err
@@ -311,7 +326,7 @@ func (c *Client) Ask(ctx context.Context, r Request) (Reply, error) {
 		msgs = append(msgs, message{Role: "assistant", Content: a.text, ToolCalls: a.calls, Annotations: a.annotations})
 		for _, tc := range a.calls {
 			name := tc.Function.Name
-			out, pics, err := run(ctx, tools[name], tc.Function.Arguments)
+			out, pics, err := run(ctx, offered[name], tc.Function.Arguments)
 			if err != nil {
 				out = cmp.Or(out, "error: "+err.Error())
 			} else {
@@ -324,6 +339,88 @@ func (c *Client) Ask(ctx context.Context, r Request) (Reply, error) {
 			msgs = append(msgs, message{Role: "tool", ToolCallID: tc.ID, Content: out})
 		}
 	}
+}
+
+// spend is what tools spent through the API during one Ask, which counts
+// toward the reply's cost.
+type spend struct {
+	mu     sync.Mutex
+	cost   float64
+	costed bool
+}
+
+type spendKey struct{}
+
+// add counts cost, if the API reported one, to the Ask ctx belongs to.
+func addSpend(ctx context.Context, cost float64, costed bool) {
+	if s, ok := ctx.Value(spendKey{}).(*spend); ok {
+		s.mu.Lock()
+		s.cost, s.costed = s.cost+cost, s.costed || costed
+		s.mu.Unlock()
+	}
+}
+
+// take returns what was spent since it was last taken.
+func (s *spend) take() (float64, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	c, ok := s.cost, s.costed
+	s.cost, s.costed = 0, false
+	return c, ok
+}
+
+// maxImage caps an image the API returns, base64 and all.
+const maxImage = 24 << 20
+
+// Image makes an image with OpenRouter's images endpoint, from providers
+// that don't collect the data, and returns its bytes. Its cost is added to
+// the Ask whose tool called it.
+func (c *Client) Image(ctx context.Context, r feature.ImageRequest) ([]byte, error) {
+	if !c.openRouter {
+		return nil, errors.New("image generation needs OpenRouter's API")
+	}
+	body := map[string]any{"model": r.Model, "prompt": r.Prompt, "n": 1, "output_format": "png",
+		"provider": map[string]string{"data_collection": "deny"}}
+	if r.AspectRatio != "" {
+		body["aspect_ratio"] = r.AspectRatio
+	}
+	if r.Quality != "" {
+		body["quality"] = r.Quality
+	}
+	payload, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	start := time.Now()
+	data, err := c.postTo(ctx, "/images", payload, 150*time.Second, maxImage)
+	if err != nil {
+		return nil, err
+	}
+	var res struct {
+		Data []struct {
+			B64 string `json:"b64_json"`
+		} `json:"data"`
+		Usage struct {
+			Cost *float64 `json:"cost"`
+		} `json:"usage"`
+	}
+	if err := json.Unmarshal(data, &res); err != nil {
+		return nil, errors.New("unreadable image response")
+	}
+	cost := 0.0
+	if res.Usage.Cost != nil {
+		cost = *res.Usage.Cost
+	}
+	addSpend(ctx, cost, res.Usage.Cost != nil)
+	if len(res.Data) == 0 || res.Data[0].B64 == "" {
+		return nil, errors.New("no image in the response")
+	}
+	img, err := base64.StdEncoding.DecodeString(res.Data[0].B64)
+	if err != nil {
+		return nil, errors.New("undecodable image")
+	}
+	logx.Infof("image %.1fs, %d KB, $%.3f", time.Since(start).Seconds(), len(img)>>10, cost)
+	return img, nil
 }
 
 // rejected is err as ErrImages if the first request carried images and an
@@ -411,9 +508,10 @@ func (c *Client) request(ctx context.Context, msgs []message, tools []any, choic
 			} `json:"message"`
 		} `json:"choices"`
 		Usage struct {
-			PromptTokens        int      `json:"prompt_tokens"`
-			CompletionTokens    int      `json:"completion_tokens"`
-			Cost                *float64 `json:"cost"` // OpenRouter's
+			PromptTokens        int            `json:"prompt_tokens"`
+			CompletionTokens    int            `json:"completion_tokens"`
+			Cost                *float64       `json:"cost"`            // OpenRouter's
+			ServerToolUse       map[string]int `json:"server_tool_use"` // uses of each server tool
 			PromptTokensDetails struct {
 				CachedTokens int `json:"cached_tokens"`
 			} `json:"prompt_tokens_details"`
@@ -424,6 +522,9 @@ func (c *Client) request(ctx context.Context, msgs []message, tools []any, choic
 	}
 	a := answer{input: r.Usage.PromptTokens, cached: r.Usage.PromptTokensDetails.CachedTokens,
 		output: r.Usage.CompletionTokens, costed: r.Usage.Cost != nil}
+	for _, n := range r.Usage.ServerToolUse {
+		a.serverTools = a.serverTools || n > 0
+	}
 	if a.costed {
 		a.cost = *r.Usage.Cost
 	}
@@ -432,24 +533,39 @@ func (c *Client) request(ctx context.Context, msgs []message, tools []any, choic
 		a.calls = r.Choices[0].Message.ToolCalls
 		if an := r.Choices[0].Message.Annotations; len(an) > 0 && string(an) != "null" {
 			a.annotations = an
+			var notes []struct{ Type string }
+			json.Unmarshal(an, &notes) // other shapes are just not citations
+			for _, n := range notes {
+				a.serverTools = a.serverTools || n.Type == "url_citation" // a page a server tool found, cited
+			}
 		}
 	}
 	return a, nil
 }
 
-// post sends payload and returns the body of a 200 response. A network
-// error, 429 or 5xx gets one retry.
+// post sends payload to chat completions and returns the body of a 200
+// response. A network error, 429 or 5xx gets one retry.
 func (c *Client) post(ctx context.Context, payload []byte) ([]byte, error) {
-	ctx, cancel := context.WithTimeout(ctx, 90*time.Second)
+	return c.postTo(ctx, "/chat/completions", payload, 90*time.Second, 4<<20)
+}
+
+// postTo sends payload to path, waiting at most wait, and returns the body
+// of a 200 response, at most limit bytes. A network error, 429 or 5xx gets
+// one retry.
+func (c *Client) postTo(ctx context.Context, path string, payload []byte, wait time.Duration, limit int64) ([]byte, error) {
+	ctx, cancel := context.WithTimeout(ctx, wait)
 	defer cancel()
 	for attempt := 1; ; attempt++ {
-		req, _ := http.NewRequestWithContext(ctx, http.MethodPost, c.base+"/chat/completions", bytes.NewReader(payload))
+		req, _ := http.NewRequestWithContext(ctx, http.MethodPost, c.base+path, bytes.NewReader(payload))
 		c.authorize(req)
 		req.Header.Set("Content-Type", "application/json")
 		resp, err := c.http.Do(req)
 		if err == nil {
-			data, _ := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
+			data, _ := io.ReadAll(io.LimitReader(resp.Body, limit+1))
 			resp.Body.Close()
+			if int64(len(data)) > limit {
+				return nil, fmt.Errorf("response over %d bytes", limit)
+			}
 			if resp.StatusCode == http.StatusOK {
 				return data, nil
 			}

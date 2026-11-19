@@ -37,7 +37,7 @@ If a feature can't be built on these, that's a design finding. Either a port bec
 A plain `go build` has everything. A tag leaves a part out, and never adds one, so a forgotten tag can't ship a smaller bot:
 
 - **`nocharts`** leaves out charts and their fonts. A feature that can be left out is a variable from a pair of files, `features_<name>.go` (`//go:build !no<name>`, the feature's `Register`) and `features_no<name>.go` (`//go:build no<name>`, nil). Its place in `features.go` stays, so the order is still set in one list; `enabled()` drops the nils. A scenario that needs it starts with `skipWithout(t, <name>Feature)`, and CI runs the tests with the tag too.
-- **`nosignal`** leaves the build with no chat network, so `network_none.go` stops it with a compile error rather than making a bot that answers no one. A second network gets a `network_<name>.go` of its own, and that file's tag becomes `nosignal && no<name>`.
+- **`nosignal`** and **`notelegram`** each leave out a chat network. A network registers itself from `network_<name>.go` (`//go:build !no<name>`), and `network.go` chooses one at startup from its settings. With both tags `network_none.go` stops the build with a compile error rather than making a bot that answers no one; a third network adds its tag to that file's. Each network's scenarios carry its tag, and CI runs the tests under each.
 
 Give a feature a tag only for a real saving, such as a dependency; a runtime setting (like `FILES`) is the way to turn a feature off.
 

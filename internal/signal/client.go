@@ -294,7 +294,8 @@ func (c *Client) dispatch(line []byte, handle func(bot.Received)) {
 	}
 }
 
-// unmatched logs the outcome of a fire-and-forget request, send or sendTyping.
+// unmatched logs the outcome of a fire-and-forget request: sendTyping or
+// sendReaction.
 func unmatched(m *rpcMsg) {
 	if m.Error != nil {
 		logx.Errorf("signal-cli request %s failed: %s", m.ID, txt.Clamp(m.Error.Message, 200))
@@ -397,6 +398,12 @@ func (c *Client) Media(ctx context.Context, msg feature.Message, i int) ([]byte,
 	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
 	m := msg.Media[i]
+	if strings.HasPrefix(m.ID, sentPrefix) {
+		if data, ok := c.recent.sent(msg.Chat.Key(), m.ID); ok {
+			return data, nil
+		}
+		return nil, errors.New("the picture is no longer held")
+	}
 	var r struct {
 		Data []byte `json:"data"` // base64, decoded as it is read: one copy fewer of a big image
 	}

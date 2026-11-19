@@ -27,11 +27,13 @@ type Chatter struct{ Message feature.Message }
 // GroupChanged says only that a group's members, name or description changed.
 type GroupChanged struct{ Chat feature.Chat }
 
-// Deleted says the message sender sent at Sent was deleted for everyone,
-// at At.
+// Deleted says the versions before At of the message Sender sent at Sent
+// were deleted for everyone or replaced; with Bot, the message is one the
+// bot sent (Send's timestamp), and Sender is unused.
 type Deleted struct {
 	Chat     feature.Chat
 	Sender   string
+	Bot      bool
 	Sent, At int64
 }
 

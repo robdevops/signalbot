@@ -1,3 +1,5 @@
+//go:build !nosignal
+
 package main
 
 // startBot wires the bot to the scenario fakes, as main does. It is the only
@@ -19,7 +21,7 @@ import (
 // starts with all of them cleared.
 var settingNames = []string{"SIGNALCLI_SOCKET", "MODEL_API_URL", "MODEL_API_KEY", "MODEL", "MODEL_SEARCH", "MODEL_REASONING",
 	"SIGNAL_DM_USER_IDS", "MODEL_SYSTEM_PROMPT", "INTRO", "MAX_CONCURRENCY", "HISTORY_MAX", "TOOL_LINGER_ROUNDS",
-	"MCP_CONFIG", "GROUP_CONTEXT", "FILES", "JOURNAL_STREAM"}
+	"MCP_CONFIG", "GROUP_CONTEXT", "FILES", "CHARTS", "JOURNAL_STREAM"}
 
 // startBot starts the bot in w, connected to its fakes, and returns once it
 // has connected and loaded its contacts. Everything it started is drained
@@ -57,7 +59,10 @@ func startBot(t *testing.T, w world) *harness {
 	// What main does.
 	cfg := config.Load()
 	cfg.Test = test
-	net := newNetwork(cfg.Test)
+	net, err := newNetwork(cfg.Test)
+	if err != nil {
+		t.Fatal(err)
+	}
 	ctx, closeConn := context.WithCancel(context.Background())
 	t.Cleanup(closeConn)
 	b := bot.New(ctx, cfg, net)

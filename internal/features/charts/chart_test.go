@@ -2,7 +2,9 @@ package charts
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
+	"fmt"
 	"image"
 	"image/color"
 	"image/png"
@@ -186,7 +188,7 @@ func TestChartTwoAxes(t *testing.T) {
 	if !s.right.used || s.Series[0].Points[1].Value != 120 || s.Series[1].Points[1].Value != -50 {
 		t.Fatalf("per-axis modes: %+v", s.Series)
 	}
-	if got := s.summary(); got != chartNote+"Final values: A $120.0, B -50.0%." {
+	if got := s.summary(); got != chartNote+"Final values: A $120.0 (+20.0% over the period), B -50.0%." {
 		t.Fatalf("summary %q", got)
 	}
 	if _, err := renderChart(s, lightTheme); err != nil {
@@ -599,5 +601,118 @@ func TestChartSourceClamp(t *testing.T) {
 	}
 	if c, _ := parseChart(dualAxisTool, true, `{"source":"  Yahoo Finance ",`+sampleChart()[1:]); c.Source != "Yahoo Finance" {
 		t.Fatalf("source %q", c.Source)
+	}
+}
+
+// A value chart labels each line's period change unless show_change is
+// false; in change mode or from a start of 0 or less, it shows none.
+func TestShowChange(t *testing.T) {
+	t.Parallel()
+	pts := func(a, b float64) []chartPoint { return []chartPoint{{Value: a}, {Value: b}} }
+	yes, no := true, false
+	on := &chartAxis{Mode: "value"}
+	for _, tc := range []struct {
+		a     *chartAxis
+		first float64
+		last  float64
+		want  string
+	}{
+		{on, 229.28, 178.67, "-22.1%"},
+		{on, 100, 105, "+5.0%"},
+		{on, 100, 99.99, "+0.0%"},
+		{on, 0, 5, ""},
+		{on, -2, 5, ""},
+		{&chartAxis{Mode: "value", ShowChange: &yes}, 100, 105, "+5.0%"},
+		{&chartAxis{Mode: "value", ShowChange: &no}, 100, 105, ""},
+		{&chartAxis{Mode: "change", ShowChange: &yes}, 0, 5, ""},
+	} {
+		if got := tc.a.change(pts(tc.first, tc.last)); got != tc.want {
+			t.Errorf("%+v %v→%v: %q, want %q", *tc.a, tc.first, tc.last, got, tc.want)
+		}
+	}
+
+	for _, tool := range []struct {
+		name string
+		dual bool
+		axis string
+	}{{chartTool, false, `"y_axis":{"mode":"value"}`}, {dualAxisTool, true, `"axes":{"left":{"title":"Price"}}`}} {
+		s, err := parseChart(tool.name, tool.dual, `{"title":"NVDA, 1 month",`+tool.axis+`,"series":[{"name":"NVDA","points":[{"date":"2026-10-09","value":229.28},{"date":"2026-11-09","value":178.67}]}]}`)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := s.summary(); got != chartNote+"Final values: NVDA 178.7 (-22.1% over the period)." {
+			t.Fatalf("%s: summary %q", tool.name, got)
+		}
+	}
+	s, _ := parseChart(chartTool, false, `{"title":"T","y_axis":{"show_change":false},"series":[{"name":"A","points":[{"date":"2026-10-09","value":1},{"date":"2026-11-09","value":2}]}]}`)
+	if strings.Contains(s.summary(), "period") {
+		t.Fatal("shown when turned off")
+	}
+
+	// Drawn, alone and beside another line, in both themes.
+	for _, args := range []string{
+		areaSample(22, false),
+		`{"title":"NVDA vs AMD, 1 month","axes":{"left":{"unit":"$"}},"series":[` +
+			`{"name":"NVDA","points":[{"date":"2026-10-09","value":229.28},{"date":"2026-11-09","value":178.67}]},` +
+			`{"name":"AMD","points":[{"date":"2026-10-09","value":160.1},{"date":"2026-11-09","value":171.3}]}]}`,
+	} {
+		s, err := parseChart(dualAxisTool, true, args)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, th := range []*theme{lightTheme, darkTheme} {
+			data, err := renderChart(s, th)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if dir := os.Getenv("CHART_CHANGE"); dir != "" && th == lightTheme {
+				os.WriteFile(filepath.Join(dir, "change-"+fmt.Sprint(len(s.Series))+".png"), data, 0o644)
+			}
+		}
+	}
+}
+
+// A single series' change leads its subtitle, with an arrow, and replaces
+// the subtitle in the caption; several series, or none to show, keep both
+// as given.
+func TestHeadline(t *testing.T) {
+	t.Parallel()
+	one := func(axis, a, b string) string {
+		return `{"title":"NVDA, 1 month","subtitle":"Daily close",` + axis + `"series":[{"name":"NVDA","points":[{"date":"2026-10-09","value":` + a + `},{"date":"2026-11-09","value":` + b + `}]}]}`
+	}
+	for _, c := range []struct {
+		args, head, caption string
+		up                  bool
+	}{
+		{one(``, "229.28", "178.67"), "▼ 22.1%", "NVDA, 1 month ▼ 22.1%", false},
+		{one(``, "100", "105"), "▲ 5.0%", "NVDA, 1 month ▲ 5.0%", true},
+		{one(`"y_axis":{"show_change":false},`, "100", "105"), "", "NVDA, 1 month — Daily close", true},
+		{one(`"y_axis":{"mode":"change"},`, "100", "120"), "▲ 20.0%", "NVDA, 1 month ▲ 20.0%", true},
+		{`{"title":"A vs B","series":[{"name":"A","points":[{"date":"2026-10-09","value":1},{"date":"2026-11-09","value":2}]},{"name":"B","points":[{"date":"2026-10-09","value":1},{"date":"2026-11-09","value":3}]}]}`, "", "A vs B", true},
+	} {
+		s, err := parseChart(chartTool, false, c.args)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if head, up := s.headline(); head != c.head || up != c.up {
+			t.Errorf("%s: headline %q up=%v", c.args, head, up)
+		}
+		_, pics, err := lineChart(darkHours{}, chartTool, false)(context.Background(), c.args)
+		if err != nil || len(pics) != 1 || pics[0].Caption != c.caption {
+			t.Errorf("%s: caption %+v %v", c.args, pics, err)
+		}
+	}
+}
+
+// An axis sent as a string holding its JSON is the axis, not its title.
+func TestAxisAsJSONString(t *testing.T) {
+	t.Parallel()
+	pts := `"series":[{"name":"A","points":[{"date":"2026-10-09","value":1},{"date":"2026-11-09","value":2}]}]`
+	s, err := parseChart(chartTool, false, `{"title":"T","y_axis":"{\"mode\": \"value\", \"show_change\": true}",`+pts+`}`)
+	if err != nil || s.left.Title != "" || s.left.Mode != "value" {
+		t.Fatalf("got %+v, %v", s.left, err)
+	}
+	if s, _ := parseChart(chartTool, false, `{"title":"T","y_axis":"Price",`+pts+`}`); s.left.Title != "Price" {
+		t.Fatalf("a plain title: %+v", s.left)
 	}
 }

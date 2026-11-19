@@ -461,3 +461,31 @@ func TestDeletesAndEditsFromAnyone(t *testing.T) {
 		t.Fatalf("an admin delete outside a group: %+v", r)
 	}
 }
+
+// A delete or edit the account made on a linked device names one of the
+// bot's messages: in a DM by its destination, in a group by its group.
+// Other syncs, and a sync from anyone else, are nothing to the bot.
+func TestSyncedDeletesAndEdits(t *testing.T) {
+	c := newClient("x", nil, nil)
+	c.id.Store(botID)
+	self := `"sourceUuid":"` + botID + `","timestamp":900`
+	for _, tc := range []struct {
+		name, env string
+		want      bot.Received
+	}{
+		{"delete in a DM", `{` + self + `,"syncMessage":{"sentMessage":{"timestamp":900,"destination":"+1555","destinationUuid":"` + aliceID + `","remoteDelete":{"targetTimestamp":800}}}}`,
+			bot.Deleted{Chat: feature.Chat{User: aliceID}, Bot: true, Sent: 800, At: math.MaxInt64}},
+		{"delete in a group", `{` + self + `,"syncMessage":{"sentMessage":{"timestamp":900,"groupInfo":{"groupId":"` + groupID + `","type":"DELIVER"},"remoteDelete":{"targetTimestamp":800}}}}`,
+			bot.Deleted{Chat: feature.Chat{GroupID: groupID}, Bot: true, Sent: 800, At: math.MaxInt64}},
+		{"edit", `{` + self + `,"syncMessage":{"sentMessage":{"timestamp":900,"destinationUuid":"` + aliceID + `","editMessage":{"targetSentTimestamp":800,"dataMessage":{"message":"new"}}}}}`,
+			bot.Deleted{Chat: feature.Chat{User: aliceID}, Bot: true, Sent: 800, At: math.MaxInt64}},
+		{"a message sent from the phone", `{` + self + `,"syncMessage":{"sentMessage":{"timestamp":900,"destinationUuid":"` + aliceID + `","message":"hi"}}}`, nil},
+		{"read receipts", `{` + self + `,"syncMessage":{"readMessages":[{"sender":"` + aliceID + `","timestamp":1}]}}`, nil},
+		{"from someone else", `{"sourceUuid":"` + bobID + `","syncMessage":{"sentMessage":{"destinationUuid":"` + aliceID + `","remoteDelete":{"targetTimestamp":800}}}}`, nil},
+	} {
+		r, ok := c.event(parse(t, tc.env))
+		if ok != (tc.want != nil) || ok && r != tc.want {
+			t.Errorf("%s: got %+v %v", tc.name, r, ok)
+		}
+	}
+}

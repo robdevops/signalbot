@@ -3,6 +3,7 @@ package bot
 import (
 	"cmp"
 	"context"
+	"errors"
 	"fmt"
 	"slices"
 	"strings"
@@ -91,8 +92,17 @@ func (b *Bot) Info() feature.Info {
 		Images: b.images.Load(), Audio: b.audio.Load(), PDFs: b.files.Load(), CallsTools: b.callsTools.Load(), Tools: b.toolNames(false), Intro: b.intro(false), IntroDM: b.intro(true)}
 	if b.ai == nil {
 		info.Model = ""
+	} else {
+		info.MakesImage = b.ai.ReportsCost() // OpenRouter's API, which has an images endpoint
 	}
 	return info
+}
+
+func (b *Bot) GenerateImage(ctx context.Context, r feature.ImageRequest) ([]byte, error) {
+	if b.ai == nil {
+		return nil, errors.New("no model")
+	}
+	return b.ai.Image(ctx, r)
 }
 
 func (b *Bot) Go(fn func(context.Context)) {
@@ -181,8 +191,9 @@ func (b *Bot) delivered(msg feature.Message) {
 	for _, m := range r.Members {
 		chats.Claim(known, m.Name, m.ID)
 	}
-	b.net.Send(msg.Chat, msg.Text, nil, known)
+	p := b.pending()
 	if b.ai != nil { // with no model, nothing would read it
-		b.chats.Add(key, b.now(), msg.Expires, chats.Entry{Role: "user", Content: cmp.Or(msg.Name, "someone") + ": " + msg.Text, Context: true})
+		b.chats.Add(key, b.now(), msg.Expires, chats.Entry{Role: "user", Content: cmp.Or(msg.Name, "someone") + ": " + msg.Text, Context: true, Refs: []chats.Ref{p}})
 	}
+	b.sendKept(key, p, msg.Chat, msg.Text, nil, known)
 }

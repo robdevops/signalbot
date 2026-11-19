@@ -196,7 +196,7 @@ func renderPie(s *pieSpec, th *theme) ([]byte, error) {
 
 // drawPie draws the chart, a ring with the total in its hole, in theme th.
 func drawPie(s *pieSpec, th *theme) *canvas {
-	cv := newCanvas(th, s.Title, s.Subtitle, s.Source)
+	cv := newCanvas(th, s.Title, s.Subtitle, th.muted, s.Source)
 	legendFace := face(chartFonts.regular, 26)
 	defer legendFace.Close()
 

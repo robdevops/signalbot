@@ -114,6 +114,10 @@ func themeFor(d darkHours) *theme {
 // Register offers the chart tools on h, and sends a chart alone with its
 // caption.
 func Register(h feature.Host) error {
+	if !txt.Bool(h.Env("CHARTS", ""), true) { // off, such as for a charts MCP server of one's own
+		logx.Infof("charts: off (CHARTS)")
+		return nil
+	}
 	mode := darkMode(h)
 	h.OfferTools(feature.ToolGroup{
 		Names:    []string{"**charts**: line, pie"},
@@ -148,7 +152,11 @@ func lineChart(mode darkHours, tool string, dual bool) func(context.Context, str
 			return "error: " + err.Error(), nil, fmt.Errorf("%w: %v", errArgs, err)
 		}
 		data, err := renderChart(s, themeFor(mode))
-		return drawn(s.summary(), chartCaption(s.Title, s.Subtitle), fileName("line", s.Title), data, err)
+		caption := chartCaption(s.Title, s.Subtitle)
+		if head, _ := s.headline(); head != "" { // the change, in place of the subtitle
+			caption = s.Title + " " + head
+		}
+		return drawn(s.summary(), caption, fileName("line", s.Title), data, err)
 	}
 }
 

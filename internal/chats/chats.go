@@ -315,6 +315,22 @@ func (s *Store[M]) Forget(key, id string, at int64) {
 	s.tidy(key, c)
 }
 
+// Retag replaces the ref named id, in the entries holding it, with refs:
+// for a reply kept before it was sent, whose timestamps came after.
+func (s *Store[M]) Retag(key, id string, refs []Ref) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	c := s.get(key, false)
+	if c == nil {
+		return
+	}
+	for i, e := range c.history {
+		if j := slices.IndexFunc(e.Refs, func(r Ref) bool { return r.ID == id }); j >= 0 {
+			c.history[i].Refs = slices.Concat(e.Refs[:j:j], refs, e.Refs[j+1:])
+		}
+	}
+}
+
 // Gone reports whether the version of message id at at was deleted or
 // replaced by an edit, so it is not answered or kept.
 func (s *Store[M]) Gone(key, id string, at int64) bool {
