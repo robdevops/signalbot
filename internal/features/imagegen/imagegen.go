@@ -5,6 +5,7 @@ package imagegen
 import (
 	"cmp"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -99,7 +100,7 @@ func Register(h feature.Host) error {
 		return nil
 	case info.Model == "":
 		return nil
-	case !info.MakesImage:
+	case info.Provider != "openrouter":
 		logx.Infof("images: off, as only OpenRouter's API makes them")
 		return nil
 	case !slices.Contains([]string{"low", "medium", "high", "auto"}, quality):
@@ -167,7 +168,7 @@ func run(h feature.Host, model, quality string) func(context.Context, string) (s
 		}
 		a.Prompt = txt.Clamp(a.Prompt, maxPrompt)
 		logx.Infof("image asked: %s, %d requirements, %s", cmp.Or(a.Kind, "no kind"), len(a.Requirements), cmp.Or(a.AspectRatio, "model's ratio")) // never the prompt
-		data, err := h.GenerateImage(ctx, feature.ImageRequest{Model: model, Prompt: imagePrompt(a), AspectRatio: a.AspectRatio, Quality: quality})
+		data, err := generate(ctx, h, model, quality, a.AspectRatio, imagePrompt(a))
 		if err != nil {
 			return "error: the image could not be made (" + reason(err) + "). Tell the user, briefly.", nil, err
 		}
@@ -178,6 +179,27 @@ func run(h feature.Host, model, quality string) func(context.Context, string) (s
 		return "The picture is made and attached to your reply.", []feature.Picture{{Data: data, Name: fileName(title),
 			HistoryNote: historyNote(a)}}, nil
 	}
+}
+
+// generate asks OpenRouter's images endpoint for one PNG and returns it.
+func generate(ctx context.Context, h feature.Host, model, quality, ratio, prompt string) ([]byte, error) {
+	body := map[string]any{"model": model, "prompt": prompt, "n": 1, "output_format": "png", "quality": quality}
+	if ratio != "" {
+		body["aspect_ratio"] = ratio
+	}
+	data, err := h.CallAPI(ctx, "/images", body)
+	if err != nil {
+		return nil, err
+	}
+	var res struct {
+		Data []struct {
+			B64 string `json:"b64_json"`
+		} `json:"data"`
+	}
+	if json.Unmarshal(data, &res) != nil || len(res.Data) == 0 || res.Data[0].B64 == "" {
+		return nil, errors.New("no image in the response")
+	}
+	return base64.StdEncoding.DecodeString(res.Data[0].B64)
 }
 
 // historyNote is what history keeps of a picture, so a change asked for

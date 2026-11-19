@@ -3,7 +3,10 @@ package imagegen
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"image"
 	"image/color"
 	"image/png"
@@ -30,7 +33,7 @@ func pngBytes(t *testing.T) []byte {
 // host is a host whose API makes images, with settings.
 func host(settings map[string]string) *featuretest.Host {
 	h := featuretest.New()
-	h.Bot = feature.Info{Model: "x/model", CallsTools: true, MakesImage: true}
+	h.Bot = feature.Info{Model: "x/model", CallsTools: true, Provider: "openrouter"}
 	for k, v := range settings {
 		h.Settings[k] = v
 	}
@@ -79,7 +82,7 @@ func TestOff(t *testing.T) {
 		"no model": func() *featuretest.Host { h := host(nil); h.Bot.Model = ""; return h }(),
 		"other API": func() *featuretest.Host {
 			h := host(nil)
-			h.Bot.MakesImage = false
+			h.Bot.Provider = ""
 			return h
 		}(),
 	} {
@@ -98,11 +101,8 @@ func TestRun(t *testing.T) {
 	var logs logx.Buffer
 	defer logx.SetOutput(&logs, &logs, false)()
 	h := host(map[string]string{"IMAGE_MODEL": "x/painter", "IMAGE_QUALITY": "high"})
-	var got feature.ImageRequest
-	h.Image = func(_ context.Context, r feature.ImageRequest) ([]byte, error) {
-		got = r
-		return pngBytes(t), nil
-	}
+	var got req
+	h.API = answering(t, pngBytes(t), &got, nil)
 	Register(h)
 	run := h.ToolGroups()[0].Tools[0].Run
 	out, pics, err := run(context.Background(), `{"prompt":"  a fox in the snow ","aspect_ratio":"16:9","title":"Snow fox"}`)
@@ -112,7 +112,7 @@ func TestRun(t *testing.T) {
 	if !strings.Contains(logs.String(), "image asked: no kind, 0 requirements, 16:9") || strings.Contains(logs.String(), "fox") {
 		t.Errorf("log %q", logs.String())
 	}
-	if got != (feature.ImageRequest{Model: "x/painter", Prompt: "a fox in the snow", AspectRatio: "16:9", Quality: "high"}) {
+	if got != (req{Path: "/images", Model: "x/painter", Prompt: "a fox in the snow", AspectRatio: "16:9", Quality: "high"}) {
 		t.Errorf("asked %+v", got)
 	}
 	if p := pics[0]; p.Name != "Snow fox" || p.Caption != "" || p.HistoryNote != "[sent a picture made from the prompt: a fox in the snow]" || !bytes.Equal(p.Data, pngBytes(t)) {
@@ -136,7 +136,7 @@ func TestRun(t *testing.T) {
 func TestRunFails(t *testing.T) {
 	h := host(nil)
 	var fail error
-	h.Image = func(context.Context, feature.ImageRequest) ([]byte, error) { return nil, fail }
+	h.API = answering(t, nil, nil, &fail)
 	Register(h)
 	run := h.ToolGroups()[0].Tools[0].Run
 	for e, want := range map[string]string{
@@ -151,7 +151,8 @@ func TestRunFails(t *testing.T) {
 			t.Errorf("%s: %q", e, out)
 		}
 	}
-	h.Image = func(context.Context, feature.ImageRequest) ([]byte, error) { return []byte("not an image"), nil }
+	fail = nil
+	h.API = answering(t, []byte("not an image"), nil, &fail)
 	if out, pics, err := run(context.Background(), `{"prompt":"x"}`); err == nil || pics != nil {
 		t.Errorf("not an image: %q", out)
 	}
@@ -161,11 +162,8 @@ func TestRunFails(t *testing.T) {
 // first, with its requirements listed; an artistic one goes as written.
 func TestTechnicalPrompt(t *testing.T) {
 	h := host(nil)
-	var got feature.ImageRequest
-	h.Image = func(_ context.Context, r feature.ImageRequest) ([]byte, error) {
-		got = r
-		return pngBytes(t), nil
-	}
+	var got req
+	h.API = answering(t, pngBytes(t), &got, nil)
 	Register(h)
 	run := h.ToolGroups()[0].Tools[0].Run
 	run(context.Background(), `{"prompt":"a cutaway of a stereo record groove","kind":"technical",`+
@@ -192,5 +190,27 @@ func TestTechnicalPrompt(t *testing.T) {
 		if got.Prompt != "a fox in watercolour" {
 			t.Fatalf("%s: %q", args, got.Prompt)
 		}
+	}
+}
+
+// req is what an image request asked for.
+type req struct{ Path, Model, Prompt, AspectRatio, Quality string }
+
+// answering is a fake model API that records an image request in got and
+// answers it as OpenRouter's images endpoint does with data, or fails with
+// *fail.
+func answering(t *testing.T, data []byte, got *req, fail *error) func(context.Context, string, map[string]any) (json.RawMessage, error) {
+	return func(_ context.Context, path string, body map[string]any) (json.RawMessage, error) {
+		if got != nil {
+			s := func(k string) string { v, _ := body[k].(string); return v }
+			*got = req{path, s("model"), s("prompt"), s("aspect_ratio"), s("quality")}
+			if body["n"] != 1 || body["output_format"] != "png" {
+				t.Errorf("body %v", body)
+			}
+		}
+		if fail != nil && *fail != nil {
+			return nil, *fail
+		}
+		return json.RawMessage(fmt.Sprintf(`{"created":1,"data":[{"b64_json":%q}],"usage":{"cost":0.04}}`, base64.StdEncoding.EncodeToString(data))), nil
 	}
 }

@@ -11,8 +11,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"net/http"
 	"net/url"
+	"regexp"
 	"slices"
 	"strings"
 	"sync"
@@ -369,58 +371,68 @@ func (s *spend) take() (float64, bool) {
 	return c, ok
 }
 
-// maxImage caps an image the API returns, base64 and all.
-const maxImage = 24 << 20
+// maxCall caps a Call's response, and callWait how long it may take.
+const (
+	maxCall  = 32 << 20
+	callWait = 150 * time.Second
+)
 
-// Image makes an image with OpenRouter's images endpoint, from providers
-// that don't collect the data, and returns its bytes. Its cost is added to
-// the Ask whose tool called it.
-func (c *Client) Image(ctx context.Context, r feature.ImageRequest) ([]byte, error) {
-	if !c.openRouter {
-		return nil, errors.New("image generation needs OpenRouter's API")
+// apiPath is a path a Call may post to: an endpoint of the API, no query.
+var apiPath = regexp.MustCompile(`^(/[a-z0-9_-]+)+$`)
+
+// Provider is the API's provider as server tools name it: "openrouter",
+// or "" for another API.
+func (c *Client) Provider() string {
+	if c.openRouter {
+		return "openrouter"
 	}
-	body := map[string]any{"model": r.Model, "prompt": r.Prompt, "n": 1, "output_format": "png",
-		"provider": map[string]string{"data_collection": "deny"}}
-	if r.AspectRatio != "" {
-		body["aspect_ratio"] = r.AspectRatio
+	return ""
+}
+
+// Call posts body to path at the API, for a tool, and returns the
+// response. On OpenRouter it asks for providers that don't collect the
+// data, as every request does; the cost the response reports is added to
+// the reply of the Ask whose tool called it. Outside a tool there is no
+// reply to count it toward, so it refuses.
+func (c *Client) Call(ctx context.Context, path string, body map[string]any) (json.RawMessage, error) {
+	if _, ok := ctx.Value(spendKey{}).(*spend); !ok {
+		return nil, errors.New("the model's API is called only from a tool")
 	}
-	if r.Quality != "" {
-		body["quality"] = r.Quality
+	if !apiPath.MatchString(path) || path == "/chat/completions" {
+		return nil, fmt.Errorf("not an endpoint a tool may call: %q", path)
+	}
+	if c.openRouter {
+		body = maps.Clone(body)
+		p, _ := body["provider"].(map[string]any)
+		p = maps.Clone(p)
+		if p == nil {
+			p = map[string]any{}
+		}
+		p["data_collection"] = "deny"
+		body["provider"] = p
 	}
 	payload, err := json.Marshal(body)
 	if err != nil {
 		return nil, err
 	}
 	start := time.Now()
-	data, err := c.postTo(ctx, "/images", payload, 150*time.Second, maxImage)
+	data, err := c.postTo(ctx, path, payload, callWait, maxCall)
 	if err != nil {
 		return nil, err
 	}
-	var res struct {
-		Data []struct {
-			B64 string `json:"b64_json"`
-		} `json:"data"`
+	var usage struct {
 		Usage struct {
 			Cost *float64 `json:"cost"`
 		} `json:"usage"`
 	}
-	if err := json.Unmarshal(data, &res); err != nil {
-		return nil, errors.New("unreadable image response")
-	}
+	json.Unmarshal(data, &usage) // a response without usage costs nothing known
 	cost := 0.0
-	if res.Usage.Cost != nil {
-		cost = *res.Usage.Cost
+	if usage.Usage.Cost != nil {
+		cost = *usage.Usage.Cost
 	}
-	addSpend(ctx, cost, res.Usage.Cost != nil)
-	if len(res.Data) == 0 || res.Data[0].B64 == "" {
-		return nil, errors.New("no image in the response")
-	}
-	img, err := base64.StdEncoding.DecodeString(res.Data[0].B64)
-	if err != nil {
-		return nil, errors.New("undecodable image")
-	}
-	logx.Infof("image %.1fs, %d KB, $%.3f", time.Since(start).Seconds(), len(img)>>10, cost)
-	return img, nil
+	addSpend(ctx, cost, usage.Usage.Cost != nil)
+	logx.Infof("api %s %.1fs, %d KB, $%.3f", path, time.Since(start).Seconds(), len(data)>>10, cost)
+	return data, nil
 }
 
 // rejected is err as ErrImages if the first request carried images and an
