@@ -45,7 +45,9 @@ const description = "Make a picture from a text prompt with an image model, and 
 	"labelled or how-it-works illustration; artistic for anything else, such as art, a scene, a portrait, a logo or a meme. " +
 	"For technical, first work out the facts yourself, as an expert would check them, then list each one the picture must get right in requirements: " +
 	"what every label says and exactly what it points to, which way each arrow points and what it means, angles, counts, order, " +
-	"what is perpendicular, parallel, above or inside what. Keep labels few and short; name every box, label and arrow in the prompt and how they connect. " +
+	"what is perpendicular, parallel, above or inside what. Unless the user names a style, plan a rich infographic: a title, the main illustration, " +
+	"three to six short callouts with key facts and figures, and a legend; give every word and number it should show, as the image model invents none, " +
+	"and name every box, label and arrow and how they connect. " +
 	"Make one picture per call, and at most 4 in a reply. It can't see or change a picture the user sent: it only makes a new one from your words. " +
 	"To change a picture you made, start from its note in the conversation: keep its kind and every requirement, add the change, and rewrite the whole prompt. " +
 	"After it is made, reply in one short sentence, or not at all: don't describe the picture back."
@@ -62,8 +64,9 @@ var schema = json.RawMessage(`{"type":"object","properties":{` +
 // it: image models favour looks over accuracy unless told otherwise.
 const (
 	technicalBrief = "A picture that teaches, so it must be accurate: draw exactly what is described, and nothing that contradicts it. " +
-		"Keep any style the description asks for, but never at the cost of accuracy; if it names none, use a clean, uncluttered layout " +
-		"with room around each part, consistent line weights and high contrast. " +
+		"Keep any style the description asks for, but never at the cost of accuracy; if it names none, make it a rich, polished infographic: " +
+		"a bold title, a detailed main illustration with depth and texture, colour-coded sections, icons, callout boxes with the facts and figures given, " +
+		"and a small legend, in a clear visual hierarchy where every part stays legible. " +
 		"Draw each thing once; things too close to tell apart at the picture's scale share one mark and one label, with an inset if they must be shown apart."
 	textRules = "Text: only the words given above (labels, any title or caption), spelled exactly, each short, large and legible, " +
 		"a label placed next to what it names with a leader line if needed, and each label exactly once. No other text, no placeholder text, no invented numbers or values. " +
