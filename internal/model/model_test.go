@@ -701,6 +701,21 @@ func TestCall(t *testing.T) {
 			t.Errorf("called %q", path)
 		}
 	}
+	// Provider settings of any Go type keep theirs; a nil body is an empty
+	// one; a provider that isn't an object is refused.
+	type prefs struct {
+		Order []string `json:"order"`
+	}
+	c.Call(inTool, "/images", map[string]any{"provider": prefs{[]string{"b"}}})
+	if p, _ := called["provider"].(map[string]any); !reflect.DeepEqual(p, map[string]any{"order": []any{"b"}, "data_collection": "deny"}) {
+		t.Errorf("provider %v", called["provider"])
+	}
+	if _, err := c.Call(inTool, "/images", nil); err != nil || !reflect.DeepEqual(called, map[string]any{"provider": map[string]any{"data_collection": "deny"}}) {
+		t.Errorf("nil body: %v, sent %v", err, called)
+	}
+	if _, err := c.Call(inTool, "/images", map[string]any{"provider": "allow"}); err == nil {
+		t.Error("a provider that isn't an object was sent")
+	}
 	other := client(t, srv.URL, false)
 	other.Call(inTool, "/images", map[string]any{"model": "m"})
 	if _, ok := called["provider"]; ok || other.Provider() != "" || c.Provider() != "openrouter" {

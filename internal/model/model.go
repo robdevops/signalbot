@@ -401,12 +401,17 @@ func (c *Client) Call(ctx context.Context, path string, body map[string]any) (js
 	if !apiPath.MatchString(path) || path == "/chat/completions" {
 		return nil, fmt.Errorf("not an endpoint a tool may call: %q", path)
 	}
+	body = maps.Clone(body)
+	if body == nil {
+		body = map[string]any{}
+	}
 	if c.openRouter {
-		body = maps.Clone(body)
-		p, _ := body["provider"].(map[string]any)
-		p = maps.Clone(p)
-		if p == nil {
-			p = map[string]any{}
+		p := map[string]any{} // the body's provider settings, of whatever Go type, as a JSON object
+		if v, ok := body["provider"]; ok && v != nil {
+			raw, err := json.Marshal(v)
+			if err != nil || json.Unmarshal(raw, &p) != nil || p == nil {
+				return nil, errors.New("provider must be a JSON object")
+			}
 		}
 		p["data_collection"] = "deny"
 		body["provider"] = p
