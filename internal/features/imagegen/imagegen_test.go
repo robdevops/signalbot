@@ -152,3 +152,36 @@ func TestRunFails(t *testing.T) {
 		t.Errorf("not an image: %q", out)
 	}
 }
+
+// A technical picture's prompt goes inside a brief that puts accuracy
+// first, with its requirements listed; an artistic one goes as written.
+func TestTechnicalPrompt(t *testing.T) {
+	h := host(nil)
+	var got feature.ImageRequest
+	h.Image = func(_ context.Context, r feature.ImageRequest) ([]byte, error) {
+		got = r
+		return pngBytes(t), nil
+	}
+	Register(h)
+	run := h.ToolGroups()[0].Tools[0].Run
+	run(context.Background(), `{"prompt":"a cutaway of a stereo record groove","kind":"technical",`+
+		`"requirements":["the two walls are 90 degrees apart"," ","each wall's arrow is perpendicular to it"]}`)
+	want := technicalBrief + "\n\na cutaway of a stereo record groove\n\nIt must get these exactly right:\n" +
+		"- the two walls are 90 degrees apart\n- each wall's arrow is perpendicular to it\n\n" + textRules
+	if got.Prompt != want {
+		t.Fatalf("technical prompt:\n%s", got.Prompt)
+	}
+	_, pics, _ := run(context.Background(), `{"prompt":"a cutaway","kind":"technical"}`)
+	if got.Prompt != technicalBrief+"\n\na cutaway\n\n"+textRules {
+		t.Fatalf("with no requirements:\n%s", got.Prompt)
+	}
+	if pics[0].HistoryNote != "[sent a picture made from the prompt: a cutaway]" {
+		t.Errorf("history keeps %q", pics[0].HistoryNote)
+	}
+	for _, args := range []string{`{"prompt":"a fox in watercolour","kind":"artistic","requirements":["ignored"]}`, `{"prompt":"a fox in watercolour"}`} {
+		run(context.Background(), args)
+		if got.Prompt != "a fox in watercolour" {
+			t.Fatalf("%s: %q", args, got.Prompt)
+		}
+	}
+}

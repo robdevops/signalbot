@@ -40,15 +40,38 @@ const description = "Make a picture from a text prompt with an image model, and 
 	"a diagram, a logo, an icon, a poster or a photo-like image. Use it only when the user asks for a picture to be made, " +
 	"not to describe or explain one, and not for a chart of data, which the chart tools draw from the numbers. " +
 	"Write the prompt in full, as the image model sees nothing else: the subject, the style, the composition, the colours and the mood, " +
-	"and any text to appear in the picture, exactly. For a diagram, name every box, label and arrow and how they connect. " +
+	"and any text to appear in the picture, exactly. " +
+	"Set kind to technical for a picture that explains or teaches: a diagram, cutaway, cross-section, schematic, infographic, " +
+	"labelled or how-it-works illustration; artistic for anything else, such as art, a scene, a portrait, a logo or a meme. " +
+	"For technical, first work out the facts yourself, as an expert would check them, then list each one the picture must get right in requirements: " +
+	"what every label says and exactly what it points to, which way each arrow points and what it means, angles, counts, order, " +
+	"what is perpendicular, parallel, above or inside what. Keep labels few and short; name every box, label and arrow in the prompt and how they connect. " +
 	"Make one picture per call, and at most 4 in a reply. It can't see or change a picture the user sent: it only makes a new one from your words. " +
 	"After it is made, reply in one short sentence, or not at all: don't describe the picture back."
 
 var schema = json.RawMessage(`{"type":"object","properties":{` +
 	`"prompt":{"type":"string","description":"The full description of the picture for the image model."},` +
 	`"aspect_ratio":{"type":"string","enum":["` + strings.Join(ratios, `","`) + `"],"description":"The picture's shape: 1:1 unless the subject suits wide (16:9, 3:2, 4:3) or tall (9:16, 2:3, 3:4)."},` +
-	`"title":{"type":"string","description":"A short title for the picture, 2 to 6 words, for its file name."}},` +
-	`"required":["prompt"],"additionalProperties":false}`)
+	`"title":{"type":"string","description":"A short title for the picture, 2 to 6 words, for its file name."},` +
+	`"kind":{"type":"string","enum":["technical","artistic"],"description":"technical for a diagram, cutaway, infographic or other picture that explains; artistic for anything else."},` +
+	`"requirements":{"type":"array","maxItems":12,"items":{"type":"string"},"description":"For technical: each fact the picture must get exactly right, one per item."}},` +
+	`"required":["prompt","kind"],"additionalProperties":false}`)
+
+// technicalBrief opens a technical picture's prompt, and textRules close
+// it: image models favour looks over accuracy unless told otherwise.
+const (
+	technicalBrief = "An accurate technical illustration that teaches. Correctness matters more than decoration: draw exactly what is described, " +
+		"and nothing that contradicts it. Clean, uncluttered layout with room around each part, consistent line weights, high contrast."
+	textRules = "Text: only the labels given, spelled exactly, each short, large and legible, placed next to what it names with a leader line if needed. " +
+		"No other text, no placeholder text, no invented numbers or values. Every arrow points exactly as described."
+)
+
+// maxRequirements caps the requirements, and maxRequirement each one, in
+// runes.
+const (
+	maxRequirements = 12
+	maxRequirement  = 300
+)
 
 // maxPrompt caps the prompt, in runes.
 const maxPrompt = 4000
@@ -86,9 +109,37 @@ func Register(h feature.Host) error {
 }
 
 type args struct {
-	Prompt      string `json:"prompt"`
-	AspectRatio string `json:"aspect_ratio"`
-	Title       string `json:"title"`
+	Prompt       string   `json:"prompt"`
+	AspectRatio  string   `json:"aspect_ratio"`
+	Title        string   `json:"title"`
+	Kind         string   `json:"kind"`
+	Requirements []string `json:"requirements"`
+}
+
+// imagePrompt is what the image model is asked: an artistic picture's
+// prompt as the model wrote it; a technical one's inside a brief that puts
+// accuracy first, with the facts it must get right listed after it.
+func imagePrompt(a args) string {
+	if a.Kind != "technical" {
+		return a.Prompt
+	}
+	var b strings.Builder
+	b.WriteString(technicalBrief + "\n\n" + a.Prompt + "\n\n")
+	n := 0
+	for _, r := range a.Requirements {
+		if r = strings.TrimSpace(r); r != "" && n < maxRequirements {
+			if n == 0 {
+				b.WriteString("It must get these exactly right:\n")
+			}
+			b.WriteString("- " + txt.Clamp(r, maxRequirement) + "\n")
+			n++
+		}
+	}
+	if n > 0 {
+		b.WriteString("\n")
+	}
+	b.WriteString(textRules)
+	return b.String()
 }
 
 var errArgs = errors.New("bad arguments")
@@ -107,7 +158,7 @@ func run(h feature.Host, model, quality string) func(context.Context, string) (s
 			a.AspectRatio = ""
 		}
 		a.Prompt = txt.Clamp(a.Prompt, maxPrompt)
-		data, err := h.GenerateImage(ctx, feature.ImageRequest{Model: model, Prompt: a.Prompt, AspectRatio: a.AspectRatio, Quality: quality})
+		data, err := h.GenerateImage(ctx, feature.ImageRequest{Model: model, Prompt: imagePrompt(a), AspectRatio: a.AspectRatio, Quality: quality})
 		if err != nil {
 			return "error: the image could not be made (" + reason(err) + "). Tell the user, briefly.", nil, err
 		}
