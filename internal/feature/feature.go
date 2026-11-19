@@ -137,14 +137,6 @@ type Picture struct {
 	HistoryNote string // what history keeps of it; "" keeps "[sent an image]"
 }
 
-// ImageRequest asks for an image to be made from a prompt.
-type ImageRequest struct {
-	Model       string // the image model's ID at the API, such as "openai/gpt-image-2"
-	Prompt      string
-	AspectRatio string // such as "1:1" or "16:9"; "" lets the model choose
-	Quality     string // "low", "medium", "high" or "auto"; "" is the API's default
-}
-
 // ToolGroup is a set of tools offered to the model together. One with no
 // Tools, only Names, such as a feature's chat commands, is named only in
 // the prompt's list of what the bot has, not in the intro's {tools}.
@@ -178,7 +170,7 @@ type Info struct {
 	Audio      bool     // the model takes audio
 	PDFs       bool     // the model's API takes PDFs
 	CallsTools bool     // the model can call tools
-	MakesImage bool     // the API can make an image from a prompt (GenerateImage): OpenRouter's
+	Provider   string   // the model API's provider, as server tools name it: "openrouter", or "" for another
 	Tools      []string // the Names of every tool group with tools, in feature order; none when it can't call tools
 	Intro      string   // INTRO with {name}, {model}, {tools} and {more} filled in, as in a group
 	IntroDM    string   // the same in a DM, with IntroLine's DM-only lines too
@@ -256,11 +248,12 @@ type Host interface {
 	Tell(user, text string)
 	// Groups lists the groups the bot shares with user.
 	Groups(ctx context.Context, user string) ([]Group, error)
-	// GenerateImage makes an image from a prompt with the model's API, and
-	// returns its bytes. What it cost counts toward the chat's daily budget
-	// when called from a tool's Run. It fails when Info().MakesImage is
-	// false.
-	GenerateImage(ctx context.Context, r ImageRequest) ([]byte, error)
+	// CallAPI posts body as JSON to path (such as "/images") at the model's
+	// API and returns the response body, from a tool's Run only, so what it
+	// cost counts toward the reply and the chat's daily budget. The core
+	// adds the key, and on OpenRouter asks for providers that don't collect
+	// the data; a feature never sees the key.
+	CallAPI(ctx context.Context, path string, body map[string]any) (json.RawMessage, error)
 	// Redact replaces every name and ID of anyone but the bot in text with
 	// "redacted", for logging text the bot doesn't control.
 	Redact(text string) string

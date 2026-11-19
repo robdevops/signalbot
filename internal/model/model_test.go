@@ -3,7 +3,6 @@ package model
 import (
 	"context"
 	"crypto/tls"
-	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -638,33 +637,30 @@ func TestRetryDelay(t *testing.T) {
 	}
 }
 
-// An image is made at OpenRouter's images endpoint, from providers that
-// don't collect the data, and what it cost counts toward the reply that
-// asked for it.
-func TestImage(t *testing.T) {
+// A tool calls an endpoint of the API through Call: the core adds the key,
+// and on OpenRouter asks for providers that don't collect the data, keeping
+// any other provider settings; the cost the response reports counts toward
+// the reply. Outside a tool, or at a path that isn't an endpoint, it
+// refuses; on another API the request goes as given.
+func TestCall(t *testing.T) {
 	var logs logx.Buffer
 	t.Cleanup(logx.SetOutput(&logs, &logs, false))
-	png := []byte("\x89PNG\r\n\x1a\nfake")
 	var mu sync.Mutex
 	var chat int
-	var imageBody map[string]any
+	var called map[string]any
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		b, _ := io.ReadAll(r.Body)
 		mu.Lock()
 		defer mu.Unlock()
 		switch r.URL.Path {
 		case "/images":
-			json.Unmarshal(b, &imageBody)
-			if string(b) == "" || r.Header.Get("Authorization") != "Bearer or-key" {
+			called = nil
+			json.Unmarshal(b, &called)
+			if r.Header.Get("Authorization") != "Bearer or-key" {
 				w.WriteHeader(401)
 				return
 			}
-			if p, _ := imageBody["prompt"].(string); p == "refuse" {
-				w.WriteHeader(400)
-				io.WriteString(w, `{"error":{"code":400,"message":"Your request was rejected by the safety system"}}`)
-				return
-			}
-			fmt.Fprintf(w, `{"created":1,"data":[{"b64_json":%q}],"usage":{"cost":0.04}}`, base64.StdEncoding.EncodeToString(png))
+			io.WriteString(w, `{"created":1,"data":[{"b64_json":"cG5n"}],"usage":{"cost":0.04}}`)
 		case "/chat/completions":
 			chat++
 			if chat == 1 {
@@ -676,32 +672,54 @@ func TestImage(t *testing.T) {
 	}))
 	t.Cleanup(srv.Close)
 	c := client(t, srv.URL, true)
-	var got []byte
+	var got json.RawMessage
 	draw := feature.Tool{Name: "draw", Run: func(ctx context.Context, _ string) (string, []feature.Picture, error) {
-		data, err := c.Image(ctx, feature.ImageRequest{Model: "openai/gpt-image-2", Prompt: "a red panda", AspectRatio: "16:9", Quality: "medium"})
-		got = data
+		var err error
+		got, err = c.Call(ctx, "/images", map[string]any{"model": "x/painter", "prompt": "a red panda", "provider": map[string]any{"order": []string{"a"}}})
 		return "made", nil, err
 	}}
 	r, err := c.Ask(context.Background(), Request{Text: "draw a red panda", Tools: []feature.Tool{draw}})
-	if err != nil || string(got) != string(png) {
-		t.Fatalf("got %q, %v", got, err)
+	if err != nil || !strings.Contains(string(got), `"b64_json":"cG5n"`) {
+		t.Fatalf("got %s, %v", got, err)
 	}
 	if r.Cost < 0.0429 || r.Cost > 0.0431 || !r.Costed {
 		t.Errorf("cost %v", r.Cost)
 	}
-	want := map[string]any{"model": "openai/gpt-image-2", "prompt": "a red panda", "aspect_ratio": "16:9", "quality": "medium", "n": float64(1),
-		"output_format": "png", "provider": map[string]any{"data_collection": "deny"}}
-	if !reflect.DeepEqual(imageBody, want) {
-		t.Errorf("image request %v", imageBody)
+	want := map[string]any{"model": "x/painter", "prompt": "a red panda", "provider": map[string]any{"order": []any{"a"}, "data_collection": "deny"}}
+	if !reflect.DeepEqual(called, want) {
+		t.Errorf("request %v", called)
 	}
-	if l := logs.String(); !strings.Contains(l, "$0.043") || strings.Contains(l, "red panda") {
+	if l := logs.String(); !strings.Contains(l, "api /images ") || !strings.Contains(l, "$0.043") || strings.Contains(l, "red panda") {
 		t.Errorf("logged %q", l)
 	}
-	if _, err := c.Image(context.Background(), feature.ImageRequest{Model: "m", Prompt: "refuse"}); err == nil || !strings.Contains(err.Error(), "status 400: Your request was rejected by the safety system") {
-		t.Errorf("refusal: %v", err)
+	if _, err := c.Call(context.Background(), "/images", map[string]any{}); err == nil {
+		t.Error("called outside a tool")
 	}
-	if _, err := client(t, srv.URL, false).Image(context.Background(), feature.ImageRequest{Model: "m", Prompt: "x"}); err == nil {
-		t.Error("made an image on another API")
+	inTool := context.WithValue(context.Background(), spendKey{}, &spend{})
+	for _, path := range []string{"/chat/completions", "images", "/images?x=1", "/../keys", ""} {
+		if _, err := c.Call(inTool, path, map[string]any{}); err == nil {
+			t.Errorf("called %q", path)
+		}
+	}
+	// Provider settings of any Go type keep theirs; a nil body is an empty
+	// one; a provider that isn't an object is refused.
+	type prefs struct {
+		Order []string `json:"order"`
+	}
+	c.Call(inTool, "/images", map[string]any{"provider": prefs{[]string{"b"}}})
+	if p, _ := called["provider"].(map[string]any); !reflect.DeepEqual(p, map[string]any{"order": []any{"b"}, "data_collection": "deny"}) {
+		t.Errorf("provider %v", called["provider"])
+	}
+	if _, err := c.Call(inTool, "/images", nil); err != nil || !reflect.DeepEqual(called, map[string]any{"provider": map[string]any{"data_collection": "deny"}}) {
+		t.Errorf("nil body: %v, sent %v", err, called)
+	}
+	if _, err := c.Call(inTool, "/images", map[string]any{"provider": "allow"}); err == nil {
+		t.Error("a provider that isn't an object was sent")
+	}
+	other := client(t, srv.URL, false)
+	other.Call(inTool, "/images", map[string]any{"model": "m"})
+	if _, ok := called["provider"]; ok || other.Provider() != "" || c.Provider() != "openrouter" {
+		t.Errorf("another API got %v", called)
 	}
 }
 
