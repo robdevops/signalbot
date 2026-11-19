@@ -399,7 +399,7 @@ func (c *Client) Media(ctx context.Context, msg feature.Message, i int) ([]byte,
 	defer cancel()
 	m := msg.Media[i]
 	if strings.HasPrefix(m.ID, sentPrefix) {
-		if data, ok := c.recent.sent(m.ID); ok {
+		if data, ok := c.recent.sent(msg.Chat.Key(), m.ID); ok {
 			return data, nil
 		}
 		return nil, errors.New("the picture is no longer held")

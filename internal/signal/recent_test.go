@@ -89,16 +89,42 @@ func TestRecentSentPictures(t *testing.T) {
 	for i := range int64(4) {
 		r.add("u:x", "bot", i+1, []attachment{{ID: fmt.Sprintf("sent:%d:0", i+1), ContentType: "image/png", Size: len(big), data: big}})
 	}
-	if _, ok := r.sent("sent:1:0"); ok {
+	if _, ok := r.sent("u:x", "sent:1:0"); ok {
 		t.Fatal("the oldest kept past the cap")
 	}
 	for _, id := range []string{"sent:2:0", "sent:3:0", "sent:4:0"} {
-		if d, ok := r.sent(id); !ok || len(d) != len(big) {
+		if d, ok := r.sent("u:x", id); !ok || len(d) != len(big) {
 			t.Fatalf("%s not held", id)
 		}
 	}
 	r.forget("u:x", "bot", 4)
-	if _, ok := r.sent("sent:4:0"); ok || r.bytes != 2*len(big) {
+	if _, ok := r.sent("u:x", "sent:4:0"); ok || r.bytes != 2*len(big) {
 		t.Fatalf("after a delete: %d bytes held", r.bytes)
+	}
+}
+
+// A picture is served only in the chat it was sent in, though another
+// chat's send had the same timestamp; and the byte cap drops only the bot's
+// pictures, not others' records.
+func TestRecentSentPicturesByChat(t *testing.T) {
+	var r recent
+	r.add("g:other", "alice", 1, []attachment{{ID: "a1", ContentType: "image/png", Size: 10}})
+	r.add("g:A", "bot", 7, []attachment{{ID: "sent:7:0", ContentType: "image/png", Size: 1, data: []byte("A")}})
+	r.add("g:B", "bot", 7, []attachment{{ID: "sent:7:0", ContentType: "image/png", Size: 1, data: []byte("B")}})
+	for range 20 {
+		if d, ok := r.sent("g:B", "sent:7:0"); !ok || string(d) != "B" {
+			t.Fatalf("got %q", d)
+		}
+	}
+	if _, ok := r.sent("g:C", "sent:7:0"); ok {
+		t.Fatal("served in another chat")
+	}
+	big := make([]byte, recentBytes)
+	r.add("g:A", "bot", 8, []attachment{{ID: "sent:8:0", ContentType: "image/png", Size: len(big), data: big}})
+	if _, ok := r.get("g:other", "alice", 1); !ok {
+		t.Fatal("the byte cap dropped a record with no bytes")
+	}
+	if _, ok := r.sent("g:A", "sent:7:0"); ok {
+		t.Fatal("an older picture kept past the cap")
 	}
 }

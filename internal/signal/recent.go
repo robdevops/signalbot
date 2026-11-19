@@ -3,6 +3,7 @@ package signal
 import (
 	"slices"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 )
@@ -73,12 +74,16 @@ func held(as []attachment) int {
 	return n
 }
 
-// sent returns a picture the bot sent, by its ID.
-func (r *recent) sent(id string) ([]byte, bool) {
+// sent returns a picture the bot sent in chat, by its ID: only from that
+// chat, as two chats' sends can share a timestamp.
+func (r *recent) sent(chat, id string) ([]byte, bool) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.prune()
-	for _, e := range r.byKey {
+	for k, e := range r.byKey {
+		if !strings.HasPrefix(k, chat+"|") {
+			continue
+		}
 		for _, a := range e.attachments {
 			if a.ID == id && a.data != nil {
 				return a.data, true
@@ -101,14 +106,25 @@ func (r *recent) forget(chat, author string, ts int64) {
 	}
 }
 
-// prune drops the oldest beyond recentMax or recentBytes, and any older
-// than recentAge, so nothing is remembered longer than a day. r.mu is held.
+// prune drops the oldest beyond recentMax, and any older than recentAge,
+// so nothing is remembered longer than a day; and beyond recentBytes the
+// oldest pictures the bot sent, leaving others' records. r.mu is held.
 func (r *recent) prune() {
 	now := r.clock()
-	for len(r.order) > 0 && (len(r.order) > recentMax || r.bytes > recentBytes || now.Sub(r.byKey[r.order[0]].at) > recentAge) {
+	for len(r.order) > 0 && (len(r.order) > recentMax || now.Sub(r.byKey[r.order[0]].at) > recentAge) {
 		r.bytes -= held(r.byKey[r.order[0]].attachments)
 		delete(r.byKey, r.order[0])
 		r.order = r.order[1:]
+	}
+	for i := 0; r.bytes > recentBytes && i < len(r.order); {
+		k := r.order[i]
+		if n := held(r.byKey[k].attachments); n > 0 {
+			r.bytes -= n
+			delete(r.byKey, k)
+			r.order = slices.Delete(r.order, i, i+1)
+			continue
+		}
+		i++
 	}
 }
 
