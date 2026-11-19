@@ -1300,7 +1300,7 @@ func TestScenarioSystemPromptLayering(t *testing.T) {
 	h := startBot(t, world{Env: map[string]string{"MODEL_SYSTEM_PROMPT": "Talk like a pirate."}})
 	h.ask(fromAlice("what is up"))
 	p := h.lastRequest().System
-	if !strings.HasPrefix(p, "You are a helpful assistant in a chat. ") || !strings.Contains(p, " This is a Signal chat. ") || !strings.Contains(p, "\nTalk like a pirate.\nIf asked to introduce yourself") {
+	if !strings.HasPrefix(p, "You are a helpful assistant in a chat. ") || !strings.Contains(p, " This is a Signal chat. ") || !strings.Contains(p, "\nTalk like a pirate.\nToday is ") {
 		t.Fatalf("system prompt %q", p)
 	}
 }
@@ -2227,9 +2227,14 @@ func golden(t *testing.T, name, got string) {
 
 // Every feature on: web search, the chart tool offered, two MCP servers with
 // tools and chat commands, group context.
+// goldenNow is the clock of the golden prompts, which say today's date.
+func goldenNow() time.Time {
+	return time.Date(2026, 11, 19, 12, 0, 0, 0, time.FixedZone("AEDT", 11*3600))
+}
+
 func TestScenarioGoldenPromptFull(t *testing.T) {
 	skipWithout(t, chartsFeature)
-	h := startBot(t, world{Vision: true, MCP: true})
+	h := startBot(t, world{Vision: true, MCP: true, Now: goldenNow})
 	h.ignored(inGroup("the moon is made of cheese"))
 	h.ask(atBot("chart AAPL against the S&P 500 for a year"))
 	golden(t, "prompt_full.txt", h.lastRequest().System)
@@ -2252,7 +2257,7 @@ func TestScenarioScheduleInIntroOnlyInDM(t *testing.T) {
 
 // A model that can't call tools: {tools} is "none" and there is no tools line.
 func TestScenarioGoldenPromptNoFeatures(t *testing.T) {
-	h := startBot(t, world{NoTools: true})
+	h := startBot(t, world{NoTools: true, Now: goldenNow})
 	h.ask(atBot("chart AAPL against the S&P 500 for a year"))
 	golden(t, "prompt_notools.txt", h.lastRequest().System)
 }

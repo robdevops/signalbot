@@ -24,7 +24,9 @@ func TestGoldenPromptNoFeatures(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, tools := range []bool{false, true} {
-		h := start(t, options{tools: tools})
+		h := start(t, options{tools: tools, cfg: func(c *config.Config) {
+			c.Test.Now = func() time.Time { return time.Date(2026, 11, 19, 12, 0, 0, 0, time.FixedZone("AEDT", 11*3600)) }
+		}})
 		r, _ := h.ask(atBot("how did AAPL do against the S&P 500 this year?"))
 		if got := system(r); got != string(want) {
 			t.Fatalf("tools %v: system prompt\n got  %q\n want %q", tools, got, want)

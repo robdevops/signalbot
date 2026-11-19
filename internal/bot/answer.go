@@ -27,7 +27,10 @@ const (
 		// Earlier messages include, in a group, others' talk not addressed
 		// to the bot, which it otherwise tends to answer all at once.
 		"Earlier messages are the conversation so far, not questions for you: " +
-		"reply to the latest message alone, using them only to understand it or when it asks you to."
+		"reply to the latest message alone, using them only to understand it or when it asks you to. " +
+		// The model's knowledge ends at its training, and it otherwise
+		// "corrects" news from after it.
+		"What you know ends with your training: about anything since, take the user's word, or check with a tool if you have one, rather than correct them from memory."
 	mentionPrompt = "A mention shown as [unnamed user] is someone whose name you don't know; don't invent one. " +
 		"To mention someone, write @ followed by their exact name. Never write your own name with an @. " +
 		// What a page or document says reaches the model as text under its
@@ -415,6 +418,9 @@ func (b *Bot) system(offered []int, dm bool) string {
 	if b.cfg.SystemPrompt != "" {
 		p += "\n" + b.cfg.SystemPrompt
 	}
+	// The date near the end, so the prompt before it stays the same for
+	// the API's cache; the intro last, for its tests.
+	p += "\nToday is " + b.now().Format("Monday 2 January 2006 (MST)") + "."
 	// Quoted, so a newline or quote in the name or INTRO can't escape it.
 	return p + "\nIf asked to introduce yourself, reply with exactly this text and nothing else: " + strconv.Quote(b.intro(dm))
 }
