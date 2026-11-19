@@ -176,7 +176,12 @@ func TestTechnicalPrompt(t *testing.T) {
 	if got.Prompt != technicalBrief+"\n\na cutaway\n\n"+textRules {
 		t.Fatalf("with no requirements:\n%s", got.Prompt)
 	}
-	if pics[0].HistoryNote != "[sent a picture made from the prompt: a cutaway]" {
+	if pics[0].HistoryNote != "[sent a technical picture made from the prompt: a cutaway]" {
+		t.Errorf("history keeps %q", pics[0].HistoryNote)
+	}
+	_, pics, _ = run(context.Background(), `{"prompt":"Voyager 1 at one light day","kind":"technical","requirements":["drawn to scale: distance from the Sun is linear along the axis"," ","Neptune at 30 AU"]}`)
+	if want := "[sent a technical picture made from the prompt: Voyager 1 at one light day]\n[its requirements:\n" +
+		"- drawn to scale: distance from the Sun is linear along the axis\n- Neptune at 30 AU]"; pics[0].HistoryNote != want {
 		t.Errorf("history keeps %q", pics[0].HistoryNote)
 	}
 	for _, args := range []string{`{"prompt":"a fox in watercolour","kind":"artistic","requirements":["ignored"]}`, `{"prompt":"a fox in watercolour"}`} {

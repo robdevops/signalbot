@@ -47,6 +47,7 @@ const description = "Make a picture from a text prompt with an image model, and 
 	"what every label says and exactly what it points to, which way each arrow points and what it means, angles, counts, order, " +
 	"what is perpendicular, parallel, above or inside what. Keep labels few and short; name every box, label and arrow in the prompt and how they connect. " +
 	"Make one picture per call, and at most 4 in a reply. It can't see or change a picture the user sent: it only makes a new one from your words. " +
+	"To change a picture you made, start from its note in the conversation: keep its kind and every requirement, add the change, and rewrite the whole prompt. " +
 	"After it is made, reply in one short sentence, or not at all: don't describe the picture back."
 
 var schema = json.RawMessage(`{"type":"object","properties":{` +
@@ -169,8 +170,28 @@ func run(h feature.Host, model, quality string) func(context.Context, string) (s
 		}
 		title := txt.Clamp(txt.SafeName(a.Title), 60)
 		return "The picture is made and attached to your reply.", []feature.Picture{{Data: data, Name: fileName(title),
-			HistoryNote: "[sent a picture made from the prompt: " + txt.Clamp(a.Prompt, 400) + "]"}}, nil
+			HistoryNote: historyNote(a)}}, nil
 	}
+}
+
+// historyNote is what history keeps of a picture, so a change asked for
+// later can build on it: the prompt, and for a technical picture its kind
+// and requirements too, which a follow-up must keep (such as "to scale").
+func historyNote(a args) string {
+	if a.Kind != "technical" {
+		return "[sent a picture made from the prompt: " + txt.Clamp(a.Prompt, 400) + "]"
+	}
+	note := "[sent a technical picture made from the prompt: " + txt.Clamp(a.Prompt, 1200) + "]"
+	var reqs []string
+	for _, r := range a.Requirements {
+		if r = strings.TrimSpace(r); r != "" && len(reqs) < maxRequirements {
+			reqs = append(reqs, "- "+txt.Clamp(r, maxRequirement))
+		}
+	}
+	if len(reqs) > 0 {
+		note += "\n[its requirements:\n" + strings.Join(reqs, "\n") + "]"
+	}
+	return note
 }
 
 // reason is a short, safe reason a request failed, for the model: the
