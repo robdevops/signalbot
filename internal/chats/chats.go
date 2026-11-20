@@ -220,8 +220,8 @@ func (s *Store[M]) Post(key string, m M) error {
 // PostLow adds m to the chat's mailbox at low priority: it waits after
 // everything else, and is the first dropped, by Post, to make room, so it
 // never takes the place of a message. A low-priority item already waiting
-// is replaced by merge(waiting), so at most one waits.
-func (s *Store[M]) PostLow(key string, m M, merge func(waiting M) M) error {
+// is replaced by merge(waiting, m), so at most one waits.
+func (s *Store[M]) PostLow(key string, m M, merge func(waiting, m M) M) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	c := s.get(key, true)
@@ -229,7 +229,7 @@ func (s *Store[M]) PostLow(key string, m M, merge func(waiting M) M) error {
 	case c == nil:
 		return errFull
 	case c.busy && len(c.low) > 0:
-		c.low[0] = merge(c.low[0])
+		c.low[0] = merge(c.low[0], m)
 		return nil
 	case c.busy && len(c.queue) >= maxQueue:
 		return errQueueFull
@@ -376,6 +376,21 @@ func (s *Store[M]) Retag(key, id string, refs []Ref) {
 			c.history[i].Refs = slices.Concat(e.Refs[:j:j], refs, e.Refs[j+1:])
 		}
 	}
+}
+
+// Withdraw drops the entries holding the ref named id: for a post kept
+// before it was sent, whose send failed, so the chat never saw it.
+func (s *Store[M]) Withdraw(key, id string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	c := s.get(key, false)
+	if c == nil {
+		return
+	}
+	c.history = slices.DeleteFunc(c.history, func(e Entry) bool {
+		return slices.ContainsFunc(e.Refs, func(r Ref) bool { return r.ID == id })
+	})
+	s.tidy(key, c)
 }
 
 // Gone reports whether the version of message id at at was deleted or

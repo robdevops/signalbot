@@ -79,10 +79,10 @@ func TestLowPriority(t *testing.T) {
 	}, pool.spawn)
 	var evicted []string
 	s.SetEvicted(func(m string) { evicted = append(evicted, m) })
-	merge := func(m string) func(string) string { return func(w string) string { return w + "+" + m } }
+	merge := func(w, m string) string { return w + "+" + m }
 	s.Post("g:1", "0")
 	for _, m := range []string{"a", "b", "c"} {
-		if err := s.PostLow("g:1", m, merge(m)); err != nil {
+		if err := s.PostLow("g:1", m, merge); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -96,7 +96,7 @@ func TestLowPriority(t *testing.T) {
 	if fmt.Sprint(evicted) != "[a+b+c]" {
 		t.Fatalf("evicted %v", evicted)
 	}
-	if err := s.PostLow("g:1", "d", merge("d")); err != errQueueFull {
+	if err := s.PostLow("g:1", "d", merge); err != errQueueFull {
 		t.Errorf("a low-priority item took a message's place: err %v", err)
 	}
 	close(release)
@@ -108,7 +108,7 @@ func TestLowPriority(t *testing.T) {
 	release = make(chan struct{})
 	got = nil
 	s.Post("g:1", "0")
-	s.PostLow("g:1", "a", merge("a"))
+	s.PostLow("g:1", "a", merge)
 	s.Post("g:1", "1")
 	close(release)
 	pool.wg.Wait()
@@ -379,5 +379,19 @@ func TestRetag(t *testing.T) {
 	s.Forget("k", "bot\\x0011", 1<<62)
 	if h := s.History("k"); len(h) != 1 || h[0].Content != "q" {
 		t.Fatalf("forgetting a retagged ref left %v", h)
+	}
+}
+
+// Withdraw drops the entries holding a placeholder ref, and leaves the
+// rest.
+func TestWithdraw(t *testing.T) {
+	s := New(10, func([]string) {}, newSlots(1).spawn)
+	s.Add("k", time.Now(), 0,
+		Entry{Role: "user", Content: "q", Refs: []Ref{{"alice\\x001", 1}}},
+		Entry{Role: "assistant", Content: "a", Refs: []Ref{{"pending\\x001", 0}}})
+	s.Withdraw("k", "pending\\x001")
+	s.Withdraw("none", "pending\\x001")
+	if h := s.History("k"); len(h) != 1 || h[0].Content != "q" {
+		t.Fatalf("withdrawing left %v", h)
 	}
 }

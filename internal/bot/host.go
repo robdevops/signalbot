@@ -143,14 +143,14 @@ func (b *Bot) Post(p feature.Post) {
 	}
 }
 
-// once is done made safe to call more than once, the calls after the first
-// doing nothing; nil does nothing.
-func once(done func(sent []int64, dropped bool)) func(sent []int64, dropped bool) {
+// once is onSent made safe to call more than once, the calls after the
+// first doing nothing; nil does nothing.
+func once(onSent func(sent []int64, dropped bool)) func(sent []int64, dropped bool) {
 	var o sync.Once
 	return func(sent []int64, dropped bool) {
 		o.Do(func() {
-			if done != nil {
-				done(sent, dropped)
+			if onSent != nil {
+				onSent(sent, dropped)
 			}
 		})
 	}
@@ -158,22 +158,30 @@ func once(done func(sent []int64, dropped bool)) func(sent []int64, dropped bool
 
 // say sends a post in its chat's slot, if the bot may still post there,
 // with @Name linked to the chat's known names. With a label, history keeps
-// it as the bot's own entry, "[Label] text", clamped; without one, nothing.
+// it as the bot's own entry, "[Label] text", clamped, unless the send
+// fails; without one, nothing.
 func (b *Bot) say(p feature.Post) {
 	defer p.OnSent(nil, true) // if it is never sent
 	if !b.net.Reachable(b.ctx, p.Chat) {
-		logx.Infof("dropped a post: the bot can no longer post in its chat")
+		logx.Infof("dropped a post: its chat isn't reachable")
 		return
 	}
 	key := p.Chat.Key()
 	text, kept := captioned(p.Text, p.Pictures)
 	if p.Label == "" || b.ai == nil { // with no model, nothing would read it
-		p.OnSent(b.net.Send(p.Chat, text, p.Pictures, b.chats.Names(key)), false)
+		sent := b.net.Send(p.Chat, text, p.Pictures, b.chats.Names(key))
+		p.OnSent(sent, len(sent) == 0)
 		return
 	}
 	ref := b.pending()
 	b.chats.Add(key, b.now(), 0, chats.Entry{Role: "assistant", Content: txt.Clamp("["+p.Label+"] "+kept, maxPostKept), Refs: []chats.Ref{ref}})
-	p.OnSent(b.sendKept(key, ref, p.Chat, text, p.Pictures, b.chats.Names(key)), false)
+	sent := b.net.Send(p.Chat, text, p.Pictures, b.chats.Names(key))
+	if len(sent) == 0 {
+		b.chats.Withdraw(key, ref.ID) // the chat never saw it, and it may be posted again
+	} else {
+		b.chats.Retag(key, ref.ID, botRefs(sent))
+	}
+	p.OnSent(sent, len(sent) == 0)
 }
 
 // maxPostKept caps what history keeps of a post.
@@ -187,23 +195,29 @@ func (b *Bot) React(chat feature.Chat, msg feature.Message, emoji string) {
 		return
 	}
 	msg.Chat = chat
-	r := Reaction{Message: msg, Emoji: emoji}
-	add := Reacted{Chat: chat, Reactions: []Reaction{r}}
-	merge := func(waiting Received) Received {
-		w := waiting.(Reacted)
-		w.Reactions = slices.DeleteFunc(slices.Clone(w.Reactions), func(x Reaction) bool {
-			return x.Message.Sender == msg.Sender && x.Message.Timestamp == msg.Timestamp
+	add := Reacted{Chat: chat, Reactions: []Reaction{{Message: msg, Emoji: emoji}}}
+	if err := b.chats.PostLow(chat.Key(), add, mergeReactions); err != nil {
+		b.dropped(add, err)
+	}
+}
+
+// mergeReactions adds m's reactions to those waiting: one on a message
+// that already has one waiting replaces it, and past maxReactions the
+// oldest is dropped.
+func mergeReactions(waiting, m Received) Received {
+	w := waiting.(Reacted)
+	w.Reactions = slices.Clone(w.Reactions)
+	for _, r := range m.(Reacted).Reactions {
+		w.Reactions = slices.DeleteFunc(w.Reactions, func(x Reaction) bool {
+			return x.Message.Sender == r.Message.Sender && x.Message.Timestamp == r.Message.Timestamp
 		})
 		if len(w.Reactions) >= maxReactions {
 			logx.Warnf("dropped a reaction: %d already wait in its chat", maxReactions)
 			w.Reactions = w.Reactions[1:]
 		}
 		w.Reactions = append(w.Reactions, r)
-		return w
 	}
-	if err := b.chats.PostLow(chat.Key(), add, merge); err != nil {
-		b.dropped(add, err)
-	}
+	return w
 }
 
 // maxReactions caps the reactions waiting in one chat.

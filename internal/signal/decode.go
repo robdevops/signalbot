@@ -521,7 +521,7 @@ func (c *Client) Reachable(ctx context.Context, chat feature.Chat) bool {
 	wait, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
 	if c.WaitID(wait) == "" {
-		logx.Warnf("post dropped: not connected to signal-cli after 10s")
+		logx.Warnf("not connected to signal-cli after 10s")
 		return false
 	}
 	if chat.GroupID == "" {
@@ -530,7 +530,7 @@ func (c *Client) Reachable(ctx context.Context, chat feature.Chat) bool {
 	}
 	var gs []group
 	if err := c.call(wait, "listGroups", nil, &gs); err != nil {
-		logx.Warnf("post dropped: listGroups failed: %v", err)
+		logx.Warnf("listGroups failed: %v", err)
 		return false
 	}
 	return slices.ContainsFunc(gs, func(g group) bool { return g.IsMember && g.ID == chat.GroupID })

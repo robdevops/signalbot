@@ -56,6 +56,7 @@ type fakeNet struct {
 	stopped int          // their stops called
 	fetched []string     // the media IDs fetched
 	sends   atomic.Int64 // Send calls, for their timestamps
+	fail    atomic.Bool  // while set, Send fails: nothing is sent
 	watch   Watch        // what Watch was told
 }
 
@@ -87,8 +88,12 @@ func (n *fakeNet) WaitID(ctx context.Context) string {
 	}
 }
 
-// Send returns one timestamp per call, counting up from 5000.
+// Send returns one timestamp per call, counting up from 5000, or none
+// while fail is set.
 func (n *fakeNet) Send(chat feature.Chat, text string, images []feature.Picture, known map[string]string) []int64 {
+	if n.fail.Load() {
+		return nil
+	}
 	n.sent <- sent{chat, text, images, known}
 	return []int64{5000 + n.sends.Add(1)}
 }

@@ -57,7 +57,8 @@ const (
 )
 
 // respond acts on an addressed message: as act says (nothing if Done; its
-// Answer and Pictures sent, with OnSent told of what went out), else by
+// Answer and Pictures sent, with OnSent told of what went out, and told
+// they were dropped if they weren't, or Send failed), else by
 // asking the model and sending its reply (asking again if the API rejects
 // its images or tools; see fallBack); with no model, only an Answer and
 // Pictures are sent, and with tools off a chat command gets noTools rather
@@ -66,6 +67,9 @@ const (
 // are offered by msg.Text alone, what was typed, never a sender's name or a
 // quote. refs names the messages answered, for history (see Forget).
 func (b *Bot) respond(msg feature.Message, act feature.Action, text string, refs []chats.Ref) {
+	if act.OnSent != nil { // made once by hooked
+		defer act.OnSent(nil, true) // if nothing is sent, also if something below panics
+	}
 	switch {
 	case act.Done:
 		return
@@ -73,7 +77,7 @@ func (b *Bot) respond(msg feature.Message, act feature.Action, text string, refs
 		text, _ := captioned(act.Answer, act.Pictures)
 		sent := b.net.Send(msg.Chat, text, act.Pictures, b.chats.Names(msg.Chat.Key()))
 		if act.OnSent != nil {
-			act.OnSent(sent, false)
+			act.OnSent(sent, len(sent) == 0)
 		}
 		return
 	case b.ai == nil:

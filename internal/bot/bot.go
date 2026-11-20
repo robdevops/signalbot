@@ -37,7 +37,8 @@ type Network interface {
 	Watch(w Watch)
 	WaitID(ctx context.Context) string
 	// Send posts a reply, split as the network needs, and returns the
-	// timestamps of the messages sent, which name them for a later delete.
+	// timestamps of the messages sent, which name them for a later delete;
+	// a send that fails returns no timestamps.
 	Send(chat feature.Chat, text string, pics []feature.Picture, known map[string]string) (sent []int64)
 	// React puts emoji on msg in chat, as a reaction from the bot.
 	React(chat feature.Chat, msg feature.Message, emoji string)
@@ -353,7 +354,8 @@ func abandon(rs []Received) {
 // an answer), a delivered one, a post, the bot's reactions, and one that
 // waited for the bot's ID and was not addressed after all. A panic loses
 // only the message or turn that caused it, and nothing new starts once
-// shutdown begins; a post left waiting then is told it was dropped.
+// shutdown begins; a post left waiting then, or a hook's answer not yet
+// sent, is told it was dropped.
 func (b *Bot) work(rs []Received) {
 	var batch []feature.Message
 	flush := func() {
@@ -405,6 +407,9 @@ func (b *Bot) work(rs []Received) {
 			default:
 				if act := b.hooked(msg); !act.IsZero() {
 					alone(func() { b.respond(msg, act, prompt(msg), refs(msg)) })
+					if act.OnSent != nil {
+						act.OnSent(nil, true) // if shutdown began first
+					}
 					return
 				}
 				if !fits(batch, msg) {
@@ -546,7 +551,9 @@ func (b *Bot) onMessage(ctx context.Context, msg feature.Message) feature.Action
 const slowHooks = time.Second
 
 // hooked runs the OnMessage hooks for an addressed message, in its chat's
-// slot. If they haven't returned after slowHooks, the chat sees the bot
+// slot, and makes the OnSent of the Action that wins safe to call more than
+// once, so it can be told the answer was dropped wherever it isn't sent.
+// If the hooks haven't returned after slowHooks, the chat sees the bot
 // typing until they do, as it would while the model answers; quick ones
 // show nothing.
 func (b *Bot) hooked(msg feature.Message) feature.Action {
@@ -569,7 +576,11 @@ func (b *Bot) hooked(msg feature.Message) feature.Action {
 			stop()
 		}
 	}()
-	return b.onMessage(b.ctx, msg)
+	act := b.onMessage(b.ctx, msg)
+	if act.OnSent != nil {
+		act.OnSent = once(act.OnSent)
+	}
+	return act
 }
 
 // introLine is a feature's line for the introduction, perhaps only in a DM.

@@ -698,26 +698,26 @@ const strangerID = "33333333-3333-4333-8333-333333333333"
 // A post goes to a group or a DM, with @Name linked to the chat's known
 // names, unless the network says the bot can no longer post there. History
 // keeps a labelled one as the bot's own, clamped, and nothing of one with
-// no label. Done is called once: when it is sent, or dropped.
+// no label. OnSent is called once: when it is sent, or dropped.
 func TestPost(t *testing.T) {
 	h := start(t, options{})
-	type done struct {
+	type outcome struct {
 		sent    []int64
 		dropped bool
 	}
-	dones := make(chan done, 16)
+	outcomes := make(chan outcome, 16)
 	post := func(p feature.Post) {
-		p.OnSent = func(sent []int64, dropped bool) { dones <- done{sent, dropped} }
+		p.OnSent = func(sent []int64, dropped bool) { outcomes <- outcome{sent, dropped} }
 		h.b.Post(p)
 	}
-	next := func() done {
+	next := func() outcome {
 		t.Helper()
 		select {
-		case d := <-dones:
+		case d := <-outcomes:
 			return d
 		case <-time.After(5 * time.Second):
-			t.Fatal("Done never called")
-			return done{}
+			t.Fatal("OnSent never called")
+			return outcome{}
 		}
 	}
 	group := feature.Chat{GroupID: groupID}
@@ -728,7 +728,7 @@ func TestPost(t *testing.T) {
 		t.Fatalf("sent %+v", s)
 	}
 	if d := next(); d.dropped || fmt.Sprint(d.sent) != "[5002]" {
-		t.Fatalf("done %+v", d)
+		t.Fatalf("OnSent got %+v", d)
 	}
 	post(feature.Post{Chat: group, Label: "Label", Text: "never sent", Pictures: []feature.Picture{{Data: png, Caption: "a caption", HistoryNote: "[a picture]"}}})
 	if s := h.nextSend(); s.text != "a caption" || len(s.images) != 1 {
@@ -754,19 +754,19 @@ func TestPost(t *testing.T) {
 	for _, chat := range []feature.Chat{{User: strangerID}, {GroupID: "other"}} {
 		post(feature.Post{Chat: chat, Label: "Label", Text: "never sent"})
 		if d := next(); !d.dropped || d.sent != nil {
-			t.Fatalf("done %+v", d)
+			t.Fatalf("OnSent got %+v", d)
 		}
 	}
 	post(feature.Post{Chat: group}) // nothing to send
 	if d := next(); !d.dropped {
-		t.Fatalf("done %+v", d)
+		t.Fatalf("OnSent got %+v", d)
 	}
 	h.settle()
 	h.noSend()
-	if len(dones) != 0 {
-		t.Fatalf("Done called again: %+v", <-dones)
+	if len(outcomes) != 0 {
+		t.Fatalf("OnSent called again: %+v", <-outcomes)
 	}
-	if n := strings.Count(h.logs.String(), "<6>dropped a post: the bot can no longer post in its chat\n"); n != 2 {
+	if n := strings.Count(h.logs.String(), "<6>dropped a post: its chat isn't reachable\n"); n != 2 {
 		t.Fatalf("%d drops logged:\n%s", n, h.logs)
 	}
 	if strings.Contains(h.logs.String(), "never sent") {
@@ -775,7 +775,7 @@ func TestPost(t *testing.T) {
 }
 
 // A post that doesn't fit in its chat's mailbox is dropped, with a warning
-// of its own, and Done says so.
+// of its own, and OnSent says so.
 func TestPostDropped(t *testing.T) {
 	h := start(t, options{})
 	h.holdModel()
@@ -787,7 +787,7 @@ func TestPostDropped(t *testing.T) {
 	dropped := make(chan bool, 1)
 	h.b.Post(feature.Post{Chat: feature.Chat{User: aliceID}, Text: "never sent", OnSent: func(_ []int64, d bool) { dropped <- d }})
 	if !<-dropped {
-		t.Fatal("Done said it was sent")
+		t.Fatal("OnSent said it was sent")
 	}
 	if !strings.Contains(h.logs.String(), "<4>dropped a post: 4 messages are already waiting in this chat\n") {
 		t.Fatalf("logs:\n%s", h.logs)
@@ -800,6 +800,44 @@ func TestPostDropped(t *testing.T) {
 	}
 	h.settle()
 	h.noSend()
+}
+
+// A send that fails counts as dropped, for a post with or without a label
+// and for a hook's answer, so the feature can try again; a labelled post
+// leaves history as it was, so trying again doesn't keep it twice.
+func TestFailedSendDropped(t *testing.T) {
+	type outcome struct {
+		sent    []int64
+		dropped bool
+	}
+	outcomes := make(chan outcome, 4)
+	onSent := func(sent []int64, dropped bool) { outcomes <- outcome{sent, dropped} }
+	h := start(t, options{features: func(b *Bot) {
+		b.Command("ping", func(context.Context, feature.Message, string) feature.Action {
+			return feature.Action{Answer: "pong", OnSent: onSent}
+		})
+	}})
+	h.net.fail.Store(true)
+	h.b.Post(feature.Post{Chat: feature.Chat{User: aliceID}, Text: "never sent", OnSent: onSent})
+	h.b.Post(feature.Post{Chat: feature.Chat{GroupID: groupID}, Label: "Label", Text: "never sent", OnSent: onSent})
+	h.receive(dm("/ping"))
+	for range 3 {
+		select {
+		case o := <-outcomes:
+			if !o.dropped || o.sent != nil {
+				t.Fatalf("OnSent got %+v", o)
+			}
+		case <-time.After(5 * time.Second):
+			t.Fatal("OnSent never called")
+		}
+	}
+	h.settle()
+	if len(outcomes) != 0 {
+		t.Fatalf("OnSent called again: %+v", <-outcomes)
+	}
+	if hist := h.b.chats.History(feature.Chat{GroupID: groupID}.Key()); len(hist) != 0 {
+		t.Fatalf("history %v", hist)
+	}
 }
 
 // The bot's reactions wait at low priority: merged into one item, a later

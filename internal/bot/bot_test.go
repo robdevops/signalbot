@@ -452,6 +452,36 @@ func TestShutdownStopsWaiting(t *testing.T) {
 	}
 }
 
+// A hook's answer cut off by shutdown, which began after the hook
+// returned, is never sent, and its OnSent is told it was dropped, once.
+func TestShutdownDropsAnswer(t *testing.T) {
+	outcomes := make(chan bool, 2)
+	stopped := make(chan struct{})
+	h := start(t, options{features: func(b *Bot) {
+		b.Command("ping", func(context.Context, feature.Message, string) feature.Action {
+			go func() { defer close(stopped); b.Shutdown(5 * time.Second) }()
+			for !b.closing.Load() {
+				time.Sleep(time.Millisecond)
+			}
+			return feature.Action{Answer: "pong", OnSent: func(_ []int64, dropped bool) { outcomes <- dropped }}
+		})
+	}})
+	h.receive(dm("/ping"))
+	<-stopped
+	h.noSend()
+	select {
+	case dropped := <-outcomes:
+		if !dropped {
+			t.Fatal("OnSent said it was sent")
+		}
+	default:
+		t.Fatal("OnSent never called")
+	}
+	if len(outcomes) != 0 {
+		t.Fatal("OnSent called again")
+	}
+}
+
 // Waiting messages whose photos together pass 4 are answered in two turns,
 // so no turn carries more pictures than one message may.
 func TestWaitingPhotosSplit(t *testing.T) {

@@ -106,7 +106,7 @@ type File struct {
 type Action struct {
 	Answer     string                           // reply with this text, without the model (addressed messages only)
 	Pictures   []Picture                        // send these with Answer, or alone, without the model; captions as for a tool's pictures (addressed messages only)
-	OnSent     func(sent []int64, dropped bool) // if set with Answer or Pictures, called with the timestamps they went out in (addressed messages only); alone it doesn't count
+	OnSent     func(sent []int64, dropped bool) // if set with Answer or Pictures, called once: with the timestamps they went out in, or dropped (addressed messages only); alone it doesn't count
 	ToolChoice string                           // make the model call this tool before answering (addressed messages only)
 	Context    string                           // keep this text in the chat's history (unaddressed messages only)
 	Done       bool                             // the hook handled the message: no answer, no model, and for an unaddressed one nothing kept and no later hook
@@ -270,7 +270,9 @@ type Host interface {
 	Post(p Post)
 	// React puts emoji on msg in chat, as a reaction from the bot, through
 	// the chat's mailbox at low priority: unless msg was deleted or edited
-	// since, and unless the reaction is dropped to make room.
+	// since, and unless the reaction is dropped to make room. chat mirrors
+	// the network's React; msg's own Chat is ignored. A message the bot
+	// made (Timestamp 0) can't be reacted to; nothing happens.
 	React(chat Chat, msg Message, emoji string)
 	// Groups lists the groups the bot shares with user.
 	Groups(ctx context.Context, user string) ([]Group, error)

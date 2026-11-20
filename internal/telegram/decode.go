@@ -696,7 +696,7 @@ func (c *Client) Reachable(ctx context.Context, chat feature.Chat) bool {
 	wait, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
 	if c.WaitID(wait) == "" {
-		logx.Warnf("post dropped: not connected to Telegram after 10s")
+		logx.Warnf("not connected to Telegram after 10s")
 		return false
 	}
 	if chat.GroupID == "" {

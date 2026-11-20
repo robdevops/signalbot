@@ -201,7 +201,8 @@ func (h *Host) Deliver(m feature.Message) {
 	h.delivered = append(h.delivered, m)
 }
 
-// Post records p; Posts returns what was posted. Done is never called.
+// Post records p; Posts returns what was posted. OnSent is never called:
+// a test calls it to say the post was sent or dropped.
 func (h *Host) Post(p feature.Post) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
