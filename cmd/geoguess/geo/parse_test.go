@@ -13,7 +13,7 @@ func TestParse(t *testing.T) {
 		want Point
 		ok   bool
 	}{
-		// Signal Android's Attach → Location.
+		// Signal's + → Location.
 		{"https://maps.google.com/maps?q=-37.8136%2C144.9631", mel, true},
 		{"https://maps.google.com/maps?q=-37.8136,144.9631", mel, true},
 		{"Here: https://maps.google.com/maps?q=-37.8136%2C144.9631.", mel, true},

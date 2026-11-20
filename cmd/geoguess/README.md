@@ -1,8 +1,9 @@
 # GeoGuess
 
 A GeoGuessr-style game for signalbot. `/geo` posts a street-level photo;
-players answer by sending a location (Signal's 📎 → Location with the pin
-moved, or typed coordinates such as `-37.81, 144.96`); when time is up the
+players answer by sending a location (on Signal, the **+** button →
+Location; on Telegram, 📎 → Location; with the pin moved), or typed
+coordinates such as `-37.81, 144.96`; when time is up the
 bot names the place and ranks players by how far off they were.
 
 ```

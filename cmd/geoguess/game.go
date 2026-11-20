@@ -159,7 +159,7 @@ func (s *server) start(ctx context.Context, c *callContext, length time.Duration
 // caption is the photo's caption: how to guess, and by when.
 func caption(deadline time.Time, length time.Duration) string {
 	return "🌍 **Where is this?** Send a location before " + deadline.Local().Format("15:04") + " (" + lengthLabel(length) + ").\n" +
-		"Signal: 📎 → Location → **drag the pin**, then send. Or type coordinates, e.g. `-37.81, 144.96`.\n" +
+		"Signal: **+** → Location; Telegram: 📎 → Location. **Drag the pin**, then send. Or type coordinates, e.g. `-37.81, 144.96`.\n" +
 		"⚠️ Location starts at *your* position. Move the pin before you send."
 }
 
