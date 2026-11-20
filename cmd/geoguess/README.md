@@ -14,8 +14,11 @@ bot names the place and ranks players by how far off they were.
 /geo scores          this chat's totals over the last 7 days
 ```
 
-Nobody needs to mention the bot: a message that starts with `/geo`, and any
-guess during a round, reaches it as it is.
+On Signal nobody needs to mention the bot: a message that starts with `/geo`,
+and any guess during a round, reaches it as it is. On Telegram `/geo` works
+the same way, but plain guesses reach the bot only with privacy mode off (or
+the bot an admin); with privacy mode on, which is the default, players reply
+to the round's photo instead.
 
 It is a separate program that signalbot starts as an
 [MCP addon](../../docs/FILES_LINKS_TOOLS_MCP.md#addons) server. It speaks MCP

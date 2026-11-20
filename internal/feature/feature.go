@@ -42,7 +42,7 @@ type Message struct {
 	Expires   time.Duration // the chat's disappearing-messages timer; 0 if off
 	Timestamp int64         // when it was sent, by the sender's clock, as the network names it; 0 for one the bot made, such as a scheduled post. An edit keeps the original's
 	Edited    int64         // for an edit of the message sent at Timestamp, which it replaces, when it was edited; 0 for an original
-	Addressed bool          // it mentions the bot, replies to it, or is a DM from an allowed sender
+	Addressed bool          // it mentions the bot, replies to it, starts (in a group) with one of the bot's commands, or is a DM from an allowed sender
 }
 
 // Quote is the message another one replies to, as the replier's app sent it.

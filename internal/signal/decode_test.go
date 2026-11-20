@@ -59,6 +59,9 @@ func TestAddressed(t *testing.T) {
 		{"a command glued to more", `{` + fromBob + `,"dataMessage":{"message":"/geography",` + inGroup + `}}`, false},
 		{"the bot's own command", `{"sourceUuid":"` + botID + `","dataMessage":{"message":"/geo",` + inGroup + `}}`, false},
 		{"a command in a DM from anyone else", `{"sourceUuid":"` + aliceID + `","dataMessage":{"message":"/geo"}}`, false},
+		{"a command replying to someone else", `{` + fromBob + `,"dataMessage":{"message":"/geo","quote":{"authorUuid":"` + aliceID + `"},` + inGroup + `}}`, true},
+		{"a command as a photo's caption", `{` + fromBob + `,"dataMessage":{"message":"/geo","attachments":[{"contentType":"image/png","id":"a","size":10}],` + inGroup + `}}`, true},
+		{"a sticker with no text", `{` + fromBob + `,"dataMessage":{"sticker":{"packId":"p","stickerId":1},` + inGroup + `}}`, false},
 	} {
 		self := botID
 		if got := isAddressed(parse(t, tc.env), self, allowed, commands); got != tc.want {
@@ -81,9 +84,27 @@ func TestWatchCommands(t *testing.T) {
 	if c.message(env, botID).Addressed {
 		t.Fatal("addressed before Watch named the commands")
 	}
+	connected(c)
+	if r, ok := c.event(env); !ok {
+		t.Fatal("dropped before Watch")
+	} else if _, isChatter := r.(bot.Chatter); !isChatter {
+		t.Errorf("before Watch the reader made %T, want chatter", r)
+	}
 	c.Watch(bot.Watch{Commands: []string{"geo"}})
 	if m := c.message(env, botID); !m.Addressed || m.Text != "/geo 90s" {
 		t.Errorf("after Watch: addressed %v, text %q", m.Addressed, m.Text)
+	}
+	if r, ok := c.event(env); !ok {
+		t.Fatal("dropped after Watch")
+	} else if _, isIncoming := r.(bot.Incoming); !isIncoming {
+		t.Errorf("after Watch the reader made %T, want an addressed message", r)
+	}
+	if c.members.on.Load() {
+		t.Error("commands alone turned member loading on")
+	}
+	c.Watch(bot.Watch{Events: true})
+	if !c.members.on.Load() {
+		t.Error("Events didn't turn member loading on")
 	}
 }
 
