@@ -183,6 +183,9 @@ func (c *Client) WaitID(ctx context.Context) string {
 	return c.selfID()
 }
 
+// Name is the network's name.
+func (c *Client) Name() string { return "telegram" }
+
 // BotName is the bot's first name, or "telegrambot" until known.
 func (c *Client) BotName() string {
 	if n, _ := c.name.Load().(string); n != "" {

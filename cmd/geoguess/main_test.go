@@ -380,6 +380,37 @@ const (
 	bob   = "u_bob"
 )
 
+// The caption gives the steps for the network the bot said it is on, and
+// both when it said none.
+func TestCaption(t *testing.T) {
+	at := time.Date(2026, 11, 20, 14, 3, 0, 0, time.Local)
+	for _, tc := range []struct{ network, want, not string }{
+		{"signal", "Tap **+** → Location, pinch to zoom out, **drag the pin**", "📎"},
+		{"telegram", "Tap 📎 → Location, pinch to zoom out, **drag the pin**", "**+**"},
+		{"", "Signal: **+** → Location; Telegram: 📎 → Location. Pinch to zoom out, **drag the pin**", "Tap"},
+	} {
+		got := caption(at, 3*time.Minute, tc.network)
+		if !strings.Contains(got, tc.want) || strings.Contains(got, tc.not) || !strings.Contains(got, "14:03 (3 min)") ||
+			!strings.Contains(got, "-37.81, 144.96") || !strings.Contains(got, "Move the pin before you send") {
+			t.Errorf("%q: %q", tc.network, got)
+		}
+	}
+}
+
+// A round's caption uses the network the bot offered in the handshake.
+func TestCaptionNetwork(t *testing.T) {
+	clk, c, _ := start(t)
+	var init initializeResult
+	c.result("initialize", map[string]any{
+		"protocolVersion": protocolVersion,
+		"capabilities":    map[string]any{"experimental": map[string]any{vendor + "addon": map[string]any{"version": 1, "network": "signal"}}},
+	}, &init)
+	r := c.geo("90s", from(clk, chat, alice))
+	if got := words(r); !strings.Contains(got, "Tap **+** → Location") || strings.Contains(got, "📎") {
+		t.Errorf("caption %q", got)
+	}
+}
+
 func TestInitializeAndTools(t *testing.T) {
 	_, c, _ := start(t)
 	var init initializeResult
@@ -430,7 +461,7 @@ func TestRound(t *testing.T) {
 	if data, _ := base64.StdEncoding.DecodeString(r.Content[0].Data); !bytes.HasPrefix(data, []byte("jpeg ")) {
 		t.Errorf("image %q", data)
 	}
-	want := caption(began.Add(90*time.Second), 90*time.Second)
+	want := caption(began.Add(90*time.Second), 90*time.Second, "")
 	if words(r) != want || !strings.Contains(want, "(90 sec)") {
 		t.Errorf("caption %q", words(r))
 	}

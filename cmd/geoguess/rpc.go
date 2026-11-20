@@ -206,7 +206,8 @@ type (
 		Resources    resourcesCapability        `json:"resources"`
 	}
 	addonCapability struct {
-		Version int `json:"version"`
+		Version int    `json:"version"`
+		Network string `json:"network,omitempty"` // the bot's chat network, as the bot offers it
 	}
 	resourcesCapability struct {
 		Subscribe bool `json:"subscribe"`
@@ -298,7 +299,16 @@ type callContext struct {
 // methods are the MCP methods GeoGuess answers.
 func (s *server) methods() map[string]handler {
 	return map[string]handler{
-		"initialize": func(context.Context, json.RawMessage) (any, error) {
+		"initialize": func(_ context.Context, raw json.RawMessage) (any, error) {
+			var p struct {
+				Capabilities struct {
+					Experimental map[string]addonCapability `json:"experimental"`
+				} `json:"capabilities"`
+			}
+			json.Unmarshal(raw, &p) // optional: without a network the caption names both
+			s.mu.Lock()
+			s.network = p.Capabilities.Experimental[vendor+"addon"].Network
+			s.mu.Unlock()
 			r := initializeResult{ProtocolVersion: protocolVersion, ServerInfo: serverInfo{Name: "geoguess", Title: "GeoGuess", Version: "1"}}
 			r.Capabilities.Experimental = map[string]addonCapability{vendor + "addon": {Version: 1}}
 			r.Capabilities.Resources.Subscribe = true

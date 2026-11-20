@@ -126,6 +126,7 @@ func (n *fakeNet) Reachable(_ context.Context, chat feature.Chat) bool {
 	return chat.User == aliceID || chat.User == bobID
 }
 
+func (n *fakeNet) Name() string    { return "fake" }
 func (n *fakeNet) BotName() string { return "Botty" }
 
 // Prompt is Signal's, so the golden prompt holds with no features.

@@ -261,13 +261,24 @@ type handshake struct {
 	subscribe    bool   // it takes resource subscriptions
 }
 
-// initialize performs the MCP handshake, as the bot's version, offering
-// signalbot's extension, and returns what the server said of itself.
-func initialize(ctx context.Context, c conn, version string) (handshake, error) {
+// botInfo is what the bot tells a server of itself in the handshake.
+type botInfo struct {
+	version string // the bot's version, "dev" if unknown
+	network string // the chat network, as Info names it, for addons
+}
+
+// initialize performs the MCP handshake, as self, offering signalbot's
+// extension with the chat network the bot is on, and returns what the
+// server said of itself.
+func initialize(ctx context.Context, c conn, self botInfo) (handshake, error) {
+	offer := map[string]any{"version": addonVersion}
+	if self.network != "" {
+		offer["network"] = self.network
+	}
 	res, err := c.call(ctx, "initialize", map[string]any{
 		"protocolVersion": protocol,
-		"capabilities":    map[string]any{"experimental": map[string]any{vendor + "addon": map[string]int{"version": addonVersion}}},
-		"clientInfo":      map[string]string{"name": "signalbot", "version": version},
+		"capabilities":    map[string]any{"experimental": map[string]any{vendor + "addon": offer}},
+		"clientInfo":      map[string]string{"name": "signalbot", "version": self.version},
 	})
 	if err != nil {
 		return handshake{}, err
@@ -341,21 +352,21 @@ func modelName(server, tool string) string {
 // run addons as plain servers; each addon started joins it.
 func start(ctx context.Context, h feature.Host, path string, servers map[string]server, k *keeper) error {
 	info := h.Info()
-	version := cmp.Or(info.Version, "dev")
+	self := botInfo{version: cmp.Or(info.Version, "dev"), network: info.Network}
 	type owner struct{ server, tool string }
 	taken := map[string]owner{} // the model's names for tools, and whose they are
 	var cmds []string           // for the startup line
 	for _, name := range slices.Sorted(maps.Keys(servers)) {
 		cfg := servers[name]
-		var c conn = &httpConn{url: cfg.URL, headers: cfg.Headers, client: httpx.Client(2), version: version}
+		var c conn = &httpConn{url: cfg.URL, headers: cfg.Headers, client: httpx.Client(2), bot: self}
 		if cfg.Command != "" {
-			s := &stdioConn{name: name, cfg: cfg, version: version, redact: h.Redact}
+			s := &stdioConn{name: name, cfg: cfg, bot: self, redact: h.Redact}
 			if cfg.Addon != nil {
 				s.prefix, s.updated = envPrefix(name), make(chan struct{}, 1)
 			}
 			c = s
 		}
-		listed, hs, err := connect(ctx, c, version)
+		listed, hs, err := connect(ctx, c, self)
 		if err != nil {
 			logx.Errorf("MCP server %s unavailable, its tools are left out: %s", name, describe(err, cfg.Addon != nil))
 			continue
@@ -550,7 +561,7 @@ func command(h feature.Host, server, n string, c chatCommand, models map[string]
 
 // connect starts the server, initializes it, and lists its tools by name,
 // all of them, whoever they are for.
-func connect(ctx context.Context, c conn, version string) ([]tool, handshake, error) {
+func connect(ctx context.Context, c conn, self botInfo) ([]tool, handshake, error) {
 	ctx2, cancel := context.WithTimeout(ctx, callTimeout)
 	defer cancel()
 	if s, ok := c.(*stdioConn); ok {
@@ -558,7 +569,7 @@ func connect(ctx context.Context, c conn, version string) ([]tool, handshake, er
 			return nil, handshake{}, err
 		}
 	}
-	hs, err := initialize(ctx2, c, version)
+	hs, err := initialize(ctx2, c, self)
 	if err != nil {
 		return nil, handshake{}, err
 	}

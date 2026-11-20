@@ -92,7 +92,7 @@ func (b *Bot) Store(name string) (feature.Store, error) {
 }
 
 func (b *Bot) Info() feature.Info {
-	info := feature.Info{Name: b.net.BotName(), Version: b.cfg.Version, Model: b.cfg.Model,
+	info := feature.Info{Name: b.net.BotName(), Network: b.net.Name(), Version: b.cfg.Version, Model: b.cfg.Model,
 		Images: b.images.Load(), Audio: b.audio.Load(), PDFs: b.files.Load(), CallsTools: b.callsTools.Load(), Tools: b.toolNames(false), Intro: b.intro(false), IntroDM: b.intro(true)}
 	if b.ai == nil {
 		info.Model = ""

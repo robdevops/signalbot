@@ -42,6 +42,7 @@ type server struct {
 	wants      map[string]bool    // regions a /geo asked for that the buffer lacks
 	changed    chan struct{}      // closed when the buffer gains a photo
 	seeds      map[string]*geo.Seeds
+	network    string // the chat network the bot said it is on, "" if it didn't
 
 	saveMu sync.Mutex // one save at a time, so the last one written is the newest
 }

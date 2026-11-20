@@ -49,6 +49,9 @@ type Network interface {
 	// in chat on its own: a group it is still in and answers in, or the DM
 	// of a user still allowed to DM it.
 	Reachable(ctx context.Context, chat feature.Chat) bool
+	// Name is the network's own short lowercase name, such as the one its
+	// package is named for; it never blocks.
+	Name() string
 	// BotName never blocks.
 	BotName() string
 	// Prompt is the network's own line in the system prompt, such as its

@@ -134,6 +134,9 @@ coordinate, a place or person's name, a pseudonym or message text.
 
 - `initialize` advertises `tools`, `resources.subscribe` and
   `experimental["io.github.robdevops.signalbot/addon"] = {"version": 1}`.
+  It reads the `network` the bot offers under the same key, and the round's
+  caption gives the steps for that network only (Signal's **+** button, or
+  Telegram's 📎); with none, it gives both.
 - `tools/list` has `geo` (`{args}`) and `geo_guess` (`{text}`), both with
   `_meta["io.github.robdevops.signalbot/visibility"] = ["bot"]`, so neither is
   offered to the model.

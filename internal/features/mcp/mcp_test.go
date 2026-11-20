@@ -89,6 +89,7 @@ type fakeMCP struct {
 	mu       sync.Mutex
 	session  string // the live session id
 	version  string // the bot's, as initialize sent it
+	network  string // the chat network, as initialize offered it
 	inits    int
 	badCalls int // requests that carried the wrong session id
 }
@@ -103,9 +104,15 @@ func (f *fakeMCP) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if req.Method == "initialize" {
-		var p struct{ ClientInfo struct{ Version string } }
+		var p struct {
+			ClientInfo   struct{ Version string }
+			Capabilities struct {
+				Experimental map[string]struct{ Network string }
+			}
+		}
 		json.Unmarshal(req.Params, &p)
 		f.inits, f.version = f.inits+1, p.ClientInfo.Version
+		f.network = p.Capabilities.Experimental[vendor+"addon"].Network
 		f.session = fmt.Sprintf("s%d", f.inits)
 		w.Header().Set("Mcp-Session-Id", f.session)
 	} else if r.Header.Get("Mcp-Session-Id") != f.session {
@@ -398,12 +405,12 @@ func TestToolGroups(t *testing.T) {
 		"scout":{"url":"`+serve(t, scoutMCP)+`","allowed_tools":["fail"],
 			"chat_commands":{"scout":{"tool":"fail"}}},
 		"plain_Mcp":{"url":"`+serve(t, &fakeMCP{})+`","allowed_tools":["echo"],"keywords":[]}}}`,
-		func(h *featuretest.Host) { h.Bot.Version = "v1.2.3" })
+		func(h *featuretest.Host) { h.Bot.Version, h.Bot.Network = "v1.2.3", "signal" })
 	if err != nil {
 		t.Fatal(err)
 	}
-	if scoutMCP.version != "v1.2.3" {
-		t.Errorf("clientInfo version %q", scoutMCP.version)
+	if scoutMCP.version != "v1.2.3" || scoutMCP.network != "signal" {
+		t.Errorf("clientInfo version %q, network %q", scoutMCP.version, scoutMCP.network)
 	}
 	gs := h.ToolGroups()
 	if len(gs) != 3 {

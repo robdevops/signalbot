@@ -55,12 +55,13 @@ type rpcMsg struct {
 // stdioConn runs a local MCP server and talks to it over stdin and stdout,
 // one JSON message per line.
 type stdioConn struct {
-	name, version string
-	cfg           server
-	redact        func(string) string              // scrubs names and IDs from its output before it is logged
-	prefix        string                           // an addon's: it gets the bot's variables that start with this, and its stderr is only counted
-	updated       chan struct{}                    // an addon's: marked, without waiting, when it says a resource was updated
-	ready         func(context.Context, handshake) // an addon's: called each time it has started again and initialized
+	name    string
+	bot     botInfo // what initialize tells the server
+	cfg     server
+	redact  func(string) string              // scrubs names and IDs from its output before it is logged
+	prefix  string                           // an addon's: it gets the bot's variables that start with this, and its stderr is only counted
+	updated chan struct{}                    // an addon's: marked, without waiting, when it says a resource was updated
+	ready   func(context.Context, handshake) // an addon's: called each time it has started again and initialized
 
 	nextID  atomic.Int64
 	mu      sync.Mutex // guards stdin, pending, done and the stderr counts
@@ -276,7 +277,7 @@ func (c *stdioConn) supervise(ctx context.Context) {
 			continue // c.done is still the exited process's, so it retries
 		}
 		ictx, cancel := context.WithTimeout(ctx, callTimeout)
-		hs, err := initialize(ictx, c, c.version)
+		hs, err := initialize(ictx, c, c.bot)
 		cancel()
 		if err != nil {
 			logx.Warnf("MCP server %s failed to initialize: %s", c.name, describe(err, c.prefix != ""))
@@ -371,9 +372,10 @@ func (c *stdioConn) notify(_ context.Context, method string, params any) error {
 // httpConn talks to a remote MCP server: each message is a POST, answered
 // with JSON or a stream of server-sent events.
 type httpConn struct {
-	url, version string
-	headers      map[string]string
-	client       *http.Client
+	url     string
+	bot     botInfo // what initialize tells the server
+	headers map[string]string
+	client  *http.Client
 
 	nextID  atomic.Int64
 	mu      sync.Mutex
@@ -390,7 +392,7 @@ func (c *httpConn) call(ctx context.Context, method string, params any) (json.Ra
 		c.mu.Lock()
 		c.session, c.ready = "", false
 		c.mu.Unlock()
-		if _, err := initialize(ctx, c, c.version); err != nil {
+		if _, err := initialize(ctx, c, c.bot); err != nil {
 			return nil, err
 		}
 		res, err = c.roundTrip(ctx, method, params)

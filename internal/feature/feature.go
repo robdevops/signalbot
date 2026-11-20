@@ -180,6 +180,7 @@ type Info struct {
 	PDFs       bool     // the model's API takes PDFs
 	CallsTools bool     // the model can call tools
 	Provider   string   // the model API's provider, as server tools name it: "openrouter", or "" for another
+	Network    string   // the chat network, as it names itself, such as "signal" or "telegram"
 	Tools      []string // the Names of every tool group with tools, in feature order; none when it can't call tools
 	Intro      string   // INTRO with {name}, {model}, {tools} and {more} filled in, as in a group
 	IntroDM    string   // the same in a DM, with IntroLine's DM-only lines too
