@@ -256,6 +256,20 @@ func TestScenarioReplyToBotIsAnswered(t *testing.T) {
 		[]string{`user: Alice: [Replying to a message attributed to you: "oil around 78"]` + "\nAre you still there"})
 }
 
+// A group message that starts with one of the bot's commands is for the bot,
+// as on Telegram, without a mention; another slash word is still chatter.
+func TestScenarioUntaggedCommandIsAnswered(t *testing.T) {
+	h := startBot(t, world{})
+	if s := h.ask(inGroup("/intro")); s.GroupID != idGroup || !strings.HasPrefix(s.Message, "hi, I'm") {
+		t.Fatalf("sent %+v", s)
+	}
+	if n := len(h.requests()); n != 0 {
+		t.Fatalf("the model was asked %d times", n)
+	}
+	h.ignored(inGroup("/shrug"))
+	h.ignored(inGroup("try /intro"))
+}
+
 func TestScenarioAllowedDMIsAnswered(t *testing.T) {
 	h := startBot(t, world{})
 	if s := h.ask(fromAlice("a test direct message")); s.Recipient != idAlice || s.GroupID != "" || s.Message != "ok" {

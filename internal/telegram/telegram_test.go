@@ -526,7 +526,7 @@ func TestEvents(t *testing.T) {
 	if _, ok := c.event(parse(t, `{"update_id":1,"message_reaction":{`+inGroup+`,"message_id":500,"user":{"id":1111111,"first_name":"Alice"},"old_reaction":[],"new_reaction":[{"type":"emoji","emoji":"👍"}]}}`)); ok {
 		t.Fatal("an event with no hook")
 	}
-	c.Watch(true)
+	c.Watch(bot.Watch{Events: true})
 	c.groupAllowed(context.Background(), groupS)             // Alice is in it
 	c.Send(feature.Chat{GroupID: groupS}, "hello", nil, nil) // message 500, the bot's
 	r, _ := c.event(parse(t, `{"update_id":2,"message_reaction":{`+inGroup+`,"message_id":500,"user":{"id":1111111,"first_name":"Alice"},"old_reaction":[{"type":"emoji","emoji":"👍"}],"new_reaction":[]}}`))
@@ -778,7 +778,7 @@ func TestNoOneListed(t *testing.T) {
 func TestEventsAfterExpiry(t *testing.T) {
 	f := newFake(t)
 	c := connected(f.client("1111111"))
-	c.Watch(true)
+	c.Watch(bot.Watch{Events: true})
 	c.gate[groupS] = gateState{ok: true, until: time.Now().Add(-time.Minute)}
 	r, ok := c.event(parse(t, `{"update_id":1,"message_reaction":{`+inGroup+`,"message_id":9,"user":{"id":1111111,"first_name":"Alice"},"old_reaction":[],"new_reaction":[{"type":"emoji","emoji":"👍"}]}}`))
 	if _, isH := r.(bot.Happened); !ok || !isH {

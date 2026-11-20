@@ -61,7 +61,7 @@ Logs go to the journal or Docker's log driver and are kept as long as your setti
 
 ## What the bot can see
 
-In a group, signal-cli passes every message to the bot, which checks each one for whether it is addressed to it. Messages not addressed to it are never logged and never answered. Their text, with the sender's display name, is kept in that group's history as context, the same way and for the same time as everything else there, unless `GROUP_CONTEXT=false`, in which case they are dropped on the spot. In DMs, the bot answers only the IDs listed in `SIGNAL_DM_USER_IDS`. A message an addon's watch takes (see below) is neither answered nor kept, even as context.
+In a group, signal-cli passes every message to the bot, which checks each one for whether it is addressed to it: it mentions the bot, replies to it, or starts with one of its commands, such as `/intro`. Messages not addressed to it are never logged and never answered. Their text, with the sender's display name, is kept in that group's history as context, the same way and for the same time as everything else there, unless `GROUP_CONTEXT=false`, in which case they are dropped on the spot. In DMs, the bot answers only the IDs listed in `SIGNAL_DM_USER_IDS`. A message an addon's watch takes (see below) is neither answered nor kept, even as context.
 
 ## Telegram
 

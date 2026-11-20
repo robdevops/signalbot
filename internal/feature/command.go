@@ -3,7 +3,9 @@ package feature
 import (
 	"context"
 	"fmt"
+	"maps"
 	"regexp"
+	"slices"
 	"strings"
 	"sync"
 	"unicode"
@@ -34,6 +36,13 @@ func (c *Commands) Take(name string) error {
 	}
 	c.taken[name] = true
 	return nil
+}
+
+// Names lists the command names taken, sorted.
+func (c *Commands) Names() []string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return slices.Sorted(maps.Keys(c.taken))
 }
 
 // CommandHook is the OnMessage hook for command name: an addressed message

@@ -178,10 +178,11 @@ func isAllowed(env *envelope, allowed map[string]bool) bool {
 }
 
 // isAddressed reports whether env is for the bot: it mentions the bot,
-// replies to one of its messages, or is a DM from an allowed sender, and
-// has text, an attachment the bot can fetch or a sticker. It never blocks,
-// so the reader can use it.
-func isAddressed(env *envelope, self string, allowed map[string]bool) bool {
+// replies to one of its messages, starts with one of the commands (in a
+// group; a DM is decided by the allowlist), or is a DM from an allowed
+// sender, and has text, an attachment the bot can fetch or a sticker. It
+// never blocks, so the reader can use it.
+func isAddressed(env *envelope, self string, allowed, commands map[string]bool) bool {
 	d := env.DataMessage
 	if d == nil || self == "" || fromSelf(env, self) {
 		return false
@@ -193,8 +194,19 @@ func isAddressed(env *envelope, self string, allowed map[string]bool) bool {
 	if env.chat().GroupID == "" {
 		return isAllowed(env, allowed)
 	}
+	if name, _, ok := feature.ParseCommand(d.Message); ok && commands[name] {
+		return true
+	}
 	return slices.ContainsFunc(d.Mentions, func(m mention) bool { return is(self, m.UUID, m.Number) }) ||
 		d.Quote != nil && is(self, d.Quote.AuthorUUID, d.Quote.Author)
+}
+
+// commandSet is the commands features registered, nil before Watch.
+func (c *Client) commandSet() map[string]bool {
+	if p := c.commands.Load(); p != nil {
+		return *p
+	}
+	return nil
 }
 
 // event is env as the core gets it, decided on the reader goroutine without
@@ -325,7 +337,7 @@ func (c *Client) person(uuid, source, number, sent string) feature.Person {
 // not allowed, which is logged by ID only.
 func (c *Client) judge(env *envelope, self string) (addressed, other bool) {
 	switch {
-	case isAddressed(env, self, c.allowed):
+	case isAddressed(env, self, c.allowed, c.commandSet()):
 		return true, false
 	case fromSelf(env, self):
 	case env.chat().GroupID == "":
@@ -373,7 +385,7 @@ func (c *Client) message(env *envelope, self string) feature.Message {
 		Expires:   time.Duration(d.ExpiresInSeconds) * time.Second,
 		Timestamp: env.Timestamp,
 		Edited:    env.edited,
-		Addressed: isAddressed(env, self, c.allowed),
+		Addressed: isAddressed(env, self, c.allowed, c.commandSet()),
 	}
 	var images, files []feature.Media
 	add := func(as []attachment, quoted bool) {

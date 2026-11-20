@@ -15,7 +15,7 @@ A small, [privacy-conscious](PRIVACY.md) chat bot for Signal, through a running 
 
 ## Features
 
-- Responds to @mentions, replies to its messages, and DMs from whitelisted contacts
+- Responds to @mentions, replies to its messages, its commands (such as `/intro`) without a mention, and DMs from whitelisted contacts
 - Tools: web search, line and pie charts, [pictures](docs/FILES_LINKS_TOOLS_MCP.md#images) (drawings, art, diagrams) with GPT Image 2, and your own [MCP connectors](docs/FILES_LINKS_TOOLS_MCP.md#mcp-connectors)
 - [`/schedule`](docs/SCHEDULING.md) a message or command, once or repeating
 - [Addons](docs/FILES_LINKS_TOOLS_MCP.md#addons): MCP servers that run their own commands and games in chosen groups, without the model, such as [GeoGuess](cmd/geoguess/README.md), seeing only pseudonyms

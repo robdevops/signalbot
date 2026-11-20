@@ -531,7 +531,7 @@ func TestMemberChanges(t *testing.T) {
 	f.set("listContacts", `[{"uuid":"`+bobID+`","profile":{"givenName":"Bob"}},{"uuid":"`+aliceID+`","profile":{"givenName":"Alice"}}]`)
 	listed(botID, aliceID)
 	c := newClient(f.sock, allowAll(), &config.Test{ReloadGap: time.Millisecond})
-	c.Watch(true)
+	c.Watch(bot.Watch{Events: true})
 	got, conn := run(t, c, f)
 	eventually(t, "the first listGroups", func() bool { return len(f.calls("listGroups")) == 1 })
 	update := func(group string) { // and wait for its comparison, so the next answer is the next update's
@@ -593,7 +593,7 @@ func TestMemberChangeRules(t *testing.T) {
 	listed(botID, aliceID)
 	test := &config.Test{ReloadGap: time.Millisecond}
 	c := newClient(f.sock, allowAll(), test)
-	c.Watch(true)
+	c.Watch(bot.Watch{Events: true})
 	got, conn := run(t, c, f)
 	eventually(t, "the first listGroups", func() bool { return len(f.calls("listGroups")) == 1 })
 	frame := func(from string) string {
@@ -665,7 +665,7 @@ func TestMemberChangeRules(t *testing.T) {
 // never taken for one of them.
 func TestMembersWaitForTheBotsID(t *testing.T) {
 	c := newClient("x", nil, nil)
-	c.Watch(true)
+	c.Watch(bot.Watch{Events: true})
 	if gs, ok := c.members.load(context.Background(), func(string, ...any) {}); ok || gs != nil {
 		t.Fatalf("loaded %v before the ID was known", gs)
 	}

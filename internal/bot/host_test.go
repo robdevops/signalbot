@@ -147,6 +147,10 @@ func TestCommands(t *testing.T) {
 	}
 	h.receive(chatter("/hi")) // not addressed: not a command
 	h.noSend()
+	h.net.mu.Lock()
+	w := h.net.watch
+	h.net.mu.Unlock()
+	equal(t, "commands the network watches for", w.Commands, []string{"hi", "pick"})
 }
 
 // A group with Keywords is offered when a message matches, and for the

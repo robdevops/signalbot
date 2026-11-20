@@ -30,6 +30,7 @@ const (
 
 func TestAddressed(t *testing.T) {
 	allowed := map[string]bool{"+1555": true}
+	commands := map[string]bool{"geo": true}
 	for _, tc := range []struct {
 		name, env string
 		want      bool
@@ -49,14 +50,40 @@ func TestAddressed(t *testing.T) {
 		{"empty DM", `{` + fromBob + `,"dataMessage":{"message":"  "}}`, false},
 		{"no data message", `{` + fromBob + `}`, false},
 		{"the bot's own", `{"sourceUuid":"` + botID + `","dataMessage":{"message":"hi"}}`, false},
+		{"a command in a group", `{` + fromBob + `,"dataMessage":{"message":"/geo",` + inGroup + `}}`, true},
+		{"a command with args", `{` + fromBob + `,"dataMessage":{"message":" /geo 90s",` + inGroup + `}}`, true},
+		{"a command in capitals", `{` + fromBob + `,"dataMessage":{"message":"/GEO",` + inGroup + `}}`, true},
+		{"another slash word", `{` + fromBob + `,"dataMessage":{"message":"/shrug",` + inGroup + `}}`, false},
+		{"a command without its slash", `{` + fromBob + `,"dataMessage":{"message":"geo 90s",` + inGroup + `}}`, false},
+		{"a command mid-message", `{` + fromBob + `,"dataMessage":{"message":"try /geo",` + inGroup + `}}`, false},
+		{"a command glued to more", `{` + fromBob + `,"dataMessage":{"message":"/geography",` + inGroup + `}}`, false},
+		{"the bot's own command", `{"sourceUuid":"` + botID + `","dataMessage":{"message":"/geo",` + inGroup + `}}`, false},
+		{"a command in a DM from anyone else", `{"sourceUuid":"` + aliceID + `","dataMessage":{"message":"/geo"}}`, false},
 	} {
 		self := botID
-		if got := isAddressed(parse(t, tc.env), self, allowed); got != tc.want {
+		if got := isAddressed(parse(t, tc.env), self, allowed, commands); got != tc.want {
 			t.Errorf("%s: %v", tc.name, got)
 		}
-		if isAddressed(parse(t, tc.env), "", allowed) {
+		if isAddressed(parse(t, tc.env), "", allowed, commands) {
 			t.Errorf("%s: addressed before the bot's ID is known", tc.name)
 		}
+	}
+	// With no commands registered, a slash word in a group is chatter.
+	if isAddressed(parse(t, `{`+fromBob+`,"dataMessage":{"message":"/geo",`+inGroup+`}}`), botID, allowed, nil) {
+		t.Error("a slash word is addressed with no commands registered")
+	}
+}
+
+func TestWatchCommands(t *testing.T) {
+	captureLogs(t)
+	c := newClient("x", nil, nil)
+	env := parse(t, `{`+fromBob+`,"dataMessage":{"message":"/geo 90s",`+inGroup+`}}`)
+	if c.message(env, botID).Addressed {
+		t.Fatal("addressed before Watch named the commands")
+	}
+	c.Watch(bot.Watch{Commands: []string{"geo"}})
+	if m := c.message(env, botID); !m.Addressed || m.Text != "/geo 90s" {
+		t.Errorf("after Watch: addressed %v, text %q", m.Addressed, m.Text)
 	}
 }
 

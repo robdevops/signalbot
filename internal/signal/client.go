@@ -74,9 +74,10 @@ type Client struct {
 	knownOnce    sync.Once
 	closed       atomic.Bool // Run has returned
 	names        names
-	recent       recent       // attachments of recent messages, for replies to them
-	members      members      // each group's members, to tell who joined and left
-	test         *config.Test // nil in production
+	recent       recent                          // attachments of recent messages, for replies to them
+	members      members                         // each group's members, to tell who joined and left
+	commands     atomic.Pointer[map[string]bool] // the commands features registered (Watch)
+	test         *config.Test                    // nil in production
 }
 
 // New makes the client its settings say: SIGNALCLI_SOCKET, host:port

@@ -30,9 +30,11 @@ type Network interface {
 	// Run calls handle for each message received until ctx ends. handle
 	// must not block.
 	Run(ctx context.Context, handle func(Received))
-	// Watch says whether any feature has an event hook, before Run, so the
-	// network can skip work for events nothing would read.
-	Watch(events bool)
+	// Watch says, before Run, what the network should look out for: whether
+	// any feature has an event hook, so it can skip work for events nothing
+	// would read, and the commands features registered, so a group message
+	// that starts with one counts as addressed to the bot.
+	Watch(w Watch)
 	WaitID(ctx context.Context) string
 	// Send posts a reply, split as the network needs, and returns the
 	// timestamps of the messages sent, which name them for a later delete.
@@ -55,6 +57,12 @@ type Network interface {
 	Media(ctx context.Context, msg feature.Message, i int) ([]byte, error)
 	Groups(ctx context.Context, user string) ([]feature.Group, error)
 	Redact(text string) string
+}
+
+// Watch is what the network should look out for, set once before Run.
+type Watch struct {
+	Events   bool     // a feature has an OnEvent hook
+	Commands []string // the commands features registered, lowercase, without "/"
 }
 
 // Member is a group member: a display name and the network's ID for them,
@@ -144,7 +152,7 @@ func (b *Bot) Run() {
 			b.timers.Run(b.timerCtx)
 		}
 	})
-	b.net.Watch(len(b.events) > 0)
+	b.net.Watch(Watch{Events: len(b.events) > 0, Commands: b.commands.Names()})
 	b.net.Run(b.ctx, b.handle)
 	b.stopTimers()
 	b.running.Wait()

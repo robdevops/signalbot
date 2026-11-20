@@ -55,6 +55,7 @@ type fakeNet struct {
 	typing  int          // Typing calls
 	fetched []string     // the media IDs fetched
 	sends   atomic.Int64 // Send calls, for their timestamps
+	watch   Watch        // what Watch was told
 }
 
 type sent struct {
@@ -64,7 +65,11 @@ type sent struct {
 	known  map[string]string
 }
 
-func (n *fakeNet) Watch(bool) {}
+func (n *fakeNet) Watch(w Watch) {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	n.watch = w
+}
 
 func (n *fakeNet) Run(ctx context.Context, handle func(Received)) {
 	n.handle = handle

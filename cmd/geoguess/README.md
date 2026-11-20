@@ -14,6 +14,9 @@ bot names the place and ranks players by how far off they were.
 /geo scores          this chat's totals over the last 7 days
 ```
 
+Nobody needs to mention the bot: a message that starts with `/geo`, and any
+guess during a round, reaches it as it is.
+
 It is a separate program that signalbot starts as an
 [MCP addon](../../docs/FILES_LINKS_TOOLS_MCP.md#addons) server. It speaks MCP
 2025-06-18 over stdio (newline-delimited JSON-RPC) by hand, with signalbot's
