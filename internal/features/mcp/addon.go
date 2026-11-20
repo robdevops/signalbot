@@ -304,6 +304,7 @@ type callContext struct {
 	Sent      int64  `json:"sent"`   // when the bot got it, in Unix seconds
 	Edited    int64  `json:"edited"` // when the bot got the edit; 0 for an original
 	Name      string `json:"name,omitempty"`
+	Deadline  int64  `json:"deadline,omitempty"` // a direct call's: when the bot stops waiting, in Unix seconds
 }
 
 // context is m's context for the addon, which the bot got at at. It keeps

@@ -56,12 +56,16 @@ type server struct {
 // chatCommand makes "/name ..." a turn in which the model must call tool,
 // or, if direct, an addon's tool the bot calls itself, without the model.
 // With require_arg, a bare "/name" is answered by the bot, not the model,
-// showing example if set.
+// showing example if set. A direct command's timeout is how long its call
+// may take, from 1s to 2m; unset, directTimeout.
 type chatCommand struct {
 	Tool       string `json:"tool"`
 	RequireArg bool   `json:"require_arg"`
 	Example    string `json:"example"`
 	Direct     bool   `json:"direct"`
+	Timeout    string `json:"timeout"`
+
+	timeout time.Duration // Timeout, read; 0 if unset
 }
 
 // settings are the keys a server may have, and commandSettings a chat
@@ -70,7 +74,7 @@ type chatCommand struct {
 var (
 	settings = []string{"url", "headers", "command", "args", "env", "allowed_tools", "blocked_tools",
 		"instructions", "keywords", "chat_commands", "disabled", "addon"}
-	commandSettings = []string{"tool", "require_arg", "example", "direct"}
+	commandSettings = []string{"tool", "require_arg", "example", "direct", "timeout"}
 	ignored         = []string{"type", "transport", "timeout", "alwaysAllow", "autoApprove", "description"}
 )
 
@@ -182,8 +186,20 @@ func load(path string) (map[string]server, error) {
 			if err := unknown(c, commandSettings); err != nil {
 				return nil, bad("chat command %q: %v", txt.Clamp(n, 40), err)
 			}
-			if s.ChatCommands[n].Direct && s.Addon == nil {
+			cc := s.ChatCommands[n]
+			if cc.Direct && s.Addon == nil {
 				return nil, bad("chat command %q is direct, which needs an addon block", txt.Clamp(n, 40))
+			}
+			if _, set := c["timeout"]; set {
+				if !cc.Direct {
+					return nil, bad("chat command %q has a timeout, which only a direct command takes", txt.Clamp(n, 40))
+				}
+				d, err := time.ParseDuration(cc.Timeout)
+				if err != nil || d < time.Second || d > maxDirectTimeout {
+					return nil, bad("chat command %q: timeout %q isn't a time from 1s to 2m, such as 15s or 1m", txt.Clamp(n, 40), txt.Clamp(cc.Timeout, 40))
+				}
+				cc.timeout = d
+				s.ChatCommands[n] = cc
 			}
 		}
 		switch {
@@ -548,7 +564,7 @@ func command(h feature.Host, server, n string, c chatCommand, models map[string]
 		case c.RequireArg && args == "":
 			return feature.Action{Answer: bare}
 		case c.Direct:
-			return a.direct(ctx, m, name, c.Tool, args)
+			return a.direct(ctx, m, name, c, args)
 		}
 		return feature.Action{ToolChoice: model}
 	})

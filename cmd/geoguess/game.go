@@ -18,13 +18,17 @@ const (
 	guard     = "No hints during a round 😉"
 	noChat    = "GeoGuess works only in a chat."
 	noRound   = "There's no round on. Start one with /geo."
-	noPhoto   = "I'm still looking for a photo. Try again in a minute."
+	noPhoto   = "I couldn't find a good spot in time; I'm still looking, so try /geo again in a minute."
 	badLength = "A round can be 30s to 30m, such as /geo 90s or /geo 5m."
 	usage     = "Try /geo, /geo 90s, /geo end, /geo skip, /geo scores, or a region such as /geo europe or /geo AU,NZ."
 )
 
 // pin is the reaction to a recorded guess.
 const pin = "📍"
+
+// replyTime is what /geo leaves before the bot's deadline to start the
+// round and send the photo, so it never starts one the bot won't show.
+const replyTime = 3 * time.Second
 
 // call runs one tool. Only an unknown tool is a protocol error; the rest
 // answer in words.
@@ -121,15 +125,25 @@ func (s *server) start(ctx context.Context, c *callContext, length time.Duration
 	if r != nil {
 		return busy(r, s.clock.Now())
 	}
-	photo, ok := s.take(ctx, region)
+	wait := s.cfg.Wait
+	if c.Deadline != 0 { // leave the bot time to send the photo
+		wait = min(wait, time.Until(time.Unix(c.Deadline, 0))-replyTime)
+	}
+	photo, ok := s.take(ctx, region, wait)
 	if !ok {
 		return text(noPhoto)
 	}
 	s.mu.Lock()
 	now := s.clock.Now()
-	if r := s.rounds[c.Chat]; r != nil { // another /geo began one meanwhile
+	r = s.rounds[c.Chat]
+	if r != nil || ctx.Err() != nil { // another /geo began one meanwhile, or the bot gave up
 		s.buffer = append([]geo.Photo{photo}, s.buffer...)
+		close(s.changed) // for a /geo waiting in another chat
+		s.changed = make(chan struct{})
 		s.mu.Unlock()
+		if r == nil {
+			return text(noPhoto)
+		}
 		return busy(r, now)
 	}
 	r = &round{

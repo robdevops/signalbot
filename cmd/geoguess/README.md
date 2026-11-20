@@ -46,7 +46,7 @@ which is what gives it the `GEO_` settings below:
 ```jsonc
 "geo": {
   "command": "/addons/geoguess",
-  "chat_commands": {"geo": {"tool": "geo", "direct": true, "example": "/geo 3m"}},
+  "chat_commands": {"geo": {"tool": "geo", "direct": true, "example": "/geo 3m", "timeout": "60s"}},
   "addon": {"chats": ["<group id>"], "post": true, "react": true, "watch": true, "watch_max": "1h"}
 }
 ```
@@ -54,7 +54,13 @@ which is what gives it the `GEO_` settings below:
 `chats` takes the groups' IDs as Signal or Telegram shows them, or `["all"]`;
 add `"dms": true` to play in DMs too. GeoGuess needs `post` (for the results),
 `react` (the 📍 on a counted guess) and `watch` (to read guesses). A round
-lasts at most 30 minutes, so the default `watch_max` of 1h is enough.
+lasts at most 30 minutes, so the default `watch_max` of 1h is enough. The
+`timeout` lets `/geo` wait for a photo when none is ready: keep it above
+`GEO_WAIT` (50s by default). GeoGuess never waits past the bot's timeout
+anyway, less a few seconds to send the photo, and starts no round the bot has
+given up on. A call that waits holds one of the bot's 2 calls at once for
+GeoGuess, so while two chats each wait for a photo, `/geo end`, `/geo skip`
+and `/geo scores` are told GeoGuess is busy.
 
 GeoGuess keeps its own files in `GEO_STATE_DIR`, which you create, writable by
 the bot's user, and set in `/etc/signalbot.env`:
@@ -87,6 +93,8 @@ trusts its CA), and nothing else.
 | `GEO_MIN_QUALITY` | `0.5` | Minimum Mapillary `quality_score` (0 to 1), when a photo has one |
 | `GEO_MAX_AGE_YEARS` | `10` | Ignore older photos |
 | `GEO_BUFFER` | `3` | Checked photos kept ready (1 to 20) |
+| `GEO_KEEP` | empty | Regions to always keep a photo ready for, comma-separated, in `GEO_REGIONS`'s names, one photo each: `AU,NZ` keeps one Australian and one New Zealand photo, so `/geo AU` answers at once. Searched before topping up `GEO_BUFFER` (a region whose search fails is tried again after a backoff, and the buffer fills meanwhile), never dropped to make room or used by a `/geo` another photo can serve, and refilled once used |
+| `GEO_WAIT` | `50s` | How long `/geo` waits for a photo when none is ready, 5s to 110s, before saying to try again; the search carries on either way. Keep the `geo` chat command's `timeout` above it |
 | `GEO_NOMINATIM_URL` | `https://nominatim.openstreetmap.org` | Reverse geocoder for the place names; `https://` only, as it is sent each round's answer |
 | `GEO_PANORAMAX_URL` | `https://api.panoramax.xyz` | Panoramax API (a STAC catalogue), such as one instance's; `https://` only |
 | `GEO_MAPILLARY_URL` | `https://graph.mapillary.com` | Mapillary Graph API; `https://` only |
@@ -140,8 +148,9 @@ coordinate, a place or person's name, a pseudonym or message text.
 - `tools/list` has `geo` (`{args}`) and `geo_guess` (`{text}`), both with
   `_meta["io.github.robdevops.signalbot/visibility"] = ["bot"]`, so neither is
   offered to the model.
-- `tools/call` reads the chat, the sender and the receive times from
-  `_meta["io.github.robdevops.signalbot/context"]`. Starting a round answers
+- `tools/call` reads the chat, the sender, the receive times and the
+  `deadline` from `_meta["io.github.robdevops.signalbot/context"]`. A call
+  the bot cancels (`notifications/cancelled`) stops. Starting a round answers
   with the photo, its caption and a `…/watch` for `geo_guess`, until 5s past
   the deadline; a recorded guess answers with `…/react: "📍"`.
 - When a round's time is up GeoGuess queues a `post` with the results, its

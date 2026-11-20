@@ -321,6 +321,35 @@ func TestWaitingCommandOnItsOwn(t *testing.T) {
 	}
 }
 
+// A hook that takes over a second on an addressed message shows the bot
+// typing, stopped before the answer goes out; a quick one shows nothing.
+func TestSlowHookTypes(t *testing.T) {
+	h := start(t, options{features: func(b *Bot) {
+		b.OnMessage(func(_ context.Context, m feature.Message) feature.Action {
+			switch m.Text {
+			case "/slow":
+				time.Sleep(1500 * time.Millisecond)
+				return feature.Action{Answer: "slow"}
+			case "/fast":
+				return feature.Action{Answer: "fast"}
+			}
+			return feature.Action{}
+		})
+	}})
+	h.receive(dm("/fast"))
+	if s := h.nextSend(); s.text != "fast" || h.typing() != 0 {
+		t.Fatalf("fast: sent %q, typing %d times", s.text, h.typing())
+	}
+	h.receive(dm("/slow"))
+	if s := h.nextSend(); s.text != "slow" || h.typing() != 1 || h.stopped() != 1 {
+		t.Fatalf("slow: sent %q, typing %d times, stopped %d", s.text, h.typing(), h.stopped())
+	}
+	h.settle()
+	if h.typing() != 1 || h.stopped() != 1 {
+		t.Fatalf("after: typing %d times, stopped %d", h.typing(), h.stopped())
+	}
+}
+
 // While a batch is being answered, 4 more messages can wait, and they are
 // answered together after it, in one batch.
 func TestFourWaitDuringABatch(t *testing.T) {

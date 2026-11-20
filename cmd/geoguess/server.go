@@ -18,13 +18,12 @@ import (
 // server is GeoGuess: the chats' rounds, their scores, the outbox the bot
 // reads, and the photos kept ready.
 type server struct {
-	cfg       config
-	clock     clock
-	photos    finder
-	log       *log.Logger
-	doc       *state.Doc
-	nonce     string        // this run's, in each outbox cursor and op ID
-	photoWait time.Duration // how long /geo waits for a photo when none is ready
+	cfg    config
+	clock  clock
+	photos finder
+	log    *log.Logger
+	doc    *state.Doc
+	nonce  string // this run's, in each outbox cursor and op ID
 
 	out   *wire
 	dirty chan struct{} // the outbox gained ops: tell the client
@@ -40,6 +39,7 @@ type server struct {
 	subscribed bool               // the client wants to hear of the outbox
 	buffer     []geo.Photo        // photos ready for a round, oldest first
 	wants      map[string]bool    // regions a /geo asked for that the buffer lacks
+	retries    map[string]retry   // GEO_KEEP regions whose last search failed
 	changed    chan struct{}      // closed when the buffer gains a photo
 	seeds      map[string]*geo.Seeds
 	network    string // the chat network the bot said it is on, "" if it didn't
@@ -109,17 +109,17 @@ const (
 func newServer(cfg config, clk clock, photos finder, logger *log.Logger) (*server, error) {
 	s := &server{
 		cfg: cfg, clock: clk, photos: photos, log: logger,
-		doc:       state.Open(cfg.StateDir, "geo"),
-		nonce:     randomID(4),
-		photoWait: 10 * time.Second,
-		dirty:     make(chan struct{}, 1),
-		wake:      make(chan struct{}, 1),
-		rounds:    map[string]*round{},
-		timers:    map[string]stopper{},
-		scores:    map[string][]score{},
-		wants:     map[string]bool{},
-		changed:   make(chan struct{}),
-		seeds:     map[string]*geo.Seeds{},
+		doc:     state.Open(cfg.StateDir, "geo"),
+		nonce:   randomID(4),
+		dirty:   make(chan struct{}, 1),
+		wake:    make(chan struct{}, 1),
+		rounds:  map[string]*round{},
+		timers:  map[string]stopper{},
+		scores:  map[string][]score{},
+		wants:   map[string]bool{},
+		retries: map[string]retry{},
+		changed: make(chan struct{}),
+		seeds:   map[string]*geo.Seeds{},
 	}
 	var st saved
 	if _, err := s.doc.Load(&st); err != nil {

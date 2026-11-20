@@ -12,7 +12,7 @@
   },
   "geo": {
     "command": "/addons/geoguess",
-    "chat_commands": {"geo": {"tool": "geo", "direct": true, "example": "/geo 3m"}},
+    "chat_commands": {"geo": {"tool": "geo", "direct": true, "example": "/geo 3m", "timeout": "60s"}},
     "addon": {"chats": ["all"], "dms": false, "post": true, "react": true, "watch": true, "watch_max": "1h"}
   },
   "files": {

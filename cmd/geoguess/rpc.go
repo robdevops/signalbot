@@ -84,7 +84,9 @@ func (w *wire) send(v any) error {
 type handler func(ctx context.Context, params json.RawMessage) (any, error)
 
 // serve reads requests from in until it ends or ctx does, answering each on
-// its own goroutine through out, and waits for the answers in flight.
+// its own goroutine through out, and waits for the answers in flight. A
+// request the client cancels (notifications/cancelled) has its context
+// cancelled, so it stops rather than act for no one.
 func (s *server) serve(ctx context.Context, in io.Reader, out io.Writer) error {
 	s.out = &wire{w: out}
 	ctx, cancel := context.WithCancel(ctx)
@@ -92,6 +94,8 @@ func (s *server) serve(ctx context.Context, in io.Reader, out io.Writer) error {
 	go s.notifier(ctx)
 	var wg sync.WaitGroup
 	defer wg.Wait()
+	var mu sync.Mutex
+	inFlight := map[string]context.CancelFunc{} // by request ID
 	r := bufio.NewReaderSize(in, 64<<10)
 	for {
 		line, err := readLine(r)
@@ -109,13 +113,34 @@ func (s *server) serve(ctx context.Context, in io.Reader, out io.Writer) error {
 			s.out.send(response{JSONRPC: "2.0", ID: json.RawMessage("null"), Error: &rpcError{codeParse, "parse error"}})
 			continue
 		}
+		if m.Method == "notifications/cancelled" {
+			var p struct {
+				RequestID json.RawMessage `json:"requestId"`
+			}
+			json.Unmarshal(m.Params, &p)
+			mu.Lock()
+			if stop := inFlight[string(p.RequestID)]; stop != nil {
+				stop()
+			}
+			mu.Unlock()
+			continue
+		}
 		if len(m.ID) == 0 || m.Method == "" { // a notification, or a response
 			continue
 		}
+		id := string(m.ID)
+		rctx, stop := context.WithCancel(ctx)
+		mu.Lock()
+		inFlight[id] = stop
+		mu.Unlock()
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			s.out.send(s.answer(ctx, m))
+			s.out.send(s.answer(rctx, m))
+			mu.Lock()
+			delete(inFlight, id)
+			mu.Unlock()
+			stop()
 		}()
 	}
 }
@@ -285,7 +310,8 @@ type callParams struct {
 }
 
 // callContext is the message a call came from: pseudonyms for its chat and
-// sender, and the bot's receive times in whole seconds.
+// sender, and the bot's receive times in whole seconds; and, for a call the
+// bot waits on, when it stops waiting.
 type callContext struct {
 	Chat      string `json:"chat"`
 	Sender    string `json:"sender"`
@@ -294,6 +320,7 @@ type callContext struct {
 	Group     bool   `json:"group"`
 	Sent      int64  `json:"sent"`
 	Edited    int64  `json:"edited"`
+	Deadline  int64  `json:"deadline,omitempty"`
 }
 
 // methods are the MCP methods GeoGuess answers.

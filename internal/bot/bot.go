@@ -403,7 +403,7 @@ func (b *Bot) work(rs []Received) {
 			case !msg.Addressed:
 				alone(func() { b.overhear(msg) })
 			default:
-				if act := b.onMessage(b.ctx, msg); !act.IsZero() {
+				if act := b.hooked(msg); !act.IsZero() {
 					alone(func() { b.respond(msg, act, prompt(msg), refs(msg)) })
 					return
 				}
@@ -539,6 +539,37 @@ func (b *Bot) onMessage(ctx context.Context, msg feature.Message) feature.Action
 		}
 	}
 	return feature.Action{}
+}
+
+// slowHooks is how long an addressed message's OnMessage hooks may run
+// before the chat sees the bot typing.
+const slowHooks = time.Second
+
+// hooked runs the OnMessage hooks for an addressed message, in its chat's
+// slot. If they haven't returned after slowHooks, the chat sees the bot
+// typing until they do, as it would while the model answers; quick ones
+// show nothing.
+func (b *Bot) hooked(msg feature.Message) feature.Action {
+	var mu sync.Mutex
+	var stop func()
+	done := false
+	timer := time.AfterFunc(slowHooks, func() {
+		mu.Lock()
+		defer mu.Unlock()
+		if !done {
+			stop = b.net.Typing(msg.Chat)
+		}
+	})
+	defer func() { // also if a hook panics
+		timer.Stop()
+		mu.Lock()
+		defer mu.Unlock()
+		done = true
+		if stop != nil {
+			stop()
+		}
+	}()
+	return b.onMessage(b.ctx, msg)
 }
 
 // introLine is a feature's line for the introduction, perhaps only in a DM.

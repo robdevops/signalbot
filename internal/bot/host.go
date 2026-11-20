@@ -259,7 +259,7 @@ func (b *Bot) delivered(msg feature.Message) {
 		b.chats.Learn(key, msg.Name, msg.Sender)
 	}
 	msg.Addressed = true
-	if act := b.onMessage(b.ctx, msg); !act.IsZero() || r.Mentioned {
+	if act := b.hooked(msg); !act.IsZero() || r.Mentioned {
 		b.respond(msg, act, prompt(msg), nil)
 		return
 	}

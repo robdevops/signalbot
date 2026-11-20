@@ -255,9 +255,12 @@ func TestLoad(t *testing.T) {
 	// settings it could be, and both lists at once too; keys other clients
 	// write are ignored, so a pasted entry starts.
 	for bad, want := range map[string]string{
-		`{"mcpServers":{"w":{"url":"u","allowedTools":["t"]}}}`:                                 `: MCP server "w": unknown setting "allowedTools" (settings are url, headers, command, args, env, allowed_tools, blocked_tools, instructions, keywords, chat_commands, disabled, addon)`,
-		`{"mcpServers":{"w":{"url":"u","chat_commands":{"x":{"tool":"t","requireArg":true}}}}}`: `: MCP server "w": chat command "x": unknown setting "requireArg" (settings are tool, require_arg, example, direct)`,
-		`{"mcpServers":{"w":{"url":"u","allowed_tools":[],"blocked_tools":["t"]}}}`:             `: MCP server "w": has both allowed_tools and blocked_tools; use one`,
+		`{"mcpServers":{"w":{"url":"u","allowedTools":["t"]}}}`:                                                              `: MCP server "w": unknown setting "allowedTools" (settings are url, headers, command, args, env, allowed_tools, blocked_tools, instructions, keywords, chat_commands, disabled, addon)`,
+		`{"mcpServers":{"w":{"url":"u","chat_commands":{"x":{"tool":"t","requireArg":true}}}}}`:                              `: MCP server "w": chat command "x": unknown setting "requireArg" (settings are tool, require_arg, example, direct, timeout)`,
+		`{"mcpServers":{"w":{"url":"u","chat_commands":{"x":{"tool":"t","timeout":"30s"}}}}}`:                                `: MCP server "w": chat command "x" has a timeout, which only a direct command takes`,
+		`{"mcpServers":{"w":{"command":"c","addon":{},"chat_commands":{"x":{"tool":"t","direct":true,"timeout":"3m"}}}}}`:    `: MCP server "w": chat command "x": timeout "3m" isn't a time from 1s to 2m, such as 15s or 1m`,
+		`{"mcpServers":{"w":{"command":"c","addon":{},"chat_commands":{"x":{"tool":"t","direct":true,"timeout":"500ms"}}}}}`: `: MCP server "w": chat command "x": timeout "500ms" isn't a time from 1s to 2m, such as 15s or 1m`,
+		`{"mcpServers":{"w":{"url":"u","allowed_tools":[],"blocked_tools":["t"]}}}`:                                          `: MCP server "w": has both allowed_tools and blocked_tools; use one`,
 	} {
 		p := writeConfig(t, bad)
 		if _, err := load(p); err == nil || err.Error() != p+want {

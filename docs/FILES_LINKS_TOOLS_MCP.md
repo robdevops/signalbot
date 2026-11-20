@@ -56,7 +56,7 @@ The model can call tools from [MCP](https://modelcontextprotocol.io) servers, re
   },
   "geo": {
     "command": "/addons/geoguess",
-    "chat_commands": {"geo": {"tool": "geo", "direct": true, "example": "/geo 3m"}},
+    "chat_commands": {"geo": {"tool": "geo", "direct": true, "example": "/geo 3m", "timeout": "60s"}},
     "addon": {"chats": ["all"], "dms": false, "post": true, "react": true, "watch": true, "watch_max": "1h"}
   },
   "files": {
@@ -77,7 +77,7 @@ The model can call tools from [MCP](https://modelcontextprotocol.io) servers, re
 | `allowed_tools` / `blocked_tools` | offer only these tools, or every tool but these (one or the other, not both) |
 | `instructions` | a line added to the system prompt while the server's tools are offered (see below) |
 | `keywords` | offer the server's tools only when a message has one of these words (see below). A server without them is offered with every message, except one whose page or file the model is shown, so what a document says can't call its tools |
-| `chat_commands` | optional slash-command shortcuts to a tool (you can always just ask): `tool` names it, `require_arg` makes a bare command get a usage reply, and `example` adds one to it; for an addon, `direct` has the bot call the tool itself, without the model (see [Addons](#addons)) |
+| `chat_commands` | optional slash-command shortcuts to a tool (you can always just ask): `tool` names it, `require_arg` makes a bare command get a usage reply, and `example` adds one to it; for an addon, `direct` has the bot call the tool itself, without the model, and `timeout` sets how long that call may take (see [Addons](#addons)) |
 | `addon` | makes a local server an addon, and says where it may act and what it may do (see [Addons](#addons)) |
 | `disabled` | leave the server out without deleting it |
 
@@ -105,7 +105,7 @@ An addon is a local MCP server that does more than offer tools: it answers its o
 ```jsonc
 "geo": {
   "command": "/addons/geoguess",
-  "chat_commands": {"geo": {"tool": "geo", "direct": true, "example": "/geo 3m"}},
+  "chat_commands": {"geo": {"tool": "geo", "direct": true, "example": "/geo 3m", "timeout": "60s"}},
   "addon": {
     "chats": ["<group ID>"],
     "dms": false,
@@ -133,7 +133,7 @@ Each permission is off unless set. For an addon, `chats`, `dms` and these permis
 
 **What an addon sees.** Never a phone number, account ID or group ID: chats and people are pseudonyms the bot makes with a secret kept in `mcp.json` in the state directory, different for each addon. It sees a command's text after the command, the messages its watches match, and, with `names`, display names. To name someone in what it says, it writes their pseudonym as `{u_…}`, and the bot puts in the name it last saw them use there, as an @mention, or "someone".
 
-- **Direct commands.** `"direct": true` on a chat command has the bot call the addon's tool itself, with the text after the command, and send what it answers (text, and up to 2 pictures) without the model. The tool must be marked for the bot, and is then never offered to the model. A call has 15 seconds, and at most 2 run at once per addon; a third is told the addon is busy. When it fails, the chat gets a short line ("GeoGuess couldn't do that just now."), never the addon's own error text. An addon with no tool for the model has its commands named in the prompt's list of what the bot has, so the model can point people to them.
+- **Direct commands.** `"direct": true` on a chat command has the bot call the addon's tool itself, with the text after the command, and send what it answers (text, and up to 2 pictures) without the model. The tool must be marked for the bot, and is then never offered to the model. A call has 15 seconds, or the command's `timeout`, from 1s to 2m (`"timeout": "60s"`), for an addon that may take a while, such as GeoGuess finding a photo; while it runs the chat sees the bot typing. At most 2 run at once per addon; a third is told the addon is busy, so with a long `timeout`, two calls that wait (two chats each waiting for a GeoGuess photo) make even a quick command such as `/geo scores` wait for one to end. When it fails, the chat gets a short line ("GeoGuess couldn't do that just now."), never the addon's own error text. An addon with no tool for the model has its commands named in the prompt's list of what the bot has, so the model can point people to them.
 - **Hidden tools.** A tool whose `_meta` says it is for the bot alone (`io.github.robdevops.signalbot/visibility` without `"model"`, or MCP Apps' `ui.visibility` without `"model"`) is never offered to the model or listed as one of its tools, so tools that read chat text stay out of its hands.
 - **Watches.** A direct command's answer can ask for a watch on its chat: a pattern, such as map links, until a time at most `watch_max` away. While it lasts, a message there that matches goes to the addon instead: it isn't answered, isn't sent to the model, and isn't kept in history, even as group context; so does an edit of it later. The addon may react to it, so people see it was counted. A pattern that would match ordinary chat ("lol", "see you at 5", a news link, …) is refused, so a watch can't become a feed of everything said; at most 8 run in a chat at once. While a watch lasts, a reply to the command's pictures that asks the bot gets the addon's set answer (GeoGuess's "No hints during a round 😉"), not the model's.
 - **Outbox.** An addon posts when it likes by queueing posts, reactions and the end of a watch in its outbox, an MCP resource the bot subscribes to (`signalbot://outbox`), and saying it changed; the bot reads it at once. It may post or react only in a chat where it was used, by a command or a watch, in the last 24 hours, and only within `rate`. Its posts go through the chat's queue like any message, never more than one at a time, and history keeps them as the bot's, labelled with the addon's name (`[GeoGuess] …`), so what an addon writes never poses as a person.

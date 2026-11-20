@@ -1,6 +1,7 @@
 package mcp
 
 import (
+	"cmp"
 	"context"
 	"encoding/base64"
 	"encoding/json"
@@ -28,15 +29,22 @@ const (
 	maxPictureBytes  = 2 << 20
 )
 
-// directTimeout is how long a direct call may take, short of callTimeout so
-// a hung addon can't hold a message's slot long; tests shorten it.
+// directTimeout is how long a direct call may take, unless its command sets
+// a timeout, and a watch's call; short of callTimeout so a hung addon can't
+// hold a message's slot long; tests shorten it. maxDirectTimeout is the
+// longest a command may set.
 var directTimeout = 15 * time.Second
 
-// direct answers /name in m by calling the addon's tool itself, with args
-// and m's context: the result's text and pictures, sent without the model.
+const maxDirectTimeout = 2 * time.Minute
+
+// direct answers /name in m by calling the addon's tool c.Tool itself, with
+// args and m's context, for at most c's timeout: the result's text and
+// pictures, sent without the model. The context says when the bot stops
+// waiting, so the addon can give up in time rather than act on a call
+// nobody will see; one that runs past it is cancelled.
 // A failure is told in words for people; the server's own text is never
 // shown or logged.
-func (a *addon) direct(ctx context.Context, m feature.Message, name, tool, args string) feature.Action {
+func (a *addon) direct(ctx context.Context, m feature.Message, name string, c chatCommand, args string) feature.Action {
 	if !a.allows(m.Chat) {
 		return feature.Action{Answer: "/" + name + " isn't available in this chat."}
 	}
@@ -48,13 +56,16 @@ func (a *addon) direct(ctx context.Context, m feature.Message, name, tool, args 
 		return feature.Action{Answer: a.title + " is busy, try again in a moment."}
 	}
 	a.lease(m.Chat)
-	ctx, cancel := context.WithTimeout(ctx, directTimeout)
+	timeout := cmp.Or(c.timeout, directTimeout)
+	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	start := time.Now()
+	cc := a.context(m, a.now())
+	cc.Deadline = start.Add(timeout).Unix() // rounded down, so never late
 	res, err := a.conn.call(ctx, "tools/call", map[string]any{
-		"name":      tool,
+		"name":      c.Tool,
 		"arguments": map[string]string{"args": args},
-		"_meta":     map[string]any{vendor + "context": a.context(m, a.now())},
+		"_meta":     map[string]any{vendor + "context": cc},
 	})
 	var r toolResult
 	outcome := "ok"
@@ -66,7 +77,7 @@ func (a *addon) direct(ctx context.Context, m feature.Message, name, tool, args 
 	case r.IsError:
 		outcome = "an error result"
 	}
-	logx.Infof("MCP server %s: /%s called %s: %s in %dms, %d bytes", a.server, name, tool, outcome, time.Since(start).Milliseconds(), len(res))
+	logx.Infof("MCP server %s: /%s called %s: %s in %dms, %d bytes", a.server, name, c.Tool, outcome, time.Since(start).Milliseconds(), len(res))
 	if outcome != "ok" {
 		return feature.Action{Answer: a.title + " couldn't do that just now."}
 	}

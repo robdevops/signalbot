@@ -359,8 +359,17 @@ func (c *stdioConn) call(ctx context.Context, method string, params any) (json.R
 		}
 		return m.Result, nil
 	case <-ctx.Done():
+		if method != "initialize" { // which MCP says is never cancelled
+			c.write(rpcMsg{JSONRPC: "2.0", Method: "notifications/cancelled", Params: cancelled{RequestID: id}})
+		}
 		return nil, ctx.Err()
 	}
+}
+
+// cancelled is notifications/cancelled's params: the server may stop work
+// on a request whose answer the bot no longer waits for.
+type cancelled struct {
+	RequestID int64 `json:"requestId"`
 }
 
 func (c *stdioConn) notify(_ context.Context, method string, params any) error {

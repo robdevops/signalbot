@@ -53,6 +53,7 @@ type fakeNet struct {
 	sent    chan sent // what the bot sends, in order
 	mu      sync.Mutex
 	typing  int          // Typing calls
+	stopped int          // their stops called
 	fetched []string     // the media IDs fetched
 	sends   atomic.Int64 // Send calls, for their timestamps
 	watch   Watch        // what Watch was told
@@ -101,7 +102,11 @@ func (n *fakeNet) Typing(feature.Chat) func() {
 	n.mu.Lock()
 	defer n.mu.Unlock()
 	n.typing++
-	return func() {}
+	return func() {
+		n.mu.Lock()
+		defer n.mu.Unlock()
+		n.stopped++
+	}
 }
 
 func (n *fakeNet) Delivered(ctx context.Context, msg feature.Message) (Ready, bool) {
@@ -326,6 +331,13 @@ func (h *harness) noSend() {
 		h.t.Fatalf("sent %+v", s)
 	case <-time.After(100 * time.Millisecond):
 	}
+}
+
+// stopped is how many of the Typing calls' stops were called.
+func (h *harness) stopped() int {
+	h.net.mu.Lock()
+	defer h.net.mu.Unlock()
+	return h.net.stopped
 }
 
 func (h *harness) typing() int {

@@ -111,6 +111,9 @@ func TestAddonProcess(t *testing.T) {
 			} `json:"params"`
 		}
 		json.Unmarshal(sc.Bytes(), &req)
+		if req.Method == "notifications/cancelled" {
+			fakeLog("cancelled " + string(sc.Bytes()))
+		}
 		if req.ID == nil {
 			continue
 		}
@@ -287,7 +290,7 @@ func TestAddonLoad(t *testing.T) {
 		`{"mcpServers":{"geo":{"command":"x","addon":{"chats":["all","` + groupA + `"]}}}}`:                 `: MCP server "geo": addon chats: "all" goes alone`,
 		`{"mcpServers":{"geo":{"command":"x","addon":{"watch_max":"25h"}}}}`:                                `: MCP server "geo": addon watch_max: "25h" isn't a time from 1s to 24h, such as 1h or 30m`,
 		`{"mcpServers":{"geo":{"command":"x","addon":{"rate":{"burst":-1}}}}}`:                              `: MCP server "geo": addon rate: per_minute and burst can't be below 0`,
-		`{"mcpServers":{"geo":{"command":"x","chat_commands":{"g":{"tool":"g","drect":true}},"addon":{}}}}`: `: MCP server "geo": chat command "g": unknown setting "drect" (settings are tool, require_arg, example, direct)`,
+		`{"mcpServers":{"geo":{"command":"x","chat_commands":{"g":{"tool":"g","drect":true}},"addon":{}}}}`: `: MCP server "geo": chat command "g": unknown setting "drect" (settings are tool, require_arg, example, direct, timeout)`,
 	} {
 		p := writeConfig(t, bad)
 		if _, err := load(p); err == nil || err.Error() != p+want {
@@ -366,7 +369,8 @@ func TestDirect(t *testing.T) {
 	c := meta[vendor+"context"]
 	id := regexp.MustCompile(`^[cur]_[a-z2-7]{26}$`)
 	if !id.MatchString(c.Chat) || !id.MatchString(c.Sender) || !id.MatchString(c.Ref) || c.Chat[0] != 'c' || c.Sender[0] != 'u' || c.Ref[0] != 'r' ||
-		!c.Addressed || !c.Group || c.Edited != 0 || c.Name != "" || time.Since(time.Unix(c.Sent, 0)) > time.Minute {
+		!c.Addressed || !c.Group || c.Edited != 0 || c.Name != "" || time.Since(time.Unix(c.Sent, 0)) > time.Minute ||
+		time.Until(time.Unix(c.Deadline, 0)) > directTimeout || time.Until(time.Unix(c.Deadline, 0)) < directTimeout-5*time.Second {
 		t.Fatalf("context %+v", c)
 	}
 	if strings.Contains(got.Answer, "alice-id") || strings.Contains(got.Answer, groupA) || strings.Contains(got.Answer, "Alice") {
@@ -444,6 +448,28 @@ func TestDirectResults(t *testing.T) {
 	}
 	if strings.Contains(l, "secret") {
 		t.Fatalf("the server's error text was logged: %q", l)
+	}
+}
+
+// A direct command's timeout replaces directTimeout for its calls, and a
+// call past it is cancelled, so the addon can stop work nobody will see.
+func TestDirectTimeout(t *testing.T) {
+	t.Setenv("GAME_LOG", filepath.Join(t.TempDir(), "game.log"))
+	h, log := startAddon(t, `{"mcpServers":{"game":`+addonServer("addon", `{"dms":true}`,
+		`,"chat_commands":{"hang":{"tool":"hang","direct":true,"timeout":"1s"}}`)+`}}`)
+	start := time.Now()
+	if got := h.Message(context.Background(), in(inDM, "/hang")); got.Answer != "Game couldn't do that just now." {
+		t.Fatalf("hang: %+v", got)
+	}
+	if took := time.Since(start); took < time.Second || took >= directTimeout {
+		t.Errorf("took %v, want 1s", took)
+	}
+	if !strings.Contains(log.String(), "/hang called hang: no answer in time") {
+		t.Errorf("log %q", log.String())
+	}
+	eventually(t, "a cancellation", func() bool { return len(gameLog(t, "cancelled ")) == 1 })
+	if got := gameLog(t, "cancelled ")[0]; !regexp.MustCompile(`"params":\{"requestId":\d+\}`).MatchString(got) {
+		t.Errorf("cancelled %s", got)
 	}
 }
 

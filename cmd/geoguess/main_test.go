@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -98,17 +99,22 @@ func (b *syncBuffer) String() string {
 	return b.buf.String()
 }
 
-// fakeFinder finds a photo at once, or never if off.
+// fakeFinder finds a photo at once, or never if off: in Ballarat, or in
+// Paris for Europe, or with elsewhere for anywhere but AU. It keeps the
+// regions it was asked for.
 type fakeFinder struct {
-	mu  sync.Mutex
-	n   int
-	off bool
+	mu        sync.Mutex
+	n         int
+	off       bool
+	elsewhere bool
+	asked     []string
 }
 
 func (f *fakeFinder) Find(ctx context.Context, regions string) (geo.Photo, error) {
 	f.mu.Lock()
 	f.n++
-	n, off := f.n, f.off
+	n, off, elsewhere := f.n, f.off, f.elsewhere
+	f.asked = append(f.asked, regions)
 	f.mu.Unlock()
 	if off {
 		<-ctx.Done()
@@ -122,7 +128,7 @@ func (f *fakeFinder) Find(ctx context.Context, regions string) (geo.Photo, error
 		Place: geo.Place{Name: "Ballarat, Victoria, Australia", Country: "Australia", CountryCode: "AU"},
 		JPEG:  []byte("jpeg " + strconv.Itoa(n)),
 	}
-	if strings.Contains(strings.ToLower(regions), "europe") {
+	if strings.Contains(strings.ToLower(regions), "europe") || elsewhere && regions != "AU" {
 		p.At, p.Place = paris, geo.Place{Name: "Paris, Île-de-France, France", Country: "France", CountryCode: "FR"}
 	}
 	return p, nil
@@ -155,10 +161,14 @@ type rpcIn struct {
 }
 
 // testServer is a server keeping its state in dir, on clk, with photos from
-// the fake finder, and its log in logs.
-func testServer(t *testing.T, dir string, clk clock, photos finder, logs io.Writer) *server {
+// the fake finder, and its log in logs; extra settings come from env.
+func testServer(t *testing.T, dir string, clk clock, photos finder, logs io.Writer, env ...string) *server {
 	t.Helper()
-	cfg, err := loadConfig(func(k string) string { return map[string]string{"GEO_STATE_DIR": dir, "GEO_BUFFER": "2"}[k] })
+	vars := map[string]string{"GEO_STATE_DIR": dir, "GEO_BUFFER": "2", "GEO_WAIT": "5s"}
+	for i := 0; i+1 < len(env); i += 2 {
+		vars[env[i]] = env[i+1]
+	}
+	cfg, err := loadConfig(func(k string) string { return vars[k] })
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -166,7 +176,6 @@ func testServer(t *testing.T, dir string, clk clock, photos finder, logs io.Writ
 	if err != nil {
 		t.Fatal(err)
 	}
-	s.photoWait = 2 * time.Second
 	return s
 }
 
@@ -745,10 +754,14 @@ func TestNoPhotoAndRegions(t *testing.T) {
 	clk := &fakeClock{now: time.Date(2026, 11, 20, 14, 0, 0, 0, time.UTC)}
 	photos := &fakeFinder{off: true}
 	s := testServer(t, t.TempDir(), clk, photos, io.Discard)
-	s.photoWait = 50 * time.Millisecond
+	s.cfg.Wait = 50 * time.Millisecond
 	c := connect(t, s)
+	began := time.Now()
 	if got := words(c.geo("", from(clk, chat, alice))); got != noPhoto {
 		t.Errorf("no photo: %q", got)
+	}
+	if waited := time.Since(began); waited < s.cfg.Wait {
+		t.Errorf("gave up after %s, before GEO_WAIT", waited)
 	}
 
 	clk, c, _ = start(t)
@@ -775,21 +788,28 @@ func TestNoPhotoAndRegions(t *testing.T) {
 func TestConfig(t *testing.T) {
 	env := func(m map[string]string) func(string) string { return func(k string) string { return m[k] } }
 	c, err := loadConfig(env(map[string]string{"GEO_STATE_DIR": "/x"}))
-	if err != nil || c.Round != 3*time.Minute || c.MemLimit != 200<<20 || c.Buffer != 3 || c.MinQuality != 0.5 ||
+	if err != nil || c.Round != 3*time.Minute || c.MemLimit != 200<<20 || c.Buffer != 3 || c.MinQuality != 0.5 || c.Keep != nil || c.Wait != 50*time.Second ||
 		c.Nominatim != geo.NominatimURL || c.Panoramax != geo.PanoramaxURL || c.Mapillary != geo.MapillaryURL || c.MaxAge < 10*365*24*time.Hour {
 		t.Errorf("defaults %+v, %v", c, err)
 	}
-	c, err = loadConfig(env(map[string]string{"GEO_STATE_DIR": "/x", "GEO_ROUND": "90s", "GEO_MEMLIMIT": "1GiB", "GEO_REGIONS": "europe", "GEO_BUFFER": "5"}))
-	if err != nil || c.Round != 90*time.Second || c.MemLimit != 1<<30 || c.Regions != "europe" || c.Buffer != 5 {
+	c, err = loadConfig(env(map[string]string{"GEO_STATE_DIR": "/x", "GEO_ROUND": "90s", "GEO_MEMLIMIT": "1GiB", "GEO_REGIONS": "europe", "GEO_BUFFER": "5",
+		"GEO_KEEP": " AU, europe,", "GEO_WAIT": "110s"}))
+	if err != nil || c.Round != 90*time.Second || c.MemLimit != 1<<30 || c.Regions != "europe" || c.Buffer != 5 ||
+		!slices.Equal(c.Keep, []string{"AU", "europe"}) || c.Wait != 110*time.Second {
 		t.Errorf("set %+v, %v", c, err)
 	}
-	_, err = loadConfig(env(map[string]string{"GEO_ROUND": "1h", "GEO_MEMLIMIT": "lots", "GEO_REGIONS": "atlantis", "GEO_BUFFER": "0",
+	_, err = loadConfig(env(map[string]string{"GEO_ROUND": "1h", "GEO_MEMLIMIT": "lots", "GEO_REGIONS": "atlantis", "GEO_BUFFER": "0", "GEO_KEEP": "AU,atlantis", "GEO_WAIT": "4s",
 		"GEO_MIN_QUALITY": "2", "GEO_MAX_AGE_YEARS": "-1", "GEO_NOMINATIM_URL": "http://x",
 		"GEO_PANORAMAX_URL": "ftp://x", "GEO_MAPILLARY_URL": "graph.example"}))
-	for _, name := range []string{"GEO_STATE_DIR", "GEO_ROUND", "GEO_MEMLIMIT", "GEO_REGIONS", "GEO_BUFFER", "GEO_MIN_QUALITY", "GEO_MAX_AGE_YEARS",
+	for _, name := range []string{"GEO_STATE_DIR", "GEO_ROUND", "GEO_MEMLIMIT", "GEO_REGIONS", "GEO_BUFFER", "GEO_KEEP", "GEO_WAIT", "GEO_MIN_QUALITY", "GEO_MAX_AGE_YEARS",
 		"GEO_NOMINATIM_URL", "GEO_PANORAMAX_URL", "GEO_MAPILLARY_URL"} {
 		if err == nil || !strings.Contains(err.Error(), name) {
 			t.Errorf("no error for %s: %v", name, err)
+		}
+	}
+	for _, v := range []string{"2m", "soon", "0"} {
+		if _, err := loadConfig(env(map[string]string{"GEO_STATE_DIR": "/x", "GEO_WAIT": v})); err == nil || !strings.Contains(err.Error(), "GEO_WAIT") {
+			t.Errorf("GEO_WAIT %s: %v", v, err)
 		}
 	}
 	for s, want := range map[string]int64{"200MiB": 200 << 20, "1GiB": 1 << 30, "67108864": 64 << 20, "65536KiB": 64 << 20, "0.5GiB": 512 << 20} {
@@ -807,6 +827,234 @@ func TestConfig(t *testing.T) {
 	}
 	if err := checkDir(t.TempDir() + "/missing"); err == nil || !strings.Contains(err.Error(), "GEO_STATE_DIR") {
 		t.Errorf("a missing directory: %v", err)
+	}
+}
+
+// waitFor fails the test unless ok holds within a few seconds, checked
+// with s.mu held.
+func waitFor(t *testing.T, s *server, what string, ok func() bool) {
+	t.Helper()
+	for deadline := time.Now().Add(5 * time.Second); ; time.Sleep(5 * time.Millisecond) {
+		s.mu.Lock()
+		done := ok()
+		s.mu.Unlock()
+		if done {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("waited for %s", what)
+		}
+	}
+}
+
+// count is how many photos in the buffer are in region. s.mu is held.
+func (s *server) count(region string) int {
+	n := 0
+	for _, p := range s.buffer {
+		if s.in(p, region) {
+			n++
+		}
+	}
+	return n
+}
+
+// With GEO_KEEP=AU the prefetcher keeps an Australian photo ready with no
+// /geo asking, a /geo AU takes it at once, and it is replaced.
+func TestKeep(t *testing.T) {
+	clk := &fakeClock{now: time.Date(2026, 11, 20, 14, 0, 0, 0, time.UTC)}
+	photos := &fakeFinder{elsewhere: true}
+	s := testServer(t, t.TempDir(), clk, photos, io.Discard, "GEO_KEEP", "AU")
+	for range s.cfg.Buffer {
+		p, _ := photos.Find(context.Background(), "")
+		s.add(p, "")
+	}
+	c := connect(t, s)
+	var ready string
+	waitFor(t, s, "an AU photo", func() bool {
+		if i := s.match("AU"); i >= 0 {
+			ready = s.buffer[i].Link
+		}
+		return ready != ""
+	})
+	photos.mu.Lock()
+	if asked := photos.asked[s.cfg.Buffer:]; !slices.Equal(asked, []string{"AU"}) {
+		t.Errorf("searched %q", asked)
+	}
+	photos.mu.Unlock()
+
+	if got := words(c.geo("end", from(clk, chat, alice))); got != noRound {
+		t.Errorf("end with no round: %q", got)
+	}
+	r := c.geo("AU 2m", from(clk, chat, alice))
+	if r.Meta == nil {
+		t.Fatalf("/geo AU: %q", words(r))
+	}
+	s.mu.Lock()
+	if got := s.rounds[chat].Credit.Link; got != ready {
+		t.Errorf("/geo AU used %s, not the photo kept ready", got)
+	}
+	s.mu.Unlock()
+	if got := words(c.geo("end", from(clk, chat, alice))); !strings.Contains(got, "Ballarat") {
+		t.Errorf("a round in AU: %q", got)
+	}
+	waitFor(t, s, "a new AU photo", func() bool { return s.count("AU") == 1 })
+	photos.mu.Lock()
+	if asked := photos.asked[s.cfg.Buffer:]; !slices.Equal(asked, []string{"AU", "AU"}) {
+		t.Errorf("searched %q", asked)
+	}
+	photos.mu.Unlock()
+}
+
+// Trimming the buffer never drops a GEO_KEEP region's last photo.
+func TestKeepTrim(t *testing.T) {
+	clk := &fakeClock{now: time.Date(2026, 11, 20, 14, 0, 0, 0, time.UTC)}
+	photos := &fakeFinder{elsewhere: true}
+	s := testServer(t, t.TempDir(), clk, photos, io.Discard, "GEO_KEEP", "AU")
+	find := func(region string) geo.Photo {
+		p, err := photos.Find(context.Background(), region)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return p
+	}
+	s.add(find("AU"), "AU")
+	limit := s.cfg.Buffer + extraPhotos
+	for range limit + 3 {
+		s.add(find(""), "")
+	}
+	s.mu.Lock()
+	n, au, first := len(s.buffer), s.count("AU"), s.buffer[0].ID
+	s.mu.Unlock()
+	if n != limit || au != 1 || first != "1" {
+		t.Errorf("%d photos, %d in AU, the oldest %s", n, au, first)
+	}
+
+	// A second AU photo makes the first one droppable again.
+	s.add(find("AU"), "AU")
+	s.mu.Lock()
+	n, au = len(s.buffer), s.count("AU")
+	s.mu.Unlock()
+	if n != limit || au != 1 {
+		t.Errorf("%d photos, %d in AU", n, au)
+	}
+}
+
+// failIn is the fake finder, failing every search in one region.
+type failIn struct {
+	*fakeFinder
+	region string
+}
+
+func (f failIn) Find(ctx context.Context, regions string) (geo.Photo, error) {
+	if regions == f.region {
+		f.mu.Lock()
+		f.asked = append(f.asked, regions)
+		f.mu.Unlock()
+		return geo.Photo{}, errors.New("nothing good there")
+	}
+	return f.fakeFinder.Find(ctx, regions)
+}
+
+// A GEO_KEEP region whose searches fail waits its own backoff, and the
+// buffer still fills meanwhile.
+func TestKeepFailing(t *testing.T) {
+	clk := &fakeClock{now: time.Date(2026, 11, 20, 14, 0, 0, 0, time.UTC)}
+	photos := failIn{&fakeFinder{elsewhere: true}, "AU"}
+	s := testServer(t, t.TempDir(), clk, photos, io.Discard, "GEO_KEEP", "AU")
+	connect(t, s)
+	waitFor(t, s, "a full buffer", func() bool { return len(s.buffer) == s.cfg.Buffer })
+	s.mu.Lock()
+	r, au := s.retries["AU"], s.count("AU")
+	s.mu.Unlock()
+	if r.failures != 1 || au != 0 {
+		t.Errorf("retry %+v, %d in AU", r, au)
+	}
+	photos.mu.Lock()
+	if asked := photos.asked; !slices.Equal(asked, []string{"AU", "", ""}) {
+		t.Errorf("searched %q", asked)
+	}
+	photos.mu.Unlock()
+}
+
+// A plain /geo takes a photo GEO_KEEP can spare, leaving the kept one.
+func TestKeepPlainTake(t *testing.T) {
+	clk := &fakeClock{now: time.Date(2026, 11, 20, 14, 0, 0, 0, time.UTC)}
+	photos := &fakeFinder{elsewhere: true}
+	s := testServer(t, t.TempDir(), clk, photos, io.Discard, "GEO_KEEP", "AU")
+	for _, region := range []string{"AU", ""} {
+		p, _ := photos.Find(context.Background(), region)
+		s.add(p, region)
+	}
+	c := connect(t, s)
+	if r := c.geo("", from(clk, chat, alice)); r.Meta == nil {
+		t.Fatalf("/geo: %q", words(r))
+	}
+	s.mu.Lock()
+	place, au := s.rounds[chat].Place, s.count("AU")
+	s.mu.Unlock()
+	if !strings.Contains(place, "Paris") || au != 1 {
+		t.Errorf("/geo used a photo in %s, leaving %d in AU", place, au)
+	}
+}
+
+// A /geo the bot gives up on starts no round: one cancelled while it waits
+// leaves the photo found later ready, and one whose call is over when its
+// photo is taken puts it back. Near the bot's deadline it doesn't wait.
+func TestGeoAbandoned(t *testing.T) {
+	clk := &fakeClock{now: time.Date(2026, 11, 20, 14, 0, 0, 0, time.UTC)}
+	photos := &fakeFinder{off: true}
+	s := testServer(t, t.TempDir(), clk, photos, io.Discard)
+	c := connect(t, s)
+	got := make(chan response, 1)
+	c.mu.Lock()
+	c.waiting["99"] = got
+	c.mu.Unlock()
+	data, _ := json.Marshal(map[string]any{"jsonrpc": "2.0", "id": 99, "method": "tools/call", "params": map[string]any{
+		"name": "geo", "arguments": map[string]string{"args": ""}, "_meta": map[string]any{vendor + "context": from(clk, chat, alice)},
+	}})
+	c.send(string(data))
+	time.Sleep(100 * time.Millisecond) // for it to wait
+	began := time.Now()
+	c.send(`{"jsonrpc":"2.0","method":"notifications/cancelled","params":{"requestId":99}}`)
+	select {
+	case r := <-got:
+		var res toolResult
+		json.Unmarshal(r.Result.(json.RawMessage), &res)
+		if words(res) != noPhoto || time.Since(began) > time.Second {
+			t.Errorf("cancelled: %q after %s", words(res), time.Since(began))
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("the cancelled /geo went on waiting")
+	}
+	p := geo.Photo{Candidate: geo.Candidate{ID: "1", Source: "Mapillary", At: ballarat},
+		Place: geo.Place{Name: "Ballarat, Victoria, Australia", Country: "Australia", CountryCode: "AU"}}
+	s.add(p, "")
+	time.Sleep(50 * time.Millisecond)
+	s.mu.Lock()
+	n, round := len(s.buffer), s.rounds[chat]
+	s.mu.Unlock()
+	if n != 1 || round != nil {
+		t.Errorf("%d photos ready, round %+v", n, round)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	cc := from(clk, chat, alice)
+	if got := words(s.start(ctx, &cc, s.cfg.Round, "")); got != noPhoto {
+		t.Errorf("start, the call over: %q", got)
+	}
+	s.mu.Lock()
+	n, round = len(s.buffer), s.rounds[chat]
+	s.mu.Unlock()
+	if n != 1 || round != nil {
+		t.Errorf("after the call was over: %d photos ready, round %+v", n, round)
+	}
+
+	cc = from(clk, "c_two", bob)
+	cc.Deadline = time.Now().Add(replyTime).Unix()
+	began = time.Now()
+	if got := words(c.geo("Europe", cc)); got != noPhoto || time.Since(began) > time.Second {
+		t.Errorf("near the deadline: %q after %s", got, time.Since(began))
 	}
 }
 

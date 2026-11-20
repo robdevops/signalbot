@@ -24,6 +24,8 @@ type config struct {
 	MinQuality float64       // GEO_MIN_QUALITY: the least Mapillary quality_score
 	MaxAge     time.Duration // GEO_MAX_AGE_YEARS, as a duration
 	Buffer     int           // GEO_BUFFER: checked photos kept ready
+	Keep       []string      // GEO_KEEP: regions always kept with a photo ready, one each
+	Wait       time.Duration // GEO_WAIT: how long /geo waits for a photo when none is ready
 	Nominatim  string        // GEO_NOMINATIM_URL
 	Panoramax  string        // GEO_PANORAMAX_URL
 	Mapillary  string        // GEO_MAPILLARY_URL
@@ -35,6 +37,9 @@ const (
 	maxRound        = 30 * time.Minute
 	defaultRound    = 3 * time.Minute
 	defaultMemLimit = "200MiB"
+	minWait         = 5 * time.Second
+	maxWait         = 110 * time.Second // under the 2m a direct command may take, with time to reply
+	defaultWait     = 50 * time.Second
 )
 
 // year is a year as GEO_MAX_AGE_YEARS counts it.
@@ -85,6 +90,23 @@ func loadConfig(getenv func(string) string) (config, error) {
 	if v := strings.TrimSpace(getenv("GEO_BUFFER")); v != "" {
 		if c.Buffer, err = strconv.Atoi(v); err != nil || c.Buffer < 1 || c.Buffer > 20 {
 			errs = append(errs, fmt.Errorf("GEO_BUFFER is %q: use a whole number from 1 to 20", v))
+		}
+	}
+	for _, region := range strings.Split(getenv("GEO_KEEP"), ",") {
+		region = strings.TrimSpace(region)
+		if region == "" {
+			continue
+		}
+		if _, err := geo.LoadSeeds(region); err != nil {
+			errs = append(errs, fmt.Errorf("GEO_KEEP: %v", err))
+			continue
+		}
+		c.Keep = append(c.Keep, region)
+	}
+	c.Wait = defaultWait
+	if v := strings.TrimSpace(getenv("GEO_WAIT")); v != "" {
+		if c.Wait, err = time.ParseDuration(v); err != nil || c.Wait < minWait || c.Wait > maxWait {
+			errs = append(errs, fmt.Errorf("GEO_WAIT is %q: use 5s to 110s, such as 50s", v))
 		}
 	}
 	// Over TLS only: the geocoder is sent each round's answer.
