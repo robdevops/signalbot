@@ -131,13 +131,13 @@ func (b *Bot) Deliver(msg feature.Message) {
 	}
 }
 
-// Post sends p from the bot, in its chat's mailbox. Its Done is called
+// Post sends p from the bot, in its chat's mailbox. Its OnSent is called
 // once, whatever happens to it.
 func (b *Bot) Post(p feature.Post) {
-	p.Done = once(p.Done)
+	p.OnSent = once(p.OnSent)
 	switch {
 	case b.closing.Load(), p.Text == "" && len(p.Pictures) == 0:
-		p.Done(nil, true)
+		p.OnSent(nil, true)
 	default:
 		b.post(Outgoing{Post: p})
 	}
@@ -160,7 +160,7 @@ func once(done func(sent []int64, dropped bool)) func(sent []int64, dropped bool
 // with @Name linked to the chat's known names. With a label, history keeps
 // it as the bot's own entry, "[Label] text", clamped; without one, nothing.
 func (b *Bot) say(p feature.Post) {
-	defer p.Done(nil, true) // if it is never sent
+	defer p.OnSent(nil, true) // if it is never sent
 	if !b.net.Reachable(b.ctx, p.Chat) {
 		logx.Infof("dropped a post: the bot can no longer post in its chat")
 		return
@@ -168,12 +168,12 @@ func (b *Bot) say(p feature.Post) {
 	key := p.Chat.Key()
 	text, kept := captioned(p.Text, p.Pictures)
 	if p.Label == "" || b.ai == nil { // with no model, nothing would read it
-		p.Done(b.net.Send(p.Chat, text, p.Pictures, b.chats.Names(key)), false)
+		p.OnSent(b.net.Send(p.Chat, text, p.Pictures, b.chats.Names(key)), false)
 		return
 	}
 	ref := b.pending()
 	b.chats.Add(key, b.now(), 0, chats.Entry{Role: "assistant", Content: txt.Clamp("["+p.Label+"] "+kept, maxPostKept), Refs: []chats.Ref{ref}})
-	p.Done(b.sendKept(key, ref, p.Chat, text, p.Pictures, b.chats.Names(key)), false)
+	p.OnSent(b.sendKept(key, ref, p.Chat, text, p.Pictures, b.chats.Names(key)), false)
 }
 
 // maxPostKept caps what history keeps of a post.

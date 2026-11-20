@@ -322,7 +322,7 @@ func (b *Bot) dropped(r Received, err error) {
 	switch r := r.(type) {
 	case Outgoing:
 		what = "a post"
-		r.Post.Done(nil, true)
+		r.Post.OnSent(nil, true)
 	case Reacted:
 		what = "a reaction"
 		if n := len(r.Reactions); n > 1 {
@@ -341,7 +341,7 @@ func (b *Bot) dropped(r Received, err error) {
 func abandon(rs []Received) {
 	for _, r := range rs {
 		if o, ok := r.(Outgoing); ok {
-			o.Post.Done(nil, true)
+			o.Post.OnSent(nil, true)
 		}
 	}
 }
@@ -387,7 +387,7 @@ func (b *Bot) work(rs []Received) {
 				return
 			case Outgoing:
 				alone(func() { b.say(r.Post) })
-				r.Post.Done(nil, true) // if shutdown began first
+				r.Post.OnSent(nil, true) // if shutdown began first
 				return
 			case Reacted:
 				alone(func() { b.react(r) })

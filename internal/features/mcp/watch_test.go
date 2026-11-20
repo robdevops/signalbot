@@ -234,7 +234,7 @@ func round(t *testing.T, h *featuretest.Host, chat feature.Chat, ts int64, spec 
 		t.Fatalf("round: %+v", act)
 	}
 	if act.OnSent != nil {
-		act.OnSent([]int64{5000})
+		act.OnSent([]int64{5000}, false)
 	}
 	return act
 }
@@ -515,7 +515,7 @@ func TestOutbox(t *testing.T) {
 	}
 	queue(t, h, 1, post("1", "hello {"+c.Sender+"}"))
 	eventually(t, "the post", func() bool { return len(h.Posts()) == 1 })
-	if p := h.Posts()[0]; p.Chat != inA || p.Label != "Game" || p.Text != "hello @Alice" || p.Done == nil {
+	if p := h.Posts()[0]; p.Chat != inA || p.Label != "Game" || p.Text != "hello @Alice" || p.OnSent == nil {
 		t.Fatalf("post %+v", p)
 	}
 
@@ -525,7 +525,7 @@ func TestOutbox(t *testing.T) {
 	if n := len(h.Posts()); n != 1 {
 		t.Fatalf("%d posts while one waits", n)
 	}
-	h.Posts()[0].Done([]int64{1}, false)
+	h.Posts()[0].OnSent([]int64{1}, false)
 	eventually(t, "the held posts", func() bool { return len(h.Posts()) == 2 })
 	if p := h.Posts()[1]; p.Text != "two\n\nthree" {
 		t.Fatalf("held %q", p.Text)
@@ -533,11 +533,11 @@ func TestOutbox(t *testing.T) {
 
 	// Dropped before it was sent, as while the bot stops: posted again,
 	// one by one, as nothing waits.
-	h.Posts()[1].Done(nil, true)
+	h.Posts()[1].OnSent(nil, true)
 	eventually(t, "the post again", func() bool { return len(h.Posts()) == 3 })
-	h.Posts()[2].Done([]int64{2}, false)
+	h.Posts()[2].OnSent([]int64{2}, false)
 	eventually(t, "the next post again", func() bool { return len(h.Posts()) == 4 })
-	h.Posts()[3].Done([]int64{3}, false)
+	h.Posts()[3].OnSent([]int64{3}, false)
 	if p := h.Posts(); p[2].Text != "two" || p[3].Text != "three" {
 		t.Fatalf("again %q, %q", p[2].Text, p[3].Text)
 	}
@@ -551,7 +551,7 @@ func TestOutbox(t *testing.T) {
 	if p := h.Posts(); len(p) != 5 || p[4].Text != "four" {
 		t.Fatalf("posts %+v", p)
 	}
-	h.Posts()[4].Done(nil, false)
+	h.Posts()[4].OnSent(nil, false)
 
 	// A reaction, to a message the addon has a ref for; ops it may not do,
 	// or for a chat it has no lease in, are dropped and counted.
@@ -603,7 +603,7 @@ func TestOutboxDelivery(t *testing.T) {
 	var texts []string
 	for i := 0; i < len(h.Posts()); i++ {
 		texts = append(texts, h.Posts()[i].Text)
-		h.Posts()[i].Done([]int64{int64(i)}, false)
+		h.Posts()[i].OnSent([]int64{int64(i)}, false)
 	}
 	if want := []string{"post 1", "post 2\n\npost 3", "post 4\n\npost 5"}; !slices.Equal(texts, want) {
 		t.Fatalf("posts %q", texts)
@@ -622,7 +622,7 @@ func TestOutboxDelivery(t *testing.T) {
 		if p.Text != "post 6" {
 			t.Fatalf("try %d: %q", try, p.Text)
 		}
-		p.Done(nil, true)
+		p.OnSent(nil, true)
 		if a.apply(postOp("6", nil)); len(h.Posts()) != 4+try {
 			t.Fatalf("try %d: posted again before it was due", try)
 		}

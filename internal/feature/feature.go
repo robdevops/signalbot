@@ -104,17 +104,18 @@ type File struct {
 
 // Action is what an OnMessage hook decides. The zero value carries on.
 type Action struct {
-	Answer     string             // reply with this text, without the model (addressed messages only)
-	Pictures   []Picture          // send these with Answer, or alone, without the model; captions as for a tool's pictures (addressed messages only)
-	OnSent     func(sent []int64) // called with the timestamps of the messages Answer and Pictures went out in (addressed messages only)
-	ToolChoice string             // make the model call this tool before answering (addressed messages only)
-	Context    string             // keep this text in the chat's history (unaddressed messages only)
-	Done       bool               // the hook handled the message: no answer, no model, and for an unaddressed one nothing kept and no later hook
+	Answer     string                           // reply with this text, without the model (addressed messages only)
+	Pictures   []Picture                        // send these with Answer, or alone, without the model; captions as for a tool's pictures (addressed messages only)
+	OnSent     func(sent []int64, dropped bool) // if set with Answer or Pictures, called with the timestamps they went out in (addressed messages only); alone it doesn't count
+	ToolChoice string                           // make the model call this tool before answering (addressed messages only)
+	Context    string                           // keep this text in the chat's history (unaddressed messages only)
+	Done       bool                             // the hook handled the message: no answer, no model, and for an unaddressed one nothing kept and no later hook
 }
 
-// IsZero reports whether a carries on: no field is set.
+// IsZero reports whether a carries on: nothing set but, at most, OnSent,
+// which only follows an Answer or Pictures.
 func (a Action) IsZero() bool {
-	return a.Answer == "" && len(a.Pictures) == 0 && a.OnSent == nil && a.ToolChoice == "" && a.Context == "" && !a.Done
+	return a.Answer == "" && len(a.Pictures) == 0 && a.ToolChoice == "" && a.Context == "" && !a.Done
 }
 
 // For returns a copy of the action keeping only the fields that apply to
@@ -204,7 +205,7 @@ type Post struct {
 	Label    string                           // history keeps the post as the bot's, as "[Label] text"; "" keeps nothing
 	Text     string                           // Markdown, as written; @Name is linked to the chat's known names
 	Pictures []Picture                        // sent with Text; captions as for a tool's pictures
-	Done     func(sent []int64, dropped bool) // if set, called once: with the timestamps sent, or dropped
+	OnSent   func(sent []int64, dropped bool) // if set, called once: with the timestamps sent, or dropped
 }
 
 // Group is a group chat.

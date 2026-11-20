@@ -14,7 +14,6 @@ func TestActionIsZero(t *testing.T) {
 	for name, a := range map[string]feature.Action{
 		"Answer":     {Answer: "a"},
 		"Pictures":   {Pictures: []feature.Picture{{}}},
-		"OnSent":     {OnSent: func([]int64) {}},
 		"ToolChoice": {ToolChoice: "t"},
 		"Context":    {Context: "c"},
 		"Done":       {Done: true},
@@ -23,11 +22,15 @@ func TestActionIsZero(t *testing.T) {
 			t.Errorf("an Action with only %s set is zero", name)
 		}
 	}
+	// OnSent alone claims nothing: it only follows an Answer or Pictures.
+	if !(feature.Action{OnSent: func([]int64, bool) {}}).IsZero() {
+		t.Error("an Action with only OnSent set isn't zero")
+	}
 }
 
 // For keeps what applies to the message, and Done on both.
 func TestActionFor(t *testing.T) {
-	a := feature.Action{Answer: "a", Pictures: []feature.Picture{{}}, OnSent: func([]int64) {}, ToolChoice: "t", Context: "c", Done: true}
+	a := feature.Action{Answer: "a", Pictures: []feature.Picture{{}}, OnSent: func([]int64, bool) {}, ToolChoice: "t", Context: "c", Done: true}
 	if got := a.For(feature.Message{Addressed: true}); got.Answer != "a" || len(got.Pictures) != 1 || got.OnSent == nil || got.ToolChoice != "t" || got.Context != "" || !got.Done {
 		t.Errorf("addressed: %+v", got)
 	}

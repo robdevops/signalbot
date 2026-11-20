@@ -361,7 +361,7 @@ func (a *addon) send(id string, out *outgoing) {
 // mail puts out in its chat's mailbox.
 func (a *addon) mail(id string, out *outgoing) {
 	p := out.Post
-	p.Done = func(_ []int64, dropped bool) {
+	p.OnSent = func(_ []int64, dropped bool) {
 		a.sent(out.ops, !dropped)
 		a.mu.Lock()
 		held := a.waiting[id]

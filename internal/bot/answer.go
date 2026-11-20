@@ -73,7 +73,7 @@ func (b *Bot) respond(msg feature.Message, act feature.Action, text string, refs
 		text, _ := captioned(act.Answer, act.Pictures)
 		sent := b.net.Send(msg.Chat, text, act.Pictures, b.chats.Names(msg.Chat.Key()))
 		if act.OnSent != nil {
-			act.OnSent(sent)
+			act.OnSent(sent, false)
 		}
 		return
 	case b.ai == nil:

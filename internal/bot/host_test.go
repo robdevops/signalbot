@@ -658,7 +658,7 @@ func TestDone(t *testing.T) {
 // caption rule; OnSent gets the timestamps Send returned.
 func TestActionPictures(t *testing.T) {
 	var sentAt [][]int64
-	onSent := func(ts []int64) { sentAt = append(sentAt, ts) }
+	onSent := func(ts []int64, _ bool) { sentAt = append(sentAt, ts) }
 	h := start(t, options{features: func(b *Bot) {
 		b.Command("plain", func(context.Context, feature.Message, string) feature.Action {
 			return feature.Action{Answer: "here", Pictures: []feature.Picture{{Data: png}}, OnSent: onSent}
@@ -707,7 +707,7 @@ func TestPost(t *testing.T) {
 	}
 	dones := make(chan done, 16)
 	post := func(p feature.Post) {
-		p.Done = func(sent []int64, dropped bool) { dones <- done{sent, dropped} }
+		p.OnSent = func(sent []int64, dropped bool) { dones <- done{sent, dropped} }
 		h.b.Post(p)
 	}
 	next := func() done {
@@ -785,7 +785,7 @@ func TestPostDropped(t *testing.T) {
 		h.receive(dm(s))
 	}
 	dropped := make(chan bool, 1)
-	h.b.Post(feature.Post{Chat: feature.Chat{User: aliceID}, Text: "never sent", Done: func(_ []int64, d bool) { dropped <- d }})
+	h.b.Post(feature.Post{Chat: feature.Chat{User: aliceID}, Text: "never sent", OnSent: func(_ []int64, d bool) { dropped <- d }})
 	if !<-dropped {
 		t.Fatal("Done said it was sent")
 	}

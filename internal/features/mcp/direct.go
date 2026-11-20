@@ -84,7 +84,7 @@ func (a *addon) direct(ctx context.Context, m feature.Message, name string, c ch
 	act := a.action(m.Chat, r)
 	if r.Meta.Watch != nil {
 		if w := a.watch(m, *r.Meta.Watch); w != nil && len(act.Pictures) > 0 {
-			act.OnSent = func(sent []int64) { a.guarding(w, sent) }
+			act.OnSent = func(sent []int64, _ bool) { a.guarding(w, sent) }
 		}
 	}
 	if act.IsZero() {
