@@ -160,15 +160,15 @@ func (s *server) start(ctx context.Context, c *callContext, length time.Duration
 // caption is the photo's caption: how to guess, on the chat network the
 // bot said it is on, and by when.
 func caption(deadline time.Time, length time.Duration, network string) string {
-	share := "Signal: **+** → Location; Telegram: 📎 → Location. Pinch to zoom out"
+	steps := "Signal: **+** → Location; Telegram: 📎 → Location. Pinch to zoom out, **drag the pin**, confirm (on Signal), then send."
 	switch network {
 	case "signal":
-		share = "Tap **+** → Location, pinch to zoom out"
+		steps = "Tap **+** → Location, pinch to zoom out, **drag the pin**, confirm, then send."
 	case "telegram":
-		share = "Tap 📎 → Location, pinch to zoom out"
+		steps = "Tap 📎 → Location, pinch to zoom out, **drag the pin**, then send."
 	}
 	return "🌍 **Where is this?** Send a location before " + deadline.Local().Format("15:04") + " (" + lengthLabel(length) + ").\n" +
-		share + ", **drag the pin**, then send. Or type coordinates, e.g. `-37.81, 144.96`.\n" +
+		steps + " Or type coordinates, e.g. `-37.81, 144.96`.\n" +
 		"⚠️ Location starts at *your* position. Move the pin before you send."
 }
 

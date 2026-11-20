@@ -2,8 +2,8 @@
 
 A GeoGuessr-style game for signalbot. `/geo` posts a street-level photo;
 players answer by sending a location (on Signal, the **+** button →
-Location; on Telegram, 📎 → Location; then pinch to zoom out and drag the
-pin), or typed
+Location; on Telegram, 📎 → Location; then pinch to zoom out, drag the
+pin, confirm on Signal, and send), or typed
 coordinates such as `-37.81, 144.96`; when time is up the
 bot names the place and ranks players by how far off they were.
 

@@ -385,9 +385,9 @@ const (
 func TestCaption(t *testing.T) {
 	at := time.Date(2026, 11, 20, 14, 3, 0, 0, time.Local)
 	for _, tc := range []struct{ network, want, not string }{
-		{"signal", "Tap **+** → Location, pinch to zoom out, **drag the pin**", "📎"},
-		{"telegram", "Tap 📎 → Location, pinch to zoom out, **drag the pin**", "**+**"},
-		{"", "Signal: **+** → Location; Telegram: 📎 → Location. Pinch to zoom out, **drag the pin**", "Tap"},
+		{"signal", "Tap **+** → Location, pinch to zoom out, **drag the pin**, confirm, then send.", "📎"},
+		{"telegram", "Tap 📎 → Location, pinch to zoom out, **drag the pin**, then send.", "confirm"},
+		{"", "Signal: **+** → Location; Telegram: 📎 → Location. Pinch to zoom out, **drag the pin**, confirm (on Signal), then send.", "Tap"},
 	} {
 		got := caption(at, 3*time.Minute, tc.network)
 		if !strings.Contains(got, tc.want) || strings.Contains(got, tc.not) || !strings.Contains(got, "14:03 (3 min)") ||
