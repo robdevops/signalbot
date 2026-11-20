@@ -79,7 +79,7 @@ On Telegram (`TELEGRAM_BOT_TOKEN` set) the above holds, with these differences:
 
 ## Addons
 
-An addon is a program the bot runs on its own machine, as an [MCP server](docs/FILES_LINKS_TOOLS_MCP.md#addons), that answers its own commands, reads the messages it asks for and posts on its own, such as the [GeoGuess](cmd/geoguess/README.md) game. With none configured, none of this applies.
+An addon is a program the bot runs on its own machine, as an [MCP server](docs/FILES_LINKS_TOOLS_MCP.md#addons), that answers its own commands, reads the messages it asks for and posts on its own, such as the [GeoGuess](https://github.com/robdevops/chat-plugin-geoguess) game. With none configured, none of this applies.
 
 - **It is trusted code.** It runs as the bot's user, in the same sandbox, and could read what the bot's user can, the state directory included. What follows limits what the bot hands it; it guards against mistakes and leaks, not against a hostile program. Install only addons you would let run as the bot.
 - **What it never gets:** phone numbers, account IDs or group IDs. Chats and people are pseudonyms, made from a secret in `mcp.json` and different for each addon; by default the same person has a different one in each chat, so an addon can't follow them between groups. It gets none of the bot's settings or keys either: only `PATH`, `HOME`, the time zone and proxy settings (`TZ`, `HTTPS_PROXY`, `HTTP_PROXY`, `NO_PROXY`, `SSL_CERT_FILE`, `SSL_CERT_DIR`) if set, and the variables named for it (such as `GEO_…`).

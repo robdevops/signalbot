@@ -90,7 +90,6 @@ internal/features/*     one package per feature
 internal/kit/*          code with two or more users and no bot knowledge
 internal/arch/          the guardrail tests and the sizes report
 cmd/signalctl/          a small client for signal-cli's daemon socket, for one-off chores such as blocking; not part of the bot
-cmd/geoguess/           GeoGuess, an MCP addon the bot can run as a child process (its own README); not part of the bot, and of the bot's packages it imports only internal/kit
 ```
 
 - Core packages are concrete and call each other directly, with no interfaces between them. Files by role, no line limit.

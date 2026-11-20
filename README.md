@@ -18,7 +18,7 @@ A small, [privacy-conscious](PRIVACY.md) chat bot for Signal, through a running 
 - Responds to @mentions, replies to its messages, its commands (such as `/intro`) without a mention, and DMs from whitelisted contacts
 - Tools: web search, line and pie charts, [pictures](docs/FILES_LINKS_TOOLS_MCP.md#images) (drawings, art, diagrams) with GPT Image 2, and your own [MCP connectors](docs/FILES_LINKS_TOOLS_MCP.md#mcp-connectors)
 - [`/schedule`](docs/SCHEDULING.md) a message or command, once or repeating
-- [Addons](docs/FILES_LINKS_TOOLS_MCP.md#addons): MCP servers that run their own commands and games in chosen groups, without the model, such as [GeoGuess](cmd/geoguess/README.md), seeing only pseudonyms
+- [Addons](docs/FILES_LINKS_TOOLS_MCP.md#addons): MCP servers that run their own commands and games in chosen groups, without the model, such as [GeoGuess](https://github.com/robdevops/chat-plugin-geoguess), seeing only pseudonyms
 - Understands [files](docs/FILES_LINKS_TOOLS_MCP.md#files) (PDFs, text and code, Word, Excel and PowerPoint) and the [pages you link to](docs/FILES_LINKS_TOOLS_MCP.md#links), and if the model supports it, images, stickers, voice notes and other audio
 - Typing indicators, reactions, stickers, @mentions and replies
 - In-memory conversation context (Default: 10 messages). Never logged to disk, forgotten after 24 hours, or sooner if _disappearing messages_ requires.

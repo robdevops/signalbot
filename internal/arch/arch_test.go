@@ -43,8 +43,7 @@ func under(p, dir string) bool { return p == dir || strings.HasPrefix(p, dir+"/"
 // its own packages and kit; internal/signal imports only those,
 // internal/config and internal/bot (for Received: the network depends on
 // the core, never the reverse); internal/config and kit import no other
-// internal package; GeoGuess, an addon the bot runs as a separate program,
-// imports only kit and its own packages.
+// internal package.
 func TestImports(t *testing.T) {
 	for _, p := range goFiles(t) {
 		f, err := parser.ParseFile(token.NewFileSet(), root+"/"+p, nil, parser.ImportsOnly)
@@ -72,8 +71,6 @@ func TestImports(t *testing.T) {
 				ok = under(imp, "internal/feature") || under(imp, "internal/kit") || imp == "internal/config" || imp == "internal/bot"
 			case under(dir, "internal/kit"), dir == "internal/config":
 				ok = under(imp, "internal/kit")
-			case under(dir, "cmd/geoguess"):
-				ok = under(imp, "internal/kit") || under(imp, "cmd/geoguess")
 			default:
 				ok = dir == "." || !under(imp, "internal/features") && !under(imp, "internal/signal") && !under(imp, "internal/telegram")
 			}

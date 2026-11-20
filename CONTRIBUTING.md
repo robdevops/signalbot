@@ -16,7 +16,6 @@ internal/feature/       the ports and shared types, command parsing, featuretest
 internal/features/*     one package per feature
 internal/kit/*          code with two or more users and no bot knowledge
 cmd/signalctl/          a small client for signal-cli's daemon socket, for one-off chores such as blocking; not part of the bot
-cmd/geoguess/           GeoGuess, an addon: a separate program the bot runs as a local MCP server, speaking MCP over stdio by hand
 ```
 
 ## The port rule
@@ -54,7 +53,7 @@ Give a feature a tag only for a real saving, such as a dependency; a runtime set
 
 Tests in `internal/arch` enforce these:
 
-- **Imports:** only the main package, at the module root, imports features and `internal/signal`; a feature imports only `internal/feature`, `internal/kit` and its own packages; `internal/signal` imports only `internal/feature`, kit, `internal/config` and `internal/bot` (network to core, never the reverse); `internal/config` and kit import no other internal package; `cmd/geoguess` imports only kit and its own packages.
+- **Imports:** only the main package, at the module root, imports features and `internal/signal`; a feature imports only `internal/feature`, `internal/kit` and its own packages; `internal/signal` imports only `internal/feature`, kit, `internal/config` and `internal/bot` (network to core, never the reverse); `internal/config` and kit import no other internal package.
 - **No feature names in the core:** the core's source mentions no feature name or feature-only word (chart, MCP, group context, `/intro`, `/schedule`, …).
 - **Docs:** every setting read, the core's or a feature's (`h.Env("NAME", …)`), is in the table in [docs/CONFIGURATION.md](docs/CONFIGURATION.md).
 
