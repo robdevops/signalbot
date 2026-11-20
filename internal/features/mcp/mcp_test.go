@@ -177,7 +177,7 @@ func TestNoConfig(t *testing.T) {
 	}
 }
 
-// With no model, no server is started, and the log says so.
+// With no model, no server but an addon is started, and the log says so.
 func TestNoModel(t *testing.T) {
 	var started atomic.Bool
 	srv := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { started.Store(true) }))
@@ -186,7 +186,7 @@ func TestNoModel(t *testing.T) {
 	if err != nil || len(h.ToolGroups()) != 0 || started.Load() {
 		t.Fatalf("groups %+v, %v, started %v", h.ToolGroups(), err, started.Load())
 	}
-	if l := log.String(); l != "<4>MCP_CONFIG is set but no model is configured, so MCP servers were not started\n" {
+	if l := log.String(); l != "<4>MCP_CONFIG is set but no model is configured, so only addon servers were started\n" {
 		t.Fatalf("log %q", l)
 	}
 }
@@ -248,8 +248,8 @@ func TestLoad(t *testing.T) {
 	// settings it could be, and both lists at once too; keys other clients
 	// write are ignored, so a pasted entry starts.
 	for bad, want := range map[string]string{
-		`{"mcpServers":{"w":{"url":"u","allowedTools":["t"]}}}`:                                 `: MCP server "w": unknown setting "allowedTools" (settings are url, headers, command, args, env, allowed_tools, blocked_tools, instructions, keywords, chat_commands, disabled)`,
-		`{"mcpServers":{"w":{"url":"u","chat_commands":{"x":{"tool":"t","requireArg":true}}}}}`: `: MCP server "w": chat command "x": unknown setting "requireArg" (settings are tool, require_arg, example)`,
+		`{"mcpServers":{"w":{"url":"u","allowedTools":["t"]}}}`:                                 `: MCP server "w": unknown setting "allowedTools" (settings are url, headers, command, args, env, allowed_tools, blocked_tools, instructions, keywords, chat_commands, disabled, addon)`,
+		`{"mcpServers":{"w":{"url":"u","chat_commands":{"x":{"tool":"t","requireArg":true}}}}}`: `: MCP server "w": chat command "x": unknown setting "requireArg" (settings are tool, require_arg, example, direct)`,
 		`{"mcpServers":{"w":{"url":"u","allowed_tools":[],"blocked_tools":["t"]}}}`:             `: MCP server "w": has both allowed_tools and blocked_tools; use one`,
 	} {
 		p := writeConfig(t, bad)
@@ -479,12 +479,12 @@ func TestChatCommands(t *testing.T) {
 		"echo what's up":   {},
 		"/echoes whatever": {},
 	} {
-		if got := h.Message(ctx, dm(text)); got != want {
+		if got := h.Message(ctx, dm(text)); got.Answer != want.Answer || got.ToolChoice != want.ToolChoice || got.IsZero() != want.IsZero() {
 			t.Errorf("%q: %+v, want %+v", text, got, want)
 		}
 	}
 	group := feature.Message{Chat: feature.Chat{GroupID: "g"}, Sender: "bob", Name: "Bob", Text: "/echo hi"}
-	if got := h.Message(ctx, group); got != (feature.Action{}) {
+	if got := h.Message(ctx, group); !got.IsZero() {
 		t.Errorf("unaddressed: %+v", got)
 	}
 }
@@ -501,7 +501,7 @@ func TestChatCommandsToolsOff(t *testing.T) {
 		t.Fatalf("names %q, log %q", got, log.String())
 	}
 	m := feature.Message{Chat: feature.Chat{User: "alice"}, Sender: "alice", Name: "Alice", Text: "/echo hi", Addressed: true}
-	if got := h.Message(context.Background(), m); got != (feature.Action{}) {
+	if got := h.Message(context.Background(), m); !got.IsZero() {
 		t.Errorf("tools off: %+v", got)
 	}
 }
@@ -563,7 +563,7 @@ func TestStdio(t *testing.T) {
 	if err := Register(h); err != nil {
 		t.Fatal(err)
 	}
-	defer h.Stop()                                                            // its stdin stays open, so this returns only once SIGTERM stops it
+	defer h.Stop()                                                            // its stdin is closed, and it exits
 	if gs := h.ToolGroups(); len(gs) != 1 || gs[0].System != "Local files." { // the server's own instructions
 		t.Fatalf("groups %+v", gs)
 	}
@@ -652,7 +652,7 @@ func TestCallFailures(t *testing.T) {
 }
 
 // examples/signalbot-mcp.json is the docs' example, as written there, and
-// it loads: the disabled server is dropped, the other kept.
+// it loads: the disabled server is dropped, the others kept, one an addon.
 func TestExampleFile(t *testing.T) {
 	example, err := os.ReadFile("../../../examples/signalbot-mcp.json")
 	if err != nil {
@@ -667,7 +667,8 @@ func TestExampleFile(t *testing.T) {
 	}
 	t.Setenv("WEATHER_TOKEN", "x")
 	s, err := load("../../../examples/signalbot-mcp.json")
-	if err != nil || len(s) != 1 || s["weather"].Headers["Authorization"] != "Bearer x" || s["weather"].ChatCommands["forecast"].Example == "" {
+	if err != nil || len(s) != 2 || s["weather"].Headers["Authorization"] != "Bearer x" || s["weather"].ChatCommands["forecast"].Example == "" ||
+		s["geo"].Addon == nil || !s["geo"].Addon.Watch || !s["geo"].ChatCommands["geo"].Direct {
 		t.Fatalf("loaded %+v, %v", s, err)
 	}
 }

@@ -43,6 +43,10 @@ type Network interface {
 	// Delivered readies a posted message in its slot. ok is false, logged,
 	// if msg is dropped.
 	Delivered(ctx context.Context, msg feature.Message) (r Ready, ok bool)
+	// Reachable reports, in the chat's slot, whether the bot may still post
+	// in chat on its own: a group it is still in and answers in, or the DM
+	// of a user still allowed to DM it.
+	Reachable(ctx context.Context, chat feature.Chat) bool
 	// BotName never blocks.
 	BotName() string
 	// Prompt is the network's own line in the system prompt, such as its
@@ -97,6 +101,7 @@ type Bot struct {
 func New(ctx context.Context, cfg *config.Config, net Network) *Bot {
 	b := &Bot{cfg: cfg, net: net, timers: timers.New(), slots: make(chan struct{}, cfg.MaxConcurrency), ctx: ctx, now: time.Now}
 	b.chats = chats.New(cfg.HistoryMax, b.work, b.spawn)
+	b.chats.SetEvicted(func(r Received) { b.dropped(r, errMadeRoom) })
 	b.timerCtx, b.stopTimers = context.WithCancel(ctx)
 	if cfg.NoModel {
 		logx.Warnf("no model: set MODEL_API_KEY (or MODEL_API_URL for a provider that needs no key); until then only commands are answered")
@@ -166,8 +171,8 @@ func (b *Bot) Shutdown(d time.Duration) {
 // member change comes from another of its goroutines), so it never blocks
 // or calls the network. An Incoming message and, with a hook for them, a
 // Happened event go to their chat's mailbox; Chatter goes to the OnMessage
-// hooks here, and is never logged. (A Posted message comes from Deliver,
-// never from the network.)
+// hooks here, and is never logged. (Posted, Outgoing and Reacted come from
+// Deliver, Post and React, never from the network.)
 func (b *Bot) handle(r Received) {
 	if b.closing.Load() {
 		return
@@ -193,10 +198,10 @@ func (b *Bot) handle(r Received) {
 }
 
 // overhear runs the OnMessage hooks for an unaddressed group message, and keeps
-// the Context one returns in history.
+// the Context one returns in history, unless it is Done, which keeps nothing.
 func (b *Bot) overhear(msg feature.Message) {
 	b.replaced(msg)
-	if a := b.onMessage(b.ctx, msg); a.Context != "" && b.ai != nil { // with no model, nothing would read it
+	if a := b.onMessage(b.ctx, msg); a.Context != "" && !a.Done && b.ai != nil { // with no model, nothing would read it
 		b.chats.Add(msg.Chat.Key(), b.now(), msg.Expires, chats.Entry{Role: "user", Content: a.Context, Context: true, Refs: refs(msg)})
 	}
 }
@@ -221,11 +226,13 @@ func (b *Bot) pending() chats.Ref {
 }
 
 // sendKept sends text to chat, after entries were kept holding ref p, then
-// names them by what was sent, so a delete from a linked device finds them.
-// History is kept first so a message arriving while the send is out lands
-// after the turn, not before it.
-func (b *Bot) sendKept(key string, p chats.Ref, chat feature.Chat, text string, pics []feature.Picture, known map[string]string) {
-	b.chats.Retag(key, p.ID, botRefs(b.net.Send(chat, text, pics, known)))
+// names them by what was sent, so a delete from a linked device finds them,
+// and returns Send's timestamps. History is kept first so a message
+// arriving while the send is out lands after the turn, not before it.
+func (b *Bot) sendKept(key string, p chats.Ref, chat feature.Chat, text string, pics []feature.Picture, known map[string]string) []int64 {
+	sent := b.net.Send(chat, text, pics, known)
+	b.chats.Retag(key, p.ID, botRefs(sent))
+	return sent
 }
 
 // botRefs names the messages the bot sent, by Send's timestamps.
@@ -288,11 +295,43 @@ func (b *Bot) spawn(worker func()) bool {
 
 // post adds r to its chat's mailbox.
 func (b *Bot) post(r Received) {
-	switch err := b.chats.Post(r.chat().Key(), r); {
-	case errors.Is(err, chats.ErrNoSlot):
-		logx.Warnf("dropped a message: all %d worker slots are busy (raise MAX_CONCURRENCY)", b.cfg.MaxConcurrency)
-	case err != nil:
-		logx.Warnf("dropped a message: %v", err)
+	if err := b.chats.Post(r.chat().Key(), r); err != nil {
+		b.dropped(r, err)
+	}
+}
+
+// errMadeRoom drops the bot's waiting reactions to make room in their
+// chat's mailbox.
+var errMadeRoom = errors.New("made room in its chat for a message")
+
+// dropped logs that r was dropped for err, saying what it was, and tells a
+// post's feature.
+func (b *Bot) dropped(r Received, err error) {
+	what := "a message"
+	switch r := r.(type) {
+	case Outgoing:
+		what = "a post"
+		r.Post.Done(nil, true)
+	case Reacted:
+		what = "a reaction"
+		if n := len(r.Reactions); n > 1 {
+			what = fmt.Sprintf("%d reactions", n)
+		}
+	}
+	if errors.Is(err, chats.ErrNoSlot) {
+		logx.Warnf("dropped %s: all %d worker slots are busy (raise MAX_CONCURRENCY)", what, b.cfg.MaxConcurrency)
+	} else {
+		logx.Warnf("dropped %s: %v", what, err)
+	}
+}
+
+// abandon tells the posts among rs, left waiting when shutdown began, that
+// they were dropped.
+func abandon(rs []Received) {
+	for _, r := range rs {
+		if o, ok := r.(Outgoing); ok {
+			o.Post.Done(nil, true)
+		}
 	}
 }
 
@@ -300,9 +339,10 @@ func (b *Bot) post(r Received) {
 // messages are answered together, as one turn, so "actually" and "forget
 // it" get one reply that sees both; each run stays within one message's
 // picture limits. On its own goes a message a hook acts on (a command or
-// an answer), a delivered one, and one that waited for the bot's
-// ID and was not addressed after all. A panic loses only the message or
-// turn that caused it, and nothing new starts once shutdown begins.
+// an answer), a delivered one, a post, the bot's reactions, and one that
+// waited for the bot's ID and was not addressed after all. A panic loses
+// only the message or turn that caused it, and nothing new starts once
+// shutdown begins; a post left waiting then is told it was dropped.
 func (b *Bot) work(rs []Received) {
 	var batch []feature.Message
 	flush := func() {
@@ -320,8 +360,9 @@ func (b *Bot) work(rs []Received) {
 			fn()
 		}
 	}
-	for _, r := range rs {
+	for i, r := range rs {
 		if b.closing.Load() {
+			abandon(rs[i:])
 			return
 		}
 		safely(func() {
@@ -333,8 +374,12 @@ func (b *Bot) work(rs []Received) {
 			case Posted:
 				alone(func() { b.delivered(r.Message) })
 				return
-			case Told:
-				alone(func() { b.told(r) })
+			case Outgoing:
+				alone(func() { b.say(r.Post) })
+				r.Post.Done(nil, true) // if shutdown began first
+				return
+			case Reacted:
+				alone(func() { b.react(r) })
 				return
 			case Incoming:
 				p = r
@@ -347,7 +392,7 @@ func (b *Bot) work(rs []Received) {
 			case !msg.Addressed:
 				alone(func() { b.overhear(msg) })
 			default:
-				if act := b.onMessage(b.ctx, msg); act != (feature.Action{}) {
+				if act := b.onMessage(b.ctx, msg); !act.IsZero() {
 					alone(func() { b.respond(msg, act, prompt(msg), refs(msg)) })
 					return
 				}
@@ -478,7 +523,7 @@ func (b *Bot) load(r Incoming) (feature.Message, bool) {
 // non-zero, counting only what applies to the message, wins.
 func (b *Bot) onMessage(ctx context.Context, msg feature.Message) feature.Action {
 	for _, fn := range b.messages {
-		if a := fn(ctx, msg).For(msg); a != (feature.Action{}) {
+		if a := fn(ctx, msg).For(msg); !a.IsZero() {
 			return a
 		}
 	}

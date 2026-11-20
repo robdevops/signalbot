@@ -1,0 +1,614 @@
+{
+ "type": "FeatureCollection",
+ "features": [
+  {
+   "id": "9a479835-1331-4b8a-adce-f2173f61ffc8",
+   "bbox": [
+    2.345090985,
+    48.859925491,
+    2.345090985,
+    48.859925491
+   ],
+   "type": "Feature",
+   "links": [
+    {
+     "rel": "license",
+     "href": "https://alliance.numerique.gouv.fr/licence-ouverte-open-licence/",
+     "title": "License for this object (etalab-2.0)"
+    },
+    {
+     "rel": "self",
+     "href": "https://api.panoramax.xyz/api/collections/600d5cee-5328-4dd4-8838-5f27ef85aa59/items/9a479835-1331-4b8a-adce-f2173f61ffc8",
+     "type": "application/geo+json"
+    },
+    {
+     "rel": "via",
+     "href": "https://panoramax.ign.fr",
+     "type": "application/json",
+     "title": "Link to the original instance",
+     "instance_name": "ign"
+    }
+   ],
+   "assets": {
+    "hd": {
+     "href": "{{cdn}}/9a479835-1331-4b8a-adce-f2173f61ffc8/1331-4b8a-adce-f2173f61ffc8.jpg",
+     "type": "image/jpeg",
+     "roles": [
+      "data"
+     ],
+     "title": "HD picture",
+     "description": "Highest resolution available of this picture"
+    },
+    "sd": {
+     "href": "{{cdn}}/9a479835-1331-4b8a-adce-f2173f61ffc8/sd.jpg",
+     "type": "image/jpeg",
+     "roles": [
+      "visual"
+     ],
+     "title": "SD picture",
+     "description": "Picture in standard definition (fixed width of 2048px)"
+    },
+    "thumb": {
+     "href": "{{cdn}}/9a479835-1331-4b8a-adce-f2173f61ffc8/thumb.jpg",
+     "type": "image/jpeg",
+     "roles": [
+      "thumbnail"
+     ],
+     "title": "Thumbnail",
+     "description": "Picture in low definition (fixed width of 500px)"
+    }
+   },
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     2.345090985,
+     48.859925491
+    ]
+   },
+   "providers": [
+    {
+     "name": "alice",
+     "roles": [
+      "producer"
+     ]
+    },
+    {
+     "name": "Alice for the City",
+     "roles": [
+      "producer"
+     ]
+    }
+   ],
+   "collection": "600d5cee-5328-4dd4-8838-5f27ef85aa59",
+   "properties": {
+    "created": "2025-12-05T19:45:40.220379+00:00",
+    "license": "etalab-2.0",
+    "updated": "2025-12-26T15:25:50.228724+00:00",
+    "datetime": "2025-05-08T09:22:36.652000+00:00",
+    "collection": {
+     "semantics": [
+      {
+       "key": "producer",
+       "value": "Alice"
+      },
+      {
+       "key": "transport",
+       "value": "car"
+      }
+     ]
+    },
+    "datetimetz": "2025-05-08T11:22:36.652000+02:00",
+    "view:azimuth": 28,
+    "geovisio:status": "ready",
+    "original_file:size": 6521760,
+    "geovisio:visibility": "anyone",
+    "pers:interior_orientation": {
+     "camera_model": "imajbox 360 HD",
+     "field_of_view": 360,
+     "camera_manufacturer": "IMAJING",
+     "sensor_array_dimensions": [
+      12288,
+      6144
+     ]
+    },
+    "geovisio:rank_in_collection": 5907,
+    "quality:horizontal_accuracy": 2.0,
+    "panoramax:horizontal_pixel_density": 34
+   },
+   "stac_version": "1.0.0",
+   "asset_templates": {
+    "tiles": {
+     "href": "https://panoramax-storage-public-fast.s3.gra.perf.cloud.ovh.net/derivates/9a/47/98/35/1331-4b8a-adce-f2173f61ffc8/tiles/{TileCol}_{TileRow}.jpg",
+     "type": "image/jpeg",
+     "roles": [
+      "data"
+     ],
+     "title": "HD tiled picture",
+     "description": "Highest resolution available of this picture, as tiles"
+    }
+   },
+   "stac_extensions": [
+    "https://stac-extensions.github.io/view/v1.0.0/schema.json",
+    "https://stac-extensions.github.io/perspective-imagery/v1.0.0/schema.json",
+    "https://stac-extensions.github.io/tiled-assets/v1.0.0/schema.json"
+   ]
+  },
+  {
+   "id": "ba1508dd-3154-47d2-aa61-250b5bbca547",
+   "bbox": [
+    2.345074156,
+    48.859906028,
+    2.345074156,
+    48.859906028
+   ],
+   "type": "Feature",
+   "links": [
+    {
+     "rel": "license",
+     "href": "https://alliance.numerique.gouv.fr/licence-ouverte-open-licence/",
+     "title": "License for this object (etalab-2.0)"
+    },
+    {
+     "rel": "self",
+     "href": "https://api.panoramax.xyz/api/collections/600d5cee-5328-4dd4-8838-5f27ef85aa59/items/ba1508dd-3154-47d2-aa61-250b5bbca547",
+     "type": "application/geo+json"
+    },
+    {
+     "rel": "via",
+     "href": "https://panoramax.ign.fr",
+     "type": "application/json",
+     "title": "Link to the original instance",
+     "instance_name": "ign"
+    }
+   ],
+   "assets": {
+    "hd": {
+     "href": "{{cdn}}/ba1508dd-3154-47d2-aa61-250b5bbca547/3154-47d2-aa61-250b5bbca547.jpg",
+     "type": "image/jpeg",
+     "roles": [
+      "data"
+     ],
+     "title": "HD picture",
+     "description": "Highest resolution available of this picture"
+    },
+    "sd": {
+     "href": "{{cdn}}/ba1508dd-3154-47d2-aa61-250b5bbca547/sd.jpg",
+     "type": "image/jpeg",
+     "roles": [
+      "visual"
+     ],
+     "title": "SD picture",
+     "description": "Picture in standard definition (fixed width of 2048px)"
+    },
+    "thumb": {
+     "href": "{{cdn}}/ba1508dd-3154-47d2-aa61-250b5bbca547/thumb.jpg",
+     "type": "image/jpeg",
+     "roles": [
+      "thumbnail"
+     ],
+     "title": "Thumbnail",
+     "description": "Picture in low definition (fixed width of 500px)"
+    }
+   },
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     2.345074156,
+     48.859906028
+    ]
+   },
+   "providers": [
+    {
+     "name": "alice",
+     "roles": [
+      "producer"
+     ]
+    },
+    {
+     "name": "Alice for the City",
+     "roles": [
+      "producer"
+     ]
+    }
+   ],
+   "collection": "600d5cee-5328-4dd4-8838-5f27ef85aa59",
+   "properties": {
+    "created": "2025-12-05T19:45:38.673129+00:00",
+    "license": "etalab-2.0",
+    "updated": "2025-12-28T19:37:26.880936+00:00",
+    "datetime": "2025-05-08T09:22:36.251000+00:00",
+    "collection": {
+     "semantics": [
+      {
+       "key": "producer",
+       "value": "Alice"
+      },
+      {
+       "key": "transport",
+       "value": "car"
+      }
+     ]
+    },
+    "datetimetz": "2025-05-08T11:22:36.251000+02:00",
+    "view:azimuth": 28,
+    "geovisio:status": "ready",
+    "original_file:size": 6561382,
+    "geovisio:visibility": "anyone",
+    "pers:interior_orientation": {
+     "camera_model": "imajbox 360 HD",
+     "field_of_view": 360,
+     "camera_manufacturer": "IMAJING",
+     "sensor_array_dimensions": [
+      12288,
+      6144
+     ]
+    },
+    "geovisio:rank_in_collection": 5906,
+    "quality:horizontal_accuracy": 2.0,
+    "panoramax:horizontal_pixel_density": 34
+   },
+   "stac_version": "1.0.0",
+   "asset_templates": {
+    "tiles": {
+     "href": "https://panoramax-storage-public-fast.s3.gra.perf.cloud.ovh.net/derivates/ba/15/08/dd/3154-47d2-aa61-250b5bbca547/tiles/{TileCol}_{TileRow}.jpg",
+     "type": "image/jpeg",
+     "roles": [
+      "data"
+     ],
+     "title": "HD tiled picture",
+     "description": "Highest resolution available of this picture, as tiles"
+    }
+   },
+   "stac_extensions": [
+    "https://stac-extensions.github.io/view/v1.0.0/schema.json",
+    "https://stac-extensions.github.io/perspective-imagery/v1.0.0/schema.json",
+    "https://stac-extensions.github.io/tiled-assets/v1.0.0/schema.json"
+   ]
+  },
+  {
+   "id": "b79f56d3-4910-437a-ab3d-480dce9ea64a",
+   "bbox": [
+    2.345106645,
+    48.859944271,
+    2.345106645,
+    48.859944271
+   ],
+   "type": "Feature",
+   "links": [
+    {
+     "rel": "license",
+     "href": "https://alliance.numerique.gouv.fr/licence-ouverte-open-licence/",
+     "title": "License for this object (etalab-2.0)"
+    },
+    {
+     "rel": "self",
+     "href": "https://api.panoramax.xyz/api/collections/600d5cee-5328-4dd4-8838-5f27ef85aa59/items/b79f56d3-4910-437a-ab3d-480dce9ea64a",
+     "type": "application/geo+json"
+    },
+    {
+     "rel": "via",
+     "href": "https://panoramax.ign.fr",
+     "type": "application/json",
+     "title": "Link to the original instance",
+     "instance_name": "ign"
+    }
+   ],
+   "assets": {
+    "hd": {
+     "href": "{{cdn}}/b79f56d3-4910-437a-ab3d-480dce9ea64a/4910-437a-ab3d-480dce9ea64a.jpg",
+     "type": "image/jpeg",
+     "roles": [
+      "data"
+     ],
+     "title": "HD picture",
+     "description": "Highest resolution available of this picture"
+    },
+    "sd": {
+     "href": "{{cdn}}/b79f56d3-4910-437a-ab3d-480dce9ea64a/sd.jpg",
+     "type": "image/jpeg",
+     "roles": [
+      "visual"
+     ],
+     "title": "SD picture",
+     "description": "Picture in standard definition (fixed width of 2048px)"
+    },
+    "thumb": {
+     "href": "{{cdn}}/b79f56d3-4910-437a-ab3d-480dce9ea64a/thumb.jpg",
+     "type": "image/jpeg",
+     "roles": [
+      "thumbnail"
+     ],
+     "title": "Thumbnail",
+     "description": "Picture in low definition (fixed width of 500px)"
+    }
+   },
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     2.345106645,
+     48.859944271
+    ]
+   },
+   "providers": [
+    {
+     "name": "alice",
+     "roles": [
+      "producer"
+     ]
+    },
+    {
+     "name": "Alice for the City",
+     "roles": [
+      "producer"
+     ]
+    }
+   ],
+   "collection": "600d5cee-5328-4dd4-8838-5f27ef85aa59",
+   "properties": {
+    "created": "2025-12-05T19:45:40.163540+00:00",
+    "license": "etalab-2.0",
+    "updated": "2025-12-28T20:20:31.844006+00:00",
+    "datetime": "2025-05-08T09:22:37.042000+00:00",
+    "collection": {
+     "semantics": [
+      {
+       "key": "producer",
+       "value": "Alice"
+      },
+      {
+       "key": "transport",
+       "value": "car"
+      }
+     ]
+    },
+    "datetimetz": "2025-05-08T11:22:37.042000+02:00",
+    "view:azimuth": 27,
+    "geovisio:status": "ready",
+    "original_file:size": 6558079,
+    "geovisio:visibility": "anyone",
+    "pers:interior_orientation": {
+     "camera_model": "imajbox 360 HD",
+     "field_of_view": 360,
+     "camera_manufacturer": "IMAJING",
+     "sensor_array_dimensions": [
+      12288,
+      6144
+     ]
+    },
+    "geovisio:rank_in_collection": 5908,
+    "quality:horizontal_accuracy": 2.0,
+    "panoramax:horizontal_pixel_density": 34
+   },
+   "stac_version": "1.0.0",
+   "asset_templates": {
+    "tiles": {
+     "href": "https://panoramax-storage-public-fast.s3.gra.perf.cloud.ovh.net/derivates/b7/9f/56/d3/4910-437a-ab3d-480dce9ea64a/tiles/{TileCol}_{TileRow}.jpg",
+     "type": "image/jpeg",
+     "roles": [
+      "data"
+     ],
+     "title": "HD tiled picture",
+     "description": "Highest resolution available of this picture, as tiles"
+    }
+   },
+   "stac_extensions": [
+    "https://stac-extensions.github.io/view/v1.0.0/schema.json",
+    "https://stac-extensions.github.io/perspective-imagery/v1.0.0/schema.json",
+    "https://stac-extensions.github.io/tiled-assets/v1.0.0/schema.json"
+   ]
+  },
+  {
+   "id": "4ff8d96e-5114-4ed5-b593-daea754a6998",
+   "bbox": [
+    -1.680981389,
+    48.114966389,
+    -1.680981389,
+    48.114966389
+   ],
+   "type": "Feature",
+   "links": [
+    {
+     "rel": "license",
+     "href": "https://creativecommons.org/licenses/by-sa/4.0/",
+     "title": "License for this object (CC-BY-SA-4.0)"
+    },
+    {
+     "rel": "self",
+     "href": "https://api.panoramax.xyz/api/collections/912ed747-c21c-4c04-9c9d-f1e75a51072e/items/4ff8d96e-5114-4ed5-b593-daea754a6998",
+     "type": "application/geo+json"
+    },
+    {
+     "rel": "via",
+     "href": "https://panoramax.openstreetmap.fr",
+     "type": "application/json",
+     "title": "Link to the original instance",
+     "instance_name": "osm-fr"
+    }
+   ],
+   "assets": {
+    "hd": {
+     "href": "{{cdn}}/4ff8d96e-5114-4ed5-b593-daea754a6998/5114-4ed5-b593-daea754a6998.jpg",
+     "type": "image/jpeg",
+     "roles": [
+      "data"
+     ],
+     "title": "HD picture",
+     "description": "Highest resolution available of this picture"
+    },
+    "sd": {
+     "href": "{{cdn}}/4ff8d96e-5114-4ed5-b593-daea754a6998/sd.jpg",
+     "type": "image/jpeg",
+     "roles": [
+      "visual"
+     ],
+     "title": "SD picture",
+     "description": "Picture in standard definition (fixed width of 2048px)"
+    },
+    "thumb": {
+     "href": "{{cdn}}/4ff8d96e-5114-4ed5-b593-daea754a6998/thumb.jpg",
+     "type": "image/jpeg",
+     "roles": [
+      "thumbnail"
+     ],
+     "title": "Thumbnail",
+     "description": "Picture in low definition (fixed width of 500px)"
+    }
+   },
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     -1.680981389,
+     48.114966389
+    ]
+   },
+   "providers": [
+    {
+     "name": "bob",
+     "roles": [
+      "producer"
+     ]
+    }
+   ],
+   "collection": "912ed747-c21c-4c04-9c9d-f1e75a51072e",
+   "properties": {
+    "created": "2023-07-30T10:21:28.425345+00:00",
+    "license": "CC-BY-SA-4.0",
+    "updated": "2025-06-03T03:02:44.485815+00:00",
+    "datetime": "2018-03-27T16:55:15+00:00",
+    "collection": {
+     "semantics": []
+    },
+    "datetimetz": "2018-03-27T16:55:15+00:00",
+    "view:azimuth": 174,
+    "geovisio:status": "ready",
+    "original_file:size": 514943,
+    "geovisio:visibility": "anyone",
+    "pers:interior_orientation": {
+     "camera_model": "FDR-X1000V",
+     "focal_length": 2.8,
+     "field_of_view": 96,
+     "camera_manufacturer": "SONY",
+     "sensor_array_dimensions": [
+      1920,
+      1080
+     ]
+    },
+    "geovisio:rank_in_collection": 89,
+    "quality:horizontal_accuracy": 3.6,
+    "panoramax:horizontal_pixel_density": 20
+   },
+   "stac_version": "1.0.0",
+   "stac_extensions": [
+    "https://stac-extensions.github.io/view/v1.0.0/schema.json",
+    "https://stac-extensions.github.io/perspective-imagery/v1.0.0/schema.json"
+   ]
+  },
+  {
+   "id": "3f646b4a-caf0-4b2c-a3a6-f3273f9fc332",
+   "bbox": [
+    -1.680981389,
+    48.115098056,
+    -1.680981389,
+    48.115098056
+   ],
+   "type": "Feature",
+   "links": [
+    {
+     "rel": "license",
+     "href": "https://creativecommons.org/licenses/by-sa/4.0/",
+     "title": "License for this object (CC-BY-SA-4.0)"
+    },
+    {
+     "rel": "self",
+     "href": "https://api.panoramax.xyz/api/collections/912ed747-c21c-4c04-9c9d-f1e75a51072e/items/3f646b4a-caf0-4b2c-a3a6-f3273f9fc332",
+     "type": "application/geo+json"
+    },
+    {
+     "rel": "via",
+     "href": "https://panoramax.openstreetmap.fr",
+     "type": "application/json",
+     "title": "Link to the original instance",
+     "instance_name": "osm-fr"
+    }
+   ],
+   "assets": {
+    "hd": {
+     "href": "{{cdn}}/3f646b4a-caf0-4b2c-a3a6-f3273f9fc332/caf0-4b2c-a3a6-f3273f9fc332.jpg",
+     "type": "image/jpeg",
+     "roles": [
+      "data"
+     ],
+     "title": "HD picture",
+     "description": "Highest resolution available of this picture"
+    },
+    "sd": {
+     "href": "{{cdn}}/3f646b4a-caf0-4b2c-a3a6-f3273f9fc332/sd.jpg",
+     "type": "image/jpeg",
+     "roles": [
+      "visual"
+     ],
+     "title": "SD picture",
+     "description": "Picture in standard definition (fixed width of 2048px)"
+    },
+    "thumb": {
+     "href": "{{cdn}}/3f646b4a-caf0-4b2c-a3a6-f3273f9fc332/thumb.jpg",
+     "type": "image/jpeg",
+     "roles": [
+      "thumbnail"
+     ],
+     "title": "Thumbnail",
+     "description": "Picture in low definition (fixed width of 500px)"
+    }
+   },
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     -1.680981389,
+     48.115098056
+    ]
+   },
+   "providers": [
+    {
+     "name": "bob",
+     "roles": [
+      "producer"
+     ]
+    }
+   ],
+   "collection": "912ed747-c21c-4c04-9c9d-f1e75a51072e",
+   "properties": {
+    "created": "2023-07-30T10:21:34.688826+00:00",
+    "license": "CC-BY-SA-4.0",
+    "updated": "2025-06-03T03:02:44.485815+00:00",
+    "datetime": "2018-03-27T16:55:53+00:00",
+    "collection": {
+     "semantics": []
+    },
+    "datetimetz": "2018-03-27T16:55:53+00:00",
+    "view:azimuth": 28,
+    "geovisio:status": "ready",
+    "original_file:size": 483044,
+    "geovisio:visibility": "anyone",
+    "pers:interior_orientation": {
+     "camera_model": "FDR-X1000V",
+     "focal_length": 2.8,
+     "field_of_view": 96,
+     "camera_manufacturer": "SONY",
+     "sensor_array_dimensions": [
+      1920,
+      1080
+     ]
+    },
+    "geovisio:rank_in_collection": 123,
+    "quality:horizontal_accuracy": 4.2,
+    "panoramax:horizontal_pixel_density": 20
+   },
+   "stac_version": "1.0.0",
+   "stac_extensions": [
+    "https://stac-extensions.github.io/view/v1.0.0/schema.json",
+    "https://stac-extensions.github.io/perspective-imagery/v1.0.0/schema.json"
+   ]
+  }
+ ],
+ "links": []
+}

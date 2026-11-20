@@ -1,5 +1,8 @@
 // Package mcp offers the model the tools of the MCP servers in MCP_CONFIG,
-// one tool group per server, and turns them into chat commands.
+// one tool group per server, and turns them into chat commands. A local
+// server with an "addon" block that speaks signalbot's extension is an
+// addon: the bot calls its tools itself, for direct commands, and it never
+// learns who anyone is, only pseudonyms.
 package mcp
 
 import (
@@ -47,15 +50,18 @@ type server struct {
 	ChatCommands map[string]chatCommand `json:"chat_commands"`
 	Instructions *string                `json:"instructions"` // a system-prompt line while its tools are offered; unset: the server's own, "": none
 	Keywords     []string               `json:"keywords"`     // if set, its tools are offered only when a message has one of these words
+	Addon        *addonConfig           `json:"addon"`        // set for an addon
 }
 
-// chatCommand makes "/name ..." a turn in which the model must call tool.
+// chatCommand makes "/name ..." a turn in which the model must call tool,
+// or, if direct, an addon's tool the bot calls itself, without the model.
 // With require_arg, a bare "/name" is answered by the bot, not the model,
 // showing example if set.
 type chatCommand struct {
 	Tool       string `json:"tool"`
 	RequireArg bool   `json:"require_arg"`
 	Example    string `json:"example"`
+	Direct     bool   `json:"direct"`
 }
 
 // settings are the keys a server may have, and commandSettings a chat
@@ -63,8 +69,8 @@ type chatCommand struct {
 // MCP clients write that the bot has no use for, so a pasted entry starts.
 var (
 	settings = []string{"url", "headers", "command", "args", "env", "allowed_tools", "blocked_tools",
-		"instructions", "keywords", "chat_commands", "disabled"}
-	commandSettings = []string{"tool", "require_arg", "example"}
+		"instructions", "keywords", "chat_commands", "disabled", "addon"}
+	commandSettings = []string{"tool", "require_arg", "example", "direct"}
 	ignored         = []string{"type", "transport", "timeout", "alwaysAllow", "autoApprove", "description"}
 )
 
@@ -75,24 +81,60 @@ var unsafeToolChars = regexp.MustCompile(`[^A-Za-z0-9_-]`)
 var envPattern = regexp.MustCompile(`\$\{([A-Za-z_][A-Za-z0-9_]*)\}`)
 
 // Register starts the servers in MCP_CONFIG, if set, and offers their tools
-// on h. They run as long as the bot: when it stops, local servers get
-// SIGTERM and the bot waits for them. With no model, none is started.
+// on h. They run as long as the bot: when it stops, local servers have
+// their stdin closed, then get SIGTERM, then SIGKILL, and the bot waits for
+// them. With no model, only addons are started. With an addon, the
+// pseudonyms' secret and each addon's watches, claims, leases and outbox
+// cursor are kept in the "mcp" store; if it can't be opened, addons run as
+// plain servers.
 func Register(h feature.Host) error {
 	path := h.Env("MCP_CONFIG", "")
 	if path == "" {
-		return nil
-	}
-	if h.Info().Model == "" {
-		logx.Warnf("MCP_CONFIG is set but no model is configured, so MCP servers were not started")
 		return nil
 	}
 	servers, err := load(path)
 	if err != nil {
 		return err
 	}
+	if h.Info().Model == "" {
+		logx.Warnf("MCP_CONFIG is set but no model is configured, so only addon servers were started")
+		maps.DeleteFunc(servers, func(_ string, s server) bool { return s.Addon == nil })
+	}
+	addons := false
+	for _, s := range servers {
+		addons = addons || s.Addon != nil
+	}
+	var k *keeper
+	if addons { // so MCP without addons needs no state directory
+		store, err := h.Store("mcp")
+		var doc saved
+		if err == nil {
+			doc, err = loadSaved(store)
+		}
+		if err != nil {
+			logx.Errorf("addon features are off: the pseudonyms' secret can't be kept: %v", err)
+		} else {
+			k = newKeeper(store, doc, servers)
+		}
+	}
 	ctx, cancel := context.WithCancel(context.Background())
 	h.Go(func(life context.Context) { <-life.Done(); cancel() })
-	return start(ctx, h, path, servers)
+	if err := start(ctx, h, path, servers, k); err != nil {
+		return err
+	}
+	if k != nil && len(k.addons) > 0 {
+		// After the chat commands, so a command is never a watch's.
+		h.OnMessage(func(_ context.Context, m feature.Message) feature.Action {
+			for _, a := range k.addons {
+				if act := a.claim(m); !act.IsZero() {
+					return act
+				}
+			}
+			return feature.Action{}
+		})
+		h.Go(k.run)
+	}
+	return nil
 }
 
 func load(path string) (map[string]server, error) {
@@ -140,12 +182,25 @@ func load(path string) (map[string]server, error) {
 			if err := unknown(c, commandSettings); err != nil {
 				return nil, bad("chat command %q: %v", txt.Clamp(n, 40), err)
 			}
+			if s.ChatCommands[n].Direct && s.Addon == nil {
+				return nil, bad("chat command %q is direct, which needs an addon block", txt.Clamp(n, 40))
+			}
 		}
 		switch {
 		case (s.URL == "") == (s.Command == ""):
 			return nil, bad("needs a url or a command, not both or neither")
 		case s.AllowedTools != nil && s.BlockedTools != nil:
 			return nil, bad("has both allowed_tools and blocked_tools; use one")
+		}
+		if s.Addon != nil {
+			var entry map[string]json.RawMessage
+			json.Unmarshal(raw.Servers[name]["addon"], &entry)
+			if err := s.Addon.check(entry); err != nil {
+				return nil, bad("%v", err)
+			}
+			if err := checkAddonServer(name, s); err != nil {
+				return nil, bad("%v", err)
+			}
 		}
 		if err := s.expand(); err != nil {
 			return nil, bad("%v", err)
@@ -198,22 +253,49 @@ func (s *server) expand() (err error) {
 // maxInstructions caps a server's own instructions in the system prompt.
 const maxInstructions = 1000
 
-// initialize performs the MCP handshake, as the bot's version, and returns
-// the instructions the server sent, if any.
-func initialize(ctx context.Context, c conn, version string) (string, error) {
+// handshake is what a server says of itself in the MCP handshake.
+type handshake struct {
+	instructions string
+	title        string // its name for people, its title or else its name; "" if neither
+	addon        bool   // it speaks signalbot's extension, at the bot's version
+	subscribe    bool   // it takes resource subscriptions
+}
+
+// initialize performs the MCP handshake, as the bot's version, offering
+// signalbot's extension, and returns what the server said of itself.
+func initialize(ctx context.Context, c conn, version string) (handshake, error) {
 	res, err := c.call(ctx, "initialize", map[string]any{
 		"protocolVersion": protocol,
-		"capabilities":    map[string]any{},
+		"capabilities":    map[string]any{"experimental": map[string]any{vendor + "addon": map[string]int{"version": addonVersion}}},
 		"clientInfo":      map[string]string{"name": "signalbot", "version": version},
 	})
 	if err != nil {
-		return "", err
+		return handshake{}, err
 	}
 	var r struct {
 		Instructions string `json:"instructions"`
+		ServerInfo   struct {
+			Name  string `json:"name"`
+			Title string `json:"title"`
+		} `json:"serverInfo"`
+		Capabilities struct {
+			Experimental map[string]json.RawMessage `json:"experimental"`
+			Resources    struct {
+				Subscribe bool `json:"subscribe"`
+			} `json:"resources"`
+		} `json:"capabilities"`
 	}
-	json.Unmarshal(res, &r) // instructions are optional; a bad result shows up in tools/list
-	return strings.TrimSpace(r.Instructions), c.notify(ctx, "notifications/initialized", nil)
+	json.Unmarshal(res, &r) // all optional; a bad result shows up in tools/list
+	var ext struct {
+		Version int `json:"version"`
+	}
+	addon := json.Unmarshal(r.Capabilities.Experimental[vendor+"addon"], &ext) == nil && ext.Version == addonVersion
+	return handshake{
+		instructions: strings.TrimSpace(r.Instructions),
+		title:        txt.SafeName(cmp.Or(r.ServerInfo.Title, r.ServerInfo.Name)),
+		addon:        addon,
+		subscribe:    r.Capabilities.Resources.Subscribe,
+	}, c.notify(ctx, "notifications/initialized", nil)
 }
 
 // tool is a tool as a server lists it.
@@ -221,7 +303,24 @@ type tool struct {
 	Name        string          `json:"name"`
 	Description string          `json:"description"`
 	Schema      json.RawMessage `json:"inputSchema"`
+	Meta        struct {
+		Visibility []string `json:"io.github.robdevops.signalbot/visibility"` // nil: ["model"]
+		UI         struct {
+			Visibility []string `json:"visibility"` // MCP Apps'; nil: ["model", "app"]
+		} `json:"ui"`
+	} `json:"_meta"`
 }
+
+// forModel reports whether the tool may be offered to the model: neither
+// signalbot's visibility nor MCP Apps' leaves the model out.
+func (t tool) forModel() bool {
+	return (t.Meta.Visibility == nil || slices.Contains(t.Meta.Visibility, "model")) &&
+		(t.Meta.UI.Visibility == nil || slices.Contains(t.Meta.UI.Visibility, "model"))
+}
+
+// forBot reports whether the bot may call the tool itself: only if
+// signalbot's visibility says so (MCP Apps' "app" is a UI's, not the bot's).
+func (t tool) forBot() bool { return slices.Contains(t.Meta.Visibility, "bot") }
 
 // modelName is the name the model sees for a server's tool.
 func modelName(server, tool string) string {
@@ -230,15 +329,17 @@ func modelName(server, tool string) string {
 }
 
 // start connects to every server, in name order, and offers each one's
-// tools that its allowed_tools and blocked_tools let through as a tool
-// group, named by those tools and then its chat commands. A server that
-// cannot be reached is logged and left out. A tool named in either list
-// that a reachable server does not have, or two tools that end up with the
-// same name, is an error starting with the file's path: a typo in
-// blocked_tools would otherwise leave the tool offered. Local servers are
-// stopped when ctx ends, and the bot waits for them. While the model can't
-// call tools, no command is registered.
-func start(ctx context.Context, h feature.Host, path string, servers map[string]server) error {
+// tools that its allowed_tools and blocked_tools let through, and that are
+// for the model, as a tool group, named by those tools and then its chat
+// commands. A server that cannot be reached is logged and left out. A tool
+// named in either list that a reachable server does not have, or two tools
+// that end up with the same name, is an error starting with the file's
+// path: a typo in blocked_tools would otherwise leave the tool offered.
+// Local servers are stopped when ctx ends, and the bot waits for them.
+// While the model can't call tools, only direct commands are registered;
+// with no model, no tools are offered. k keeps the addons' state, nil to
+// run addons as plain servers; each addon started joins it.
+func start(ctx context.Context, h feature.Host, path string, servers map[string]server, k *keeper) error {
 	info := h.Info()
 	version := cmp.Or(info.Version, "dev")
 	type owner struct{ server, tool string }
@@ -248,11 +349,15 @@ func start(ctx context.Context, h feature.Host, path string, servers map[string]
 		cfg := servers[name]
 		var c conn = &httpConn{url: cfg.URL, headers: cfg.Headers, client: httpx.Client(2), version: version}
 		if cfg.Command != "" {
-			c = &stdioConn{name: name, cfg: cfg, version: version, redact: h.Redact}
+			s := &stdioConn{name: name, cfg: cfg, version: version, redact: h.Redact}
+			if cfg.Addon != nil {
+				s.prefix, s.updated = envPrefix(name), make(chan struct{}, 1)
+			}
+			c = s
 		}
-		listed, sent, err := connect(ctx, c, version)
+		listed, hs, err := connect(ctx, c, version)
 		if err != nil {
-			logx.Errorf("MCP server %s unavailable, its tools are left out: %v", name, err)
+			logx.Errorf("MCP server %s unavailable, its tools are left out: %s", name, describe(err, cfg.Addon != nil))
 			continue
 		}
 		for list, names := range map[string][]string{"allowed_tools": cfg.AllowedTools, "blocked_tools": cfg.BlockedTools} {
@@ -263,13 +368,31 @@ func start(ctx context.Context, h feature.Host, path string, servers map[string]
 				}
 			}
 		}
+		var a *addon
+		switch {
+		case cfg.Addon == nil:
+		case !hs.addon:
+			logx.Warnf("MCP server %s has an addon block but doesn't speak signalbot's addon extension (version %d), so it runs as a plain server", name, addonVersion)
+		case k != nil:
+			bot := map[string]bool{}
+			for _, t := range listed {
+				if t.forBot() {
+					bot[t.Name] = true
+				}
+			}
+			a = newAddon(name, cmp.Or(hs.title, name), *cfg.Addon, k.doc.Secret, c, bot)
+			a.host, a.changed, a.dirty = h, k.changed, c.(*stdioConn).updated
+			a.restore(k.doc.Addons[name])
+			k.addons = append(k.addons, a)
+		}
 		g := feature.ToolGroup{
-			System:   instructions(cfg.Instructions, sent),
+			System:   instructions(cfg.Instructions, hs.instructions),
 			Keywords: keywords(cfg.Keywords),
 		}
 		models := map[string]string{} // the model's name for each offered tool, by the server's
 		for _, t := range listed {
-			if cfg.AllowedTools != nil && !slices.Contains(cfg.AllowedTools, t.Name) || slices.Contains(cfg.BlockedTools, t.Name) {
+			if info.Model == "" || !t.forModel() ||
+				cfg.AllowedTools != nil && !slices.Contains(cfg.AllowedTools, t.Name) || slices.Contains(cfg.BlockedTools, t.Name) {
 				continue
 			}
 			model := modelName(name, t.Name)
@@ -294,22 +417,39 @@ func start(ctx context.Context, h feature.Host, path string, servers map[string]
 		if len(g.Names) > 0 { // before its commands join them: one line per server
 			logx.Noticef("%s: %s", label, strings.Join(g.Names, ", "))
 		}
-		if !info.CallsTools {
-			cfg.ChatCommands = nil // a command would force a tool the model can't call
+		if a != nil {
+			logx.Noticef("%s: an addon, with tools for the bot: %s", label, cmp.Or(strings.Join(slices.Sorted(maps.Keys(a.bot)), ", "), "none"))
 		}
 		var own []string // its chat commands, as "/name"
 		for _, n := range slices.Sorted(maps.Keys(cfg.ChatCommands)) {
-			if cmd := command(h, name, n, cfg.ChatCommands[n], models); cmd != "" {
+			cc := cfg.ChatCommands[n]
+			if !cc.Direct && !info.CallsTools {
+				continue // a command would force a tool the model can't call
+			}
+			if cmd := command(h, name, n, cc, models, a); cmd != "" {
 				own = append(own, cmd)
 			}
 		}
 		slices.Sort(own)
 		cmds = append(cmds, own...)
-		if len(g.Tools) > 0 {
+		switch {
+		case len(g.Tools) > 0:
 			all := strings.Join(append(g.Names, own...), ", ")
 			g.Listing = name + ": " + all
 			g.Names = []string{"**" + label + "**: " + all} // grouped by server in {tools}, in Markdown
 			h.OfferTools(g)
+		case len(own) > 0: // no group to list them in
+			var bare []string
+			for _, cmd := range own {
+				bare = append(bare, strings.TrimPrefix(cmd, "/"))
+			}
+			h.ListCommands(label, bare...)
+		}
+		if a != nil {
+			c.(*stdioConn).ready = a.ready
+			a.ready(ctx, hs)
+			h.Go(a.work)
+			h.Go(a.readOutbox)
 		}
 		if s, ok := c.(*stdioConn); ok {
 			h.Go(func(context.Context) { s.supervise(ctx) })
@@ -319,6 +459,15 @@ func start(ctx context.Context, h feature.Host, path string, servers map[string]
 		logx.Noticef("chat commands: %s", strings.Join(cmds, ", "))
 	}
 	return nil
+}
+
+// describe is err for the log: for an addon, only its code, never the
+// server's own text.
+func describe(err error, addon bool) string {
+	if addon {
+		return errCode(err)
+	}
+	return err.Error()
 }
 
 // toolList names a server's tools, the first 20 and then "…".
@@ -358,12 +507,21 @@ func keywords(words []string) *regexp.Regexp {
 }
 
 // command registers chat command n of a server on h and returns it as
-// "/name". One that can't be used (a tool the model isn't offered, or a bad
-// or taken name) is logged and skipped, returning "".
-func command(h feature.Host, server, n string, c chatCommand, models map[string]string) string {
+// "/name". A direct one calls a tool of a, the server as an addon, that the
+// bot may call; any other has the model call a tool it is offered. One that
+// can't be used (such a tool missing, or a bad or taken name) is logged and
+// skipped, returning "".
+func command(h feature.Host, server, n string, c chatCommand, models map[string]string, a *addon) string {
 	name := strings.ToLower(strings.TrimPrefix(n, "/"))
 	model, offered := models[c.Tool]
-	if !offered {
+	switch {
+	case c.Direct && a == nil:
+		logx.Warnf("MCP server %s: chat command /%s is direct, but the server's addon features are off; skipped", server, txt.Clamp(name, 40))
+		return ""
+	case c.Direct && !a.bot[c.Tool]:
+		logx.Warnf("MCP server %s: chat command /%s names tool %q, which the bot may not call; skipped", server, txt.Clamp(name, 40), txt.Clamp(c.Tool, 64))
+		return ""
+	case !c.Direct && !offered:
 		logx.Warnf("MCP server %s: chat command /%s names tool %q, which isn't offered; skipped", server, txt.Clamp(name, 40), txt.Clamp(c.Tool, 64))
 		return ""
 	}
@@ -371,10 +529,15 @@ func command(h feature.Host, server, n string, c chatCommand, models map[string]
 	if ex := strings.TrimRight(strings.TrimSpace(c.Example), "."); ex != "" {
 		bare += " Try: " + ex + "."
 	}
-	bare += " Or just ask me in plain words."
-	err := h.Command(name, func(_ context.Context, m feature.Message, args string) feature.Action {
-		if c.RequireArg && args == "" {
+	if !c.Direct {
+		bare += " Or just ask me in plain words."
+	}
+	err := h.Command(name, func(ctx context.Context, m feature.Message, args string) feature.Action {
+		switch {
+		case c.RequireArg && args == "":
 			return feature.Action{Answer: bare}
+		case c.Direct:
+			return a.direct(ctx, m, name, c.Tool, args)
 		}
 		return feature.Action{ToolChoice: model}
 	})
@@ -385,18 +548,19 @@ func command(h feature.Host, server, n string, c chatCommand, models map[string]
 	return "/" + name
 }
 
-// connect starts the server, initializes it, and lists its tools by name.
-func connect(ctx context.Context, c conn, version string) ([]tool, string, error) {
+// connect starts the server, initializes it, and lists its tools by name,
+// all of them, whoever they are for.
+func connect(ctx context.Context, c conn, version string) ([]tool, handshake, error) {
 	ctx2, cancel := context.WithTimeout(ctx, callTimeout)
 	defer cancel()
 	if s, ok := c.(*stdioConn); ok {
 		if err := s.start(ctx); err != nil {
-			return nil, "", err
+			return nil, handshake{}, err
 		}
 	}
-	own, err := initialize(ctx2, c, version)
+	hs, err := initialize(ctx2, c, version)
 	if err != nil {
-		return nil, "", err
+		return nil, handshake{}, err
 	}
 	var tools []tool
 	cursor := ""
@@ -407,19 +571,19 @@ func connect(ctx context.Context, c conn, version string) ([]tool, string, error
 		}
 		res, err := c.call(ctx2, "tools/list", params)
 		if err != nil {
-			return nil, "", err
+			return nil, handshake{}, err
 		}
 		var page struct {
 			Tools      []tool `json:"tools"`
 			NextCursor string `json:"nextCursor"`
 		}
 		if err := json.Unmarshal(res, &page); err != nil {
-			return nil, "", fmt.Errorf("tools/list: %v", err)
+			return nil, handshake{}, fmt.Errorf("tools/list: %v", err)
 		}
 		tools = append(tools, page.Tools...)
 		if cursor = page.NextCursor; cursor == "" {
 			slices.SortFunc(tools, func(a, b tool) int { return strings.Compare(a.Name, b.Name) })
-			return slices.CompactFunc(tools, func(a, b tool) bool { return a.Name == b.Name }), own, nil
+			return slices.CompactFunc(tools, func(a, b tool) bool { return a.Name == b.Name }), hs, nil
 		}
 	}
 }
@@ -447,28 +611,25 @@ func call(ctx context.Context, c conn, name, arguments string) (string, []featur
 		}
 		return "error: the tool could not be reached", nil, err
 	}
-	var r struct {
-		Content []struct {
-			Type     string `json:"type"`
-			Text     string `json:"text"`
-			Data     string `json:"data"` // base64, for an image
-			MimeType string `json:"mimeType"`
-		} `json:"content"`
-		IsError bool `json:"isError"`
-	}
+	var r toolResult
 	if json.Unmarshal(res, &r) != nil {
 		return "error: the tool sent a malformed result", nil, errors.New("malformed result")
 	}
 	var parts []string
 	var pics []feature.Picture
 	for _, p := range r.Content {
-		switch data, err := base64.StdEncoding.DecodeString(p.Data); {
-		case p.Type == "text":
+		if p.Type == "text" {
 			parts = append(parts, p.Text)
-		case p.Type == "image" && err == nil && img.Sendable(data) && len(pics) < feature.MaxPictures:
+			continue
+		}
+		data, err := base64.StdEncoding.DecodeString(p.Data)
+		if err == nil {
+			data, err = img.Safe(data) // its metadata, such as where a photo was taken, never sent
+		}
+		if p.Type == "image" && err == nil && img.Sendable(data) && len(pics) < feature.MaxPictures {
 			pics = append(pics, feature.Picture{Data: data})
 			parts = append(parts, "[image sent to the chat]")
-		default:
+		} else {
 			parts = append(parts, "[non-text content omitted]")
 		}
 	}
@@ -477,4 +638,20 @@ func call(ctx context.Context, c conn, name, arguments string) (string, []featur
 		return "error: " + out, nil, errors.New("the tool reported an error")
 	}
 	return out, pics, nil
+}
+
+// toolResult is a tools/call result. An addon's _meta may make a watch,
+// for a direct command, or ask for a reaction, for a watch's call.
+type toolResult struct {
+	Content []struct {
+		Type     string `json:"type"`
+		Text     string `json:"text"`
+		Data     string `json:"data"` // base64, for an image
+		MimeType string `json:"mimeType"`
+	} `json:"content"`
+	IsError bool `json:"isError"`
+	Meta    struct {
+		Watch *watchSpec `json:"io.github.robdevops.signalbot/watch"`
+		React string     `json:"io.github.robdevops.signalbot/react"` // an emoji to put on the message
+	} `json:"_meta"`
 }

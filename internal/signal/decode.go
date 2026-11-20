@@ -500,3 +500,26 @@ func (c *Client) Delivered(ctx context.Context, msg feature.Message) (bot.Ready,
 	r.Message = msg
 	return r, true
 }
+
+// Reachable reports whether the bot may still post in chat on its own,
+// waiting up to 10s for signal-cli: in a group, while the bot is a member
+// (listGroups); in a DM, while the user is in SIGNAL_DM_USER_IDS, by ACI or
+// number. A failure is logged.
+func (c *Client) Reachable(ctx context.Context, chat feature.Chat) bool {
+	wait, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	if c.WaitID(wait) == "" {
+		logx.Warnf("post dropped: not connected to signal-cli after 10s")
+		return false
+	}
+	if chat.GroupID == "" {
+		c.loadNames(wait, &envelope{})
+		return c.allowed[chat.User] || c.allowed[c.number(chat.User)]
+	}
+	var gs []group
+	if err := c.call(wait, "listGroups", nil, &gs); err != nil {
+		logx.Warnf("post dropped: listGroups failed: %v", err)
+		return false
+	}
+	return slices.ContainsFunc(gs, func(g group) bool { return g.IsMember && g.ID == chat.GroupID })
+}

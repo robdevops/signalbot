@@ -8,12 +8,15 @@ import (
 	"fmt"
 	"slices"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/robdevops/signalbot/internal/chats"
 	"github.com/robdevops/signalbot/internal/config"
 	"github.com/robdevops/signalbot/internal/feature"
+	"github.com/robdevops/signalbot/internal/kit/logx"
 	"github.com/robdevops/signalbot/internal/kit/state"
+	"github.com/robdevops/signalbot/internal/kit/txt"
 )
 
 // The ports. Features call them while they register, before Run.
@@ -128,19 +131,91 @@ func (b *Bot) Deliver(msg feature.Message) {
 	}
 }
 
-// Tell sends text to user, in their DM's mailbox.
-func (b *Bot) Tell(user, text string) {
-	if !b.closing.Load() && user != "" && text != "" {
-		b.post(Told{User: user, Text: text})
+// Post sends p from the bot, in its chat's mailbox. Its Done is called
+// once, whatever happens to it.
+func (b *Bot) Post(p feature.Post) {
+	p.Done = once(p.Done)
+	switch {
+	case b.closing.Load(), p.Text == "" && len(p.Pictures) == 0:
+		p.Done(nil, true)
+	default:
+		b.post(Outgoing{Post: p})
 	}
 }
 
-// told sends a Told in its chat's slot, if its user may still DM the bot,
-// which the network checks as it does for a delivered DM.
-func (b *Bot) told(t Told) {
-	chat := feature.Chat{User: t.User}
-	if _, ok := b.net.Delivered(b.ctx, feature.Message{Chat: chat, Sender: t.User}); ok {
-		b.net.Send(chat, t.Text, nil, nil)
+// once is done made safe to call more than once, the calls after the first
+// doing nothing; nil does nothing.
+func once(done func(sent []int64, dropped bool)) func(sent []int64, dropped bool) {
+	var o sync.Once
+	return func(sent []int64, dropped bool) {
+		o.Do(func() {
+			if done != nil {
+				done(sent, dropped)
+			}
+		})
+	}
+}
+
+// say sends a post in its chat's slot, if the bot may still post there,
+// with @Name linked to the chat's known names. With a label, history keeps
+// it as the bot's own entry, "[Label] text", clamped; without one, nothing.
+func (b *Bot) say(p feature.Post) {
+	defer p.Done(nil, true) // if it is never sent
+	if !b.net.Reachable(b.ctx, p.Chat) {
+		logx.Infof("dropped a post: the bot can no longer post in its chat")
+		return
+	}
+	key := p.Chat.Key()
+	text, kept := captioned(p.Text, p.Pictures)
+	if p.Label == "" || b.ai == nil { // with no model, nothing would read it
+		p.Done(b.net.Send(p.Chat, text, p.Pictures, b.chats.Names(key)), false)
+		return
+	}
+	ref := b.pending()
+	b.chats.Add(key, b.now(), 0, chats.Entry{Role: "assistant", Content: txt.Clamp("["+p.Label+"] "+kept, maxPostKept), Refs: []chats.Ref{ref}})
+	p.Done(b.sendKept(key, ref, p.Chat, text, p.Pictures, b.chats.Names(key)), false)
+}
+
+// maxPostKept caps what history keeps of a post.
+const maxPostKept = 500
+
+// React puts emoji on msg, in chat's mailbox at low priority, merged with
+// the reactions already waiting there: a later one on the same message
+// replaces the earlier, and past maxReactions the oldest is dropped.
+func (b *Bot) React(chat feature.Chat, msg feature.Message, emoji string) {
+	if b.closing.Load() || emoji == "" || msg.Timestamp == 0 { // a message the bot made can't be reacted to
+		return
+	}
+	msg.Chat = chat
+	r := Reaction{Message: msg, Emoji: emoji}
+	add := Reacted{Chat: chat, Reactions: []Reaction{r}}
+	merge := func(waiting Received) Received {
+		w := waiting.(Reacted)
+		w.Reactions = slices.DeleteFunc(slices.Clone(w.Reactions), func(x Reaction) bool {
+			return x.Message.Sender == msg.Sender && x.Message.Timestamp == msg.Timestamp
+		})
+		if len(w.Reactions) >= maxReactions {
+			logx.Warnf("dropped a reaction: %d already wait in its chat", maxReactions)
+			w.Reactions = w.Reactions[1:]
+		}
+		w.Reactions = append(w.Reactions, r)
+		return w
+	}
+	if err := b.chats.PostLow(chat.Key(), add, merge); err != nil {
+		b.dropped(add, err)
+	}
+}
+
+// maxReactions caps the reactions waiting in one chat.
+const maxReactions = 16
+
+// react puts the waiting reactions on their messages in their chat's slot,
+// skipping any message deleted or replaced by an edit since.
+func (b *Bot) react(r Reacted) {
+	for _, x := range r.Reactions {
+		if !b.gone(x.Message) {
+			b.net.React(r.Chat, x.Message, x.Emoji)
+		}
 	}
 }
 
@@ -184,7 +259,7 @@ func (b *Bot) delivered(msg feature.Message) {
 		b.chats.Learn(key, msg.Name, msg.Sender)
 	}
 	msg.Addressed = true
-	if act := b.onMessage(b.ctx, msg); act != (feature.Action{}) || r.Mentioned {
+	if act := b.onMessage(b.ctx, msg); !act.IsZero() || r.Mentioned {
 		b.respond(msg, act, prompt(msg), nil)
 		return
 	}

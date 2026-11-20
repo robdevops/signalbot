@@ -37,7 +37,8 @@ type Host struct {
 	more      []string
 	timers    []*Timer
 	delivered []feature.Message
-	told      []Told
+	posts     []feature.Post
+	reactions []Reaction
 	stores    []string
 	commands  feature.Commands
 	life      context.Context // what Go passes; ended by Stop
@@ -200,20 +201,38 @@ func (h *Host) Deliver(m feature.Message) {
 	h.delivered = append(h.delivered, m)
 }
 
-func (h *Host) Tell(user, text string) {
+// Post records p; Posts returns what was posted. Done is never called.
+func (h *Host) Post(p feature.Post) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	h.told = append(h.told, Told{user, text})
+	h.posts = append(h.posts, p)
 }
 
-// Told is a text passed to Tell.
-type Told struct{ User, Text string }
-
-// TellsSent is the texts passed to Tell, in order.
-func (h *Host) TellsSent() []Told {
+// Posts is the posts passed to Post, in order.
+func (h *Host) Posts() []feature.Post {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	return slices.Clone(h.told)
+	return slices.Clone(h.posts)
+}
+
+// Reaction is a reaction passed to React.
+type Reaction struct {
+	Chat    feature.Chat
+	Message feature.Message
+	Emoji   string
+}
+
+func (h *Host) React(chat feature.Chat, msg feature.Message, emoji string) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.reactions = append(h.reactions, Reaction{chat, msg, emoji})
+}
+
+// Reactions is the reactions passed to React, in order.
+func (h *Host) Reactions() []Reaction {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return slices.Clone(h.reactions)
 }
 
 func (h *Host) Groups(context.Context, string) ([]feature.Group, error) { return h.Shared, nil }
@@ -256,7 +275,7 @@ func (h *Host) Message(ctx context.Context, m feature.Message) feature.Action {
 	hooks := slices.Clone(h.messages)
 	h.mu.Unlock()
 	for _, fn := range hooks {
-		if a := fn(ctx, m).For(m); a != (feature.Action{}) {
+		if a := fn(ctx, m).For(m); !a.IsZero() {
 			return a
 		}
 	}

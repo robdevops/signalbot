@@ -13,6 +13,7 @@ import (
 	"bytes"
 	"encoding/base64"
 	"encoding/json"
+	"flag"
 	"fmt"
 	"image"
 	"image/png"
@@ -93,6 +94,11 @@ type world struct {
 	// their arguments: echo_error with an error result, rpc_error with a
 	// JSON-RPC error.
 	BrokenMCP bool
+	// Addon adds a local MCP addon, "game" (see TestScenarioAddonProcess),
+	// allowed in the test group and DMs: /game starts a round, a picture
+	// with a watch for "guess <number>" and a guard; each guess it is sent
+	// gets a 📍.
+	Addon bool
 	// StateDir is the bot's state directory (STATE_DIRECTORY), where it
 	// saves what must survive a restart; a fresh one if "". Two bots given
 	// the same one are the same bot before and after a restart.
@@ -204,7 +210,7 @@ func newHarness(t *testing.T, w world) *harness {
 	}
 	h.startSignal()
 	h.startModel()
-	if w.MCP || w.BrokenMCP {
+	if w.MCP || w.BrokenMCP || w.Addon {
 		h.startMCP()
 	}
 	return h
@@ -819,10 +825,11 @@ func (r modelRequest) last() chatMessage {
 
 // fakeMCPTool is a tool a fake MCP server lists, and what calling it returns.
 // A tool that fails echoes its arguments: fail is "result" for an error
-// result, "rpc" for a JSON-RPC error.
+// result, "rpc" for a JSON-RPC error. meta is its _meta, if any.
 type fakeMCPTool struct {
 	name, description, result string
 	fail                      string
+	meta                      map[string]any
 }
 
 func (h *harness) startMCP() {
@@ -831,6 +838,9 @@ func (h *harness) startMCP() {
 			{name: "get_quote", description: "Get the latest price of a stock", result: `{"content":[{"type":"text","text":"AAPL 230.10 USD"}]}`},
 			{name: "price_chart", description: "Draw a price chart of a stock", result: `{"content":[{"type":"image","mimeType":"image/png","data":"` +
 				base64.StdEncoding.EncodeToString(scenarioPNG()) + `"},{"type":"text","text":"chart of AAPL"}]}`},
+			// Tools that aren't for the model: never offered to it, nor named in its prompt.
+			{name: "bot_only", description: "For the bot", meta: map[string]any{"io.github.robdevops.signalbot/visibility": []string{"bot"}}},
+			{name: "app_only", description: "For an app's UI", meta: map[string]any{"ui": map[string]any{"visibility": []string{"app"}}}},
 		},
 		"weather": {
 			{name: "get_forecast", description: "Get the weather forecast for a place", result: `{"content":[{"type":"text","text":"sunny, 24C"}]}`},
@@ -861,6 +871,12 @@ func (h *harness) startMCP() {
 	}
 	if h.w.BrokenMCP {
 		entries = append(entries, `"broken":{"url":"`+urls["broken"]+`"}`)
+	}
+	if h.w.Addon {
+		self, _ := json.Marshal(os.Args[0])
+		entries = append(entries, `"game":{"command":`+string(self)+`,"args":["-test.run=^TestScenarioAddonProcess$","addon"],`+
+			`"chat_commands":{"game":{"tool":"game","direct":true}},`+
+			`"addon":{"chats":["`+idGroup+`"],"dms":true,"react":true,"watch":true}}`)
 	}
 	cfg := `{"mcpServers":{` + strings.Join(entries, ",") + `}}`
 	h.mcpConfig = filepath.Join(h.t.TempDir(), "mcp.json")
@@ -895,8 +911,12 @@ func (h *harness) mcpHandler(server string, tools []fakeMCPTool) http.Handler {
 		case "tools/list":
 			var list []map[string]any
 			for _, t := range tools {
-				list = append(list, map[string]any{"name": t.name, "description": t.description,
-					"inputSchema": map[string]any{"type": "object", "properties": map[string]any{"q": map[string]string{"type": "string"}}}})
+				entry := map[string]any{"name": t.name, "description": t.description,
+					"inputSchema": map[string]any{"type": "object", "properties": map[string]any{"q": map[string]string{"type": "string"}}}}
+				if t.meta != nil {
+					entry["_meta"] = t.meta
+				}
+				list = append(list, entry)
 			}
 			b, _ := json.Marshal(map[string]any{"tools": list})
 			result = string(b)
@@ -925,6 +945,59 @@ func (h *harness) mcpHandler(server string, tools []fakeMCPTool) http.Handler {
 		w.Header().Set("Content-Type", "application/json")
 		fmt.Fprintf(w, `{"jsonrpc":"2.0","id":%d,"result":%s}`, *req.ID, result)
 	})
+}
+
+// TestScenarioAddonProcess is not a scenario: run as a subprocess with the
+// argument "addon", it is the "game" addon, a stdio MCP server speaking
+// signalbot's extension. Its tools are for the bot only: game answers with
+// a picture and a watch, for an hour, on "guess <number>" with a guard;
+// guess answers each guess with a 📍. It exits when its stdin closes.
+func TestScenarioAddonProcess(t *testing.T) {
+	if flag.Arg(0) != "addon" {
+		return
+	}
+	bot := map[string]any{"io.github.robdevops.signalbot/visibility": []string{"bot"}}
+	sc := bufio.NewScanner(os.Stdin)
+	sc.Buffer(nil, 8<<20)
+	for sc.Scan() {
+		var req struct {
+			ID     *int64 `json:"id"`
+			Method string `json:"method"`
+			Params struct {
+				Name string `json:"name"`
+			} `json:"params"`
+		}
+		json.Unmarshal(sc.Bytes(), &req)
+		if req.ID == nil {
+			continue
+		}
+		var result any = map[string]any{}
+		switch req.Method {
+		case "initialize":
+			result = map[string]any{"protocolVersion": "2025-06-18", "serverInfo": map[string]string{"name": "game", "title": "Game", "version": "1"},
+				"capabilities": map[string]any{"tools": map[string]any{}, "experimental": map[string]any{"io.github.robdevops.signalbot/addon": map[string]int{"version": 1}}}}
+		case "tools/list":
+			result = map[string]any{"tools": []any{
+				map[string]any{"name": "game", "inputSchema": map[string]string{"type": "object"}, "_meta": bot},
+				map[string]any{"name": "guess", "inputSchema": map[string]string{"type": "object"}, "_meta": bot},
+			}}
+		case "tools/call":
+			switch req.Params.Name {
+			case "game":
+				result = map[string]any{
+					"content": []any{map[string]string{"type": "text", "text": "Round on"},
+						map[string]string{"type": "image", "mimeType": "image/png", "data": base64.StdEncoding.EncodeToString(scenarioPNG())}},
+					"_meta": map[string]any{"io.github.robdevops.signalbot/watch": map[string]string{"id": "r1", "pattern": `\bguess \d+`,
+						"until": time.Now().Add(time.Hour).Format(time.RFC3339), "tool": "guess", "guard": "No hints during a round"}}}
+			case "guess":
+				result = map[string]any{"content": []any{map[string]string{"type": "text", "text": "Recorded"}},
+					"_meta": map[string]string{"io.github.robdevops.signalbot/react": "📍"}}
+			}
+		}
+		b, _ := json.Marshal(map[string]any{"jsonrpc": "2.0", "id": *req.ID, "result": result})
+		fmt.Println(string(b))
+	}
+	os.Exit(0)
 }
 
 // toolCalls is every MCP tool call, as "server/tool arguments".

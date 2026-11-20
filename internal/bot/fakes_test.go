@@ -113,6 +113,14 @@ func (n *fakeNet) Delivered(ctx context.Context, msg feature.Message) (Ready, bo
 	return r, true
 }
 
+// Reachable is the group, and the DMs of Alice and Bob.
+func (n *fakeNet) Reachable(_ context.Context, chat feature.Chat) bool {
+	if chat.GroupID != "" {
+		return chat.GroupID == groupID
+	}
+	return chat.User == aliceID || chat.User == bobID
+}
+
 func (n *fakeNet) BotName() string { return "Botty" }
 
 // Prompt is Signal's, so the golden prompt holds with no features.

@@ -10,6 +10,11 @@
       "alerts": {"tool": "get_alerts"}
     }
   },
+  "geo": {
+    "command": "/addons/geoguess",
+    "chat_commands": {"geo": {"tool": "geo", "direct": true, "example": "/geo 3m"}},
+    "addon": {"chats": ["all"], "dms": false, "post": true, "react": true, "watch": true, "watch_max": "1h"}
+  },
   "files": {
     "command": "uvx",
     "args": ["some-mcp-server"],

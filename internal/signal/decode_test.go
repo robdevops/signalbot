@@ -262,6 +262,29 @@ func TestLoad(t *testing.T) {
 	}
 }
 
+// The bot may post on its own in a group it is still a member of, and in
+// the DM of someone still allowed, by ACI or number.
+func TestReachable(t *testing.T) {
+	captureLogs(t)
+	f := newFake(t)
+	f.set("listContacts", `[{"uuid":"`+aliceID+`","number":"+1555","givenName":"Alice"},{"uuid":"`+bobID+`","givenName":"Bob"}]`)
+	f.set("listGroups", `[{"id":"`+groupID+`","isMember":true},{"id":"bGVmdA==","isMember":false}]`)
+	c := newClient(f.sock, map[string]bool{"+1555": true}, nil)
+	run(t, c, f)
+	ctx := context.Background()
+	for chat, want := range map[feature.Chat]bool{
+		{User: aliceID}:       true,
+		{User: bobID}:         false,
+		{GroupID: groupID}:    true,
+		{GroupID: "bGVmdA=="}: false,
+		{GroupID: "b3RoZXI="}: false,
+	} {
+		if got := c.Reachable(ctx, chat); got != want {
+			t.Errorf("%+v: %v", chat, got)
+		}
+	}
+}
+
 // A delivered message is checked as if its sender had just posted it: a
 // DM's sender must still be allowed, by ACI or number, and a group's still
 // a member. Its sender's name is filled in, the bot's @name is taken out,

@@ -1251,13 +1251,14 @@ func TestScenarioOtherProviderRejectsTools(t *testing.T) {
 
 // With no model, the bot answers only commands: a mention or a DM gets no
 // reply, no typing and no model request, group chatter isn't kept, MCP
-// connects to no server, and a scheduled plain text is still posted.
+// connects to no server but an addon (there is none), and a scheduled
+// plain text is still posted.
 func TestScenarioNoModel(t *testing.T) {
 	h := startBot(t, world{NoModel: true, MCP: true, Contacts: map[string]string{idAlice: "Alice", idBob: "Bob"}})
 	if l, ok := h.logged("no model: set MODEL_API_KEY (or MODEL_API_URL for a provider that needs no key); until then only commands are answered"); !ok || l.Pri != 4 {
 		t.Fatalf("no notice: %v", h.logLines())
 	}
-	if _, ok := h.logged("MCP_CONFIG is set but no model is configured, so MCP servers were not started"); !ok {
+	if _, ok := h.logged("MCP_CONFIG is set but no model is configured, so only addon servers were started"); !ok {
 		t.Fatalf("no MCP line: %v", h.logLines())
 	}
 	if _, ok := h.logged("web search on"); ok {
@@ -1988,6 +1989,75 @@ func checkToolReplay(t *testing.T, r modelRequest, tool, result string) {
 	}
 	if res.Role != "tool" || res.ToolCallID != "call_1" || !strings.Contains(res.Content, result) {
 		t.Fatalf("tool result %+v", res)
+	}
+}
+
+// An addon's round watches the group for guesses: one sent as a reply to
+// the round's photo, addressed to the bot, and one in passing both go to
+// the addon, which pins them, and never to the model or history. A reply
+// to the photo that isn't a guess gets the guard, not the model; other
+// chatter is still context.
+func TestScenarioAddonGuessInTheGroup(t *testing.T) {
+	h := startBot(t, world{Addon: true, Contacts: map[string]string{idAlice: "Alice", idBob: "Bob"}})
+	if s := h.ask(atBot("/game")); s.GroupID != idGroup || s.Message != "Round on" || len(s.Attachments) != 1 {
+		t.Fatalf("sent %+v", s)
+	}
+	photo := h.lastSentAt()
+
+	guess := inGroup("my guess 42").by(idBob, "Bob")
+	guess.Quote = &quoteOf{Author: idBot, Text: "Round on", Sent: photo}
+	h.receive(guess.frame())
+	h.waitFor("a pin", func() bool { return len(h.callsTo("sendReaction")) == 1 })
+	h.receive(inGroup("guess 7, maybe").frame())
+	h.waitFor("a second pin", func() bool { return len(h.callsTo("sendReaction")) == 2 })
+	for i, p := range h.callsTo("sendReaction") {
+		if p["emoji"] != "📍" || p["groupId"] != idGroup || p["targetAuthor"] != []string{idBob, idAlice}[i] {
+			t.Fatalf("sendReaction %v", p)
+		}
+	}
+	h.noMoreSends()
+
+	hint := inGroup("where is this?")
+	hint.Quote = &quoteOf{Author: idBot, Text: "Round on", Sent: photo}
+	if s := h.ask(hint); s.Message != "No hints during a round" {
+		t.Fatalf("sent %+v", s)
+	}
+	h.ignored(inGroup("what a lovely view"))
+	if n := len(h.requests()); n != 0 {
+		t.Fatalf("%d model requests", n)
+	}
+	h.ask(atBot("anything new?"))
+	for _, c := range h.lastRequest().contents() {
+		if strings.Contains(c, "guess") {
+			t.Fatalf("a guess reached the model: %v", h.lastRequest().contents())
+		}
+	}
+	if !slices.ContainsFunc(h.lastRequest().contents(), func(c string) bool { return strings.Contains(c, "what a lovely view") }) {
+		t.Fatalf("chatter isn't context: %v", h.lastRequest().contents())
+	}
+}
+
+// In an allowed DM, every message is addressed: a guess during a round goes
+// to the addon, never to the model or history.
+func TestScenarioAddonGuessInADM(t *testing.T) {
+	h := startBot(t, world{Addon: true})
+	if s := h.ask(fromAlice("/game")); s.Recipient != idAlice || s.Message != "Round on" {
+		t.Fatalf("sent %+v", s)
+	}
+	h.receive(fromAlice("guess 12").frame())
+	h.waitFor("a pin", func() bool { return len(h.callsTo("sendReaction")) == 1 })
+	if p := h.callsTo("sendReaction")[0]; p["emoji"] != "📍" || fmt.Sprint(p["recipient"]) != "["+idAlice+"]" {
+		t.Fatalf("sendReaction %v", p)
+	}
+	h.noMoreSends()
+	if n := len(h.requests()); n != 0 {
+		t.Fatalf("%d model requests", n)
+	}
+	h.ask(fromAlice("hello"))
+	for _, c := range h.lastRequest().contents() {
+		if strings.Contains(c, "guess") {
+			t.Fatalf("a guess reached the model: %v", h.lastRequest().contents())
+		}
 	}
 }
 

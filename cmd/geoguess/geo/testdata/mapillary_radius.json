@@ -1,0 +1,154 @@
+{
+ "data": [
+  {
+   "id": "1706189916395244",
+   "computed_geometry": {
+    "type": "Point",
+    "coordinates": [
+     144.96299697336,
+     -37.813278303317
+    ]
+   },
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     144.96282777778,
+     -37.813338888889
+    ]
+   },
+   "captured_at": 1648397432000,
+   "camera_type": "perspective",
+   "is_pano": false,
+   "quality_score": 0.724,
+   "width": 4608,
+   "height": 3456,
+   "computed_compass_angle": 235.75898108927,
+   "sequence": "IPZOUkg6evRHs2oXz5nTi1",
+   "creator": {
+    "username": "alice",
+    "id": "1001"
+   },
+   "thumb_2048_url": "{{cdn}}/1706189916395244.jpg"
+  },
+  {
+   "id": "450966633448484",
+   "computed_geometry": {
+    "type": "Point",
+    "coordinates": [
+     144.96304115907,
+     -37.813265095945
+    ]
+   },
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     144.96293611111,
+     -37.813344444444
+    ]
+   },
+   "captured_at": 1648397430000,
+   "camera_type": "perspective",
+   "is_pano": false,
+   "quality_score": 0.701,
+   "width": 4608,
+   "height": 3456,
+   "computed_compass_angle": 236.50575771839,
+   "sequence": "IPZOUkg6evRHs2oXz5nTi1",
+   "creator": {
+    "username": "alice",
+    "id": "1001"
+   },
+   "thumb_2048_url": "{{cdn}}/450966633448484.jpg"
+  },
+  {
+   "id": "649893549426488",
+   "computed_geometry": {
+    "type": "Point",
+    "coordinates": [
+     144.96308336398,
+     -37.813246905267
+    ]
+   },
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     144.96304166667,
+     -37.813333333333
+    ]
+   },
+   "captured_at": 1648397428000,
+   "camera_type": "perspective",
+   "is_pano": false,
+   "quality_score": 0.738,
+   "width": 4608,
+   "height": 3456,
+   "computed_compass_angle": 243.79938219267,
+   "sequence": "IPZOUkg6evRHs2oXz5nTi1",
+   "creator": {
+    "username": "alice",
+    "id": "1001"
+   },
+   "thumb_2048_url": "{{cdn}}/649893549426488.jpg"
+  },
+  {
+   "id": "518951069663464",
+   "computed_geometry": {
+    "type": "Point",
+    "coordinates": [
+     144.9631266858,
+     -37.813233251456
+    ]
+   },
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     144.96310277778,
+     -37.813330555556
+    ]
+   },
+   "captured_at": 1648397426000,
+   "camera_type": "perspective",
+   "is_pano": false,
+   "quality_score": 0.633,
+   "width": 4608,
+   "height": 3456,
+   "computed_compass_angle": 250.66612660699,
+   "sequence": "IPZOUkg6evRHs2oXz5nTi1",
+   "creator": {
+    "username": "alice",
+    "id": "1001"
+   },
+   "thumb_2048_url": "{{cdn}}/518951069663464.jpg"
+  },
+  {
+   "id": "965287747688046",
+   "computed_geometry": {
+    "type": "Point",
+    "coordinates": [
+     144.96317140375,
+     -37.813215415651
+    ]
+   },
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     144.96317777778,
+     -37.813311111111
+    ]
+   },
+   "captured_at": 1648397424000,
+   "camera_type": "perspective",
+   "is_pano": false,
+   "quality_score": 0.603,
+   "width": 4608,
+   "height": 3456,
+   "computed_compass_angle": 242.16944133453,
+   "sequence": "IPZOUkg6evRHs2oXz5nTi1",
+   "creator": {
+    "username": "alice",
+    "id": "1001"
+   },
+   "thumb_2048_url": "{{cdn}}/965287747688046.jpg"
+  }
+ ]
+}

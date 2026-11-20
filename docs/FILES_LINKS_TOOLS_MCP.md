@@ -5,6 +5,7 @@
 - [Images](#images)
 - [How tools are offered](#how-tools-are-offered)
 - [MCP connectors](#mcp-connectors)
+- [Addons](#addons)
 
 ## Files
 
@@ -38,7 +39,7 @@ The default of 2 is meant to cover a short aside ("thanks!", "what's AMD's ticke
 
 ## MCP connectors
 
-The model can call tools from [MCP](https://modelcontextprotocol.io) servers, remote (`url`) or local (`command`). Anyone who can address the bot can make it call them, so choose what each server offers: `allowed_tools` offers only the tools listed, `blocked_tools` offers all but those, and without either every tool the server has is offered. Put the servers in a file, for example `/etc/signalbot-mcp.json`. [`examples/signalbot-mcp.json`](../examples/signalbot-mcp.json) is this one, to start from: `sudo install -m 600 examples/signalbot-mcp.json /etc/signalbot-mcp.json`, then `sudoedit /etc/signalbot-mcp.json`.
+The model can call tools from [MCP](https://modelcontextprotocol.io) servers, remote (`url`) or local (`command`). Anyone who can address the bot can make it call them (for [addons](#addons), their `chats` and permissions are the gate), so choose what each server offers: `allowed_tools` offers only the tools listed, `blocked_tools` offers all but those, and without either every tool the server has is offered. Put the servers in a file, for example `/etc/signalbot-mcp.json`. [`examples/signalbot-mcp.json`](../examples/signalbot-mcp.json) is this one, to start from: `sudo install -m 600 examples/signalbot-mcp.json /etc/signalbot-mcp.json`, then `sudoedit /etc/signalbot-mcp.json`.
 
 ```json
 {"mcpServers": {
@@ -52,6 +53,11 @@ The model can call tools from [MCP](https://modelcontextprotocol.io) servers, re
       "forecast": {"tool": "get_forecast", "require_arg": true, "example": "/forecast Sydney this weekend"},
       "alerts": {"tool": "get_alerts"}
     }
+  },
+  "geo": {
+    "command": "/addons/geoguess",
+    "chat_commands": {"geo": {"tool": "geo", "direct": true, "example": "/geo 3m"}},
+    "addon": {"chats": ["all"], "dms": false, "post": true, "react": true, "watch": true, "watch_max": "1h"}
   },
   "files": {
     "command": "uvx",
@@ -71,7 +77,8 @@ The model can call tools from [MCP](https://modelcontextprotocol.io) servers, re
 | `allowed_tools` / `blocked_tools` | offer only these tools, or every tool but these (one or the other, not both) |
 | `instructions` | a line added to the system prompt while the server's tools are offered (see below) |
 | `keywords` | offer the server's tools only when a message has one of these words (see below). A server without them is offered with every message, except one whose page or file the model is shown, so what a document says can't call its tools |
-| `chat_commands` | optional slash-command shortcuts to a tool (you can always just ask): `tool` names it, `require_arg` makes a bare command get a usage reply, and `example` adds one to it |
+| `chat_commands` | optional slash-command shortcuts to a tool (you can always just ask): `tool` names it, `require_arg` makes a bare command get a usage reply, and `example` adds one to it; for an addon, `direct` has the bot call the tool itself, without the model (see [Addons](#addons)) |
+| `addon` | makes a local server an addon, and says where it may act and what it may do (see [Addons](#addons)) |
 | `disabled` | leave the server out without deleting it |
 
 **You don't need a command to use the tools: just ask.** For example, `@signalbot what's the weather in Sydney this weekend?` The model sees every tool that's offered and decides when to call one. Without `keywords` a server's tools are always offered; with them, the message needs one of its words, such as `weather` or `forecast` above. Gating tools this way saves tokens.
@@ -86,8 +93,54 @@ Two optional fields shape how a server's tools are offered:
 A server that can't be reached at startup is logged and left out. A config error stops the bot with the file's path and the server's name: a setting it doesn't know (such as `allowedTools` for `allowed_tools`), with the settings it could be; both `allowed_tools` and `blocked_tools`; or a tool named in either list that the server doesn't have, with the list it was in and the server's tools, so a typo can't leave a blocked tool offered. Keys other MCP clients write and the bot has no use for (`type`, `transport`, `timeout`, `alwaysAllow`, `autoApprove`, `description`) are ignored, so an entry pasted from another client starts. A tool call that takes over 30 seconds tells the model it didn't answer in time, so it can try a narrower request. Local servers get only `PATH`, `HOME` and their `env`, never the bot's own environment.
 
 - **systemd:** keep the file root-only, uncomment the `LoadCredential=` and `Environment=MCP_CONFIG=` lines in `signalbot.service`, and restart. systemd hands the file to the service alone.
-- **Docker:** uncomment the MCP volume and the `environment:` lines in `compose.yaml`, then `sudo docker compose up -d`. The image has no shell or runtimes, so only remote servers (`url`) work.
+- **Docker:** uncomment the MCP volume and the `environment:` lines in `compose.yaml`, then `sudo docker compose up -d`. The image has no shell or runtimes, so only remote servers (`url`) and static binaries, such as an addon (below), work.
 - **Local servers under systemd** usually need the hardening loosened with a drop-in (`sudo systemctl edit signalbot`), for example `MemoryDenyWriteExecute=no` for Node, and `CacheDirectory=signalbot` with `Environment=HOME=/var/cache/signalbot` for npx or uvx caches.
+
+## Addons
+
+An addon is a local MCP server that does more than offer tools: it answers its own commands without the model, reads the messages it asks for, and posts and reacts when it likes. [GeoGuess](../cmd/geoguess/README.md), a photo-guessing game, is one. It is still an ordinary MCP server (protocol 2025-06-18 over stdio), which also speaks signalbot's small extension, under keys starting `io.github.robdevops.signalbot/`. A server is an addon when it has an `addon` block in the MCP file and says it speaks the extension when the bot connects; one with the block that doesn't runs as a plain server, with a warning. Addons run even with [no model](MODELS.md#no-model).
+
+**An addon is trusted code.** It runs as the bot's user, inside the same systemd or Docker sandbox, and could read what that user can. The bot gives it as little as it can (below), but that guards against bugs and leaks, not a hostile program: install only addons you would let run as the bot.
+
+```jsonc
+"geo": {
+  "command": "/addons/geoguess",
+  "chat_commands": {"geo": {"tool": "geo", "direct": true, "example": "/geo 3m"}},
+  "addon": {
+    "chats": ["<group ID>"],
+    "dms": false,
+    "post": true, "react": true, "watch": true,
+    "watch_max": "1h",
+    "names": false, "global_ids": false,
+    "rate": {"per_minute": 20, "burst": 5}
+  }
+}
+```
+
+| Key in `addon` | What it does |
+|---|---|
+| `chats` | the groups it works in, by ID exactly as Signal or Telegram shows it (a Telegram topic counts as its group), or `["all"]`. A name is an error: names can be changed, IDs can't |
+| `dms` | it also works in DMs with people allowed to DM the bot |
+| `post` | it may post on its own |
+| `react` | it may react to messages |
+| `watch` | it may ask to read chosen messages, for a while (below) |
+| `watch_max` | the longest a watch may last: 1s to 24h, default 1h |
+| `names` | each call it gets carries the sender's display name. Off, it gets none |
+| `global_ids` | a person has the same ID in every chat. Off, each chat gives them a different one, so the addon can't follow someone between groups |
+| `rate` | its posts and reactions a minute in each chat (`per_minute`, default 20), with bursts of `burst` (default 5) |
+
+Each permission is off unless set. For an addon, `chats`, `dms` and these permissions are the gate: anyone in an allowed chat can use its commands, and nothing it does reaches another chat.
+
+**What an addon sees.** Never a phone number, account ID or group ID: chats and people are pseudonyms the bot makes with a secret kept in `mcp.json` in the state directory, different for each addon. It sees a command's text after the command, the messages its watches match, and, with `names`, display names. To name someone in what it says, it writes their pseudonym as `{u_…}`, and the bot puts in the name it last saw them use there, as an @mention, or "someone".
+
+- **Direct commands.** `"direct": true` on a chat command has the bot call the addon's tool itself, with the text after the command, and send what it answers (text, and up to 2 pictures) without the model. The tool must be marked for the bot, and is then never offered to the model. A call has 15 seconds, and at most 2 run at once per addon; a third is told the addon is busy. When it fails, the chat gets a short line ("GeoGuess couldn't do that just now."), never the addon's own error text. An addon with no tool for the model has its commands named in the prompt's list of what the bot has, so the model can point people to them.
+- **Hidden tools.** A tool whose `_meta` says it is for the bot alone (`io.github.robdevops.signalbot/visibility` without `"model"`, or MCP Apps' `ui.visibility` without `"model"`) is never offered to the model or listed as one of its tools, so tools that read chat text stay out of its hands.
+- **Watches.** A direct command's answer can ask for a watch on its chat: a pattern, such as map links, until a time at most `watch_max` away. While it lasts, a message there that matches goes to the addon instead: it isn't answered, isn't sent to the model, and isn't kept in history, even as group context; so does an edit of it later. The addon may react to it, so people see it was counted. A pattern that would match ordinary chat ("lol", "see you at 5", a news link, …) is refused, so a watch can't become a feed of everything said; at most 8 run in a chat at once. While a watch lasts, a reply to the command's pictures that asks the bot gets the addon's set answer (GeoGuess's "No hints during a round 😉"), not the model's.
+- **Outbox.** An addon posts when it likes by queueing posts, reactions and the end of a watch in its outbox, an MCP resource the bot subscribes to (`signalbot://outbox`), and saying it changed; the bot reads it at once. It may post or react only in a chat where it was used, by a command or a watch, in the last 24 hours, and only within `rate`. Its posts go through the chat's queue like any message, never more than one at a time, and history keeps them as the bot's, labelled with the addon's name (`[GeoGuess] …`), so what an addon writes never poses as a person.
+- **Settings.** An addon has no `env` block. It gets `PATH`, `HOME`, the bot's time zone (`TZ`) and proxy settings (`HTTPS_PROXY`, `HTTP_PROXY`, `NO_PROXY`, and `SSL_CERT_FILE` or `SSL_CERT_DIR` for a custom CA) if set, and every variable in the bot's environment (`/etc/signalbot.env`) that starts with its server's name in capitals, anything but letters and digits as `_`, then `_`: the server `geo` gets `GEO_STATE_DIR`, `GEO_MAPILLARY_TOKEN` and so on, and never the bot's own keys. A name whose prefix starts one of the bot's settings (such as `model`, `signal` or `mcp`) is a config error. If an addon keeps files, give it a directory under its prefix and create it, writable by the bot's user.
+- **Logs.** The bot logs an addon's commands, calls and drops by name, outcome, time and size, never what was said. An addon's stderr is counted ("addon geo wrote 3 lines (210 bytes) to stderr", at most once a minute and once more when it exits), never logged, since it may echo a message. To debug an addon, run it on its own with stderr going to your own file.
+- **State.** The bot keeps an addon's watches, the messages they took, the chats it may post in and how far it has read its outbox in `mcp.json`, so a restart of either doesn't lose a round. See [PRIVACY.md](../PRIVACY.md#addons).
+- **Docker.** The image has no shell or runtimes, so an addon must be a static binary (`CGO_ENABLED=0 go build`), mounted read-only, such as `- /opt/signalbot-addons:/addons:ro` in `compose.yaml`. The state directory must be writable by user 65532 for `mcp.json`, and so must any directory the addon keeps files in. Addons share the container's or unit's memory and process limits, so raise `mem_limit` or `MemoryMax` to suit; `GOMEMLIMIT` isn't passed on, so a Go addon takes its limit from its own setting (GeoGuess: `GEO_MEMLIMIT`).
 
 ---
 

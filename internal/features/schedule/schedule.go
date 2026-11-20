@@ -229,8 +229,8 @@ func (s *scheduler) settle(e *entry, dueAt time.Time) (deliver bool) {
 	}
 	if late >= grace {
 		logx.Warnf("a one-off schedule was dropped: it was due %s ago", late.Round(time.Minute))
-		s.h.Tell(e.User, "I was offline at "+dueAt.In(s.loc).Format(whenLayout)+", so your reminder \""+
-			txt.Clamp(strings.Join(strings.Fields(e.Text), " "), 80)+"\" didn't post.")
+		s.h.Post(feature.Post{Chat: feature.Chat{User: e.User}, Text: "I was offline at " + dueAt.In(s.loc).Format(whenLayout) + ", so your reminder \"" +
+			txt.Clamp(strings.Join(strings.Fields(e.Text), " "), 80) + "\" didn't post."})
 		return false
 	}
 	return true

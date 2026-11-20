@@ -56,18 +56,25 @@ const (
 	waiting = "⏳"
 )
 
-// respond acts on an addressed message: as act says, else by asking the
-// model and sending its reply (asking again if the API rejects its images
-// or tools; see fallBack); with no model, only an Answer is sent, and with
-// tools off a chat command gets noTools rather than an answer made up
-// without its tool's data. text
+// respond acts on an addressed message: as act says (nothing if Done; its
+// Answer and Pictures sent, with OnSent told of what went out), else by
+// asking the model and sending its reply (asking again if the API rejects
+// its images or tools; see fallBack); with no model, only an Answer and
+// Pictures are sent, and with tools off a chat command gets noTools rather
+// than an answer made up without its tool's data. text
 // is the message as the model sees it, prompt(msg) for one message; tools
 // are offered by msg.Text alone, what was typed, never a sender's name or a
 // quote. refs names the messages answered, for history (see Forget).
 func (b *Bot) respond(msg feature.Message, act feature.Action, text string, refs []chats.Ref) {
 	switch {
-	case act.Answer != "":
-		b.net.Send(msg.Chat, act.Answer, nil, b.chats.Names(msg.Chat.Key()))
+	case act.Done:
+		return
+	case act.Answer != "" || len(act.Pictures) > 0:
+		text, _ := captioned(act.Answer, act.Pictures)
+		sent := b.net.Send(msg.Chat, text, act.Pictures, b.chats.Names(msg.Chat.Key()))
+		if act.OnSent != nil {
+			act.OnSent(sent)
+		}
 		return
 	case b.ai == nil:
 		return // no model: no typing, no reply
@@ -142,17 +149,6 @@ func (b *Bot) respond(msg feature.Message, act feature.Action, text string, refs
 		return
 	}
 	b.followUp(key, offered, msg.Text, reply.ToolsUsed)
-	// History notes the pictures sent, which the model would otherwise not
-	// know it did. Pictures with captions are sent with those in place of
-	// the text, which neither goes out nor is kept.
-	var notes string
-	var captions []string
-	for _, p := range reply.Pictures {
-		notes += cmp.Or(p.HistoryNote, "[sent an image]") + "\n"
-		if p.Caption != "" {
-			captions = append(captions, p.Caption)
-		}
-	}
 	// A reply that is one emoji, and nothing else, is a reaction to the
 	// message, unless the bot made the message (a scheduled post), which
 	// can't be reacted to.
@@ -164,14 +160,29 @@ func (b *Bot) respond(msg feature.Message, act feature.Action, text string, refs
 		b.net.React(msg.Chat, msg, emoji)
 		return
 	}
-	sent := reply.Text
-	if len(captions) > 0 {
-		reply.Text, sent = "", strings.Join(captions, "\n")
-	}
+	sent, kept := captioned(reply.Text, reply.Pictures)
 	p := b.pending()
 	b.chats.Add(key, start, msg.Expires, chats.Entry{Role: "user", Content: strings.TrimSpace(t.kept), Refs: refs},
-		chats.Entry{Role: "assistant", Content: notes + reply.Text, Refs: []chats.Ref{p}})
+		chats.Entry{Role: "assistant", Content: kept, Refs: []chats.Ref{p}})
 	b.sendKept(key, p, msg.Chat, sent, reply.Pictures, b.chats.Names(key))
+}
+
+// captioned is the caption rule, for text sent with pics: what is sent, and
+// what history keeps of it. History notes each picture, which the model
+// would otherwise not know the bot sent. Pictures with captions are sent
+// with those in place of the text, which then neither goes out nor is kept.
+func captioned(text string, pics []feature.Picture) (sent, kept string) {
+	var captions []string
+	for _, p := range pics {
+		kept += cmp.Or(p.HistoryNote, "[sent an image]") + "\n"
+		if p.Caption != "" {
+			captions = append(captions, p.Caption)
+		}
+	}
+	if len(captions) > 0 {
+		return strings.Join(captions, "\n"), kept
+	}
+	return text, kept + text
 }
 
 // askedForMore is added to a message asked again after the model answered

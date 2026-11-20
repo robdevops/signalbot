@@ -65,6 +65,58 @@ func TestMailboxInOrder(t *testing.T) {
 	}
 }
 
+// Low-priority items merge into one, wait after everything else, take no
+// message's place, and are dropped first to make room.
+func TestLowPriority(t *testing.T) {
+	release := make(chan struct{})
+	var got []string
+	pool := newSlots(8)
+	s := New(10, func(rs []string) {
+		if rs[0] == "0" {
+			<-release
+		}
+		got = append(got, fmt.Sprint(rs))
+	}, pool.spawn)
+	var evicted []string
+	s.SetEvicted(func(m string) { evicted = append(evicted, m) })
+	merge := func(m string) func(string) string { return func(w string) string { return w + "+" + m } }
+	s.Post("g:1", "0")
+	for _, m := range []string{"a", "b", "c"} {
+		if err := s.PostLow("g:1", m, merge(m)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for i := 1; i <= 3; i++ {
+		s.Post("g:1", fmt.Sprint(i))
+	}
+	if len(evicted) != 0 {
+		t.Fatalf("evicted %v with room left", evicted)
+	}
+	s.Post("g:1", "4") // a full mailbox: the merged item goes
+	if fmt.Sprint(evicted) != "[a+b+c]" {
+		t.Fatalf("evicted %v", evicted)
+	}
+	if err := s.PostLow("g:1", "d", merge("d")); err != errQueueFull {
+		t.Errorf("a low-priority item took a message's place: err %v", err)
+	}
+	close(release)
+	pool.wg.Wait()
+	if fmt.Sprint(got) != "[[0] [1 2 3 4]]" {
+		t.Errorf("handled %v", got)
+	}
+
+	release = make(chan struct{})
+	got = nil
+	s.Post("g:1", "0")
+	s.PostLow("g:1", "a", merge("a"))
+	s.Post("g:1", "1")
+	close(release)
+	pool.wg.Wait()
+	if fmt.Sprint(got) != "[[0] [1 a]]" {
+		t.Errorf("handled %v", got)
+	}
+}
+
 // Different chats run in parallel, each on its own slot, and a full pool
 // drops new work.
 func TestChatsInParallel(t *testing.T) {

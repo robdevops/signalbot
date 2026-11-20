@@ -614,3 +614,254 @@ func TestReceivedKinds(t *testing.T) {
 	h.settle()
 	h.noSend()
 }
+
+// A Done Action handles the message: an addressed one gets no answer and
+// no model; an unaddressed one is kept nowhere, even with a Context, and
+// later hooks never see it.
+func TestDone(t *testing.T) {
+	var later []string
+	h := start(t, options{features: func(b *Bot) {
+		b.OnMessage(func(_ context.Context, m feature.Message) feature.Action {
+			if strings.HasPrefix(m.Text, "claimed") {
+				return feature.Action{Done: true, Context: "never kept", Answer: "never sent"}
+			}
+			return feature.Action{}
+		})
+		b.OnMessage(func(_ context.Context, m feature.Message) feature.Action {
+			later = append(later, m.Text)
+			if !m.Addressed {
+				return feature.Action{Context: m.Name + ": " + m.Text}
+			}
+			return feature.Action{}
+		})
+	}})
+	h.receive(dm("claimed in a DM"))
+	h.receive(atBot("claimed in the group"))
+	h.receive(chatter("claimed chatter"))
+	h.receive(chatter("kept chatter"))
+	h.settle()
+	h.noSend()
+	if len(h.requests()) != 0 || h.typing() != 0 {
+		t.Fatalf("the model was asked, or typing shown")
+	}
+	h.eventually("the chatter", func() bool { return len(later) == 1 })
+	r, _ := h.ask(atBot("what's new?"))
+	equal(t, "model got", contents(r), []string{"user: [Messages not addressed to you, for context only:]\nBob: kept chatter", "user: Alice: what's new?"})
+	equal(t, "later hooks saw", later, []string{"kept chatter", "what's new?"})
+}
+
+// A command's pictures are sent with its Answer, without the model, by the
+// caption rule; OnSent gets the timestamps Send returned.
+func TestActionPictures(t *testing.T) {
+	var sentAt [][]int64
+	onSent := func(ts []int64) { sentAt = append(sentAt, ts) }
+	h := start(t, options{features: func(b *Bot) {
+		b.Command("plain", func(context.Context, feature.Message, string) feature.Action {
+			return feature.Action{Answer: "here", Pictures: []feature.Picture{{Data: png}}, OnSent: onSent}
+		})
+		b.Command("captioned", func(context.Context, feature.Message, string) feature.Action {
+			return feature.Action{Answer: "never sent", Pictures: []feature.Picture{{Data: png, Caption: "a caption"}, {Data: png}}, OnSent: onSent}
+		})
+		b.Command("alone", func(context.Context, feature.Message, string) feature.Action {
+			return feature.Action{Pictures: []feature.Picture{{Data: png}}}
+		})
+	}})
+	h.receive(dm("/plain"))
+	if s := h.nextSend(); s.text != "here" || len(s.images) != 1 || string(s.images[0].Data) != string(png) {
+		t.Fatalf("sent %+v", s)
+	}
+	h.receive(atBot("/captioned"))
+	if s := h.nextSend(); s.text != "a caption" || len(s.images) != 2 || s.chat.GroupID != groupID {
+		t.Fatalf("sent %+v", s)
+	}
+	h.receive(dm("/alone"))
+	if s := h.nextSend(); s.text != "" || len(s.images) != 1 {
+		t.Fatalf("sent %+v", s)
+	}
+	h.settle()
+	if len(h.requests()) != 0 {
+		t.Fatal("the model was asked")
+	}
+	if fmt.Sprint(sentAt) != "[[5001] [5002]]" {
+		t.Fatalf("OnSent got %v", sentAt)
+	}
+}
+
+// strangerID can't be reached: the fake network allows only Alice's and
+// Bob's DMs.
+const strangerID = "33333333-3333-4333-8333-333333333333"
+
+// A post goes to a group or a DM, with @Name linked to the chat's known
+// names, unless the network says the bot can no longer post there. History
+// keeps a labelled one as the bot's own, clamped, and nothing of one with
+// no label. Done is called once: when it is sent, or dropped.
+func TestPost(t *testing.T) {
+	h := start(t, options{})
+	type done struct {
+		sent    []int64
+		dropped bool
+	}
+	dones := make(chan done, 16)
+	post := func(p feature.Post) {
+		p.Done = func(sent []int64, dropped bool) { dones <- done{sent, dropped} }
+		h.b.Post(p)
+	}
+	next := func() done {
+		t.Helper()
+		select {
+		case d := <-dones:
+			return d
+		case <-time.After(5 * time.Second):
+			t.Fatal("Done never called")
+			return done{}
+		}
+	}
+	group := feature.Chat{GroupID: groupID}
+	h.ask(atBot("hello")) // learns Alice's name
+
+	post(feature.Post{Chat: group, Label: "Label", Text: "well done @Alice"})
+	if s := h.nextSend(); s.text != "well done @Alice" || s.chat != group || s.known["alice"] != aliceID {
+		t.Fatalf("sent %+v", s)
+	}
+	if d := next(); d.dropped || fmt.Sprint(d.sent) != "[5002]" {
+		t.Fatalf("done %+v", d)
+	}
+	post(feature.Post{Chat: group, Label: "Label", Text: "never sent", Pictures: []feature.Picture{{Data: png, Caption: "a caption", HistoryNote: "[a picture]"}}})
+	if s := h.nextSend(); s.text != "a caption" || len(s.images) != 1 {
+		t.Fatalf("sent %+v", s)
+	}
+	next()
+	post(feature.Post{Chat: group, Label: "Label", Text: strings.Repeat("x", 600)})
+	h.nextSend()
+	next()
+	r, _ := h.ask(atBot("and?"))
+	equal(t, "history", contents(r)[2:5], []string{"assistant: [Label] well done @Alice", "assistant: [Label] [a picture]\n", "assistant: [Label] " + strings.Repeat("x", 500-len("[Label] ")) + "…"})
+
+	// In a DM, with no label, as a timer tells a user something: nothing
+	// is kept.
+	post(feature.Post{Chat: feature.Chat{User: aliceID}, Text: "your reminder didn't post"})
+	if s := h.nextSend(); s.text != "your reminder didn't post" || s.chat.User != aliceID {
+		t.Fatalf("sent %+v", s)
+	}
+	next()
+	r, _ = h.ask(dm("anything else?"))
+	equal(t, "DM history", contents(r), []string{"user: anything else?"})
+
+	for _, chat := range []feature.Chat{{User: strangerID}, {GroupID: "other"}} {
+		post(feature.Post{Chat: chat, Label: "Label", Text: "never sent"})
+		if d := next(); !d.dropped || d.sent != nil {
+			t.Fatalf("done %+v", d)
+		}
+	}
+	post(feature.Post{Chat: group}) // nothing to send
+	if d := next(); !d.dropped {
+		t.Fatalf("done %+v", d)
+	}
+	h.settle()
+	h.noSend()
+	if len(dones) != 0 {
+		t.Fatalf("Done called again: %+v", <-dones)
+	}
+	if n := strings.Count(h.logs.String(), "<6>dropped a post: the bot can no longer post in its chat\n"); n != 2 {
+		t.Fatalf("%d drops logged:\n%s", n, h.logs)
+	}
+	if strings.Contains(h.logs.String(), "never sent") {
+		t.Fatalf("text logged:\n%s", h.logs)
+	}
+}
+
+// A post that doesn't fit in its chat's mailbox is dropped, with a warning
+// of its own, and Done says so.
+func TestPostDropped(t *testing.T) {
+	h := start(t, options{})
+	h.holdModel()
+	h.receive(dm("first"))
+	h.eventually("the first request", func() bool { return len(h.requests()) == 1 })
+	for _, s := range []string{"b", "c", "d", "e"} {
+		h.receive(dm(s))
+	}
+	dropped := make(chan bool, 1)
+	h.b.Post(feature.Post{Chat: feature.Chat{User: aliceID}, Text: "never sent", Done: func(_ []int64, d bool) { dropped <- d }})
+	if !<-dropped {
+		t.Fatal("Done said it was sent")
+	}
+	if !strings.Contains(h.logs.String(), "<4>dropped a post: 4 messages are already waiting in this chat\n") {
+		t.Fatalf("logs:\n%s", h.logs)
+	}
+	h.release()
+	for range 2 {
+		if s := h.nextSend(); s.text != "ok" {
+			t.Fatalf("sent %+v", s)
+		}
+	}
+	h.settle()
+	h.noSend()
+}
+
+// The bot's reactions wait at low priority: merged into one item, a later
+// one on the same message replacing the earlier, sent after what waited
+// with them, dropped first to make room, and skipped for a message deleted
+// since.
+func TestReact(t *testing.T) {
+	h := start(t, options{})
+	group := feature.Chat{GroupID: groupID}
+	msg := func(ts int64) feature.Message {
+		return feature.Message{Chat: group, Sender: aliceID, Timestamp: ts}
+	}
+	h.b.React(group, msg(1), "👍")
+	if s := h.nextSend(); s.text != "react 👍 to "+aliceID+"@1" {
+		t.Fatalf("sent %+v", s)
+	}
+
+	h.holdModel()
+	h.receive(atBot("zero")) // holds the chat's worker, so the rest wait
+	h.eventually("the first request", func() bool { return len(h.requests()) == 1 })
+	h.b.React(group, msg(2), "👍")
+	h.b.React(group, msg(3), "📍")
+	h.b.React(group, msg(2), "🎉")
+	h.receive(atBot("one"))
+	h.release()
+	for _, want := range []string{"ok", "ok", "react 📍 to " + aliceID + "@3", "react 🎉 to " + aliceID + "@2"} {
+		if s := h.nextSend(); s.text != want {
+			t.Fatalf("sent %q, want %q", s.text, want)
+		}
+	}
+	h.settle()
+
+	// Four messages fill the mailbox, so the reactions waiting there go.
+	h.holdModel()
+	h.receive(atBot("zero again"))
+	h.eventually("the request", func() bool { return len(h.requests()) == 3 })
+	h.b.React(group, msg(4), "👍")
+	h.b.React(group, msg(5), "👍")
+	for _, s := range []string{"a", "b", "c", "d"} {
+		h.receive(atBot(s))
+	}
+	if !strings.Contains(h.logs.String(), "<4>dropped 2 reactions: made room in its chat for a message\n") {
+		t.Fatalf("logs:\n%s", h.logs)
+	}
+	h.release()
+	for range 2 {
+		if s := h.nextSend(); s.text != "ok" {
+			t.Fatalf("sent %+v", s)
+		}
+	}
+	h.settle()
+	h.noSend()
+
+	// A reaction to a message deleted while it waited is skipped.
+	h.holdModel()
+	h.receive(atBot("zero once more"))
+	h.eventually("the request", func() bool { return len(h.requests()) == 5 })
+	h.b.React(group, msg(6), "👍")
+	h.net.handle(Deleted{Chat: group, Sender: aliceID, Sent: 6, At: 7})
+	h.release()
+	if s := h.nextSend(); s.text != "ok" {
+		t.Fatalf("sent %+v", s)
+	}
+	h.settle()
+	h.noSend()
+	if strings.Contains(h.logs.String(), "dropped a message") {
+		t.Fatalf("logs:\n%s", h.logs)
+	}
+}

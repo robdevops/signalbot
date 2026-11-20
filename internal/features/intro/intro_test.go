@@ -21,7 +21,7 @@ func TestIntro(t *testing.T) {
 	for _, text := range []string{"/intro", "/INTRO", "/help", "/Help"} {
 		for chat, want := range map[feature.Chat]string{dm: "hi, I'm Botty. DM me.", group: "hi, I'm Botty (tools: **charts**)."} {
 			m := feature.Message{Chat: chat, Sender: "u-alice", Name: "Alice", Text: text, Addressed: true}
-			if a := h.Message(context.Background(), m); a != (feature.Action{Answer: want + "\n\nThis message did not use the model."}) {
+			if a := h.Message(context.Background(), m); a.Answer != want+"\n\nThis message did not use the model." || a.ToolChoice != "" || len(a.Pictures) != 0 || a.Done {
 				t.Fatalf("%s in %+v: got %+v", text, chat, a)
 			}
 		}
@@ -33,7 +33,7 @@ func TestIntro(t *testing.T) {
 	}
 	for _, text := range []string{"/intro yourself", "/help me"} {
 		m := feature.Message{Chat: dm, Sender: "u-alice", Text: text, Addressed: true}
-		if a := h.Message(context.Background(), m); a != (feature.Action{}) {
+		if a := h.Message(context.Background(), m); !a.IsZero() {
 			t.Fatalf("%s got %+v", text, a)
 		}
 	}

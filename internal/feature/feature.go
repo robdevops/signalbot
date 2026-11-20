@@ -104,18 +104,27 @@ type File struct {
 
 // Action is what an OnMessage hook decides. The zero value carries on.
 type Action struct {
-	Answer     string // reply with this text, without the model (addressed messages only)
-	ToolChoice string // make the model call this tool before answering (addressed messages only)
-	Context    string // keep this text in the chat's history (unaddressed messages only)
+	Answer     string             // reply with this text, without the model (addressed messages only)
+	Pictures   []Picture          // send these with Answer, or alone, without the model; captions as for a tool's pictures (addressed messages only)
+	OnSent     func(sent []int64) // called with the timestamps of the messages Answer and Pictures went out in (addressed messages only)
+	ToolChoice string             // make the model call this tool before answering (addressed messages only)
+	Context    string             // keep this text in the chat's history (unaddressed messages only)
+	Done       bool               // the hook handled the message: no answer, no model, and for an unaddressed one nothing kept and no later hook
+}
+
+// IsZero reports whether a carries on: no field is set.
+func (a Action) IsZero() bool {
+	return a.Answer == "" && len(a.Pictures) == 0 && a.OnSent == nil && a.ToolChoice == "" && a.Context == "" && !a.Done
 }
 
 // For returns a copy of the action keeping only the fields that apply to
-// m: Answer and ToolChoice if m is addressed, Context if not.
+// m: Answer, Pictures, OnSent and ToolChoice if m is addressed, Context if
+// not, and Done either way.
 func (a Action) For(m Message) Action {
 	if m.Addressed {
 		a.Context = ""
 	} else {
-		a.Answer, a.ToolChoice = "", ""
+		a.Answer, a.Pictures, a.OnSent, a.ToolChoice = "", nil, nil, ""
 	}
 	return a
 }
@@ -188,6 +197,15 @@ type Store interface {
 	Save(v any) error
 }
 
+// Post is what the bot posts on its own, from a timer or a worker.
+type Post struct {
+	Chat     Chat
+	Label    string                           // history keeps the post as the bot's, as "[Label] text"; "" keeps nothing
+	Text     string                           // Markdown, as written; @Name is linked to the chat's known names
+	Pictures []Picture                        // sent with Text; captions as for a tool's pictures
+	Done     func(sent []int64, dropped bool) // if set, called once: with the timestamps sent, or dropped
+}
+
 // Group is a group chat.
 type Group struct {
 	ID, Name string
@@ -197,7 +215,8 @@ type Group struct {
 type Host interface {
 	// OnMessage sees every message. For an unaddressed one it runs on the
 	// reader goroutine, so it must not block or call the network. The first
-	// non-zero Action wins.
+	// Action that isn't zero, counting only what applies to the message,
+	// wins.
 	OnMessage(func(context.Context, Message) Action)
 	// OnTurn adds to the model's request for the addressed message being
 	// answered.
@@ -243,9 +262,14 @@ type Host interface {
 	Media(ctx context.Context, msg Message, i int) ([]byte, error)
 	// Deliver acts on msg as if its sender had just posted it in its chat.
 	Deliver(msg Message)
-	// Tell sends text from the bot to user in their DM, as written, never
-	// through the model, if they may still DM the bot.
-	Tell(user, text string)
+	// Post sends a post from the bot to its chat, as written, never through
+	// the model, through the chat's mailbox, if the bot may still post
+	// there.
+	Post(p Post)
+	// React puts emoji on msg in chat, as a reaction from the bot, through
+	// the chat's mailbox at low priority: unless msg was deleted or edited
+	// since, and unless the reaction is dropped to make room.
+	React(chat Chat, msg Message, emoji string)
 	// Groups lists the groups the bot shares with user.
 	Groups(ctx context.Context, user string) ([]Group, error)
 	// CallAPI posts body as JSON to path (such as "/images") at the model's

@@ -28,7 +28,7 @@ func chatterFrom(name, text string, media ...feature.Media) feature.Message {
 func TestGroupChatterIsContext(t *testing.T) {
 	h := host(t, "") // on by default
 	ctx := context.Background()
-	if a := h.Message(ctx, chatterFrom("Alice", "the moon is made of cheese")); a != (feature.Action{Context: "Alice: the moon is made of cheese"}) {
+	if a := h.Message(ctx, chatterFrom("Alice", "the moon is made of cheese")); a.Context != "Alice: the moon is made of cheese" || a.Answer != "" || a.Done {
 		t.Fatalf("got %+v", a)
 	}
 	if a := h.Message(ctx, chatterFrom("", "hello")); a.Context != "someone: hello" {
@@ -75,7 +75,7 @@ func TestAddressedIsNotContext(t *testing.T) {
 	h := host(t, "")
 	addressed := chatterFrom("Alice", "what do you think?")
 	addressed.Addressed = true
-	if a := h.Message(context.Background(), addressed); a != (feature.Action{}) {
+	if a := h.Message(context.Background(), addressed); !a.IsZero() {
 		t.Errorf("got %+v", a)
 	}
 }
@@ -84,7 +84,7 @@ func TestAddressedIsNotContext(t *testing.T) {
 func TestGroupContextOff(t *testing.T) {
 	for _, v := range []string{"false", "off", "0"} {
 		h := host(t, v)
-		if a := h.Message(context.Background(), chatterFrom("Alice", "hello")); a != (feature.Action{}) {
+		if a := h.Message(context.Background(), chatterFrom("Alice", "hello")); !a.IsZero() {
 			t.Errorf("GROUP_CONTEXT=%s: got %+v", v, a)
 		}
 	}

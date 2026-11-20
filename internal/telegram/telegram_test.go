@@ -247,6 +247,34 @@ func TestMessage(t *testing.T) {
 	}
 }
 
+// A location or venue is a Google Maps link, as Signal sends one, ahead of
+// any caption; a live location, where its sender is now, is dropped.
+func TestLocation(t *testing.T) {
+	c := connected(newFake(t).client("1111111"))
+	for _, tc := range []struct{ name, msg, text string }{
+		{"location", `"location":{"latitude":-37.8136,"longitude":144.9631}`, "https://maps.google.com/maps?q=-37.8136,144.9631"},
+		{"captioned", `"location":{"latitude":48.8584,"longitude":2.2945},"caption":"my guess"`, "https://maps.google.com/maps?q=48.8584,2.2945\nmy guess"},
+		{"venue", `"venue":{"location":{"latitude":51.5,"longitude":-0.1275},"title":"A place"}`, "https://maps.google.com/maps?q=51.5,-0.1275"},
+		{"live", `"location":{"latitude":-37.8136,"longitude":144.9631,"live_period":900}`, ""},
+	} {
+		r, ok := c.event(parse(t, `{"update_id":1,"message":{"message_id":10,`+fromA+`,`+inDM+`,`+tc.msg+`}}`))
+		if tc.text == "" {
+			if ok {
+				t.Errorf("%s: kept %+v", tc.name, r)
+			}
+			continue
+		}
+		in, _ := r.(bot.Incoming)
+		if !ok || in.Load == nil {
+			t.Errorf("%s: dropped", tc.name)
+			continue
+		}
+		if m, _ := in.Load(context.Background(), func(string, string) {}); m.Text != tc.text {
+			t.Errorf("%s: %q", tc.name, m.Text)
+		}
+	}
+}
+
 // An edit is the message as it now reads, named by its message ID; in the
 // DM of someone the bot doesn't answer it forgets the original.
 func TestEdits(t *testing.T) {
@@ -447,6 +475,26 @@ func TestDelivered(t *testing.T) {
 	}
 	if _, ok := c.Delivered(context.Background(), feature.Message{Chat: feature.Chat{User: "2222222"}, Sender: "2222222", Text: "x"}); ok {
 		t.Error("delivered in an unlisted DM")
+	}
+}
+
+// The bot may post on its own in a listed user's DM, and in a group while
+// someone listed is a member.
+func TestReachable(t *testing.T) {
+	captureLogs(t)
+	f := newFake(t)
+	c := connected(f.client("1111111"))
+	ctx := context.Background()
+	if !c.Reachable(ctx, feature.Chat{User: "1111111"}) || c.Reachable(ctx, feature.Chat{User: "2222222"}) {
+		t.Fatal("DMs")
+	}
+	if !c.Reachable(ctx, feature.Chat{GroupID: groupS}) {
+		t.Fatal("a group with Alice in it")
+	}
+	c.gate = map[string]gateState{}
+	f.results["getChatMember"] = `{"status":"left"}`
+	if c.Reachable(ctx, feature.Chat{GroupID: groupS}) {
+		t.Fatal("a group no one listed is in")
 	}
 }
 
