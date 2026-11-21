@@ -22,6 +22,7 @@ type Host struct {
 	Bot      feature.Info                                                                         // what Info returns
 	Fetch    func(m feature.Message, i int) ([]byte, error)                                       // what Media returns; nil fails
 	API      func(ctx context.Context, path string, body map[string]any) (json.RawMessage, error) // what CallAPI returns; nil fails
+	Use      feature.Usage                                                                        // what Usage returns
 	Shared   []feature.Group                                                                      // what Groups returns
 	TimerErr error                                                                                // if set, At fails with it, as the core does at its cap
 	Redactor func(string) string                                                                  // what Redact does; nil leaves text as it is
@@ -159,6 +160,9 @@ func (h *Host) Env(key, def string) string {
 }
 
 func (h *Host) Info() feature.Info { return h.Bot }
+
+// Usage returns Use.
+func (h *Host) Usage(context.Context, feature.Chat, bool) feature.Usage { return h.Use }
 
 // CallAPI returns what API does; nil fails.
 func (h *Host) CallAPI(ctx context.Context, path string, body map[string]any) (json.RawMessage, error) {

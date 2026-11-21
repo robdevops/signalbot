@@ -2539,3 +2539,22 @@ func TestScenarioLoneEmojiForARequestIsAskedAgain(t *testing.T) {
 		t.Fatalf("thanks was asked %d times", len(h.requests())-4)
 	}
 }
+
+// /usage answers without the model: this chat's spending and tokens today
+// against the daily budget, and in a DM the API key's totals; in a group
+// only the chat's.
+func TestScenarioUsage(t *testing.T) {
+	h := startBot(t, world{})
+	h.ask(fromAlice("hello")) // $0.002, 20 tokens in, 3 out
+	s := h.ask(fromAlice("/usage"))
+	if !strings.HasPrefix(s.Message, "This chat today: $0.002 of $1.00 (0%) · 20 tokens in, 3 out · resets in ") ||
+		!strings.Contains(s.Message, "\nAccount (API key): $3.41 today · $12.80 this week · $18.20 this month · $81.80 of $100.00 left (resets monthly)") {
+		t.Fatalf("sent %q", s.Message)
+	}
+	if n := len(h.requests()); n != 1 {
+		t.Fatalf("the model was asked %d times", n)
+	}
+	if s := h.ask(atBot("/credits")); strings.Contains(s.Message, "Account (API key)") || !strings.Contains(s.Message, "only in a DM") {
+		t.Fatalf("group sent %q", s.Message)
+	}
+}

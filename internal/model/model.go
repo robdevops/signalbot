@@ -131,6 +131,7 @@ type Reply struct {
 	ToolsUsed []string // the tools the model ran, as the tool loop reports them
 	Cost      float64  // what the API reported the reply cost, every request summed, in US dollars; set on an error too
 	Costed    bool     // the API reported a cost
+	In, Out   int      // tokens sent and received, every request summed; set on an error too
 }
 
 // ReportsCost reports whether the API says what a reply costs: only
@@ -293,6 +294,7 @@ func (c *Client) Ask(ctx context.Context, r Request) (Reply, error) {
 		total.input, total.cached, total.output, total.cost = total.input+a.input, total.cached+a.cached, total.output+a.output, total.cost+a.cost+spent
 		total.costed = total.costed || a.costed || costed
 		reply.Cost, reply.Costed = total.cost, total.costed // what was spent, even on the way to an error
+		reply.In, reply.Out = total.input, total.output
 		if err == nil {
 			logRequest(round, a, slices.ContainsFunc(msgs, func(m message) bool { return m.Annotations != nil }))
 		}
@@ -379,6 +381,47 @@ const (
 
 // apiPath is a path a Call may post to: an endpoint of the API, no query.
 var apiPath = regexp.MustCompile(`^(/[a-z0-9_-]+)+$`)
+
+// KeyUsage asks OpenRouter what the API key has spent, and its credit
+// limit; nil, with no error, on another API, which has no such endpoint.
+func (c *Client) KeyUsage(ctx context.Context) (*feature.KeyUsage, error) {
+	if !c.openRouter {
+		return nil, nil
+	}
+	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
+	defer cancel()
+	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, c.base+"/key", nil)
+	c.authorize(req)
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	data, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if resp.StatusCode != http.StatusOK {
+		return nil, &statusError{resp.StatusCode, errorText(data)}
+	}
+	var r struct {
+		Data struct {
+			Usage          float64  `json:"usage"`
+			UsageDaily     float64  `json:"usage_daily"`
+			UsageWeekly    float64  `json:"usage_weekly"`
+			UsageMonthly   float64  `json:"usage_monthly"`
+			Limit          *float64 `json:"limit"`
+			LimitRemaining *float64 `json:"limit_remaining"`
+			LimitReset     *string  `json:"limit_reset"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(data, &r); err != nil {
+		return nil, errors.New("unreadable key usage")
+	}
+	d := r.Data
+	k := &feature.KeyUsage{Today: d.UsageDaily, Week: d.UsageWeekly, Month: d.UsageMonthly, Total: d.Usage, Limit: d.Limit, Remaining: d.LimitRemaining}
+	if d.LimitReset != nil {
+		k.Reset = *d.LimitReset
+	}
+	return k, nil
+}
 
 // Provider is the API's provider as server tools name it: "openrouter",
 // or "" for another API.

@@ -602,6 +602,10 @@ func (h *harness) startModel() {
 			http.Error(w, `{"error":{"message":"no auth"}}`, http.StatusUnauthorized)
 			return
 		}
+		if r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/key") { // OpenRouter's key usage
+			io.WriteString(w, `{"data":{"usage":40,"usage_daily":3.41,"usage_weekly":12.8,"usage_monthly":18.2,"limit":100,"limit_remaining":81.8,"limit_reset":"monthly"}}`)
+			return
+		}
 		if r.Method == http.MethodGet {
 			h.mu.Lock()
 			h.lists++

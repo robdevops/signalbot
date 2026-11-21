@@ -137,6 +137,25 @@ type Picture struct {
 	HistoryNote string // what history keeps of it; "" keeps "[sent an image]"
 }
 
+// Usage is what the model has cost: in one chat today, against the daily
+// budget, and, when asked for, the API key's own totals.
+type Usage struct {
+	Tracked bool          // the core counts each chat's spending (DAILY_BUDGET is on); the chat's fields are zero otherwise
+	Spent   float64       // US dollars this chat has spent today
+	Limit   float64       // DAILY_BUDGET, in US dollars
+	In, Out int           // tokens sent and received for this chat today
+	Resets  time.Duration // until midnight, local time, when the day's count starts again
+	Key     *KeyUsage     // nil unless asked for and the API says
+}
+
+// KeyUsage is the API key's spending, as OpenRouter reports it, in US
+// dollars.
+type KeyUsage struct {
+	Today, Week, Month, Total float64
+	Limit, Remaining          *float64 // the key's credit limit and what is left of it; nil without one
+	Reset                     string   // how often the limit resets: "daily", "weekly", "monthly", or "" for never
+}
+
 // ToolGroup is a set of tools offered to the model together. One with no
 // Tools, only Names, such as a feature's chat commands, is named only in
 // the prompt's list of what the bot has, not in the intro's {tools}.
@@ -254,6 +273,9 @@ type Host interface {
 	// adds the key, and on OpenRouter asks for providers that don't collect
 	// the data; a feature never sees the key.
 	CallAPI(ctx context.Context, path string, body map[string]any) (json.RawMessage, error)
+	// Usage is what the model has cost in chat today, and with key the API
+	// key's own totals too, when the API reports them (OpenRouter's).
+	Usage(ctx context.Context, chat Chat, key bool) Usage
 	// Redact replaces every name and ID of anyone but the bot in text with
 	// "redacted", for logging text the bot doesn't control.
 	Redact(text string) string

@@ -28,7 +28,7 @@ Features reach the core only through the ports in `internal/feature`, one per st
 | The model is asked | `OnTurn` (a note on the message, images) and `Tools` (a `ToolGroup`) |
 | Time arrives | `At`: a one-shot timer |
 
-and the host's services: `Env`, `Info`, `Media`, `CallAPI`, `Deliver`, `Groups`, `Redact` and `Go`. Hooks run in `features.go` order. An `OnMessage` hook for an unaddressed message runs on the reader goroutine, so it must not block or call the network.
+and the host's services: `Env`, `Info`, `Media`, `Usage`, `CallAPI`, `Deliver`, `Groups`, `Redact` and `Go`. Hooks run in `features.go` order. An `OnMessage` hook for an unaddressed message runs on the reader goroutine, so it must not block or call the network.
 
 If a feature can't be built on these, that's a design finding. Either a port becomes more generic, and stays tied to its stage, or the feature takes on more of the work. A feature-shaped field in the core is never the answer: delete any feature and the core doesn't change.
 

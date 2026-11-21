@@ -737,3 +737,25 @@ func TestPicturesKeptOnLaterFailure(t *testing.T) {
 		t.Errorf("logged %q", logs.String())
 	}
 }
+
+// The key's usage comes from OpenRouter's /key, with the key; another API
+// has no such endpoint, so none is asked.
+func TestKeyUsage(t *testing.T) {
+	var path, auth string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		path, auth = r.URL.Path, r.Header.Get("Authorization")
+		io.WriteString(w, `{"data":{"usage":40,"usage_daily":3.41,"usage_weekly":12.8,"usage_monthly":18.2,"limit":100,"limit_remaining":81.8,"limit_reset":"monthly","label":"sk-or-v1-x"}}`)
+	}))
+	t.Cleanup(srv.Close)
+	k, err := client(t, srv.URL, true).KeyUsage(context.Background())
+	if err != nil || path != "/key" || auth != "Bearer or-key" {
+		t.Fatalf("%v, %s, %s", err, path, auth)
+	}
+	if k.Today != 3.41 || k.Week != 12.8 || k.Month != 18.2 || k.Total != 40 || *k.Limit != 100 || *k.Remaining != 81.8 || k.Reset != "monthly" {
+		t.Fatalf("got %+v", k)
+	}
+	path = ""
+	if k, err := client(t, srv.URL, false).KeyUsage(context.Background()); k != nil || err != nil || path != "" {
+		t.Fatalf("another API: %v %v %q", k, err, path)
+	}
+}

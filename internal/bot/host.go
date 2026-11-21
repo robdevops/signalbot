@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/robdevops/signalbot/internal/kit/logx"
 	"slices"
 	"strings"
 	"time"
@@ -97,6 +98,22 @@ func (b *Bot) Info() feature.Info {
 		info.Provider = b.ai.Provider()
 	}
 	return info
+}
+
+func (b *Bot) Usage(ctx context.Context, chat feature.Chat, key bool) feature.Usage {
+	var u feature.Usage
+	if b.budget != nil {
+		u.Tracked = true
+		u.Spent, u.In, u.Out, u.Limit, u.Resets = b.budget.usage(chat.Key())
+	}
+	if key && b.ai != nil {
+		k, err := b.ai.KeyUsage(ctx)
+		if err != nil {
+			logx.Warnf("couldn't read the API key's usage: %v", err)
+		}
+		u.Key = k
+	}
+	return u
 }
 
 func (b *Bot) CallAPI(ctx context.Context, path string, body map[string]any) (json.RawMessage, error) {

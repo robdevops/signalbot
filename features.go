@@ -9,6 +9,7 @@ import (
 	"github.com/robdevops/signalbot/internal/features/links"
 	"github.com/robdevops/signalbot/internal/features/mcp"
 	"github.com/robdevops/signalbot/internal/features/schedule"
+	"github.com/robdevops/signalbot/internal/features/usage"
 	"github.com/robdevops/signalbot/internal/features/vision"
 	"github.com/robdevops/signalbot/internal/features/websearch"
 )
@@ -29,6 +30,7 @@ var features = []func(feature.Host) error{
 	imagegen.Register, // after charts, for the tools line
 	mcp.Register,      // after websearch and charts, for the tools line
 	schedule.Register,
+	usage.Register,
 }
 
 // enabled is features without those this build leaves out.

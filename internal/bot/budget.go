@@ -26,8 +26,10 @@ type budget struct {
 }
 
 type spend struct {
-	Spent float64 `json:"spent"` // US dollars
-	Told  bool    `json:"told"`  // the chat was told it reached the limit
+	Spent float64 `json:"spent"`         // US dollars
+	In    int     `json:"in,omitempty"`  // tokens sent
+	Out   int     `json:"out,omitempty"` // tokens received
+	Told  bool    `json:"told"`          // the chat was told it reached the limit
 }
 
 type budgetFile struct {
@@ -88,9 +90,26 @@ func (b *budget) over(key string) (over bool, left time.Duration) {
 	if s := b.of(key, false); s == nil || s.Spent < b.limit {
 		return false, 0
 	}
+	return true, b.untilMidnight()
+}
+
+// untilMidnight is the time left today, local time.
+func (b *budget) untilMidnight() time.Duration {
 	now := b.now().In(time.Local)
 	y, m, d := now.Date()
-	return true, time.Date(y, m, d+1, 0, 0, 0, 0, time.Local).Sub(now)
+	return time.Date(y, m, d+1, 0, 0, 0, 0, time.Local).Sub(now)
+}
+
+// usage is the chat's spending and tokens today, its limit, and the time
+// until the count starts again.
+func (b *budget) usage(key string) (spent float64, in, out int, limit float64, resets time.Duration) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.roll()
+	if s := b.of(key, false); s != nil {
+		spent, in, out = s.Spent, s.In, s.Out
+	}
+	return spent, in, out, b.limit, b.untilMidnight()
 }
 
 // markTold records that the chat was told it is over its limit, and
@@ -108,15 +127,21 @@ func (b *budget) markTold(key string) (first bool) {
 	return true
 }
 
-// add records cost against the chat's spend today.
-func (b *budget) add(key string, cost float64) {
-	if cost <= 0 || math.IsNaN(cost) {
+// add records cost and tokens against the chat's spend today.
+func (b *budget) add(key string, cost float64, in, out int) {
+	if math.IsNaN(cost) || cost < 0 {
+		cost = 0
+	}
+	if cost == 0 && in <= 0 && out <= 0 {
 		return
 	}
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	b.roll()
-	b.of(key, true).Spent += cost
+	s := b.of(key, true)
+	s.Spent += cost
+	s.In += max(in, 0)
+	s.Out += max(out, 0)
 	b.save()
 }
 

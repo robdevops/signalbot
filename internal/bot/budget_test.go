@@ -40,12 +40,12 @@ func TestBudget(t *testing.T) {
 	if over, _ := b.over(group); over {
 		t.Fatal("over before spending")
 	}
-	b.add(group, 0.6)
-	b.add(group, -5) // ignored
+	b.add(group, 0.6, 0, 0)
+	b.add(group, -5, 0, 0) // ignored
 	if over, _ := b.over(group); over {
 		t.Fatal("over at 0.60")
 	}
-	b.add(group, 0.4)
+	b.add(group, 0.4, 0, 0)
 	over, left := b.over(group)
 	if !over || !b.markTold(group) || left != 90*time.Minute {
 		t.Fatalf("at 1.00: over %v, left %v", over, left)
@@ -109,5 +109,22 @@ func TestFilesOverTheCapAreLogged(t *testing.T) {
 	}
 	if logs := h.logs.String(); strings.Count(logs, "<4>1 of the files left out: together they are over 16 MB\n") != 1 || strings.Contains(logs, "big") {
 		t.Fatalf("log %q", logs)
+	}
+}
+
+// Tokens count with the cost, even when a request reports none; the day's
+// totals, the limit and the time to midnight come back together.
+func TestBudgetUsage(t *testing.T) {
+	now := time.Date(2026, 11, 21, 21, 0, 0, 0, time.Local)
+	b := newBudget(t.TempDir(), 1, func() time.Time { return now })
+	b.add("g:x", 0.25, 1000, 200)
+	b.add("g:x", 0, 50, 0)
+	b.add("g:x", 0, 0, 0) // nothing to count
+	spent, in, out, limit, resets := b.usage("g:x")
+	if spent != 0.25 || in != 1050 || out != 200 || limit != 1 || resets != 3*time.Hour {
+		t.Fatalf("got %v %d %d %v %v", spent, in, out, limit, resets)
+	}
+	if spent, in, _, _, _ := b.usage("g:other"); spent != 0 || in != 0 {
+		t.Fatalf("another chat: %v %d", spent, in)
 	}
 }
