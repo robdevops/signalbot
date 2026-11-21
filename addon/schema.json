@@ -44,8 +44,8 @@
       "description": "A direct command's result's _meta[\"io.github.robdevops.signalbot/watch\"]: the messages matching pattern in the command's chat, until until, go to tool instead of the model. The bot refuses a pattern that would match ordinary chat, and shortens until to the addon block's watch_max.",
       "type": "object",
       "properties": {
-        "id": {"description": "The watch's name, for an unwatch op; at most 64 bytes. A new watch with the ID of a live one in the chat replaces it.", "type": "string", "minLength": 1, "maxLength": 64},
-        "pattern": {"description": "An RE2 regular expression, at most 1 KB.", "type": "string", "minLength": 1, "maxLength": 1024},
+        "id": {"description": "The watch's name, for an unwatch op; at most 64 bytes of UTF-8, which maxLength, counting characters, can't check past ASCII. A new watch with the ID of a live one in the chat replaces it.", "type": "string", "minLength": 1, "maxLength": 64},
+        "pattern": {"description": "An RE2 regular expression, at most 1024 bytes of UTF-8, which maxLength, counting characters, can't check past ASCII.", "type": "string", "minLength": 1, "maxLength": 1024},
         "until": {"description": "An RFC 3339 time, in the future.", "type": "string", "format": "date-time"},
         "tool": {"description": "A tool for the bot, called with each message the watch takes, as {\"text\": …}, with its context.", "type": "string", "minLength": 1},
         "guard": {"description": "While the watch lasts, the answer to a message addressed to the bot that replies to the command's pictures; at most 500 characters.", "type": "string", "maxLength": 500}
@@ -64,6 +64,7 @@
       },
       "required": ["type"],
       "allOf": [
+        {"if": {"properties": {"type": {"const": "text"}}}, "then": {"required": ["text"]}},
         {"if": {"properties": {"type": {"const": "image"}}}, "then": {"required": ["data", "mimeType"]}}
       ]
     },
@@ -82,7 +83,7 @@
       "type": "object",
       "properties": {
         "io.github.robdevops.signalbot/watch": {"description": "A direct command's only.", "$ref": "#/$defs/Watch"},
-        "io.github.robdevops.signalbot/react": {"description": "One emoji, for the message the call came from.", "type": "string", "minLength": 1}
+        "io.github.robdevops.signalbot/react": {"description": "A watch's call's only: one emoji, for the message the watch took. Ignored on any other call; to react to a command, queue a react op with its context's ref.", "type": "string", "minLength": 1}
       }
     },
     "Op": {
@@ -92,7 +93,7 @@
         "id": {"description": "Unique among the addon's ops, for as long as the bot may read it again.", "type": "string", "minLength": 1},
         "op": {"enum": ["post", "react", "unwatch"]},
         "chat": {"description": "A post's or unwatch's chat.", "type": "string", "pattern": "^c_[a-z2-7]{26}$"},
-        "text": {"description": "A post's text, with {u_…} placeholders the bot fills in with names; at most 4000 characters.", "type": "string"},
+        "text": {"description": "A post's text, with {u_…} placeholders the bot fills in with names; at most 4000 characters, names filled in. A post with neither text nor images is dropped.", "type": "string"},
         "images": {"description": "A post's images: at most 2, and 2 MiB in all.", "type": "array", "items": {"$ref": "#/$defs/Image"}, "maxItems": 2},
         "ref": {"description": "The message a reaction is for: a context's ref.", "type": "string", "pattern": "^r_[a-z2-7]{26}$"},
         "emoji": {"description": "A reaction's: one emoji.", "type": "string", "minLength": 1},
@@ -101,7 +102,7 @@
       "required": ["id", "op"],
       "additionalProperties": false,
       "allOf": [
-        {"if": {"properties": {"op": {"const": "post"}}}, "then": {"required": ["chat"], "anyOf": [{"required": ["text"]}, {"required": ["images"]}]}},
+        {"if": {"properties": {"op": {"const": "post"}}}, "then": {"required": ["chat"], "anyOf": [{"required": ["text"], "properties": {"text": {"pattern": "\\S"}}}, {"required": ["images"], "properties": {"images": {"minItems": 1}}}]}},
         {"if": {"properties": {"op": {"const": "react"}}}, "then": {"required": ["ref", "emoji"]}},
         {"if": {"properties": {"op": {"const": "unwatch"}}}, "then": {"required": ["chat", "watch"]}}
       ]

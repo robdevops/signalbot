@@ -11,7 +11,10 @@
 // by a test, describes. The package uses only the standard library.
 package addon
 
-import "time"
+import (
+	"encoding/json"
+	"time"
+)
 
 // The protocol: the MCP version, the prefix of every key of the extension,
 // the extension's version, and the outbox's URI.
@@ -76,6 +79,19 @@ type Content struct {
 	MimeType string `json:"mimeType,omitempty"`
 }
 
+// MarshalJSON writes a text block's text even when it is empty, as MCP's
+// TextContent requires.
+func (c Content) MarshalJSON() ([]byte, error) {
+	type plain Content
+	if c.Type != "text" {
+		return json.Marshal(plain(c))
+	}
+	return json.Marshal(struct {
+		plain
+		Text string `json:"text"`
+	}{plain(c), c.Text})
+}
+
 // Result is a tool's result.
 type Result struct {
 	Content []Content   `json:"content"`
@@ -86,7 +102,7 @@ type Result struct {
 // ResultMeta is what a result asks of the bot besides its content.
 type ResultMeta struct {
 	Watch *Watch `json:"io.github.robdevops.signalbot/watch,omitempty"` // a direct command's only
-	React string `json:"io.github.robdevops.signalbot/react,omitempty"` // an emoji for the message the call came from
+	React string `json:"io.github.robdevops.signalbot/react,omitempty"` // a watch's call's only: an emoji for the message it took
 }
 
 // Text is a result of words alone.

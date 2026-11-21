@@ -4,6 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"os"
 	"reflect"
 	"regexp"
@@ -57,12 +60,27 @@ var wireTypes = map[string]reflect.Type{
 // same type for each.
 func TestSchemaMatchesTypes(t *testing.T) {
 	d := defs(t, schema(t))
-	var names []string
 	for name := range d {
 		if _, ok := wireTypes[name]; !ok && name != "ToolMeta" {
 			t.Errorf("$defs/%s has no Go type", name)
 		}
-		names = append(names, name)
+	}
+	// Every struct types.go declares is in wireTypes, so in the schema.
+	f, err := parser.ParseFile(token.NewFileSet(), "types.go", nil, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, decl := range f.Decls {
+		g, ok := decl.(*ast.GenDecl)
+		if !ok || g.Tok != token.TYPE {
+			continue
+		}
+		for _, spec := range g.Specs {
+			ts := spec.(*ast.TypeSpec)
+			if _, isStruct := ts.Type.(*ast.StructType); isStruct && ts.Name.IsExported() && wireTypes[ts.Name.Name] == nil {
+				t.Errorf("types.go's %s isn't in wireTypes, so the schema isn't checked for it", ts.Name.Name)
+			}
+		}
 	}
 	for name, typ := range wireTypes {
 		def, ok := d[name].(map[string]any)
@@ -113,9 +131,18 @@ func TestSchemaMatchesTypes(t *testing.T) {
 		}
 	}
 	// The _meta keys are the package's.
-	for def, key := range map[string]string{"ToolMeta": KeyVisibility, "ResultMeta": KeyWatch} {
+	for key, def := range map[string]string{KeyVisibility: "ToolMeta", KeyWatch: "ResultMeta", KeyReact: "ResultMeta"} {
 		if _, ok := d[def].(map[string]any)["properties"].(map[string]any)[key]; !ok {
 			t.Errorf("$defs/%s lacks %s", def, key)
+		}
+	}
+	// A pseudonym's pattern is the same wherever it appears.
+	prop := func(def, key string) any {
+		return d[def].(map[string]any)["properties"].(map[string]any)[key].(map[string]any)["pattern"]
+	}
+	for _, k := range []string{"chat", "ref"} {
+		if prop("Op", k) != prop("Context", k) {
+			t.Errorf("Op's %s pattern %v isn't Context's %v", k, prop("Op", k), prop("Context", k))
 		}
 	}
 	if v := d["Capability"].(map[string]any)["properties"].(map[string]any)["version"].(map[string]any)["const"]; v != float64(Version) {
@@ -222,6 +249,10 @@ func validate(root, s map[string]any, v any, at string) error {
 		case "minimum":
 			if n, ok := v.(float64); ok && n < kv.(float64) {
 				return fmt.Errorf("%s: %v under %v", at, n, kv)
+			}
+		case "minItems":
+			if l, ok := v.([]any); ok && float64(len(l)) < kv.(float64) {
+				return fmt.Errorf("%s: %d items, at least %v", at, len(l), kv)
 			}
 		case "maxItems":
 			if l, ok := v.([]any); ok && float64(len(l)) > kv.(float64) {
@@ -362,7 +393,8 @@ func TestSchemaSamples(t *testing.T) {
 		{"Context", Context{Chat: chatID, Sender: senderID, Ref: refID, Sent: 1763715600, Edited: 1763715660, Name: "Alice", Deadline: 1763715615}},
 		{"Watch", Watch{ID: "r1", Pattern: `maps\.google`, Until: until, Tool: "guess", Guard: "No hints 😉"}},
 		{"Result", Text("started")},
-		{"Result", Text("")},
+		{"Result", Text("")}, // MCP's TextContent needs its text, even empty
+		{"Op", Op{ID: "5", Op: "post", Chat: chatID, Text: "", Images: []Image{{Data: "aGk=", MimeType: "image/png"}}}},
 		{"Result", Result{Content: []Content{{Type: "image", Data: "aGk=", MimeType: "image/jpeg"}, {Type: "text", Text: "go"}},
 			Meta: &ResultMeta{Watch: &Watch{ID: "r1", Pattern: `\d`, Until: until, Tool: "guess"}}}},
 		{"Result", Result{Content: []Content{{Type: "text", Text: "no"}}, IsError: true, Meta: &ResultMeta{React: "📍"}}},
@@ -392,12 +424,15 @@ func TestSchemaSamples(t *testing.T) {
 		{"Watch", "a misspelt key", map[string]any{"id": "r1", "pattern": `\d`, "until": until, "tool": "guess", "gaurd": "x"}},
 		{"Watch", "too long an ID", Watch{ID: strings.Repeat("x", 65), Pattern: `\d`, Until: until, Tool: "guess"}},
 		{"Result", "an image without its bytes", Result{Content: []Content{{Type: "image", MimeType: "image/jpeg"}}}},
+		{"Result", "a text block without its text", map[string]any{"content": []any{map[string]any{"type": "text"}}}},
 		{"Result", "audio", Result{Content: []Content{{Type: "audio", Data: "aGk=", MimeType: "audio/wav"}}}},
 		{"Result", "a watch without a pattern", Result{Content: []Content{}, Meta: &ResultMeta{Watch: &Watch{ID: "r1", Until: until, Tool: "g"}}}},
 		{"Op", "no ID", Op{Op: "unwatch", Chat: chatID, Watch: "r1"}},
 		{"Op", "an unknown op", Op{ID: "1", Op: "delete", Chat: chatID}},
 		{"Op", "a post without a chat", Op{ID: "1", Op: "post", Text: "hi"}},
 		{"Op", "an empty post", Op{ID: "1", Op: "post", Chat: chatID}},
+		{"Op", "a post of empty text", map[string]any{"id": "1", "op": "post", "chat": chatID, "text": " \n"}},
+		{"Op", "a post of no images", map[string]any{"id": "1", "op": "post", "chat": chatID, "images": []any{}}},
 		{"Op", "three images", Op{ID: "1", Op: "post", Chat: chatID, Images: slices.Repeat([]Image{{Data: "aGk=", MimeType: "image/png"}}, MaxImages+1)}},
 		{"Op", "an image without its type", map[string]any{"id": "1", "op": "post", "chat": chatID, "images": []any{map[string]any{"data": "aGk="}}}},
 		{"Op", "a reaction without an emoji", Op{ID: "1", Op: "react", Ref: refID}},

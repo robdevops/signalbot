@@ -15,6 +15,7 @@ import (
 	"sync"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	ext "github.com/robdevops/signalbot/addon"
 	"github.com/robdevops/signalbot/internal/feature"
@@ -631,6 +632,35 @@ func TestOutboxDelivery(t *testing.T) {
 	}
 	if !a.done["6"] || a.cursor != "c.5" || !strings.Contains(log.String(), "<4>addon game: 1 posts dropped: not sent after 6 tries\n") {
 		t.Fatalf("cursor %q, log %q", a.cursor, log.String())
+	}
+}
+
+// Posts held behind one are merged only while their texts fit in one post
+// whole: two long ones go one after the other, neither cut.
+func TestOutboxMergeKeepsTexts(t *testing.T) {
+	a, _ := unitAddon(everything)
+	h := featuretest.New()
+	a.host = h
+	a.lease(inA)
+	id := a.chatID(inA)
+	long := strings.Repeat("é", 3000)
+	for i, text := range []string{"first", long, long} {
+		if why := a.apply(ext.Op{ID: strconv.Itoa(i), Op: "post", Chat: id, Text: text}); why != "" {
+			t.Fatal(why)
+		}
+	}
+	var texts []string
+	for i := 0; i < len(h.Posts()); i++ {
+		texts = append(texts, h.Posts()[i].Text)
+		h.Posts()[i].OnSent([]int64{int64(i)}, false)
+	}
+	if !slices.Equal(texts, []string{"first", long, long}) {
+		t.Fatalf("%d posts, of %v runes", len(texts), func() (n []int) {
+			for _, s := range texts {
+				n = append(n, utf8.RuneCountInString(s))
+			}
+			return
+		}())
 	}
 }
 

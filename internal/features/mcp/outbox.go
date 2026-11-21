@@ -10,6 +10,7 @@ import (
 	"slices"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	ext "github.com/robdevops/signalbot/addon"
 	"github.com/robdevops/signalbot/internal/feature"
@@ -292,18 +293,23 @@ type outgoing struct {
 	ops []string
 }
 
-// fits reports whether p's pictures can join o's in one post.
+// fits reports whether p can join o in one post: their pictures, and
+// their texts whole, so a merge never cuts a post that fit on its own.
 func (o *outgoing) fits(p *outgoing) bool {
 	size := 0
 	for _, pic := range append(slices.Clone(o.Pictures), p.Pictures...) {
 		size += len(pic.Data)
 	}
-	return len(o.Pictures)+len(p.Pictures) <= maxAddonPictures && size <= maxPictureBytes
+	return len(o.Pictures)+len(p.Pictures) <= maxAddonPictures && size <= maxPictureBytes &&
+		utf8.RuneCountInString(merged(o.Text, p.Text)) <= maxAnswer
 }
+
+// merged is two posts' texts as one.
+func merged(a, b string) string { return strings.TrimSpace(a + "\n\n" + b) }
 
 // send posts out in the chat whose pseudonym is id, unless a post of the
 // addon's still waits in that chat's mailbox: then out is held, merged with
-// the last one held if their pictures fit in one post, and posted once
+// the last one held if they fit in one post, and posted once
 // those before it have gone. So an addon never takes more than one place in
 // a chat's mailbox.
 func (a *addon) send(id string, out *outgoing) {
@@ -314,7 +320,7 @@ func (a *addon) send(id string, out *outgoing) {
 	if held, waiting := a.waiting[id]; waiting {
 		if n := len(held); n > 0 && held[n-1].fits(out) {
 			last := held[n-1]
-			last.Text = txt.Clamp(strings.TrimSpace(last.Text+"\n\n"+out.Text), maxAnswer)
+			last.Text = merged(last.Text, out.Text)
 			last.Pictures = append(last.Pictures, out.Pictures...)
 			last.ops = append(last.ops, out.ops...)
 		} else {
