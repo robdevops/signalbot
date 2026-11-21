@@ -220,6 +220,7 @@ type Post struct {
 	Text     string                           // Markdown, as written; @Name is linked to the chat's known names
 	Pictures []Picture                        // sent with Text; captions as for a tool's pictures
 	OnSent   func(sent []int64, dropped bool) // if set, called once: with the timestamps sent, or dropped
+	ReplyTo  int64                            // if set, sent as a reply to the bot's own earlier message in Chat that an OnSent gave this timestamp; sent plainly if the network can't find it
 }
 
 // Group is a group chat.

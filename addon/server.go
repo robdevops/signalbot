@@ -243,27 +243,35 @@ func (s *Server) settle(m message) {
 // reach the bot: a post with more than MaxImages images, or an op too big
 // for a page as it is sent.
 func (s *Server) Queue(ops ...Op) error {
+	_, err := s.QueueIDs(ops...)
+	return err
+}
+
+// QueueIDs is Queue, returning the ID it gave each op, in order, such as
+// for a later post's ReplyTo.
+func (s *Server) QueueIDs(ops ...Op) (ids []string, err error) {
 	for _, o := range ops {
 		switch {
 		case len(o.Images) > MaxImages:
-			return fmt.Errorf("a post has %d images; the most is %d", len(o.Images), MaxImages)
+			return nil, fmt.Errorf("a post has %d images; the most is %d", len(o.Images), MaxImages)
 		case sentSize(o) > pageSize:
-			return fmt.Errorf("an op is %d bytes as sent; the most is %d", sentSize(o), pageSize)
+			return nil, fmt.Errorf("an op is %d bytes as sent; the most is %d", sentSize(o), pageSize)
 		}
 	}
 	if len(ops) == 0 {
-		return nil
+		return nil, nil
 	}
 	s.mu.Lock()
 	now := s.cfg.Now()
 	for _, o := range ops {
 		s.seq++
 		o.ID = s.nonce + "." + strconv.FormatInt(s.seq, 10)
+		ids = append(ids, o.ID)
 		s.outbox = append(s.outbox, held{Held: Held{Op: o, Queued: now}, seq: s.seq})
 	}
 	s.mu.Unlock()
 	s.poke()
-	return nil
+	return ids, nil
 }
 
 // sentSize is o's size as the bot gets it: JSON inside the JSON string of

@@ -84,7 +84,7 @@ func TestSendStyles(t *testing.T) {
 	f := newFake(t)
 	c := newClient(f.sock, nil, nil)
 	run(t, c, f)
-	c.Send(feature.Chat{User: aliceID}, "**\U0001F389 big** news, @Alice: see `x`", nil, map[string]string{"alice": "u-a"})
+	c.Send(feature.Chat{User: aliceID}, "**\U0001F389 big** news, @Alice: see `x`", nil, map[string]string{"alice": "u-a"}, 0)
 	eventually(t, "a send", func() bool { return len(f.calls("send")) == 1 })
 	s := f.calls("send")[0]
 	if s["message"] != "\U0001F389 big news, @Alice: see x" {
@@ -96,7 +96,7 @@ func TestSendStyles(t *testing.T) {
 	if got := fmt.Sprint(s["mention"]); got != "[13:6:u-a]" {
 		t.Errorf("mentions %v", got)
 	}
-	c.Send(feature.Chat{User: aliceID}, "plain", nil, nil)
+	c.Send(feature.Chat{User: aliceID}, "plain", nil, nil, 0)
 	eventually(t, "a second send", func() bool { return len(f.calls("send")) == 2 })
 	if _, ok := f.calls("send")[1]["textStyle"]; ok {
 		t.Errorf("styles on plain text")

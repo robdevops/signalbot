@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"regexp"
 	"slices"
 	"strings"
@@ -171,19 +172,50 @@ var shared = []string{"TZ", "HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "http_pr
 
 // addonEnv is an addon's whole environment: PATH, HOME, the shared
 // variables that are set, and the bot's variables that start with prefix.
-func addonEnv(prefix string) []string {
+// stateDir, if not "", is the addon's <prefix>STATE_DIR unless the bot's
+// environment sets one that isn't blank; the addon makes the directory
+// itself.
+func addonEnv(prefix, stateDir string) []string {
 	env := []string{"PATH=" + os.Getenv("PATH"), "HOME=" + os.Getenv("HOME")}
 	for _, name := range shared {
 		if v, ok := os.LookupEnv(name); ok {
 			env = append(env, name+"="+v)
 		}
 	}
+	// A blank <prefix>STATE_DIR counts as unset, as the bot's own settings do.
+	own := strings.TrimSpace(os.Getenv(prefix+"STATE_DIR")) != ""
 	for _, kv := range os.Environ() {
-		if strings.HasPrefix(kv, prefix) {
-			env = append(env, kv)
+		if !strings.HasPrefix(kv, prefix) {
+			continue
 		}
+		if !own && stateDir != "" && strings.HasPrefix(kv, prefix+"STATE_DIR=") {
+			continue
+		}
+		env = append(env, kv)
+	}
+	if !own && stateDir != "" {
+		env = append(env, prefix+"STATE_DIR="+stateDir)
 	}
 	return env
+}
+
+// safeDirName is a server name that can be a directory's name as it is.
+var safeDirName = regexp.MustCompile(`^[A-Za-z0-9_-][A-Za-z0-9._-]{0,63}$`)
+
+// addonStateDir is where an addon server called name keeps its own files by
+// default: addons/<name> in the bot's state directory, the first in
+// stateDirectory (STATE_DIRECTORY's value), made absolute. It is "" when
+// STATE_DIRECTORY isn't set, or the name isn't letters, digits, ., _ and -
+// (up to 64, not starting with .), so no name can reach outside addons.
+func addonStateDir(stateDirectory, name string) string {
+	dir, _, _ := strings.Cut(stateDirectory, ":")
+	if dir == "" || !safeDirName.MatchString(name) {
+		return ""
+	}
+	if abs, err := filepath.Abs(dir); err == nil {
+		dir = abs
+	}
+	return filepath.Join(dir, "addons", name)
 }
 
 // saved is the mcp store's document.
@@ -266,6 +298,7 @@ type addon struct {
 	sending map[string]bool        // the IDs of post ops held or in a mailbox
 	failed  map[string]failure     // post ops dropped before they were sent, by ID
 	waiting map[string][]*outgoing // by chat pseudonym, while a post of its waits in the chat's mailbox: those held to send after it, in turn
+	posted  map[string]posted      // the post ops it sent, by ID, for a later post's replyTo
 }
 
 // ref is the message a ref stands for: who sent it, where and when.
@@ -289,7 +322,7 @@ func newAddon(server, title string, cfg addonConfig, secret []byte, c conn, bot 
 		matches: make(chan match, maxMatches), posts: newLimiter(cfg.Rate), calls: newLimiter(watchRate), asks: hourly(cfg.Model),
 		refs: map[string]ref{}, names: map[string]seen{}, watches: map[string][]*watch{}, claims: map[claimKey]claim{},
 		leases: map[string]lease{}, tombs: map[string]time.Time{}, done: map[string]bool{},
-		sending: map[string]bool{}, failed: map[string]failure{}, waiting: map[string][]*outgoing{}}
+		sending: map[string]bool{}, failed: map[string]failure{}, waiting: map[string][]*outgoing{}, posted: map[string]posted{}}
 }
 
 // allows reports whether the addon may be used in chat.

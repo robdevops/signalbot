@@ -3,6 +3,7 @@ package mcp
 import (
 	"bufio"
 	"bytes"
+	"cmp"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -504,12 +505,12 @@ func TestWatchRestarts(t *testing.T) {
 // Posts go to a chat the addon has a lease in, one waiting at a time, the
 // rest held and merged; one dropped before it was sent is posted again; an
 // op read again is applied once, even from the start of an unknown cursor;
-// reactions go to known messages.
+// reactions go to known messages; a reply goes as one.
 func TestOutbox(t *testing.T) {
 	d := retryDelay
 	t.Cleanup(func() { retryDelay = d }) // after the addon stops
 	retryDelay = 50 * time.Millisecond
-	h, log := startGame(t, gameConfig(""), t.TempDir())
+	h, log := startGame(t, gameConfig(`,"rate":{"per_minute":600,"burst":50}`), t.TempDir())
 	ctx := context.Background()
 	c := chatID(t, h, inA) // a lease, and a ref
 	post := func(id, text string) map[string]any {
@@ -570,6 +571,15 @@ func TestOutbox(t *testing.T) {
 	})
 	if len(h.Posts()) != 5 || strings.Contains(log.String(), "hello") {
 		t.Fatalf("posts %d, log %q", len(h.Posts()), log.String())
+	}
+
+	// A reply to the first post, which went out at 1.
+	reply := post("9", "a reply")
+	reply["replyTo"] = "1"
+	queue(t, h, 1, reply)
+	eventually(t, "the reply", func() bool { return len(h.Posts()) == 6 })
+	if p := h.Posts()[5]; p.Text != "a reply" || p.ReplyTo != 1 {
+		t.Fatalf("reply %+v", p)
 	}
 }
 
@@ -661,6 +671,167 @@ func TestOutboxMergeKeepsTexts(t *testing.T) {
 			}
 			return
 		}())
+	}
+}
+
+// A post with replyTo is sent as a reply to the post op it names, if that
+// was sent in the same chat in the last 24 hours, else plainly; it is never
+// merged with another post, either way. What was sent is kept over a
+// restart, the last maxPosted of it.
+func TestOutboxReplies(t *testing.T) {
+	cfg := everything
+	cfg.Rate = rateConfig{6000, 1000}
+	a, now := unitAddon(cfg)
+	h := featuretest.New()
+	a.host = h
+	a.lease(inA)
+	a.lease(inB)
+	idA, idB := a.chatID(inA), a.chatID(inB)
+	n := 0
+	post := func(chat, text, replyTo string) ext.Op {
+		n++
+		return ext.Op{ID: strconv.Itoa(n), Op: "post", Chat: chat, Text: text, ReplyTo: replyTo}
+	}
+	apply := func(ops ...ext.Op) {
+		t.Helper()
+		for _, o := range ops {
+			if why := a.apply(o); why != "" {
+				t.Fatalf("%s: %s", o.ID, why)
+			}
+		}
+	}
+	sent := 0
+	// next is the next post mailed, said to be sent at ts and ts+1.
+	next := func(ts int64) feature.Post {
+		t.Helper()
+		if len(h.Posts()) <= sent {
+			t.Fatalf("no post %d", sent+1)
+		}
+		p := h.Posts()[sent]
+		sent++
+		p.OnSent([]int64{ts, ts + 1}, false)
+		return p
+	}
+	expect := func(ts int64, text string, replyTo int64) {
+		t.Helper()
+		if p := next(ts); p.Text != text || p.ReplyTo != replyTo {
+			t.Fatalf("post %q replying to %d; want %q replying to %d", p.Text, p.ReplyTo, text, replyTo)
+		}
+	}
+
+	question := post(idA, "What is the capital of France?", "")
+	apply(question)
+	expect(100, question.Text, 0)
+	// Held behind a waiting post: a reply isn't merged into the post held
+	// before it, nor a later post into the reply.
+	apply(post(idA, "Waiting", ""), post(idA, "Held", ""), post(idA, "It was Paris.", question.ID), post(idA, "Next question", ""))
+	expect(200, "Waiting", 0)
+	expect(300, "Held", 0)
+	expect(400, "It was Paris.", 100)
+	expect(500, "Next question", 0)
+	if len(h.Posts()) != sent {
+		t.Fatalf("%d posts", len(h.Posts()))
+	}
+	// An op the bot doesn't know, or one sent in another chat: plainly.
+	apply(post(idA, "unknown", "nope"))
+	expect(600, "unknown", 0)
+	apply(post(idB, "elsewhere", question.ID))
+	expect(700, "elsewhere", 0)
+
+	// After a restart, as saved.
+	data, err := json.Marshal(a.state())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var st addonState
+	if err := json.Unmarshal(data, &st); err != nil {
+		t.Fatal(err)
+	}
+	if p := st.Posted[question.ID]; p.Chat != idA || p.Sent != 100 {
+		t.Fatalf("saved %+v", st.Posted)
+	}
+	a, _ = unitAddon(cfg)
+	a.now = func() time.Time { return *now }
+	a.host = h
+	a.restore(st)
+	apply(post(idA, "Paris, again.", question.ID))
+	expect(800, "Paris, again.", 100)
+
+	// 24 hours on, forgotten.
+	*now = now.Add(postedLife)
+	a.lease(inA)
+	apply(post(idA, "Too late", question.ID))
+	if len(a.state().Posted) != 0 {
+		t.Fatalf("kept %+v", a.state().Posted)
+	}
+	expect(900, "Too late", 0)
+
+	// Only the last maxPosted are kept, and restored.
+	first := ""
+	for i := range maxPosted + 3 {
+		o := post(idA, "post", "")
+		first = cmp.Or(first, o.ID)
+		apply(o)
+		next(int64(1000 + i))
+		*now = now.Add(time.Second)
+	}
+	st = a.state()
+	if len(st.Posted) != maxPosted || st.Posted[first].Sent != 0 || st.Posted[strconv.Itoa(n)].Sent != int64(1000+maxPosted+2) {
+		t.Fatalf("%d kept", len(st.Posted))
+	}
+	for i := range 10 {
+		st.Posted["extra"+strconv.Itoa(i)] = posted{Chat: idA, Sent: 1, Expires: now.Add(postedLife + time.Duration(i)*time.Second)}
+	}
+	a.restore(st)
+	if len(a.posted) != maxPosted || a.posted["extra0"].Sent != 1 || a.posted[strconv.Itoa(n-maxPosted+10)].Sent != 0 || a.posted[strconv.Itoa(n-maxPosted+11)].Sent == 0 {
+		t.Fatalf("%d restored", len(a.posted))
+	}
+}
+
+// A reply whose post was dropped before it was sent waits for it, without
+// counting a try, and is sent after it, as a reply to it.
+func TestOutboxReplyWaitsForDropped(t *testing.T) {
+	a, now := unitAddon(everything)
+	h := featuretest.New()
+	a.host = h
+	a.lease(inA)
+	id := a.chatID(inA)
+	waiting := ext.Op{ID: "w", Op: "post", Chat: id, Text: "Waiting"}
+	question := ext.Op{ID: "q", Op: "post", Chat: id, Text: "Question"}
+	answer := ext.Op{ID: "r", Op: "post", Chat: id, Text: "Answer", ReplyTo: "q"}
+	read := func() {
+		t.Helper()
+		for _, o := range []ext.Op{waiting, question, answer} {
+			if why := a.apply(o); why != "" {
+				t.Fatalf("%s: %s", o.ID, why)
+			}
+		}
+	}
+	read()
+	h.Posts()[0].OnSent([]int64{100}, false)
+	h.Posts()[1].OnSent(nil, true)
+	if len(h.Posts()) != 2 {
+		t.Fatalf("reply sent before its post: %q", h.Posts()[2].Text)
+	}
+	read() // too soon: neither is posted
+	if len(h.Posts()) != 2 {
+		t.Fatalf("%d posts", len(h.Posts()))
+	}
+	*now = now.Add(retryDelay)
+	read()
+	if len(h.Posts()) != 3 || h.Posts()[2].Text != "Question" {
+		t.Fatalf("%d posts", len(h.Posts()))
+	}
+	h.Posts()[2].OnSent([]int64{200}, false)
+	if len(h.Posts()) != 4 || h.Posts()[3].Text != "Answer" || h.Posts()[3].ReplyTo != 200 {
+		t.Fatalf("%d posts", len(h.Posts()))
+	}
+	if f := a.failed["r"]; f.tries != 0 {
+		t.Fatalf("reply tried %d times", f.tries)
+	}
+	h.Posts()[3].OnSent([]int64{201}, false)
+	if len(a.failed) != 0 || len(a.sending) != 0 {
+		t.Fatalf("failed %v, sending %v", a.failed, a.sending)
 	}
 }
 

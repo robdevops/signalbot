@@ -101,14 +101,16 @@
         "images": {"description": "A post's images: at most 2, and 2 MiB in all.", "type": "array", "items": {"$ref": "#/$defs/Image"}, "maxItems": 2},
         "ref": {"description": "The message a reaction is for: a context's ref.", "type": "string", "pattern": "^r_[a-z2-7]{26}$"},
         "emoji": {"description": "A reaction's: one emoji.", "type": "string", "minLength": 1},
-        "watch": {"description": "The ID of the watch an unwatch ends.", "type": "string", "minLength": 1, "maxLength": 64}
+        "watch": {"description": "The ID of the watch an unwatch ends.", "type": "string", "minLength": 1, "maxLength": 64},
+        "replyTo": {"description": "A post's: the ID of an earlier post op of the addon's, such as a question, so the post is sent as a reply to it. The bot remembers the ID of each post op it sent (every op of a merged post), with its chat, for 24 hours, the last 256 IDs; a post whose replyTo it doesn't know, or that was sent in another chat, is sent as an ordinary post. A post with replyTo is never merged with another.", "type": "string", "minLength": 1}
       },
       "required": ["id", "op"],
       "additionalProperties": false,
       "allOf": [
         {"if": {"properties": {"op": {"const": "post"}}}, "then": {"required": ["chat"], "anyOf": [{"required": ["text"], "properties": {"text": {"pattern": "\\S"}}}, {"required": ["images"], "properties": {"images": {"minItems": 1}}}]}},
         {"if": {"properties": {"op": {"const": "react"}}}, "then": {"required": ["ref", "emoji"]}},
-        {"if": {"properties": {"op": {"const": "unwatch"}}}, "then": {"required": ["chat", "watch"]}}
+        {"if": {"properties": {"op": {"const": "unwatch"}}}, "then": {"required": ["chat", "watch"]}},
+        {"if": {"required": ["replyTo"]}, "then": {"properties": {"op": {"const": "post"}}}}
       ]
     },
     "Image": {

@@ -75,6 +75,7 @@ type stdioConn struct {
 	cfg     server
 	redact  func(string) string              // scrubs names and IDs from its output before it is logged
 	prefix  string                           // an addon's: it gets the bot's variables that start with this, and its stderr is only counted
+	state   string                           // an addon's default <prefix>STATE_DIR; "" for none
 	updated chan struct{}                    // an addon's: marked, without waiting, when it says a resource was updated
 	ready   func(context.Context, handshake) // an addon's: called each time it has started again and initialized
 
@@ -111,7 +112,7 @@ func (c *stdioConn) start(ctx context.Context) error {
 	// addon's prefixed variables, never the bot's own, which hold the API
 	// key.
 	if c.prefix != "" {
-		cmd.Env = addonEnv(c.prefix)
+		cmd.Env = addonEnv(c.prefix, c.state)
 	} else {
 		cmd.Env = []string{"PATH=" + os.Getenv("PATH"), "HOME=" + os.Getenv("HOME")}
 		for k, v := range c.cfg.Env {

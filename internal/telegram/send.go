@@ -48,9 +48,10 @@ type sentMsg struct {
 // Send posts a reply to chat: its Markdown as Telegram's entities, a link
 // under its own text, each @Name in known (lowercased name to ID) a text
 // mention, split at Telegram's limit, the pictures first with the reply as
-// their caption when it fits. It returns the IDs of the messages sent. A
-// failure is logged.
-func (c *Client) Send(ch feature.Chat, text string, pics []feature.Picture, known map[string]string) (sent []int64) {
+// their caption when it fits, the first message a reply to the bot's own
+// message replyTo if it isn't 0 (sent anyway if that message is gone). It
+// returns the IDs of the messages sent. A failure is logged.
+func (c *Client) Send(ch feature.Chat, text string, pics []feature.Picture, known map[string]string, replyTo int64) (sent []int64) {
 	if n := utf8.RuneCountInString(text); n > maxReply {
 		logx.Warnf("reply truncated from %d chars", n)
 	}
@@ -65,8 +66,8 @@ func (c *Client) Send(ch feature.Chat, text string, pics []feature.Picture, know
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 	defer cancel()
-	note := func(msgID int64) {
-		sent = append(sent, msgID)
+	note := func(msgID int64) { // only the first message sent replies
+		sent, replyTo = append(sent, msgID), 0
 		c.noteSent(c.dest(ch).chat, msgID) // at a group's new ID, if the send found it moved
 	}
 	if len(pics) > 0 {
@@ -75,7 +76,7 @@ func (c *Client) Send(ch feature.Chat, text string, pics []feature.Picture, know
 			c := t
 			caption = &c
 		}
-		ids, err := c.sendPhotos(ctx, ch, pics, caption, known)
+		ids, err := c.sendPhotos(ctx, ch, pics, caption, known, replyTo)
 		if err != nil {
 			logx.Errorf("send failed: pictures: %v", err) // the text still goes
 		} else if caption != nil {
@@ -94,6 +95,9 @@ func (c *Client) Send(ch feature.Chat, text string, pics []feature.Picture, know
 		var m sentMsg
 		d := c.dest(ch)
 		params := d.params(map[string]any{"text": string(p.Runes), "entities": entities(p, known)})
+		if replyTo != 0 {
+			params["reply_parameters"] = replyParams(replyTo)
+		}
 		send := func() error { return c.call(ctx, "sendMessage", params, &m) }
 		move := func(to string) { params["chat_id"] = to }
 		err := c.retrying(ctx, d.chat, move, send)
@@ -108,6 +112,12 @@ func (c *Client) Send(ch feature.Chat, text string, pics []feature.Picture, know
 		note(m.MessageID)
 	}
 	return sent
+}
+
+// replyParams are Telegram's reply_parameters for a reply to the message
+// id in the same chat, sent without the reply if that message is gone.
+func replyParams(id int64) map[string]any {
+	return map[string]any{"message_id": id, "allow_sending_without_reply": true}
 }
 
 // refusedEntities reports whether err is Telegram refusing a message's
@@ -203,9 +213,10 @@ func utf16Slice(rs []rune, u []int, start, n int) []rune {
 }
 
 // sendPhotos sends pics, one as a photo or several as an album, with
-// caption on the first, without its entities if Telegram refuses them, and
-// returns the IDs of the messages sent.
-func (c *Client) sendPhotos(ctx context.Context, ch feature.Chat, pics []feature.Picture, caption *mdstyle.Text, known map[string]string) ([]int64, error) {
+// caption on the first, without its entities if Telegram refuses them, as
+// a reply to replyTo if it isn't 0, and returns the IDs of the messages
+// sent.
+func (c *Client) sendPhotos(ctx context.Context, ch feature.Chat, pics []feature.Picture, caption *mdstyle.Text, known map[string]string, replyTo int64) ([]int64, error) {
 	pics = pics[:min(len(pics), 10)] // an album's limit
 	files := map[string][]byte{}
 	for i, p := range pics {
@@ -215,14 +226,14 @@ func (c *Client) sendPhotos(ctx context.Context, ch feature.Chat, pics []feature
 	if caption != nil {
 		ents = append(ents, entities(*caption, known)...)
 	}
-	ids, err := c.sendPhotosOnce(ctx, ch, pics, files, caption, ents)
+	ids, err := c.sendPhotosOnce(ctx, ch, pics, files, caption, ents, replyTo)
 	if caption != nil && len(ents) > 0 && refusedEntities(err) {
-		ids, err = c.sendPhotosOnce(ctx, ch, pics, files, caption, []outEntity{})
+		ids, err = c.sendPhotosOnce(ctx, ch, pics, files, caption, []outEntity{}, replyTo)
 	}
 	return ids, err
 }
 
-func (c *Client) sendPhotosOnce(ctx context.Context, ch feature.Chat, pics []feature.Picture, files map[string][]byte, caption *mdstyle.Text, ents []outEntity) ([]int64, error) {
+func (c *Client) sendPhotosOnce(ctx context.Context, ch feature.Chat, pics []feature.Picture, files map[string][]byte, caption *mdstyle.Text, ents []outEntity, replyTo int64) ([]int64, error) {
 	text := ""
 	if caption != nil {
 		text = string(caption.Runes)
@@ -246,6 +257,10 @@ func (c *Client) sendPhotosOnce(ctx context.Context, ch feature.Chat, pics []fea
 		}
 		mj, _ := json.Marshal(media)
 		method, fields, out = "sendMediaGroup", d.fields(map[string]string{"media": string(mj)}), &album
+	}
+	if replyTo != 0 {
+		rj, _ := json.Marshal(replyParams(replyTo))
+		fields["reply_parameters"] = string(rj)
 	}
 	err := c.retrying(ctx, d.chat, func(to string) { fields["chat_id"] = to }, func() error { return c.upload(ctx, method, fields, files, out) })
 	if err != nil {
@@ -274,7 +289,7 @@ func (c *Client) React(ch feature.Chat, msg feature.Message, emoji string) {
 	switch {
 	case err == nil:
 	case errors.As(err, &ae) && ae.Code == 400 && strings.Contains(ae.Desc, "REACTION_INVALID"):
-		c.Send(ch, emoji, nil, nil)
+		c.Send(ch, emoji, nil, nil, 0)
 	default:
 		logx.Errorf("reaction failed: %v", err)
 	}

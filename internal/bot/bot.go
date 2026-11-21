@@ -38,8 +38,11 @@ type Network interface {
 	WaitID(ctx context.Context) string
 	// Send posts a reply, split as the network needs, and returns the
 	// timestamps of the messages sent, which name them for a later delete;
-	// a send that fails returns no timestamps.
-	Send(chat feature.Chat, text string, pics []feature.Picture, known map[string]string) (sent []int64)
+	// a send that fails returns no timestamps. If replyTo isn't 0, the
+	// first message sent replies to the bot's own message in chat that an
+	// earlier Send returned it for; one the network can't find is sent
+	// without it.
+	Send(chat feature.Chat, text string, pics []feature.Picture, known map[string]string, replyTo int64) (sent []int64)
 	// React puts emoji on msg in chat, as a reaction from the bot.
 	React(chat feature.Chat, msg feature.Message, emoji string)
 	Typing(chat feature.Chat) (stop func())
@@ -242,7 +245,7 @@ func (b *Bot) pending() chats.Ref {
 // and returns Send's timestamps. History is kept first so a message
 // arriving while the send is out lands after the turn, not before it.
 func (b *Bot) sendKept(key string, p chats.Ref, chat feature.Chat, text string, pics []feature.Picture, known map[string]string) []int64 {
-	sent := b.net.Send(chat, text, pics, known)
+	sent := b.net.Send(chat, text, pics, known, 0)
 	b.chats.Retag(key, p.ID, botRefs(sent))
 	return sent
 }

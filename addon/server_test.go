@@ -251,7 +251,7 @@ func TestCancel(t *testing.T) {
 
 // The outbox: a subscribed bot hears of new ops, a read gets them with a
 // cursor, a read at that cursor lets go of them, and a cursor the server
-// doesn't know gets everything still held.
+// doesn't know gets everything still held. QueueIDs gives the IDs.
 func TestOutbox(t *testing.T) {
 	now := time.Date(2026, 11, 21, 9, 0, 0, 0, time.UTC)
 	var mu sync.Mutex
@@ -290,9 +290,9 @@ func TestOutbox(t *testing.T) {
 	}
 	mu.Unlock()
 
-	s.Queue(Op{Op: "post", Chat: "c_one", Text: "again"})
-	if p := read("other.5"); len(p.Ops) != 1 || p.Ops[0].Text != "again" {
-		t.Errorf("an unknown cursor %+v", p)
+	ids, err := s.QueueIDs(Op{Op: "post", Chat: "c_one", Text: "again"})
+	if p := read("other.5"); err != nil || len(p.Ops) != 1 || p.Ops[0].Text != "again" || len(ids) != 1 || p.Ops[0].ID != ids[0] {
+		t.Errorf("an unknown cursor %+v, IDs %v", p, ids)
 	}
 	resp, _ := c.reply(c.request("resources/read", uriParams{"signalbot://elsewhere"}))
 	if resp.Error == nil || resp.Error.Code != codeNotFound {

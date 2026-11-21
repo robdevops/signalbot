@@ -755,6 +755,21 @@ func TestPost(t *testing.T) {
 	r, _ = h.ask(dm("anything else?"))
 	equal(t, "DM history", contents(r), []string{"user: anything else?"})
 
+	// A reply to an earlier post reaches the network, labelled or not; a
+	// plain post has none.
+	for _, p := range []feature.Post{{Chat: group, Label: "Label", Text: "the answer", ReplyTo: 5002}, {Chat: group, Text: "a reply", ReplyTo: 7}} {
+		post(p)
+		if s := h.nextSend(); s.reply != p.ReplyTo || s.text != p.Text {
+			t.Fatalf("sent %+v", s)
+		}
+		next()
+	}
+	post(feature.Post{Chat: group, Text: "plain"})
+	if s := h.nextSend(); s.reply != 0 {
+		t.Fatalf("sent %+v", s)
+	}
+	next()
+
 	for _, chat := range []feature.Chat{{User: strangerID}, {GroupID: "other"}} {
 		post(feature.Post{Chat: chat, Label: "Label", Text: "never sent"})
 		if d := next(); !d.dropped || d.sent != nil {

@@ -377,6 +377,13 @@ func start(ctx context.Context, h feature.Host, path string, servers map[string]
 	taken := map[string]owner{} // the model's names for tools, and whose they are
 	var cmds []string           // for the startup line
 	var gates []*gate           // opened on return, so no request waits on one for good
+	stateDirectory := ""        // read only with an addon, so MCP without one reads only MCP_CONFIG
+	for _, s := range servers {
+		if s.Addon != nil {
+			stateDirectory = h.Env("STATE_DIRECTORY", "")
+			break
+		}
+	}
 	defer func() {
 		for _, g := range gates {
 			g.open(nil)
@@ -396,6 +403,7 @@ func start(ctx context.Context, h feature.Host, path string, servers map[string]
 			s := &stdioConn{name: name, cfg: cfg, bot: self, redact: h.Redact}
 			if cfg.Addon != nil {
 				s.prefix, s.updated = envPrefix(name), make(chan struct{}, 1)
+				s.state = addonStateDir(stateDirectory, name)
 			}
 			if self.sample {
 				// Sampling is offered from initialize on, so its requests are

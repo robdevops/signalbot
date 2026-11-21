@@ -117,14 +117,15 @@ func Text(s string) Result { return Result{Content: []Content{{Type: "text", Tex
 
 // Op is one thing an addon's outbox asks the bot to do.
 type Op struct {
-	ID     string  `json:"id"`
-	Op     string  `json:"op"`               // "post", "react" or "unwatch"
-	Chat   string  `json:"chat,omitempty"`   // a post's or unwatch's chat pseudonym
-	Text   string  `json:"text,omitempty"`   // a post's, with {u_…} placeholders the bot fills in with names
-	Images []Image `json:"images,omitempty"` // a post's: at most 2, 2 MB in all
-	Ref    string  `json:"ref,omitempty"`    // a reaction's message
-	Emoji  string  `json:"emoji,omitempty"`  // a reaction's
-	Watch  string  `json:"watch,omitempty"`  // the ID of the watch an unwatch ends
+	ID      string  `json:"id"`
+	Op      string  `json:"op"`                // "post", "react" or "unwatch"
+	Chat    string  `json:"chat,omitempty"`    // a post's or unwatch's chat pseudonym
+	Text    string  `json:"text,omitempty"`    // a post's, with {u_…} placeholders the bot fills in with names
+	Images  []Image `json:"images,omitempty"`  // a post's: at most 2, 2 MB in all
+	Ref     string  `json:"ref,omitempty"`     // a reaction's message
+	Emoji   string  `json:"emoji,omitempty"`   // a reaction's
+	Watch   string  `json:"watch,omitempty"`   // the ID of the watch an unwatch ends
+	ReplyTo string  `json:"replyTo,omitempty"` // a post's: the ID of an earlier post of the addon's in the same chat, which it is sent as a reply to
 }
 
 // Image is an image in a post.

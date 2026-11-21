@@ -18,13 +18,15 @@ import (
 const maxApplied = 1000
 
 // addonState is what is saved of an addon: its live watches, the messages
-// they took, the chats it may post in, and how far its outbox was read.
+// they took, the chats it may post in, how far its outbox was read, and
+// the posts it sent that a later post may reply to.
 type addonState struct {
-	Watches []watch          `json:"watches,omitempty"`
-	Claims  []claim          `json:"claims,omitempty"`
-	Leases  map[string]lease `json:"leases,omitempty"` // by chat pseudonym
-	Cursor  string           `json:"cursor,omitempty"`
-	Applied []string         `json:"applied,omitempty"` // oldest first
+	Watches []watch           `json:"watches,omitempty"`
+	Claims  []claim           `json:"claims,omitempty"`
+	Leases  map[string]lease  `json:"leases,omitempty"` // by chat pseudonym
+	Cursor  string            `json:"cursor,omitempty"`
+	Applied []string          `json:"applied,omitempty"` // oldest first
+	Posted  map[string]posted `json:"posted,omitempty"`  // by post op ID
 }
 
 // keeper keeps the mcp store's document: the pseudonyms' secret and each
@@ -124,6 +126,16 @@ func (a *addon) state() addonState {
 			delete(a.tombs, id)
 		}
 	}
+	for id, p := range a.posted {
+		if !now.Before(p.Expires) {
+			delete(a.posted, id)
+			continue
+		}
+		if s.Posted == nil {
+			s.Posted = map[string]posted{}
+		}
+		s.Posted[id] = p
+	}
 	// In a fixed order, so an unchanged state saves the same.
 	slices.SortFunc(s.Watches, func(x, y watch) int {
 		return cmp.Or(x.Until.Compare(y.Until), strings.Compare(x.Chat, y.Chat), strings.Compare(x.ID, y.ID))
@@ -159,6 +171,12 @@ func (a *addon) restore(s addonState) {
 		w.key, w.re, w.Sent = l.Chat.Key(), re, w.Sent[max(len(w.Sent)-maxSent, 0):]
 		a.watches[w.key] = append(a.watches[w.key], &w)
 	}
+	for id, p := range s.Posted {
+		if now.Before(p.Expires) {
+			a.posted[id] = p
+		}
+	}
+	a.trimPosted()
 	a.cursor = s.Cursor
 	for _, id := range s.Applied[max(len(s.Applied)-maxApplied, 0):] {
 		a.remember(id)

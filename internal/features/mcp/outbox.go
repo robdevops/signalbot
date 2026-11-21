@@ -216,6 +216,8 @@ func (a *addon) apply(o ext.Op) (why string) {
 	case again:
 	case o.Op == "post" && failed && now.Before(f.retry):
 		again, a.missed = true, true // not yet: a later read posts it
+	case o.Op == "post" && a.waitsToPost(o.ReplyTo):
+		again, a.missed = true, true // after the post it replies to
 	case o.Op != "post":
 		a.remember(o.ID)
 	}
@@ -258,6 +260,13 @@ func (a *addon) apply(o ext.Op) (why string) {
 	return ""
 }
 
+// waitsToPost reports whether the post op called id was dropped and waits
+// to be posted again. a.mu is held.
+func (a *addon) waitsToPost(id string) bool {
+	_, failed := a.failed[id]
+	return id != "" && failed && !a.sending[id]
+}
+
 // post posts o in its chat, if the addon may. One posted again, after it
 // was dropped, isn't counted against the rate again.
 func (a *addon) post(o ext.Op, again bool) (why string) {
@@ -276,7 +285,7 @@ func (a *addon) post(o ext.Op, again bool) (why string) {
 		b64 = append(b64, im.Data)
 	}
 	out := &outgoing{Post: feature.Post{Chat: l.Chat, Label: a.title, Text: txt.Clamp(a.fill(l.Chat, strings.TrimSpace(o.Text)), maxAnswer), Pictures: a.pictures(b64)},
-		ops: []string{o.ID}}
+		ops: []string{o.ID}, replyTo: o.ReplyTo}
 	switch {
 	case out.Text == "" && len(out.Pictures) == 0:
 		return "empty posts"
@@ -287,15 +296,22 @@ func (a *addon) post(o ext.Op, again bool) (why string) {
 	return ""
 }
 
-// outgoing is a post of the addon's, and the ops it carries.
+// outgoing is a post of the addon's, the ops it carries, and the ID of
+// the post op it replies to, if any.
 type outgoing struct {
 	feature.Post
-	ops []string
+	ops     []string
+	replyTo string
 }
 
 // fits reports whether p can join o in one post: their pictures, and
 // their texts whole, so a merge never cuts a post that fit on its own.
+// A reply joins no other post, and none joins it, so it stays a message
+// of its own and a later post a new one.
 func (o *outgoing) fits(p *outgoing) bool {
+	if o.replyTo != "" || p.replyTo != "" {
+		return false
+	}
 	size := 0
 	for _, pic := range append(slices.Clone(o.Pictures), p.Pictures...) {
 		size += len(pic.Data)
@@ -334,27 +350,96 @@ func (a *addon) send(id string, out *outgoing) {
 	a.mail(id, out)
 }
 
-// mail puts out in its chat's mailbox.
+// mail puts out in its chat's mailbox, as a reply to the post it replies
+// to if that was sent in the same chat and is still remembered; otherwise
+// as an ordinary post. Posts in a chat are mailed in turn, so a post sent
+// before this one is remembered by now. A reply to a post that was dropped
+// and waits to be posted again waits too, and is posted after it.
 func (a *addon) mail(id string, out *outgoing) {
 	p := out.Post
+	if out.replyTo != "" {
+		a.mu.Lock()
+		pending, retry := a.waitsToPost(out.replyTo), a.failed[out.replyTo].retry
+		if t, ok := a.posted[out.replyTo]; ok && t.Chat == id && a.now().Before(t.Expires) {
+			p.ReplyTo = t.Sent
+		}
+		a.mu.Unlock()
+		if pending {
+			a.postpone(out.ops, retry)
+			a.mailNext(id)
+			return
+		}
+	}
 	p.OnSent = func(sent []int64, dropped bool) {
 		if !dropped {
 			a.replied(p.Chat, sent)
+			a.rememberPosted(id, out.ops, sent)
 		}
 		a.sent(out.ops, !dropped)
-		a.mu.Lock()
-		held := a.waiting[id]
-		if len(held) == 0 {
-			delete(a.waiting, id)
-		} else {
-			a.waiting[id] = held[1:]
-		}
-		a.mu.Unlock()
-		if len(held) > 0 {
-			a.mail(id, held[0])
-		}
+		a.mailNext(id)
 	}
 	a.host.Post(p)
+}
+
+// mailNext mails the next post held for the chat whose pseudonym is id, if
+// one is.
+func (a *addon) mailNext(id string) {
+	a.mu.Lock()
+	held := a.waiting[id]
+	if len(held) == 0 {
+		delete(a.waiting, id)
+	} else {
+		a.waiting[id] = held[1:]
+	}
+	a.mu.Unlock()
+	if len(held) > 0 {
+		a.mail(id, held[0])
+	}
+}
+
+// posted is a post op the addon sent: the pseudonym of its chat, the first
+// of the timestamps it went out in, which a reply names, and until when a
+// later post may reply to it.
+type posted struct {
+	Chat    string    `json:"chat"`
+	Sent    int64     `json:"sent"`
+	Expires time.Time `json:"expires"`
+}
+
+// How long a post op is remembered for a later post's replyTo, and how
+// many are.
+const (
+	postedLife = 24 * time.Hour
+	maxPosted  = 256
+)
+
+// rememberPosted records that the post carrying ops went out in the chat whose
+// pseudonym is chat, first as sent[0], so a later post may reply to it.
+func (a *addon) rememberPosted(chat string, ops []string, sent []int64) {
+	if len(sent) == 0 {
+		return
+	}
+	until := a.now().Add(postedLife)
+	a.mu.Lock()
+	for _, id := range ops {
+		a.posted[id] = posted{Chat: chat, Sent: sent[0], Expires: until}
+	}
+	a.trimPosted()
+	a.mu.Unlock()
+}
+
+// trimPosted forgets the posts that expire soonest past maxPosted. a.mu is
+// held.
+func (a *addon) trimPosted() {
+	if len(a.posted) <= maxPosted {
+		return
+	}
+	ids := slices.SortedFunc(maps.Keys(a.posted), func(x, y string) int {
+		return cmp.Or(a.posted[x].Expires.Compare(a.posted[y].Expires), strings.Compare(x, y))
+	})
+	for _, id := range ids[:len(ids)-maxPosted] {
+		delete(a.posted, id)
+	}
 }
 
 // sent records that the post carrying ops was sent, or dropped before it
@@ -392,10 +477,34 @@ func (a *addon) sent(ops []string, ok bool) {
 		time.AfterFunc(retry, a.poke)
 	}
 	if settled {
-		select {
-		case a.settled <- struct{}{}:
-		default:
-		}
+		a.signalSettled()
+	}
+}
+
+// postpone puts the post carrying ops back, to be read and posted again
+// from until, without counting a try: the post it replies to wasn't sent
+// yet, and is posted again then.
+func (a *addon) postpone(ops []string, until time.Time) {
+	a.mu.Lock()
+	for _, id := range ops {
+		delete(a.sending, id)
+		a.failed[id] = failure{a.failed[id].tries, until}
+	}
+	a.missed = true
+	settled := len(a.sending) == 0
+	a.mu.Unlock()
+	a.changed()
+	if settled {
+		a.signalSettled()
+	}
+}
+
+// signalSettled tells a read waiting for its posts that none is being
+// sent.
+func (a *addon) signalSettled() {
+	select {
+	case a.settled <- struct{}{}:
+	default:
 	}
 }
 

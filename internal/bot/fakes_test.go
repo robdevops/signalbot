@@ -65,6 +65,7 @@ type sent struct {
 	text   string
 	images []feature.Picture
 	known  map[string]string
+	reply  int64
 }
 
 func (n *fakeNet) Watch(w Watch) {
@@ -90,11 +91,11 @@ func (n *fakeNet) WaitID(ctx context.Context) string {
 
 // Send returns one timestamp per call, counting up from 5000, or none
 // while fail is set.
-func (n *fakeNet) Send(chat feature.Chat, text string, images []feature.Picture, known map[string]string) []int64 {
+func (n *fakeNet) Send(chat feature.Chat, text string, images []feature.Picture, known map[string]string, replyTo int64) []int64 {
 	if n.fail.Load() {
 		return nil
 	}
-	n.sent <- sent{chat, text, images, known}
+	n.sent <- sent{chat, text, images, known, replyTo}
 	return []int64{5000 + n.sends.Add(1)}
 }
 

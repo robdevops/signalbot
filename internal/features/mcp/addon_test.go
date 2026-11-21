@@ -308,9 +308,9 @@ func TestAddonLoad(t *testing.T) {
 	}
 }
 
-// An addon gets PATH, HOME, the time zone and proxy settings, and the
-// bot's variables with its prefix, never the bot's own; it is offered
-// signalbot's extension in the handshake.
+// An addon gets PATH, HOME, the time zone and proxy settings, the bot's
+// variables with its prefix, never the bot's own, and its state directory;
+// it is offered signalbot's extension in the handshake.
 func TestAddonEnv(t *testing.T) {
 	t.Setenv("MODEL_API_KEY", "secret-key")
 	t.Setenv("GAME_TOKEN", "t")
@@ -319,9 +319,75 @@ func TestAddonEnv(t *testing.T) {
 		t.Setenv(name, "x")
 	}
 	h, _ := startAddon(t, `{"mcpServers":{"game":`+addonServer("addon", `{"dms":true}`, direct)+`}}`)
-	want := strings.Join(slices.Sorted(slices.Values(append([]string{"GAME_TOKEN", "HOME", "PATH"}, shared...))), ",")
+	want := strings.Join(slices.Sorted(slices.Values(append([]string{"GAME_STATE_DIR", "GAME_TOKEN", "HOME", "PATH"}, shared...))), ",")
 	if got := h.Message(context.Background(), in(inDM, "/env")); got.Answer != want {
 		t.Fatalf("env %+v", got)
+	}
+}
+
+// An addon's default state directory is addons/<name> in the bot's first
+// state directory, made absolute; none without STATE_DIRECTORY, or for a
+// name that isn't safe as a directory's name.
+func TestAddonStateDir(t *testing.T) {
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range []struct{ stateDirectory, name, want string }{
+		{"/var/lib/signalbot", "quiz", "/var/lib/signalbot/addons/quiz"},
+		{"/var/lib/signalbot:/other", "geo.v2", "/var/lib/signalbot/addons/geo.v2"},
+		{"/data/", "my-quiz_1", "/data/addons/my-quiz_1"},
+		{"state", "quiz", filepath.Join(wd, "state", "addons", "quiz")},
+		{"", "quiz", ""},
+		{":/other", "quiz", ""},
+		{"/data", "", ""},
+		{"/data", ".", ""},
+		{"/data", "..", ""},
+		{"/data", ".hidden", ""},
+		{"/data", "a/b", ""},
+		{"/data", "../x", ""},
+		{"/data", `a\b`, ""},
+		{"/data", "a b", ""},
+		{"/data", "quiz\x00", ""},
+		{"/data", "jeu-é", ""},
+		{"/data", strings.Repeat("a", 64), "/data/addons/" + strings.Repeat("a", 64)},
+		{"/data", strings.Repeat("a", 65), ""},
+	} {
+		if got := addonStateDir(c.stateDirectory, c.name); got != c.want {
+			t.Errorf("%q, %q: got %q, want %q", c.stateDirectory, c.name, got, c.want)
+		}
+	}
+}
+
+// An addon's STATE_DIR is the default given, unless the bot's environment
+// sets its own, which wins; with no default, it gets none.
+func TestAddonEnvStateDir(t *testing.T) {
+	stateDirs := func(env []string) []string {
+		var out []string
+		for _, kv := range env {
+			if strings.HasPrefix(kv, "QUIZ_STATE_DIR=") {
+				out = append(out, kv)
+			}
+		}
+		return out
+	}
+	if got := stateDirs(addonEnv("QUIZ_", "/data/addons/quiz")); !slices.Equal(got, []string{"QUIZ_STATE_DIR=/data/addons/quiz"}) {
+		t.Errorf("default: %q", got)
+	}
+	if got := stateDirs(addonEnv("QUIZ_", "")); len(got) != 0 {
+		t.Errorf("no state directory: %q", got)
+	}
+	for _, blank := range []string{"", "  "} {
+		t.Setenv("QUIZ_STATE_DIR", blank)
+		if got := stateDirs(addonEnv("QUIZ_", "/data/addons/quiz")); !slices.Equal(got, []string{"QUIZ_STATE_DIR=/data/addons/quiz"}) {
+			t.Errorf("blank %q: %q", blank, got)
+		}
+	}
+	t.Setenv("QUIZ_STATE_DIR", "/home/alice/quiz")
+	for _, def := range []string{"/data/addons/quiz", ""} {
+		if got := stateDirs(addonEnv("QUIZ_", def)); !slices.Equal(got, []string{"QUIZ_STATE_DIR=/home/alice/quiz"}) {
+			t.Errorf("own value, default %q: %q", def, got)
+		}
 	}
 }
 
