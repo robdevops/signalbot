@@ -55,12 +55,12 @@ The model can call tools from [MCP](https://modelcontextprotocol.io) servers, re
     }
   },
   "geo": {
-    "command": "/addons/geoguess",
+    "command": "/opt/signalbot-addons/geoguess",
     "chat_commands": {"geo": {"tool": "geo", "direct": true, "example": "/geo 3m", "timeout": "60s"}},
     "addon": {"chats": ["all"], "dms": false, "post": true, "react": true, "watch": true, "watch_max": "1h"}
   },
   "quiz": {
-    "command": "/addons/quiz",
+    "command": "/opt/signalbot-addons/quiz",
     "chat_commands": {"quiz": {"tool": "quiz", "direct": true, "example": "/quiz 80s music", "timeout": "90s"}},
     "addon": {"chats": ["all"], "post": true, "react": true, "watch": true, "model": {"per_hour": 30, "max_tokens": 4000}}
   },
@@ -111,7 +111,7 @@ An addon written in Go can use the package [`github.com/robdevops/signalbot/addo
 
 ```jsonc
 "geo": {
-  "command": "/addons/geoguess",
+  "command": "/opt/signalbot-addons/geoguess",
   "chat_commands": {"geo": {"tool": "geo", "direct": true, "example": "/geo 3m", "timeout": "60s"}},
   "addon": {
     "chats": ["<group ID>"],
@@ -150,7 +150,7 @@ Each permission is off unless set. For an addon, `chats`, `dms` and these permis
 - **Settings.** An addon has no `env` block. It gets `PATH`, `HOME`, the bot's time zone (`TZ`) and proxy settings (`HTTPS_PROXY`, `HTTP_PROXY`, `NO_PROXY`, and `SSL_CERT_FILE` or `SSL_CERT_DIR` for a custom CA) if set, and every variable in the bot's environment (`/etc/signalbot.env`) that starts with its server's name in capitals, anything but letters and digits as `_`, then `_`: the server `geo` gets `GEO_STATE_DIR`, `GEO_MAPILLARY_TOKEN` and so on, and never the bot's own keys. A name whose prefix starts one of the bot's settings (such as `model`, `signal` or `mcp`) is a config error. If an addon keeps files, give it a directory under its prefix and create it, writable by the bot's user.
 - **Logs.** The bot logs an addon's commands, calls and drops by name, outcome, time and size, never what was said. An addon's stderr is counted ("addon geo wrote 3 lines (210 bytes) to stderr", at most once a minute and once more when it exits), never logged, since it may echo a message. To debug an addon, run it on its own with stderr going to your own file.
 - **State.** The bot keeps an addon's watches, the messages they took, the chats it may post in and how far it has read its outbox in `mcp.json`, so a restart of either doesn't lose a round. See [PRIVACY.md](../PRIVACY.md#addons).
-- **Docker.** The image has no shell or runtimes, so an addon must be a static binary (`CGO_ENABLED=0 go build`), mounted read-only, such as `- /opt/signalbot-addons:/addons:ro` in `compose.yaml`. The state directory must be writable by user 65532 for `mcp.json`, and so must any directory the addon keeps files in. Addons share the container's or unit's memory and process limits, so raise `mem_limit` or `MemoryMax` to suit; `GOMEMLIMIT` isn't passed on, so a Go addon takes its limit from its own setting (GeoGuess: `GEO_MEMLIMIT`).
+- **Docker.** The image has no shell or runtimes, so an addon must be a static binary (`CGO_ENABLED=0 go build`), mounted read-only at the same path, such as `- /opt/signalbot-addons:/opt/signalbot-addons:ro` in `compose.yaml`, so its `command` is the same under Docker and systemd (whose `ProtectSystem=strict` leaves `/opt` readable). The state directory must be writable by user 65532 for `mcp.json`, and so must any directory the addon keeps files in. Addons share the container's or unit's memory and process limits, so raise `mem_limit` or `MemoryMax` to suit; `GOMEMLIMIT` isn't passed on, so a Go addon takes its limit from its own setting (GeoGuess: `GEO_MEMLIMIT`).
 
 ---
 

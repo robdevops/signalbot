@@ -11,12 +11,12 @@
     }
   },
   "geo": {
-    "command": "/addons/geoguess",
+    "command": "/opt/signalbot-addons/geoguess",
     "chat_commands": {"geo": {"tool": "geo", "direct": true, "example": "/geo 3m", "timeout": "60s"}},
     "addon": {"chats": ["all"], "dms": false, "post": true, "react": true, "watch": true, "watch_max": "1h"}
   },
   "quiz": {
-    "command": "/addons/quiz",
+    "command": "/opt/signalbot-addons/quiz",
     "chat_commands": {"quiz": {"tool": "quiz", "direct": true, "example": "/quiz 80s music", "timeout": "90s"}},
     "addon": {"chats": ["all"], "post": true, "react": true, "watch": true, "model": {"per_hour": 30, "max_tokens": 4000}}
   },
