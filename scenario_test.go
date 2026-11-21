@@ -544,12 +544,14 @@ func TestScenarioLinkedDeviceDeletesBotReply(t *testing.T) {
 	h := startBot(t, world{})
 	h.queue(modelReply{Text: "the secret is 42"})
 	h.ask(fromAlice("what is the secret?"))
+	h.settle() // the reply\'s sent timestamp is in history
 	h.receive(syncFrame("", idAlice, h.lastSentAt(), false))
 	h.ask(fromAlice("and now?"))
 	equal(t, "conversation", h.lastRequest().contents(), []string{"user: what is the secret?", "user: and now?"})
 
 	h.queue(modelReply{Text: "the group secret is 7"})
 	h.ask(atBot("what is the group secret?"))
+	h.settle() // the reply\'s sent timestamp is in history
 	h.receive(syncFrame(idGroup, "", h.lastSentAt(), false))
 	h.ask(atBot("and now?"))
 	equal(t, "conversation", h.lastRequest().contents(), []string{"user: Alice: what is the group secret?", "user: Alice: and now?"})
@@ -561,6 +563,7 @@ func TestScenarioLinkedDeviceEditDropsBotReply(t *testing.T) {
 	h := startBot(t, world{})
 	h.queue(modelReply{Text: "the first answer"})
 	h.ask(fromAlice("the first question"))
+	h.settle() // the reply\'s sent timestamp is in history
 	h.receive(syncFrame("", idAlice, h.lastSentAt(), true))
 	h.ask(fromAlice("the second question"))
 	equal(t, "conversation", h.lastRequest().contents(), []string{"user: the first question", "user: the second question"})
@@ -2497,6 +2500,7 @@ func TestScenarioQuotedBotPictureIsTheOriginal(t *testing.T) {
 		t.Fatalf("model got another image (%d chars of base64, sent %d)", len(got), len(sentB64))
 	}
 	// Deleted from a linked device, it is gone: the thumbnail again.
+	h.settle() // the reply\'s sent timestamp is in history
 	h.receive(syncFrame("", idAlice, chartAt, false))
 	q2 := fromAlice("and now?")
 	q2.Quote = q.Quote
@@ -2541,8 +2545,7 @@ func TestScenarioLoneEmojiForARequestIsAskedAgain(t *testing.T) {
 }
 
 // /usage answers without the model: this chat's spending and tokens today
-// against the daily budget, and in a DM the API key's totals; in a group
-// only the chat's.
+// against the daily budget, and the API key's totals, in a group too.
 func TestScenarioUsage(t *testing.T) {
 	h := startBot(t, world{})
 	h.ask(fromAlice("hello")) // $0.002, 20 tokens in, 3 out
@@ -2554,7 +2557,7 @@ func TestScenarioUsage(t *testing.T) {
 	if n := len(h.requests()); n != 1 {
 		t.Fatalf("the model was asked %d times", n)
 	}
-	if s := h.ask(atBot("/credits")); strings.Contains(s.Message, "Account (API key)") || !strings.Contains(s.Message, "only in a DM") {
+	if s := h.ask(atBot("/credits")); !strings.Contains(s.Message, "Account (API key): $3.41 today") || s.GroupID != idGroup {
 		t.Fatalf("group sent %q", s.Message)
 	}
 }

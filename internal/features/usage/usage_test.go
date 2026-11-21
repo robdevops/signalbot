@@ -17,8 +17,8 @@ func answer(t *testing.T, h *featuretest.Host, m feature.Message) string {
 	return h.Message(context.Background(), m).Answer
 }
 
-// In a DM, /usage and its aliases give this chat's day and the key's
-// totals; in a group, only the chat's, as the key's are the operator's.
+// /usage and its aliases give this chat's day and the key's totals, in a
+// DM and in a group alike.
 func TestUsage(t *testing.T) {
 	h := featuretest.New()
 	h.Bot = feature.Info{Model: "x/model"}
@@ -37,7 +37,7 @@ func TestUsage(t *testing.T) {
 		}
 	}
 	group := feature.Message{Chat: feature.Chat{GroupID: "g"}, Sender: "alice", Addressed: true, Text: "/usage"}
-	if got := answer(t, h, group); strings.Contains(got, "Account (API key)") || !strings.Contains(got, "only in a DM") {
+	if got := answer(t, h, group); got != want {
 		t.Fatalf("group:\n%s", got)
 	}
 	dm.Text = "/usage please explain"

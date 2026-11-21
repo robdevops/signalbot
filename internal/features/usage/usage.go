@@ -1,7 +1,6 @@
 // Package usage answers "/usage", and its aliases "/credits" and
 // "/tokens", without the model: what the model has cost in this chat
-// today, against the daily budget, and in a DM the API key's own totals,
-// which are the operator's and not for a whole group.
+// today, against the daily budget, and the API key's own totals.
 package usage
 
 import (
@@ -22,8 +21,7 @@ func Register(h feature.Host) error {
 		if h.Info().Model == "" {
 			return feature.Action{Answer: "There's no model, so nothing is spent."}
 		}
-		dm := m.Chat.GroupID == ""
-		return feature.Action{Answer: report(h.Usage(ctx, m.Chat, dm), dm)}
+		return feature.Action{Answer: report(h.Usage(ctx, m.Chat, true))}
 	}
 	names := []string{"usage", "credits", "tokens"}
 	for _, n := range names {
@@ -35,8 +33,8 @@ func Register(h feature.Host) error {
 	return nil
 }
 
-// report is the answer: this chat's day, then in a DM the key's totals.
-func report(u feature.Usage, dm bool) string {
+// report is the answer: this chat's day, then the key's totals.
+func report(u feature.Usage) string {
 	var lines []string
 	if u.Tracked {
 		pct := 0.0
@@ -49,8 +47,6 @@ func report(u feature.Usage, dm bool) string {
 		lines = append(lines, "**This chat today:** not counted, as there's no daily budget (DAILY_BUDGET)")
 	}
 	switch k := u.Key; {
-	case !dm:
-		lines = append(lines, "The account's totals are shown only in a DM.")
 	case k == nil:
 		lines = append(lines, "**Account:** the API doesn't say what the key has spent")
 	default:

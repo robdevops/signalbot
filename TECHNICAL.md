@@ -236,7 +236,7 @@ In `features.go` order, which is the order hooks run in and of the tools line an
   - With no model it connects to no server and warns "MCP_CONFIG is set but no model is configured, so MCP servers were not started".
   - Config errors stop the bot, each starting with the file's path and naming the server: a key that is neither a setting nor one other clients write (`type`, `transport`, `timeout`, `alwaysAllow`, `autoApprove`, `description`, ignored), with the settings listed, in a server or a chat command; both `allowed_tools` and `blocked_tools`; a tool name the server lacks, with the list it is in and the server's tools (the first 20, then "…"); and two tools that become one name for the model, naming both.
 - **`schedule`** is `/schedule` ([below](#schedule)).
-- **`usage`** answers `/usage`, `/credits` and `/tokens` without the model: this chat's spending and tokens today against `DAILY_BUDGET`, with the time until midnight, from `Host.Usage`; in a DM also the API key's spending today, this week and this month and its remaining credit, from OpenRouter's `GET /key`. A group gets only the chat's line, since the key's totals are the operator's. Without a daily budget the chat's day isn't counted, and says so; on another API the key line says the API doesn't report it.
+- **`usage`** answers `/usage`, `/credits` and `/tokens` without the model: this chat's spending and tokens today against `DAILY_BUDGET`, with the time until midnight, from `Host.Usage`, then the API key's spending today, this week and this month and its remaining credit, from OpenRouter's `GET /key`, in a group as in a DM. Without a daily budget the chat's day isn't counted, and says so; on another API the key line says the API doesn't report it.
 
 ### `/schedule`
 
