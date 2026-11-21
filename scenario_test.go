@@ -2548,16 +2548,16 @@ func TestScenarioLoneEmojiForARequestIsAskedAgain(t *testing.T) {
 // against the daily budget, and the API key's totals, in a group too.
 func TestScenarioUsage(t *testing.T) {
 	h := startBot(t, world{})
-	h.ask(fromAlice("hello")) // $0.002, 20 tokens in, 3 out
+	h.ask(fromAlice("hello")) // $0.002
 	s := h.ask(fromAlice("/usage"))
-	if !strings.HasPrefix(s.Message, "This chat today: $0.002 of $1.00 (0%) · 20 tokens in, 3 out · resets in ") ||
-		!strings.Contains(s.Message, "\nAccount (API key): $3.41 today · $12.80 this week · $18.20 this month · $81.80 of $100.00 left (resets monthly)") {
+	if !strings.HasPrefix(s.Message, "This chat today: $0.00 of $1.00 (0%) · resets in ") ||
+		!strings.Contains(s.Message, "\nAccount: $3.41 today · $12.80 this week · $18.20 this month · $40.00 all time · $81.80 of $100.00 left (resets monthly)") {
 		t.Fatalf("sent %q", s.Message)
 	}
 	if n := len(h.requests()); n != 1 {
 		t.Fatalf("the model was asked %d times", n)
 	}
-	if s := h.ask(atBot("/credits")); !strings.Contains(s.Message, "Account (API key): $3.41 today") || s.GroupID != idGroup {
+	if s := h.ask(atBot("/tokens")); !strings.Contains(s.Message, "Account: $3.41 today") || s.GroupID != idGroup {
 		t.Fatalf("group sent %q", s.Message)
 	}
 }

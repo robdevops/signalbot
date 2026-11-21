@@ -18,7 +18,7 @@ A small, [privacy-conscious](PRIVACY.md) chat bot for Signal, through a running 
 - Responds to @mentions, replies to its messages, and DMs from whitelisted contacts
 - Tools: web search, line and pie charts, [pictures](docs/FILES_LINKS_TOOLS_MCP.md#images) (drawings, art, diagrams) with GPT Image 2, and your own [MCP connectors](docs/FILES_LINKS_TOOLS_MCP.md#mcp-connectors)
 - [`/schedule`](docs/SCHEDULING.md) a message or command, once or repeating
-- `/usage` (or `/credits`, `/tokens`): what the model has cost in this chat today, against the daily budget, and the API key's spending and remaining credit
+- `/usage` (or `/credits`, `/tokens`): what the model has cost in this chat today, against the daily budget, and the API key's spending for each period OpenRouter reports, with its remaining credit
 - Understands [files](docs/FILES_LINKS_TOOLS_MCP.md#files) (PDFs, text and code, Word, Excel and PowerPoint) and the [pages you link to](docs/FILES_LINKS_TOOLS_MCP.md#links), and if the model supports it, images, stickers, voice notes and other audio
 - Typing indicators, reactions, stickers, @mentions and replies
 - In-memory conversation context (Default: 10 messages). Never logged to disk, forgotten after 24 hours, or sooner if _disappearing messages_ requires.

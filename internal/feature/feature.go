@@ -143,7 +143,6 @@ type Usage struct {
 	Tracked bool          // the core counts each chat's spending (DAILY_BUDGET is on); the chat's fields are zero otherwise
 	Spent   float64       // US dollars this chat has spent today
 	Limit   float64       // DAILY_BUDGET, in US dollars
-	In, Out int           // tokens sent and received for this chat today
 	Resets  time.Duration // until midnight, local time, when the day's count starts again
 	Key     *KeyUsage     // nil unless asked for and the API says
 }
@@ -151,7 +150,7 @@ type Usage struct {
 // KeyUsage is the API key's spending, as OpenRouter reports it, in US
 // dollars.
 type KeyUsage struct {
-	Today, Week, Month, Total float64
+	Today, Week, Month, Total *float64 // nil for a period the API doesn't report
 	Limit, Remaining          *float64 // the key's credit limit and what is left of it; nil without one
 	Reset                     string   // how often the limit resets: "daily", "weekly", "monthly", or "" for never
 }

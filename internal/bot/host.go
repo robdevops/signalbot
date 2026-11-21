@@ -104,7 +104,7 @@ func (b *Bot) Usage(ctx context.Context, chat feature.Chat, key bool) feature.Us
 	var u feature.Usage
 	if b.budget != nil {
 		u.Tracked = true
-		u.Spent, u.In, u.Out, u.Limit, u.Resets = b.budget.usage(chat.Key())
+		u.Spent, u.Limit, u.Resets = b.budget.usage(chat.Key())
 	}
 	if key && b.ai != nil {
 		k, err := b.ai.KeyUsage(ctx)

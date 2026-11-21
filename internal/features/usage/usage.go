@@ -1,6 +1,7 @@
 // Package usage answers "/usage", and its aliases "/credits" and
 // "/tokens", without the model: what the model has cost in this chat
-// today, against the daily budget, and the API key's own totals.
+// today, against the daily budget, and the API key's totals for each
+// period the API reports.
 package usage
 
 import (
@@ -33,7 +34,8 @@ func Register(h feature.Host) error {
 	return nil
 }
 
-// report is the answer: this chat's day, then the key's totals.
+// report is the answer: this chat's day, then the key's totals for each
+// period the API reports.
 func report(u feature.Usage) string {
 	var lines []string
 	if u.Tracked {
@@ -41,45 +43,34 @@ func report(u feature.Usage) string {
 		if u.Limit > 0 {
 			pct = 100 * u.Spent / u.Limit
 		}
-		lines = append(lines, fmt.Sprintf("**This chat today:** %s of %s (%.0f%%) · %s tokens in, %s out · resets in %s",
-			dollars(u.Spent), dollars(u.Limit), pct, count(u.In), count(u.Out), until(u.Resets)))
+		lines = append(lines, fmt.Sprintf("**This chat today:** $%.2f of $%.2f (%.0f%%) · resets in %s", u.Spent, u.Limit, pct, until(u.Resets)))
 	} else {
 		lines = append(lines, "**This chat today:** not counted, as there's no daily budget (DAILY_BUDGET)")
 	}
-	switch k := u.Key; {
-	case k == nil:
-		lines = append(lines, "**Account:** the API doesn't say what the key has spent")
-	default:
-		line := fmt.Sprintf("**Account (API key):** %s today · %s this week · %s this month", dollars(k.Today), dollars(k.Week), dollars(k.Month))
-		if k.Limit != nil && k.Remaining != nil {
-			line += fmt.Sprintf(" · %s of %s left", dollars(*k.Remaining), dollars(*k.Limit))
-			if k.Reset != "" {
-				line += " (resets " + k.Reset + ")"
-			}
-		} else {
-			line += " · no credit limit on the key"
+	k := u.Key
+	if k == nil {
+		return strings.Join(append(lines, "**Account:** the API doesn't say what the key has spent"), "\n")
+	}
+	var parts []string
+	for _, p := range []struct {
+		v    *float64
+		name string
+	}{{k.Today, "today"}, {k.Week, "this week"}, {k.Month, "this month"}, {k.Total, "all time"}} {
+		if p.v != nil {
+			parts = append(parts, fmt.Sprintf("$%.2f %s", *p.v, p.name))
 		}
-		lines = append(lines, line)
 	}
-	return strings.Join(lines, "\n")
-}
-
-// dollars is d in US dollars: to the cent, or to a tenth of a cent below
-// ten cents, where most chats' days are.
-func dollars(d float64) string {
-	if d > 0 && d < 0.1 {
-		return fmt.Sprintf("$%.3f", d)
+	if k.Limit != nil && k.Remaining != nil {
+		left := fmt.Sprintf("$%.2f of $%.2f left", *k.Remaining, *k.Limit)
+		if k.Reset != "" {
+			left += " (resets " + k.Reset + ")"
+		}
+		parts = append(parts, left)
 	}
-	return fmt.Sprintf("$%.2f", d)
-}
-
-// count is n with thousands separators.
-func count(n int) string {
-	s := fmt.Sprint(n)
-	for i := len(s) - 3; i > 0; i -= 3 {
-		s = s[:i] + "," + s[i:]
+	if len(parts) == 0 {
+		parts = append(parts, "no figures reported")
 	}
-	return s
+	return strings.Join(append(lines, "**Account:** "+strings.Join(parts, " · ")), "\n")
 }
 
 // until is d in whole hours, or minutes under an hour.

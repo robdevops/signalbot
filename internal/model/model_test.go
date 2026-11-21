@@ -751,7 +751,7 @@ func TestKeyUsage(t *testing.T) {
 	if err != nil || path != "/key" || auth != "Bearer or-key" {
 		t.Fatalf("%v, %s, %s", err, path, auth)
 	}
-	if k.Today != 3.41 || k.Week != 12.8 || k.Month != 18.2 || k.Total != 40 || *k.Limit != 100 || *k.Remaining != 81.8 || k.Reset != "monthly" {
+	if *k.Today != 3.41 || *k.Week != 12.8 || *k.Month != 18.2 || *k.Total != 40 || *k.Limit != 100 || *k.Remaining != 81.8 || k.Reset != "monthly" {
 		t.Fatalf("got %+v", k)
 	}
 	path = ""

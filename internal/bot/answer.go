@@ -115,8 +115,8 @@ func (b *Bot) respond(msg feature.Message, act feature.Action, text string, refs
 			Tools:      tools,
 			ToolChoice: act.ToolChoice,
 		})
-		if b.budget != nil && (reply.Costed || reply.In > 0 || reply.Out > 0) { // every request counts, a failed or rejected one too
-			b.budget.add(key, reply.Cost, reply.In, reply.Out)
+		if b.budget != nil && reply.Costed { // every request counts, a failed or rejected one too
+			b.budget.add(key, reply.Cost)
 		}
 		off, again := b.fallBack(err, imagesOff)
 		if err == nil && nudge == "" && b.ignoredRequest(offered, msg, reply) {
