@@ -89,7 +89,7 @@ internal/feature/       the ports and shared types (the only part of the core fe
 internal/features/*     one package per feature
 internal/kit/*          code with two or more users and no bot knowledge
 internal/arch/          the guardrail tests and the sizes report
-addon/                  signalbot's MCP addon extension, for the bot and any addon written in Go: its wire format and a ready stdio server; public, standard library only
+addon/                  signalbot's MCP addon extension, for the bot and any addon written in Go: its wire format, a ready stdio server, and schema.json for addons in other languages; public, standard library only
 cmd/signalctl/          a small client for signal-cli's daemon socket, for one-off chores such as blocking; not part of the bot
 ```
 

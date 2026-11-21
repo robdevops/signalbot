@@ -656,3 +656,46 @@ func alive(pid int) bool {
 	_, after, _ := strings.Cut(string(stat), ") ")
 	return !strings.HasPrefix(after, "Z")
 }
+
+// The pseudonyms and refs the bot makes, and the context it sends, are as
+// addon/schema.json, the extension's schema for addons in any language,
+// says.
+func TestPseudonymsMatchSchema(t *testing.T) {
+	data, err := os.ReadFile("../../../addon/schema.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var s struct {
+		Defs struct {
+			Context struct {
+				Properties map[string]struct {
+					Pattern string `json:"pattern"`
+				} `json:"properties"`
+			} `json:"Context"`
+		} `json:"$defs"`
+	}
+	if err := json.Unmarshal(data, &s); err != nil {
+		t.Fatal(err)
+	}
+	a := newAddon("game", "Game", addonConfig{}, bytes.Repeat([]byte{7}, secretSize), nil, nil)
+	g := newAddon("game", "Game", addonConfig{GlobalIDs: true}, bytes.Repeat([]byte{7}, secretSize), nil, nil)
+	c := a.context(in(inA, "/play"), time.Now())
+	for key, ids := range map[string][]string{
+		"chat":   {c.Chat, a.chatID(inB)},
+		"sender": {c.Sender, g.userID(inA, "bob-id")},
+		"ref":    {c.Ref},
+	} {
+		re, err := regexp.Compile(s.Defs.Context.Properties[key].Pattern)
+		if err != nil || s.Defs.Context.Properties[key].Pattern == "" {
+			t.Fatalf("the schema's %s pattern: %v", key, err)
+		}
+		for _, id := range ids {
+			if !re.MatchString(id) {
+				t.Errorf("%s %q doesn't match the schema's %s", key, id, re)
+			}
+		}
+	}
+	if !placeholder.MatchString("{" + c.Sender + "}") {
+		t.Error("a sender's placeholder isn't filled in")
+	}
+}

@@ -7,7 +7,8 @@
 //
 // The bot's mcp feature and an addon both use these types, so the
 // protocol is defined once. An addon in another language implements the
-// same JSON. The package uses only the standard library.
+// same JSON, which schema.json, a JSON Schema kept in step with these types
+// by a test, describes. The package uses only the standard library.
 package addon
 
 import "time"
