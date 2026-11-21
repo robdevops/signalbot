@@ -20,6 +20,7 @@ import (
 // A watch's limits.
 const (
 	maxWatches = 8       // live in one chat, per addon
+	maxSent    = 64      // the addon's messages a reply watch knows replies to
 	maxPattern = 1 << 10 // a pattern's size, in characters, as addon/schema.json counts
 	maxWatchID = 64      // an ID's size, in characters
 	maxGuard   = 500     // a guard's size, in runes
@@ -35,7 +36,9 @@ var watchRate = rateConfig{PerMinute: 120, Burst: 20}
 
 // watch is a live watch: an addon's claim, until Until, on the messages
 // matching Pattern in one chat that the bot gets while it lasts, and the
-// edits of those sent from Since on.
+// edits of those sent from Since on. With Replies, only addressed replies
+// to the addon's own messages sent while it lives, in Sent, are taken, and
+// Pattern may be empty.
 type watch struct {
 	ID       string    `json:"id"`
 	Chat     string    `json:"chat"` // the chat's pseudonym; its lease names the chat
@@ -45,6 +48,8 @@ type watch struct {
 	Since    int64     `json:"since"` // the Timestamp of the command that made it, by its sender's clock: only for edits
 	Until    time.Time `json:"until"`
 	Pictures []int64   `json:"pictures,omitempty"` // when the bot's messages with the command's pictures were sent, as Quote.Sent names them
+	Replies  bool      `json:"replies,omitempty"`
+	Sent     []int64   `json:"sent,omitempty"` // a reply watch's: when the addon's messages were sent, as Quote.Sent names them; the last maxSent
 
 	key string         // the chat's key
 	re  *regexp.Regexp // Pattern
@@ -126,14 +131,14 @@ func (a *addon) watch(m feature.Message, spec ext.Watch) *watch {
 	if re, err = regexp.Compile(spec.Pattern); err != nil {
 		return refuse("its pattern isn't RE2")
 	}
-	if ordinary(re) {
+	if !spec.Replies && ordinary(re) { // a reply to the addon's own message is meant for it
 		return refuse("its pattern matches ordinary chat")
 	}
 	if latest := now.Add(a.cfg.watchMax); until.After(latest) {
 		until = latest
 	}
 	w := &watch{ID: spec.ID, Chat: a.chatID(m.Chat), Pattern: spec.Pattern, Tool: spec.Tool, Guard: txt.Clamp(strings.TrimSpace(spec.Guard), maxGuard),
-		Since: m.Timestamp, Until: until, key: m.Chat.Key(), re: re}
+		Since: m.Timestamp, Until: until, Replies: spec.Replies, key: m.Chat.Key(), re: re}
 	a.mu.Lock()
 	tomb := w.Chat + "\x00" + w.ID
 	if t, ok := a.tombs[tomb]; ok && now.Before(t) {
@@ -163,6 +168,46 @@ func (a *addon) guarding(w *watch, sent []int64) {
 	a.changed()
 }
 
+// replied records that the addon's messages in chat went out at sent, on
+// each of the chat's live reply watches, so they take replies to them.
+func (a *addon) replied(chat feature.Chat, sent []int64) {
+	if len(sent) == 0 {
+		return
+	}
+	now := a.now()
+	found := false
+	a.mu.Lock()
+	for _, w := range a.watches[chat.Key()] {
+		if w.Replies && now.Before(w.Until) {
+			w.Sent = append(w.Sent, sent...)
+			w.Sent = w.Sent[max(len(w.Sent)-maxSent, 0):]
+			found = true
+		}
+	}
+	a.mu.Unlock()
+	if found {
+		a.changed()
+	}
+}
+
+// takes reports whether w takes m, apart from when: a reply watch only an
+// addressed reply to one of the addon's messages it knows, and its pattern,
+// if it has one, must match.
+func (a *addon) takes(w *watch, m feature.Message) bool {
+	if w.Replies {
+		if !m.Addressed || m.Quote == nil || !m.Quote.Bot || m.Quote.Sent == 0 {
+			return false
+		}
+		a.mu.Lock()
+		known := slices.Contains(w.Sent, m.Quote.Sent)
+		a.mu.Unlock()
+		if !known {
+			return false
+		}
+	}
+	return w.re.MatchString(m.Text)
+}
+
 // claim is the Action for m if one of the addon's watches takes it: Done,
 // with m sent to the watch worker. So is an edit of a message one took. An
 // addressed message that quotes the pictures of a watch with a guard, even
@@ -173,7 +218,7 @@ func (a *addon) guarding(w *watch, sent []int64) {
 // An original is taken whenever the bot gets it while a watch lasts, not by
 // its Timestamp: on Signal that is its sender's clock, which may be behind.
 // An edit's original must be from Since on, so an older message's edit is
-// never taken.
+// never taken. A reply watch takes only what takes says.
 func (a *addon) claim(m feature.Message) feature.Action {
 	if !a.allows(m.Chat) {
 		return feature.Action{}
@@ -196,7 +241,7 @@ func (a *addon) claim(m feature.Message) feature.Action {
 		a.mu.Unlock()
 	}
 	for _, w := range live {
-		if got.tool == "" && now.Before(w.Until) && (m.Edited == 0 || m.Timestamp >= w.Since) && w.re.MatchString(m.Text) {
+		if got.tool == "" && now.Before(w.Until) && (m.Edited == 0 || m.Timestamp >= w.Since) && a.takes(w, m) {
 			got.tool = w.Tool
 		}
 	}
@@ -357,6 +402,16 @@ type bucket struct {
 
 func newLimiter(rate rateConfig) *limiter {
 	return &limiter{every: time.Minute / time.Duration(max(rate.PerMinute, 1)), burst: float64(max(rate.Burst, 1)), buckets: map[string]*bucket{}}
+}
+
+// hourly is a limiter of m.PerHour tokens an hour, all of them at once if
+// saved up; nil if m is.
+func hourly(m *modelConfig) *limiter {
+	if m == nil {
+		return nil
+	}
+	n := max(m.PerHour, 1)
+	return &limiter{every: time.Hour / time.Duration(n), burst: float64(n), buckets: map[string]*bucket{}}
 }
 
 // fill is chat's bucket at now, with what came back since. l.mu is held.

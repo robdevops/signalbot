@@ -678,8 +678,9 @@ func TestExampleFile(t *testing.T) {
 	}
 	t.Setenv("WEATHER_TOKEN", "x")
 	s, err := load("../../../examples/signalbot-mcp.json")
-	if err != nil || len(s) != 2 || s["weather"].Headers["Authorization"] != "Bearer x" || s["weather"].ChatCommands["forecast"].Example == "" ||
-		s["geo"].Addon == nil || !s["geo"].Addon.Watch || !s["geo"].ChatCommands["geo"].Direct {
+	if err != nil || len(s) != 3 || s["weather"].Headers["Authorization"] != "Bearer x" || s["weather"].ChatCommands["forecast"].Example == "" ||
+		s["geo"].Addon == nil || !s["geo"].Addon.Watch || !s["geo"].ChatCommands["geo"].Direct || s["geo"].Addon.Model != nil ||
+		s["quiz"].Addon == nil || s["quiz"].Addon.Model == nil || *s["quiz"].Addon.Model != (modelConfig{30, 4000}) {
 		t.Fatalf("loaded %+v, %v", s, err)
 	}
 }

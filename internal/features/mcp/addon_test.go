@@ -269,15 +269,20 @@ func TestCoreSettingsAreTheDocs(t *testing.T) {
 
 func TestAddonLoad(t *testing.T) {
 	s, err := load(writeConfig(t, `{"mcpServers":{"game":`+addonServer("addon", `{"chats":["`+groupA+`","`+telegram+`"],"dms":true}`, direct)+`,`+
-		`"all":`+addonServer("addon", `{"chats":["all"],"watch_max":"30m","rate":{"per_minute":6}}`, "")+`}}`))
+		`"all":`+addonServer("addon", `{"chats":["all"],"watch_max":"30m","rate":{"per_minute":6},"model":{"per_hour":5}}`, "")+`,`+
+		`"ask":`+addonServer("addon", `{"model":{}}`, "")+`}}`))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if a := s["game"].Addon; a == nil || !a.DMs || len(a.Chats) != 2 || a.watchMax != time.Hour || a.Rate != (rateConfig{20, 5}) || !s["game"].ChatCommands["play"].Direct {
+	if a := s["game"].Addon; a == nil || !a.DMs || len(a.Chats) != 2 || a.watchMax != time.Hour || a.Rate != (rateConfig{20, 5}) || a.Model != nil ||
+		!s["game"].ChatCommands["play"].Direct {
 		t.Fatalf("game: %+v", s["game"])
 	}
-	if a := s["all"].Addon; a.watchMax != 30*time.Minute || a.Rate != (rateConfig{6, 5}) {
+	if a := s["all"].Addon; a.watchMax != 30*time.Minute || a.Rate != (rateConfig{6, 5}) || a.Model == nil || *a.Model != (modelConfig{5, 4000}) {
 		t.Fatalf("all: %+v", a)
+	}
+	if a := s["ask"].Addon; a.Model == nil || *a.Model != (modelConfig{30, 4000}) {
+		t.Fatalf("ask: %+v", a)
 	}
 	for bad, want := range map[string]string{
 		`{"mcpServers":{"geo":{"url":"https://x","addon":{}}}}`:                                             `: MCP server "geo": an addon needs a command: addons run only as local servers`,
@@ -285,12 +290,15 @@ func TestAddonLoad(t *testing.T) {
 		`{"mcpServers":{"model":{"command":"x","addon":{}}}}`:                                               `: MCP server "model": an addon's settings start with MODEL_, as the bot's own MODEL_API_KEY does; rename the server`,
 		`{"mcpServers":{"Daily":{"command":"x","addon":{}}}}`:                                               `: MCP server "Daily": an addon's settings start with DAILY_, as the bot's own DAILY_BUDGET does; rename the server`,
 		`{"mcpServers":{"geo":{"command":"x","chat_commands":{"geo":{"tool":"geo","direct":true}}}}}`:       `: MCP server "geo": chat command "geo" is direct, which needs an addon block`,
-		`{"mcpServers":{"geo":{"command":"x","addon":{"chat":["all"]}}}}`:                                   `: MCP server "geo": addon: unknown setting "chat" (settings are chats, dms, post, react, watch, watch_max, names, global_ids, rate)`,
+		`{"mcpServers":{"geo":{"command":"x","addon":{"chat":["all"]}}}}`:                                   `: MCP server "geo": addon: unknown setting "chat" (settings are chats, dms, post, react, watch, watch_max, names, global_ids, rate, model)`,
 		`{"mcpServers":{"geo":{"command":"x","addon":{"rate":{"perMinute":1}}}}}`:                           `: MCP server "geo": addon rate: unknown setting "perMinute" (settings are per_minute, burst)`,
 		`{"mcpServers":{"geo":{"command":"x","addon":{"chats":["Family"]}}}}`:                               `: MCP server "geo": addon chats: "Family" isn't a group ID; copy the group's ID as Signal or Telegram shows it, or use "all"`,
 		`{"mcpServers":{"geo":{"command":"x","addon":{"chats":["all","` + groupA + `"]}}}}`:                 `: MCP server "geo": addon chats: "all" goes alone`,
 		`{"mcpServers":{"geo":{"command":"x","addon":{"watch_max":"25h"}}}}`:                                `: MCP server "geo": addon watch_max: "25h" isn't a time from 1s to 24h, such as 1h or 30m`,
 		`{"mcpServers":{"geo":{"command":"x","addon":{"rate":{"burst":-1}}}}}`:                              `: MCP server "geo": addon rate: per_minute and burst can't be below 0`,
+		`{"mcpServers":{"geo":{"command":"x","addon":{"model":{"perHour":1}}}}}`:                            `: MCP server "geo": addon model: unknown setting "perHour" (settings are per_hour, max_tokens)`,
+		`{"mcpServers":{"geo":{"command":"x","addon":{"model":{"per_hour":-1}}}}}`:                          `: MCP server "geo": addon model: per_hour and max_tokens can't be below 0`,
+		`{"mcpServers":{"geo":{"command":"x","addon":{"model":{"max_tokens":40000}}}}}`:                     `: MCP server "geo": addon model: max_tokens can't be over 32000`,
 		`{"mcpServers":{"geo":{"command":"x","chat_commands":{"g":{"tool":"g","drect":true}},"addon":{}}}}`: `: MCP server "geo": chat command "g": unknown setting "drect" (settings are tool, require_arg, example, direct, timeout)`,
 	} {
 		p := writeConfig(t, bad)

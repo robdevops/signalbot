@@ -344,7 +344,7 @@ func (c *Client) Ask(ctx context.Context, r Request) (Reply, error) {
 }
 
 // spend is what tools spent through the API during one Ask, which counts
-// toward the reply's cost.
+// toward the reply's cost, or what Calls with a ctx from Meter spent.
 type spend struct {
 	mu     sync.Mutex
 	cost   float64
@@ -353,13 +353,29 @@ type spend struct {
 
 type spendKey struct{}
 
-// add counts cost, if the API reported one, to the Ask ctx belongs to.
+// addSpend counts cost, if the API reported one, to the Ask or meter ctx
+// belongs to.
 func addSpend(ctx context.Context, cost float64, costed bool) {
 	if s, ok := ctx.Value(spendKey{}).(*spend); ok {
 		s.mu.Lock()
 		s.cost, s.costed = s.cost+cost, s.costed || costed
 		s.mu.Unlock()
 	}
+}
+
+// Metered reports whether what a Call with ctx costs is counted: toward
+// the reply, for a tool's ctx during an Ask, or by a meter from Meter.
+func Metered(ctx context.Context) bool {
+	_, ok := ctx.Value(spendKey{}).(*spend)
+	return ok
+}
+
+// Meter is ctx with a meter for what Calls made with it cost, outside an
+// Ask, and a func that returns what they cost since it was last called,
+// and whether the API reported a cost, for a caller that counts it itself.
+func Meter(ctx context.Context) (context.Context, func() (float64, bool)) {
+	s := &spend{}
+	return context.WithValue(ctx, spendKey{}, s), s.take
 }
 
 // take returns what was spent since it was last taken.
@@ -389,21 +405,29 @@ func (c *Client) Provider() string {
 	return ""
 }
 
-// Call posts body to path at the API, for a tool, and returns the
-// response. On OpenRouter it asks for providers that don't collect the
-// data, as every request does; the cost the response reports is added to
-// the reply of the Ask whose tool called it. Outside a tool there is no
-// reply to count it toward, so it refuses.
+// Call posts body to path at the API, for a tool or a ctx from Meter, and
+// returns the response. On OpenRouter it asks for providers that don't
+// collect the data, as every request does; the cost the response reports
+// is added to the reply of the Ask whose tool called it, or to ctx's
+// meter. Without either there is nothing to count it toward, so it
+// refuses. For "/chat/completions" the model is the client's own, whatever
+// body names, and on OpenRouter the cost is asked for.
 func (c *Client) Call(ctx context.Context, path string, body map[string]any) (json.RawMessage, error) {
-	if _, ok := ctx.Value(spendKey{}).(*spend); !ok {
-		return nil, errors.New("the model's API is called only from a tool")
+	if !Metered(ctx) {
+		return nil, errors.New("the model's API is called only from a tool, or metered")
 	}
-	if !apiPath.MatchString(path) || path == "/chat/completions" {
+	if !apiPath.MatchString(path) {
 		return nil, fmt.Errorf("not an endpoint a tool may call: %q", path)
 	}
 	body = maps.Clone(body)
 	if body == nil {
 		body = map[string]any{}
+	}
+	if path == "/chat/completions" {
+		body["model"] = c.model // never a dearer one
+		if c.openRouter {
+			body["usage"] = map[string]bool{"include": true}
+		}
 	}
 	if c.openRouter {
 		p := map[string]any{} // the body's provider settings, of whatever Go type, as a JSON object

@@ -43,19 +43,31 @@ type Config struct {
 }
 
 // Server is an addon's side of the protocol, on stdin and stdout: MCP's
-// initialize, tools and resources, the extension's context and outbox, and
-// cancellation. Make one with New.
+// initialize, tools and resources, the extension's context and outbox,
+// cancellation, and sampling the bot's model. Make one with New.
 type Server struct {
 	cfg   Config
 	tools map[string]Tool
-	nonce string        // this run's, in each outbox cursor and op ID
+	nonce string        // this run's, in each outbox cursor, op ID and request ID
 	dirty chan struct{} // the outbox gained ops: tell the bot
 
-	mu         sync.Mutex
-	network    string
-	subscribed bool
-	outbox     []held // ops the bot hasn't read past, oldest first
-	seq        int64  // the last op's sequence number
+	mu           sync.Mutex
+	network      string
+	sampling     bool // the bot offered sampling in initialize
+	watchReplies bool // the bot takes a watch with Replies
+	subscribed   bool
+	outbox       []held                 // ops the bot hasn't read past, oldest first
+	seq          int64                  // the last op's sequence number
+	wire         *wire                  // Run's, while it runs
+	asked        int64                  // the last request's sequence number
+	pending      map[string]chan answer // the requests to the bot awaiting an answer, by ID
+}
+
+// answer is the bot's answer to a request of the addon's: its result, or
+// why there is none.
+type answer struct {
+	result json.RawMessage
+	err    error
 }
 
 // held is an op waiting in the outbox, with this run's sequence number,
@@ -77,7 +89,8 @@ const (
 const MaxImages = 2
 
 // maxLine caps one incoming line. The bot's requests are small: a
-// command's arguments or one chat message.
+// command's arguments or one chat message; so are its answers to Sample,
+// which the addon block's max_tokens caps.
 const maxLine = 1 << 20
 
 // JSON-RPC's error codes, and MCP's for a resource that isn't there.
@@ -95,7 +108,7 @@ func New(c Config) *Server {
 	if c.Now == nil {
 		c.Now = time.Now
 	}
-	s := &Server{cfg: c, tools: map[string]Tool{}, nonce: randomID(4), dirty: make(chan struct{}, 1)}
+	s := &Server{cfg: c, tools: map[string]Tool{}, nonce: randomID(4), dirty: make(chan struct{}, 1), pending: map[string]chan answer{}}
 	for _, t := range c.Tools {
 		s.tools[t.Name] = t
 	}
@@ -108,6 +121,120 @@ func (s *Server) Network() string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.network
+}
+
+// CanSample reports whether the bot offered sampling in initialize, so
+// that Sample may work: it does with the addon block's model permission.
+func (s *Server) CanSample() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.sampling
+}
+
+// WatchReplies reports whether the bot said in initialize that it takes a
+// watch with Replies. One that didn't would refuse it.
+func (s *Server) WatchReplies() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.watchReplies
+}
+
+// BotError is the bot's error answer to a request of the addon's, such as
+// a sampling request it refused.
+type BotError struct {
+	Code    int
+	Message string
+}
+
+func (e *BotError) Error() string { return fmt.Sprintf("the bot refused: %s (%d)", e.Message, e.Code) }
+
+// errStopped is a request's error when Run returns before the bot answers.
+var errStopped = errors.New("addon: Run returned before the bot answered")
+
+// Sample asks the bot's model, through MCP's sampling/createMessage, with
+// the cost charged to chat, a chat pseudonym the addon may post in now. It
+// needs Run running and a bot that offered sampling (CanSample); without
+// either it fails at once. When ctx ends first, it tells the bot the
+// request is cancelled and returns ctx's error. An error answer is a
+// *BotError.
+func (s *Server) Sample(ctx context.Context, chat string, req SampleRequest) (SampleResult, error) {
+	if err := ctx.Err(); err != nil {
+		return SampleResult{}, err
+	}
+	req.Meta.Chat = chat
+	s.mu.Lock()
+	w := s.wire
+	if w == nil || !s.sampling {
+		s.mu.Unlock()
+		if w == nil {
+			return SampleResult{}, errors.New("addon: Sample needs Run running")
+		}
+		return SampleResult{}, errors.New("addon: the bot offers no sampling")
+	}
+	s.asked++
+	id := s.nonce + "." + strconv.FormatInt(s.asked, 10)
+	got := make(chan answer, 1)
+	s.pending[id] = got
+	s.mu.Unlock()
+	if err := w.send(request{JSONRPC: "2.0", ID: id, Method: "sampling/createMessage", Params: req}); err != nil {
+		if s.forget(id) {
+			return SampleResult{}, err
+		}
+	}
+	var a answer
+	select {
+	case a = <-got:
+	case <-ctx.Done():
+		if s.forget(id) {
+			w.send(notification{JSONRPC: "2.0", Method: "notifications/cancelled", Params: struct {
+				RequestID string `json:"requestId"`
+			}{id}})
+			return SampleResult{}, ctx.Err()
+		}
+		a = <-got // answered as ctx ended
+	}
+	if a.err != nil {
+		return SampleResult{}, a.err
+	}
+	var r SampleResult
+	if err := json.Unmarshal(a.result, &r); err != nil {
+		return SampleResult{}, fmt.Errorf("addon: the bot's sampling result: %w", err)
+	}
+	return r, nil
+}
+
+// forget drops a request still awaiting its answer, and reports whether it
+// was.
+func (s *Server) forget(id string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	_, ok := s.pending[id]
+	delete(s.pending, id)
+	return ok
+}
+
+// settle hands the bot's answer to the request it answers, if one awaits
+// it.
+func (s *Server) settle(m message) {
+	var id string
+	if json.Unmarshal(m.ID, &id) != nil {
+		return
+	}
+	s.mu.Lock()
+	got := s.pending[id]
+	delete(s.pending, id)
+	s.mu.Unlock()
+	if got == nil {
+		return
+	}
+	switch {
+	case m.Error != nil:
+		got <- answer{err: &BotError{m.Error.Code, m.Error.Message}}
+	case len(m.Result) == 0:
+		got <- answer{err: errors.New("addon: the bot's answer has neither result nor error")}
+	default:
+		got <- answer{result: m.Result}
+	}
 }
 
 // Queue adds ops to the outbox, giving each its ID, and tells a subscribed
@@ -183,10 +310,21 @@ func (s *Server) Run(ctx context.Context, in io.Reader, out io.Writer) error {
 	ctx, cancel := context.WithCancel(ctx)
 	var wg sync.WaitGroup
 	notified := make(chan struct{})
+	s.mu.Lock()
+	s.wire = w
+	s.mu.Unlock()
 	defer func() {
 		cancel() // first, so the calls in flight stop
+		s.mu.Lock()
+		s.wire = nil
+		for id, got := range s.pending {
+			got <- answer{err: errStopped}
+			delete(s.pending, id)
+		}
+		s.mu.Unlock()
 		wg.Wait()
 		<-notified
+		w.close() // so a Sample still finishing writes nothing more
 	}()
 	go func() { defer close(notified); s.notifier(ctx, w) }()
 	if len(s.Outbox()) > 0 {
@@ -243,7 +381,13 @@ func (s *Server) Run(ctx context.Context, in io.Reader, out io.Writer) error {
 			mu.Unlock()
 			continue
 		}
-		if len(m.ID) == 0 || m.Method == "" { // a notification, or a response
+		if m.Method == "" { // an answer to a request of the addon's
+			if len(m.ID) > 0 {
+				s.settle(m)
+			}
+			continue
+		}
+		if len(m.ID) == 0 { // a notification
 			continue
 		}
 		id := string(m.ID)
@@ -268,12 +412,22 @@ func (s *Server) Run(ctx context.Context, in io.Reader, out io.Writer) error {
 func DecodeArgs(raw json.RawMessage, v any) error { return decode(raw, v) }
 
 // message is one JSON-RPC message read: a request, a notification (no ID)
-// or a response to a request of the addon's (it sends none).
+// or a response to a request of the addon's (no method).
 type message struct {
 	JSONRPC string          `json:"jsonrpc"`
 	ID      json.RawMessage `json:"id,omitempty"`
 	Method  string          `json:"method"`
 	Params  json.RawMessage `json:"params,omitempty"`
+	Result  json.RawMessage `json:"result,omitempty"`
+	Error   *rpcError       `json:"error,omitempty"`
+}
+
+// request is a request of the addon's to the bot.
+type request struct {
+	JSONRPC string `json:"jsonrpc"`
+	ID      string `json:"id"`
+	Method  string `json:"method"`
+	Params  any    `json:"params"`
 }
 
 // response is the answer to one request: its result or an error.
@@ -299,10 +453,12 @@ type rpcError struct {
 func (e *rpcError) Error() string { return e.Message }
 
 // wire writes whole messages to stdout, one per line, one at a time: it is
-// the only writer of stdout, which carries nothing but the protocol.
+// the only writer of stdout, which carries nothing but the protocol. Once
+// closed, when Run returns, it writes nothing.
 type wire struct {
-	mu sync.Mutex
-	w  io.Writer
+	mu     sync.Mutex
+	w      io.Writer
+	closed bool
 }
 
 func (w *wire) send(v any) error {
@@ -312,8 +468,17 @@ func (w *wire) send(v any) error {
 	}
 	w.mu.Lock()
 	defer w.mu.Unlock()
+	if w.closed {
+		return errStopped
+	}
 	_, err = w.w.Write(append(data, '\n'))
 	return err
+}
+
+func (w *wire) close() {
+	w.mu.Lock()
+	w.closed = true
+	w.mu.Unlock()
 }
 
 // handler answers one request's params with a result, or an *rpcError.
@@ -449,11 +614,15 @@ func (s *Server) methods() map[string]handler {
 			var p struct {
 				Capabilities struct {
 					Experimental map[string]Capability `json:"experimental"`
+					Sampling     *struct{}             `json:"sampling"`
 				} `json:"capabilities"`
 			}
 			json.Unmarshal(raw, &p) // optional: a bot that offers no network still gets an answer
+			addon := p.Capabilities.Experimental[KeyAddon]
 			s.mu.Lock()
-			s.network = p.Capabilities.Experimental[KeyAddon].Network
+			s.network = addon.Network
+			s.watchReplies = addon.WatchReplies
+			s.sampling = p.Capabilities.Sampling != nil
 			s.mu.Unlock()
 			r := initializeResult{ProtocolVersion: Protocol, ServerInfo: serverInfo{Name: s.cfg.Name, Title: s.cfg.Title, Version: s.cfg.Version}}
 			r.Capabilities.Experimental = map[string]Capability{KeyAddon: {Version: Version}}

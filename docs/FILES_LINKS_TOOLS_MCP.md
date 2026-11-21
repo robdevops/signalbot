@@ -59,6 +59,11 @@ The model can call tools from [MCP](https://modelcontextprotocol.io) servers, re
     "chat_commands": {"geo": {"tool": "geo", "direct": true, "example": "/geo 3m", "timeout": "60s"}},
     "addon": {"chats": ["all"], "dms": false, "post": true, "react": true, "watch": true, "watch_max": "1h"}
   },
+  "quiz": {
+    "command": "/addons/quiz",
+    "chat_commands": {"quiz": {"tool": "quiz", "direct": true, "example": "/quiz 80s music", "timeout": "90s"}},
+    "addon": {"chats": ["all"], "post": true, "react": true, "watch": true, "model": {"per_hour": 30, "max_tokens": 4000}}
+  },
   "files": {
     "command": "uvx",
     "args": ["some-mcp-server"],
@@ -115,6 +120,7 @@ An addon written in Go can use the package [`github.com/robdevops/signalbot/addo
     "watch_max": "1h",
     "names": false, "global_ids": false,
     "rate": {"per_minute": 20, "burst": 5}
+    // "model": {"per_hour": 30, "max_tokens": 4000}, only for an addon that asks the model
   }
 }
 ```
@@ -130,6 +136,7 @@ An addon written in Go can use the package [`github.com/robdevops/signalbot/addo
 | `names` | each call it gets carries the sender's display name. Off, it gets none |
 | `global_ids` | a person has the same ID in every chat. Off, each chat gives them a different one, so the addon can't follow someone between groups |
 | `rate` | its posts and reactions a minute in each chat (`per_minute`, default 20), with bursts of `burst` (default 5) |
+| `model` | it may ask the bot's model (below): at most `per_hour` requests an hour, all chats together (default 30), each answer at most `max_tokens` tokens (default 4000, at most 32000) |
 
 Each permission is off unless set. For an addon, `chats`, `dms` and these permissions are the gate: anyone in an allowed chat can use its commands, and nothing it does reaches another chat.
 
@@ -137,7 +144,8 @@ Each permission is off unless set. For an addon, `chats`, `dms` and these permis
 
 - **Direct commands.** `"direct": true` on a chat command has the bot call the addon's tool itself, with the text after the command, and send what it answers (text, and up to 2 pictures) without the model. The tool must be marked for the bot, and is then never offered to the model. A call has 15 seconds, or the command's `timeout`, from 1s to 2m (`"timeout": "60s"`), for an addon that may take a while, such as GeoGuess finding a photo; while it runs the chat sees the bot typing. At most 2 run at once per addon; a third is told the addon is busy, so with a long `timeout`, two calls that wait (two chats each waiting for a GeoGuess photo) make even a quick command such as `/geo scores` wait for one to end. When it fails, the chat gets a short line ("GeoGuess couldn't do that just now."), never the addon's own error text. An addon with no tool for the model has its commands named in the prompt's list of what the bot has, so the model can point people to them.
 - **Hidden tools.** A tool whose `_meta` says it is for the bot alone (`io.github.robdevops.signalbot/visibility` without `"model"`, or MCP Apps' `ui.visibility` without `"model"`) is never offered to the model or listed as one of its tools, so tools that read chat text stay out of its hands.
-- **Watches.** A direct command's answer can ask for a watch on its chat: a pattern, such as map links, until a time at most `watch_max` away. While it lasts, a message there that matches goes to the addon instead: it isn't answered, isn't sent to the model, and isn't kept in history, even as group context; so does an edit of it later. The addon may react to it, so people see it was counted. A pattern that would match ordinary chat ("lol", "see you at 5", a news link, …) is refused, so a watch can't become a feed of everything said; at most 8 run in a chat at once. While a watch lasts, a reply to the command's pictures that asks the bot gets the addon's set answer (GeoGuess's "No hints during a round 😉"), not the model's.
+- **Watches.** A direct command's answer can ask for a watch on its chat: a pattern, such as map links, until a time at most `watch_max` away. While it lasts, a message there that matches goes to the addon instead: it isn't answered, isn't sent to the model, and isn't kept in history, even as group context; so does an edit of it later. The addon may react to it, so people see it was counted. A pattern that would match ordinary chat ("lol", "see you at 5", a news link, …) is refused, so a watch can't become a feed of everything said; at most 8 run in a chat at once. While a watch lasts, a reply to the command's pictures that asks the bot gets the addon's set answer (GeoGuess's "No hints during a round 😉"), not the model's. A reply watch (`"replies": true`) takes instead only replies to the addon's own messages in the chat while it lasts, the command's answer and its posts, that ask the bot, such as a quiz's free-text answers; its pattern, if it has one, must match them too, and isn't held to the ordinary-chat rule, since such a reply is meant for the addon.
+- **Model.** With `model`, an addon may ask the bot's model for text, through MCP's standard sampling request (`sampling/createMessage`): it sends the prompt, and the bot runs it on its own model, with its own key, and sends back the answer. The addon needs no key or provider of its own. The bot offers this only to an addon with `model`, and only while it has a model; MCP suggests a person approve each request, and here the `model` setting is that approval. Each request names the chat it is for, one the addon may post in now, and is charged to that chat's `DAILY_BUDGET`: one over its budget is refused, and so is one past `per_hour`. A request is text only, at most 16 messages and 32 KB, with one in flight per addon at a time. Only its outcome, time, size, tokens and cost are logged, never the prompt or the answer.
 - **Outbox.** An addon posts when it likes by queueing posts, reactions and the end of a watch in its outbox, an MCP resource the bot subscribes to (`signalbot://outbox`), and saying it changed; the bot reads it at once. It may post or react only in a chat where it was used, by a command or a watch, in the last 24 hours, and only within `rate`. Its posts go through the chat's queue like any message, never more than one at a time, and history keeps them as the bot's, labelled with the addon's name (`[GeoGuess] …`), so what an addon writes never poses as a person.
 - **Settings.** An addon has no `env` block. It gets `PATH`, `HOME`, the bot's time zone (`TZ`) and proxy settings (`HTTPS_PROXY`, `HTTP_PROXY`, `NO_PROXY`, and `SSL_CERT_FILE` or `SSL_CERT_DIR` for a custom CA) if set, and every variable in the bot's environment (`/etc/signalbot.env`) that starts with its server's name in capitals, anything but letters and digits as `_`, then `_`: the server `geo` gets `GEO_STATE_DIR`, `GEO_MAPILLARY_TOKEN` and so on, and never the bot's own keys. A name whose prefix starts one of the bot's settings (such as `model`, `signal` or `mcp`) is a config error. If an addon keeps files, give it a directory under its prefix and create it, writable by the bot's user.
 - **Logs.** The bot logs an addon's commands, calls and drops by name, outcome, time and size, never what was said. An addon's stderr is counted ("addon geo wrote 3 lines (210 bytes) to stderr", at most once a minute and once more when it exits), never logged, since it may echo a message. To debug an addon, run it on its own with stderr going to your own file.

@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"strconv"
 	"strings"
@@ -442,4 +443,263 @@ func TestEmptyResult(t *testing.T) {
 	if !strings.Contains(string(resp.Result), `"content":[]`) {
 		t.Errorf("result %s", resp.Result)
 	}
+}
+
+// asked waits for the server's request of method, skipping other lines,
+// and returns its ID and params.
+func (c *client) asked(method string) (id json.RawMessage, params json.RawMessage) {
+	c.t.Helper()
+	timeout := time.After(5 * time.Second)
+	for {
+		select {
+		case line := <-c.lines:
+			var m message
+			json.Unmarshal(line, &m)
+			if m.Method == method && len(m.ID) > 0 {
+				return m.ID, m.Params
+			}
+		case <-timeout:
+			c.t.Fatalf("no %s", method)
+		}
+	}
+}
+
+// initializeSampling initializes as a bot offering sampling and reply
+// watches.
+func initializeSampling(c *client) {
+	c.result("initialize", map[string]any{
+		"protocolVersion": Protocol,
+		"capabilities": map[string]any{"sampling": map[string]any{},
+			"experimental": map[string]any{KeyAddon: Capability{Version: Version, Network: "signal", WatchReplies: true}}},
+	}, nil)
+}
+
+// sampled is Sample's outcome, run on its own goroutine.
+type sampled struct {
+	r   SampleResult
+	err error
+}
+
+func sampleAsync(ctx context.Context, s *Server, req SampleRequest) chan sampled {
+	done := make(chan sampled, 1)
+	go func() {
+		r, err := s.Sample(ctx, chatID, req)
+		done <- sampled{r, err}
+	}()
+	return done
+}
+
+func waitSampled(t *testing.T, done chan sampled) sampled {
+	t.Helper()
+	select {
+	case got := <-done:
+		return got
+	case <-time.After(5 * time.Second):
+		t.Fatal("Sample didn't return")
+	}
+	return sampled{}
+}
+
+var question = SampleRequest{Messages: []SampleMessage{{Role: "user", Content: Content{Type: "text", Text: "a question"}}}, SystemPrompt: "Be brief.", MaxTokens: 100}
+
+// The bot's initialize says whether Sample and reply watches may work.
+func TestCanSample(t *testing.T) {
+	s := New(Config{Name: "game"})
+	c := start(t, s)
+	initialize(c, "signal")
+	if s.CanSample() || s.WatchReplies() {
+		t.Errorf("without them: sample %v, replies %v", s.CanSample(), s.WatchReplies())
+	}
+	if _, err := s.Sample(context.Background(), "c_one", question); err == nil {
+		t.Error("Sample worked with no sampling offered")
+	}
+	initializeSampling(c)
+	if !s.CanSample() || !s.WatchReplies() || s.Network() != "signal" {
+		t.Errorf("with them: sample %v, replies %v, network %q", s.CanSample(), s.WatchReplies(), s.Network())
+	}
+}
+
+// Sample before Run fails at once.
+func TestSampleBeforeRun(t *testing.T) {
+	if _, err := New(Config{Name: "game"}).Sample(context.Background(), "c_one", question); err == nil {
+		t.Error("Sample worked before Run")
+	}
+}
+
+// Sample sends sampling/createMessage with the chat in _meta and an ID of
+// the server's, and returns the bot's result.
+func TestSample(t *testing.T) {
+	s := New(Config{Name: "game"})
+	c := start(t, s)
+	initializeSampling(c)
+	done := sampleAsync(context.Background(), s, question)
+	id, params := c.asked("sampling/createMessage")
+	var p SampleRequest
+	if err := json.Unmarshal(params, &p); err != nil || p.Meta.Chat != chatID || p.MaxTokens != 100 || p.SystemPrompt != "Be brief." ||
+		len(p.Messages) != 1 || p.Messages[0].Content.Text != "a question" {
+		t.Errorf("params %s", params)
+	}
+	var raw any
+	json.Unmarshal(params, &raw)
+	if err := validate(schema(t), map[string]any{"$ref": "#/$defs/SampleRequest"}, raw, "SampleRequest"); err != nil {
+		t.Error(err)
+	}
+	var sid string
+	if json.Unmarshal(id, &sid) != nil || !strings.HasPrefix(sid, s.nonce+".") {
+		t.Errorf("ID %s", id)
+	}
+	// Another ID is ignored, and the server still serves.
+	c.send(map[string]any{"jsonrpc": "2.0", "id": "other.1", "result": map[string]any{}})
+	c.result("ping", struct{}{}, nil)
+	c.send(map[string]any{"jsonrpc": "2.0", "id": id, "result": SampleResult{Role: "assistant", Content: Content{Type: "text", Text: "an answer"}, Model: "a-model", StopReason: "endTurn"}})
+	got := waitSampled(t, done)
+	if got.err != nil || got.r.Content.Text != "an answer" || got.r.Model != "a-model" || got.r.StopReason != "endTurn" {
+		t.Errorf("got %+v", got)
+	}
+	// A second request has another ID.
+	done = sampleAsync(context.Background(), s, question)
+	id2, _ := c.asked("sampling/createMessage")
+	if string(id2) == string(id) {
+		t.Errorf("the same ID twice: %s", id)
+	}
+	c.send(map[string]any{"jsonrpc": "2.0", "id": id2, "result": SampleResult{Role: "assistant", Content: Content{Type: "text", Text: "again"}, Model: "m"}})
+	if got := waitSampled(t, done); got.err != nil || got.r.Content.Text != "again" {
+		t.Errorf("second %+v", got)
+	}
+}
+
+// An error answer is a *BotError with its code and message.
+func TestSampleRefused(t *testing.T) {
+	s := New(Config{Name: "game"})
+	c := start(t, s)
+	initializeSampling(c)
+	done := sampleAsync(context.Background(), s, question)
+	id, _ := c.asked("sampling/createMessage")
+	c.send(map[string]any{"jsonrpc": "2.0", "id": id, "error": map[string]any{"code": -32600, "message": "over budget"}})
+	got := waitSampled(t, done)
+	var be *BotError
+	if !errors.As(got.err, &be) || be.Code != -32600 || be.Message != "over budget" {
+		t.Errorf("got %+v", got)
+	}
+}
+
+// When Sample's context ends, the bot is told, and a late answer is
+// ignored.
+func TestSampleCancel(t *testing.T) {
+	s := New(Config{Name: "game"})
+	c := start(t, s)
+	initializeSampling(c)
+	ctx, cancel := context.WithCancel(context.Background())
+	done := sampleAsync(ctx, s, question)
+	id, _ := c.asked("sampling/createMessage")
+	cancel()
+	timeout := time.After(5 * time.Second)
+	for cancelled := false; !cancelled; {
+		select {
+		case line := <-c.lines:
+			var m struct {
+				Method string
+				Params struct {
+					RequestID json.RawMessage `json:"requestId"`
+				}
+			}
+			json.Unmarshal(line, &m)
+			cancelled = m.Method == "notifications/cancelled" && string(m.Params.RequestID) == string(id)
+		case <-timeout:
+			t.Fatal("no notifications/cancelled")
+		}
+	}
+	if got := waitSampled(t, done); !errors.Is(got.err, context.Canceled) {
+		t.Errorf("got %+v", got)
+	}
+	c.send(map[string]any{"jsonrpc": "2.0", "id": id, "result": SampleResult{Role: "assistant", Content: Content{Type: "text", Text: "late"}, Model: "m"}})
+	c.result("ping", struct{}{}, nil)
+}
+
+// A Sample awaiting its answer when Run returns fails, and one after fails
+// at once.
+func TestSampleRunEnds(t *testing.T) {
+	s := New(Config{Name: "game"})
+	c := start(t, s)
+	initializeSampling(c)
+	done := sampleAsync(context.Background(), s, question)
+	c.asked("sampling/createMessage")
+	c.in.Close()
+	if got := waitSampled(t, done); !errors.Is(got.err, errStopped) {
+		t.Errorf("got %+v", got)
+	}
+	select {
+	case got := <-sampleAsync(context.Background(), s, question):
+		if got.err == nil {
+			t.Error("Sample worked after Run returned")
+		}
+	case <-time.After(time.Second):
+		t.Error("Sample after Run waited")
+	}
+}
+
+// A tool's call may sample; when Run stops mid-call, the call's Sample
+// ends and nothing is written after Run returns.
+func TestSampleInACall(t *testing.T) {
+	ended := make(chan error, 1)
+	var s *Server
+	s = New(Config{Name: "game", Tools: []Tool{{Name: "quiz", Call: func(ctx context.Context, c *Context, _ json.RawMessage) (Result, error) {
+		_, err := s.Sample(ctx, c.Chat, question)
+		ended <- err
+		return Text("stopped"), nil
+	}}}})
+	inR, inW := io.Pipe()
+	outR, outW := io.Pipe()
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- s.Run(ctx, inR, outW) }()
+	lines := make(chan string, 16)
+	go func() {
+		sc := bufio.NewScanner(outR)
+		for sc.Scan() {
+			lines <- sc.Text()
+		}
+		close(lines)
+	}()
+	send := func(v string) {
+		if _, err := inW.Write([]byte(v + "\n")); err != nil {
+			t.Fatal(err)
+		}
+	}
+	send(`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"capabilities":{"sampling":{}}}}`)
+	for line := range lines { // requests are answered at once, so wait
+		if strings.Contains(line, `"id":1`) {
+			break
+		}
+	}
+	send(`{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"quiz","_meta":{"` + KeyContext + `":{"chat":"c_one"}}}}`)
+	for line := range lines {
+		if strings.Contains(line, "sampling/createMessage") {
+			break
+		}
+	}
+	cancel()
+	select {
+	case err := <-done:
+		if err != context.Canceled {
+			t.Errorf("Run returned %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("Run didn't return")
+	}
+	select {
+	case err := <-ended:
+		if err == nil {
+			t.Error("the call's Sample worked")
+		}
+	default:
+		t.Error("the call's Sample hadn't returned when Run did")
+	}
+	outW.Close()
+	for line := range lines {
+		if !strings.Contains(line, "notifications/cancelled") && !strings.Contains(line, `"id":2`) {
+			t.Errorf("after the cancel: %s", line)
+		}
+	}
+	inW.Close()
 }

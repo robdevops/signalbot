@@ -26,22 +26,25 @@ const (
 )
 
 // The extension's keys: the capability both sides offer in initialize, and
-// the _meta keys on a call (the context), a tool (who may call it) and a
-// result (a watch to start, a reaction to put on the message).
+// the _meta keys on a call (the context), a tool (who may call it), a
+// result (a watch to start, a reaction to put on the message) and a
+// sampling request (the chat that pays).
 const (
 	KeyAddon      = Vendor + "addon"
 	KeyContext    = Vendor + "context"
 	KeyVisibility = Vendor + "visibility"
 	KeyWatch      = Vendor + "watch"
 	KeyReact      = Vendor + "react"
+	KeyChat       = Vendor + "chat"
 )
 
 // Capability is the extension's entry in capabilities.experimental under
-// KeyAddon. The bot offers its chat network; an addon answers with the
-// version alone.
+// KeyAddon. The bot offers its chat network and what it can do; an addon
+// answers with the version alone.
 type Capability struct {
-	Version int    `json:"version"`
-	Network string `json:"network,omitempty"` // the bot's chat network, as it names itself: "signal", "telegram"
+	Version      int    `json:"version"`
+	Network      string `json:"network,omitempty"`      // the bot's chat network, as it names itself: "signal", "telegram"
+	WatchReplies bool   `json:"watchReplies,omitempty"` // the bot's: it takes a watch with Replies
 }
 
 // Context is the message a call the bot makes came from, in the call's
@@ -62,13 +65,17 @@ type Context struct {
 
 // Watch is what a direct command's result asks for, in its _meta under
 // KeyWatch: the messages matching Pattern in the command's chat, until
-// Until, go to Tool instead of the model.
+// Until, go to Tool instead of the model. With Replies, it takes only
+// replies to the addon's own messages, and Pattern, which may then be
+// empty, must match them too; offer it only to a bot whose Capability has
+// WatchReplies.
 type Watch struct {
 	ID      string `json:"id"`
-	Pattern string `json:"pattern"`         // RE2
-	Until   string `json:"until"`           // RFC 3339
-	Tool    string `json:"tool"`            // called with each message it matches, as {"text": …}
-	Guard   string `json:"guard,omitempty"` // the answer, while it lasts, to a message addressed to the bot that quotes the command's pictures
+	Pattern string `json:"pattern,omitempty"` // RE2; needed unless Replies
+	Until   string `json:"until"`             // RFC 3339
+	Tool    string `json:"tool"`              // called with each message it matches, as {"text": …}
+	Guard   string `json:"guard,omitempty"`   // the answer, while it lasts, to a message addressed to the bot that quotes the command's pictures
+	Replies bool   `json:"replies,omitempty"` // only replies to the command's answer and the addon's posts in the chat while it lives
 }
 
 // Content is one block of a tool's result: text, or an image.
@@ -139,4 +146,36 @@ type Page struct {
 type Held struct {
 	Op     Op        `json:"op"`
 	Queued time.Time `json:"queued"`
+}
+
+// SampleRequest is MCP's sampling/createMessage params, as an addon asks
+// the bot's model (Server.Sample): the bot runs it on its own model and
+// charges the chat in Meta. The bot takes text alone.
+type SampleRequest struct {
+	Messages     []SampleMessage `json:"messages"`
+	SystemPrompt string          `json:"systemPrompt,omitempty"`
+	MaxTokens    int             `json:"maxTokens"`             // the bot caps it at the addon block's max_tokens
+	Temperature  *float64        `json:"temperature,omitempty"` // nil is the model's own
+	Meta         SampleMeta      `json:"_meta"`
+}
+
+// SampleMeta is a sampling request's _meta.
+type SampleMeta struct {
+	Chat string `json:"io.github.robdevops.signalbot/chat"` // c_…, the chat that pays, one the addon may post in now
+}
+
+// SampleMessage is one message of a sampling request: what the user or the
+// assistant said.
+type SampleMessage struct {
+	Role    string  `json:"role"` // "user" or "assistant"
+	Content Content `json:"content"`
+}
+
+// SampleResult is the bot's answer to a sampling request: MCP's
+// CreateMessageResult.
+type SampleResult struct {
+	Role       string  `json:"role"` // "assistant"
+	Content    Content `json:"content"`
+	Model      string  `json:"model"`                // the model that wrote it
+	StopReason string  `json:"stopReason,omitempty"` // "endTurn", "maxTokens", …
 }

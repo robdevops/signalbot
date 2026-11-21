@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -41,14 +42,28 @@ var (
 	errExited     = errors.New("server exited")
 )
 
+// rpcMsg is a JSON-RPC message. Its ID is a number or a string: the bot's
+// own requests use numbers, and a server's may use either.
 type rpcMsg struct {
 	JSONRPC string          `json:"jsonrpc"`
-	ID      *int64          `json:"id,omitempty"`
+	ID      json.RawMessage `json:"id,omitempty"`
 	Method  string          `json:"method,omitempty"`
 	Params  any             `json:"params,omitempty"`
 	Result  json.RawMessage `json:"result,omitempty"`
 	Error   *rpcError       `json:"error,omitempty"`
 }
+
+// hasID reports whether m has an ID: a request or a response.
+func (m rpcMsg) hasID() bool { return len(m.ID) > 0 && string(m.ID) != "null" }
+
+// number is m's ID as one of the bot's own, if it is a number.
+func (m rpcMsg) number() (int64, bool) {
+	var id int64
+	return id, json.Unmarshal(m.ID, &id) == nil
+}
+
+// idOf is the bot's own request ID n, as a message carries it.
+func idOf(n int64) json.RawMessage { return json.RawMessage(strconv.FormatInt(n, 10)) }
 
 // --- stdio --------------------------------------------------------------
 
@@ -64,10 +79,14 @@ type stdioConn struct {
 	ready   func(context.Context, handshake) // an addon's: called each time it has started again and initialized
 
 	nextID  atomic.Int64
-	mu      sync.Mutex // guards stdin, pending, done and the stderr counts
+	mu      sync.Mutex // guards stdin, pending, done, life, serve, serving and the stderr counts
 	stdin   io.WriteCloser
 	pending map[int64]chan rpcMsg
-	done    chan struct{} // closed when the current process exits
+	done    chan struct{}   // closed when the current process exits
+	life    context.Context // what start was given: the server's whole run
+
+	serve   requestFunc // an addon's: answers its sampling requests; nil refuses them
+	serving *served     // the server's request being answered, if any
 
 	errLines, errBytes int       // an addon's stderr, since it was last logged
 	errLogged          time.Time // when it was
@@ -127,7 +146,7 @@ func (c *stdioConn) start(ctx context.Context) error {
 	}
 	done, exited := make(chan struct{}), make(chan struct{})
 	c.mu.Lock()
-	c.stdin, c.pending, c.done = stdin, map[int64]chan rpcMsg{}, done
+	c.stdin, c.pending, c.done, c.life = stdin, map[int64]chan rpcMsg{}, done, ctx
 	c.mu.Unlock()
 
 	go c.readStderr(errR)
@@ -170,6 +189,10 @@ func (c *stdioConn) start(ctx context.Context) error {
 			delete(c.pending, id)
 		}
 		c.stdin = nil
+		if c.serving != nil { // nobody is left to answer
+			c.serving.cancel()
+			c.serving = nil
+		}
 		c.mu.Unlock()
 		close(done)
 	}()
@@ -297,21 +320,40 @@ func (c *stdioConn) dispatch(line []byte) {
 		return
 	}
 	switch {
-	case m.ID != nil && m.Method != "":
-		// A request from the server: answer pings, refuse the rest.
-		reply := rpcMsg{JSONRPC: "2.0", ID: m.ID, Result: json.RawMessage(`{}`)}
-		if m.Method != "ping" {
-			reply = rpcMsg{JSONRPC: "2.0", ID: m.ID, Error: &rpcError{Code: -32601, Message: "method not supported"}}
+	case m.hasID() && m.Method != "":
+		// A request from the server: answer pings and, for an addon that
+		// may, sampling; refuse the rest.
+		switch {
+		case m.Method == "ping":
+			c.write(rpcMsg{JSONRPC: "2.0", ID: m.ID, Result: json.RawMessage(`{}`)})
+		case m.Method == "sampling/createMessage" && c.request(m.ID, line):
+		default:
+			c.write(rpcMsg{JSONRPC: "2.0", ID: m.ID, Error: &rpcError{Code: -32601, Message: "method not supported"}})
 		}
-		c.write(reply)
-	case m.ID != nil:
+	case m.hasID():
+		id, ok := m.number()
+		if !ok {
+			return // not an answer to the bot's
+		}
 		c.mu.Lock()
-		ch := c.pending[*m.ID]
-		delete(c.pending, *m.ID)
+		ch := c.pending[id]
+		delete(c.pending, id)
 		c.mu.Unlock()
 		if ch != nil {
 			ch <- m
 		}
+	case m.Method == "notifications/cancelled":
+		var p struct {
+			Params struct {
+				RequestID json.RawMessage `json:"requestId"`
+			} `json:"params"`
+		}
+		json.Unmarshal(line, &p)
+		c.mu.Lock()
+		if s := c.serving; s != nil && bytes.Equal(bytes.TrimSpace(p.Params.RequestID), s.id) {
+			s.cancel()
+		}
+		c.mu.Unlock()
 	case m.Method == "notifications/resources/updated" && c.updated != nil:
 		// Any resource: the spec lets it be one under the one subscribed.
 		select {
@@ -319,6 +361,74 @@ func (c *stdioConn) dispatch(line []byte) {
 		default:
 		}
 	}
+}
+
+// requestFunc answers a server's request, given its params: a result, or
+// an error to send back. Its ctx ends when the server cancels the request,
+// or exits.
+type requestFunc func(ctx context.Context, params json.RawMessage) (any, *rpcError)
+
+// served is a server's request being answered.
+type served struct {
+	id     json.RawMessage
+	cancel context.CancelFunc
+}
+
+// serveRequests has fn answer the server's sampling requests from now on.
+func (c *stdioConn) serveRequests(fn requestFunc) {
+	c.mu.Lock()
+	c.serve = fn
+	c.mu.Unlock()
+}
+
+// request answers the server's request id, whose whole message is line,
+// with c.serve, on a goroutine of its own, so the reader never waits on
+// it, and reports whether it was taken. One is answered at a time: while
+// one is, another gets an error at once. The answer goes to the process
+// that asked, and is dropped if it has exited.
+func (c *stdioConn) request(id json.RawMessage, line []byte) bool {
+	var m struct {
+		Params json.RawMessage `json:"params"`
+	}
+	json.Unmarshal(line, &m)
+	c.mu.Lock()
+	fn, life, proc := c.serve, c.life, c.done
+	if fn == nil || life == nil {
+		c.mu.Unlock()
+		return false
+	}
+	if c.serving != nil {
+		c.mu.Unlock()
+		c.write(rpcMsg{JSONRPC: "2.0", ID: id, Error: &rpcError{Code: -32000, Message: "busy: one request at a time"}})
+		return true
+	}
+	ctx, cancel := context.WithCancel(life)
+	s := &served{id: bytes.TrimSpace(id), cancel: cancel}
+	c.serving = s
+	c.mu.Unlock()
+	go func() {
+		defer cancel()
+		res, rerr := fn(ctx, m.Params)
+		reply := rpcMsg{JSONRPC: "2.0", ID: id, Error: rerr}
+		if rerr == nil {
+			data, err := json.Marshal(res)
+			if err != nil {
+				reply.Error = &rpcError{Code: -32603, Message: "internal error"}
+			} else {
+				reply.Result = data
+			}
+		}
+		c.mu.Lock()
+		if c.serving == s {
+			c.serving = nil
+		}
+		same := c.done == proc
+		c.mu.Unlock()
+		if same && ctx.Err() == nil { // a cancelled request gets no answer, as MCP says
+			c.write(reply)
+		}
+	}()
+	return true
 }
 
 func (c *stdioConn) write(m rpcMsg) error {
@@ -346,7 +456,7 @@ func (c *stdioConn) call(ctx context.Context, method string, params any) (json.R
 	c.pending[id] = ch
 	c.mu.Unlock()
 	defer func() { c.mu.Lock(); delete(c.pending, id); c.mu.Unlock() }()
-	if err := c.write(rpcMsg{JSONRPC: "2.0", ID: &id, Method: method, Params: params}); err != nil {
+	if err := c.write(rpcMsg{JSONRPC: "2.0", ID: idOf(id), Method: method, Params: params}); err != nil {
 		return nil, err
 	}
 	select {
@@ -411,7 +521,7 @@ func (c *httpConn) call(ctx context.Context, method string, params any) (json.Ra
 
 func (c *httpConn) roundTrip(ctx context.Context, method string, params any) (json.RawMessage, error) {
 	id := c.nextID.Add(1)
-	resp, err := c.post(ctx, rpcMsg{JSONRPC: "2.0", ID: &id, Method: method, Params: params})
+	resp, err := c.post(ctx, rpcMsg{JSONRPC: "2.0", ID: idOf(id), Method: method, Params: params})
 	if err != nil {
 		return nil, err
 	}
@@ -501,7 +611,7 @@ func readSSE(r io.Reader, id int64) (*rpcMsg, error) {
 			data.WriteString(strings.TrimPrefix(strings.TrimPrefix(line, "data:"), " "))
 		case line == "" && data.Len() > 0:
 			var m rpcMsg
-			if json.Unmarshal([]byte(data.String()), &m) == nil && m.ID != nil && *m.ID == id {
+			if json.Unmarshal([]byte(data.String()), &m) == nil && answers(m, id) {
 				return &m, nil
 			}
 			data.Reset()
@@ -509,9 +619,15 @@ func readSSE(r io.Reader, id int64) (*rpcMsg, error) {
 	}
 	if data.Len() > 0 {
 		var m rpcMsg
-		if json.Unmarshal([]byte(data.String()), &m) == nil && m.ID != nil && *m.ID == id {
+		if json.Unmarshal([]byte(data.String()), &m) == nil && answers(m, id) {
 			return &m, nil
 		}
 	}
 	return nil, errors.New("no response in event stream")
+}
+
+// answers reports whether m is the response to the bot's request id.
+func answers(m rpcMsg, id int64) bool {
+	n, ok := m.number()
+	return m.Method == "" && ok && n == id
 }

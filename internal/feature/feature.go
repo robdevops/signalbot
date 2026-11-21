@@ -31,6 +31,20 @@ func (c Chat) Key() string {
 	return "u:" + c.User
 }
 
+type chargeKey struct{}
+
+// ChargeTo is ctx naming chat as the one that pays for the model's API
+// calls made with it outside a tool, through Host.CallAPI.
+func ChargeTo(ctx context.Context, chat Chat) context.Context {
+	return context.WithValue(ctx, chargeKey{}, chat)
+}
+
+// ChargedChat is the chat ChargeTo named in ctx, if any.
+func ChargedChat(ctx context.Context) (Chat, bool) {
+	c, ok := ctx.Value(chargeKey{}).(Chat)
+	return c, ok
+}
+
 // Message is a message posted in a chat.
 type Message struct {
 	Chat      Chat
@@ -276,11 +290,17 @@ type Host interface {
 	React(chat Chat, msg Message, emoji string)
 	// Groups lists the groups the bot shares with user.
 	Groups(ctx context.Context, user string) ([]Group, error)
-	// CallAPI posts body as JSON to path (such as "/images") at the model's
-	// API and returns the response body, from a tool's Run only, so what it
-	// cost counts toward the reply and the chat's daily budget. The core
-	// adds the key, and on OpenRouter asks for providers that don't collect
-	// the data; a feature never sees the key.
+	// CallAPI posts body as JSON to path (such as "/images" or
+	// "/chat/completions") at the model's API and returns the response
+	// body. Inside a tool's Run, what it cost counts toward the reply and
+	// the chat's daily budget. Outside one, ctx must come from ChargeTo:
+	// the core refuses the call when that chat is over its daily budget,
+	// makes it, and adds what it cost to that chat's budget. Without
+	// either, it refuses. For "/chat/completions" the core sets the model
+	// to the bot's own, whatever the body says, and on OpenRouter asks for
+	// the cost to be reported. The core adds the key, and on OpenRouter
+	// asks for providers that don't collect the data; a feature never sees
+	// the key.
 	CallAPI(ctx context.Context, path string, body map[string]any) (json.RawMessage, error)
 	// Redact replaces every name and ID of anyone but the bot in text with
 	// "redacted", for logging text the bot doesn't control.

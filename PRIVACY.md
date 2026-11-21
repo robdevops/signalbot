@@ -86,10 +86,11 @@ An addon is a program the bot runs on its own machine, as an [MCP server](docs/F
 - **Where it works:** only in the groups its `chats` lists (or all, if set to `all`), and in DMs only with `dms`.
 - **What each permission sends:**
   - a command (`/geo …`) sends the text after it, and who sent it, as a pseudonym, and when the bot got it, never the sender's own clock;
-  - `watch` sends the messages its watch matches (GeoGuess: map links and coordinates during a round), with the same; nothing else said in the chat. A pattern that would match ordinary chat is refused, so there is no feed of everything;
+  - `watch` sends the messages its watch matches (GeoGuess: map links and coordinates during a round), with the same; nothing else said in the chat. A pattern that would match ordinary chat is refused, so there is no feed of everything. A reply watch sends replies to the addon's own messages that ask the bot, such as answers to a quiz, whatever they say;
   - `names` adds each sender's display name. Without it, the addon writes a pseudonym where a name goes, and the bot puts in the name it last saw that person use in that chat, kept in memory for a day;
   - `global_ids` gives a person the same pseudonym in every chat, so the addon can link them across groups;
-  - `post` and `react` send nothing: they let it post and react, only in a chat where it was used in the last day.
+  - `post` and `react` send nothing: they let it post and react, only in a chat where it was used in the last day;
+  - `model` lets it ask the bot's model, with the bot's key: the addon's prompts, and whatever it put in them from the chat, go to the model provider, as chat with the bot does, and what they cost counts toward that chat's `DAILY_BUDGET`. The bot logs only each request's outcome, time, size and cost, never the prompt or the answer.
 - **What the addon keeps** is its own, in whatever directory you give it (GeoGuess: `GEO_STATE_DIR`), outside what this page lists for the bot. Read its own documentation.
 - **Deletes and edits are not passed on.** A message an addon took stays with the addon if its sender later deletes it for everyone. An edit of one is passed on, as a new version.
 - **Taken messages are kept nowhere by the bot:** not in history, not as context (so `GROUP_CONTEXT=false` makes no difference to them), not in the log. The addon still gets them.
@@ -100,7 +101,7 @@ An addon is a program the bot runs on its own machine, as an [MCP server](docs/F
   |---|---|
   | The pseudonym secret | Until `mcp.json` is deleted, which gives everyone new pseudonyms |
   | Chats an addon may post in: the chat's pseudonym and its real ID | 24 hours after the addon was last used there |
-  | Live watches: the chat's pseudonym, the pattern, and the times of the bot's messages with the command's pictures | Until the watch ends, at most `watch_max` (24 hours at most) |
+  | Live watches: the chat's pseudonym, the pattern, and the times of the bot's messages with the command's pictures, and for a reply watch of the addon's messages | Until the watch ends, at most `watch_max` (24 hours at most) |
   | Messages a watch took: the chat's ID, the sender's pseudonym and the message's time, never its text | 48 hours, so a later edit is taken too |
   | How far the bot has read each addon's outbox, and the last 1,000 outbox entries' IDs | Replaced on each save; dropped once the server is no longer an addon |
 

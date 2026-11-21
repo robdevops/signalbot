@@ -911,3 +911,62 @@ func TestReact(t *testing.T) {
 		t.Fatalf("logs:\n%s", h.logs)
 	}
 }
+
+// Outside a tool, CallAPI is made only for a ctx charged to a chat: it is
+// refused when that chat is over its daily budget, and what it cost is
+// added to that chat's budget. The model is the bot's own.
+func TestCallAPICharged(t *testing.T) {
+	dir := t.TempDir()
+	h := start(t, options{cfg: func(c *config.Config) { c.DailyBudget, c.StateDir = 0.0015, dir }})
+	alice := feature.Chat{User: "+15550000001"}
+	group := feature.Chat{GroupID: "Z3JvdXA="}
+	body := map[string]any{"model": "x/dearer", "messages": []any{map[string]any{"role": "user", "content": "hi"}}}
+	if _, err := h.b.CallAPI(context.Background(), "/chat/completions", body); err == nil {
+		t.Fatal("a call neither from a tool nor charged was made")
+	}
+	if n := len(h.requests()); n != 0 {
+		t.Fatalf("%d requests", n)
+	}
+	charged := feature.ChargeTo(context.Background(), alice)
+	if data, err := h.b.CallAPI(charged, "/chat/completions", body); err != nil || !strings.Contains(string(data), `"ok"`) {
+		t.Fatalf("got %s, %v", data, err)
+	}
+	if r := h.requests(); len(r) != 1 || r[0]["model"] != "test/test-model" {
+		t.Fatalf("requests %v", r)
+	}
+	if over, _ := h.b.budget.over(alice.Key()); over {
+		t.Fatal("over after $0.001")
+	}
+	if _, err := h.b.CallAPI(charged, "/chat/completions", body); err != nil {
+		t.Fatal(err)
+	}
+	if over, _ := h.b.budget.over(alice.Key()); !over {
+		t.Fatal("the cost wasn't added to the chat's budget")
+	}
+	if _, err := h.b.CallAPI(charged, "/chat/completions", body); err != errOverBudget {
+		t.Fatalf("over budget: %v", err)
+	}
+	if n := len(h.requests()); n != 2 {
+		t.Fatalf("%d requests", n)
+	}
+	if _, err := h.b.CallAPI(feature.ChargeTo(context.Background(), group), "/chat/completions", body); err != nil {
+		t.Fatalf("another chat: %v", err)
+	}
+	if over, _ := h.b.budget.over(group.Key()); over {
+		t.Fatal("another chat is over")
+	}
+}
+
+// With no daily budget, a charged call is made all the same.
+func TestCallAPIChargedNoBudget(t *testing.T) {
+	h := start(t, options{})
+	charged := feature.ChargeTo(context.Background(), feature.Chat{User: "+15550000002"})
+	for range 3 {
+		if _, err := h.b.CallAPI(charged, "/chat/completions", map[string]any{}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if h.b.budget != nil || len(h.requests()) != 3 {
+		t.Fatalf("budget %v, %d requests", h.b.budget, len(h.requests()))
+	}
+}

@@ -17,6 +17,7 @@ import (
 	"github.com/robdevops/signalbot/internal/kit/logx"
 	"github.com/robdevops/signalbot/internal/kit/state"
 	"github.com/robdevops/signalbot/internal/kit/txt"
+	"github.com/robdevops/signalbot/internal/model"
 )
 
 // The ports. Features call them while they register, before Run.
@@ -106,8 +107,27 @@ func (b *Bot) CallAPI(ctx context.Context, path string, body map[string]any) (js
 	if b.ai == nil {
 		return nil, errors.New("no model")
 	}
-	return b.ai.Call(ctx, path, body)
+	chat, charged := feature.ChargedChat(ctx)
+	if model.Metered(ctx) || !charged { // a tool's cost counts toward its reply; with neither, Call refuses
+		return b.ai.Call(ctx, path, body)
+	}
+	key := chat.Key()
+	if b.budget != nil {
+		if over, _ := b.budget.over(key); over {
+			return nil, errOverBudget
+		}
+	}
+	ctx, spent := model.Meter(ctx)
+	data, err := b.ai.Call(ctx, path, body)
+	if cost, ok := spent(); ok && b.budget != nil {
+		b.budget.add(key, cost)
+	}
+	return data, err
 }
+
+// errOverBudget refuses a call charged to a chat that has spent its daily
+// budget.
+var errOverBudget = errors.New("the chat has reached its daily budget")
 
 func (b *Bot) Go(fn func(context.Context)) {
 	b.running.Go(func() { fn(b.ctx) })

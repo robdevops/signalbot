@@ -101,7 +101,7 @@ func (a *addon) state() addonState {
 		a.watches[key] = ws
 		for _, w := range ws {
 			c := *w
-			c.Pictures = slices.Clone(w.Pictures)
+			c.Pictures, c.Sent = slices.Clone(w.Pictures), slices.Clone(w.Sent)
 			s.Watches = append(s.Watches, c)
 		}
 	}
@@ -134,7 +134,7 @@ func (a *addon) state() addonState {
 
 // restore takes up s, as saved, leaving out what has expired, and a watch
 // in a chat the addon is no longer allowed in or whose pattern no longer
-// passes.
+// passes: a reply watch's pattern isn't checked against ordinary chat.
 func (a *addon) restore(s addonState) {
 	now := a.now()
 	a.mu.Lock()
@@ -152,11 +152,11 @@ func (a *addon) restore(s addonState) {
 	for _, w := range s.Watches {
 		l, ok := a.leases[w.Chat]
 		re, err := regexp.Compile(w.Pattern)
-		if !ok || !now.Before(w.Until) || !a.allows(l.Chat) || err != nil || utf8.RuneCountInString(w.Pattern) > maxPattern || ordinary(re) ||
+		if !ok || !now.Before(w.Until) || !a.allows(l.Chat) || err != nil || utf8.RuneCountInString(w.Pattern) > maxPattern || !w.Replies && ordinary(re) ||
 			len(a.watches[l.Chat.Key()]) >= maxWatches {
 			continue
 		}
-		w.key, w.re = l.Chat.Key(), re
+		w.key, w.re, w.Sent = l.Chat.Key(), re, w.Sent[max(len(w.Sent)-maxSent, 0):]
 		a.watches[w.key] = append(a.watches[w.key], &w)
 	}
 	a.cursor = s.Cursor

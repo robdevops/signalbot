@@ -24,18 +24,33 @@ import (
 
 // addonConfig is a server's "addon" block: what an addon may do, and where.
 type addonConfig struct {
-	Chats     []string   `json:"chats"` // group IDs, or "all"
-	DMs       bool       `json:"dms"`
-	Post      bool       `json:"post"`
-	React     bool       `json:"react"`
-	Watch     bool       `json:"watch"`
-	WatchMax  string     `json:"watch_max"` // how long a watch may last: 1h by default, 24h at most
-	Names     bool       `json:"names"`     // the context carries the sender's display name
-	GlobalIDs bool       `json:"global_ids"`
-	Rate      rateConfig `json:"rate"`
+	Chats     []string     `json:"chats"` // group IDs, or "all"
+	DMs       bool         `json:"dms"`
+	Post      bool         `json:"post"`
+	React     bool         `json:"react"`
+	Watch     bool         `json:"watch"`
+	WatchMax  string       `json:"watch_max"` // how long a watch may last: 1h by default, 24h at most
+	Names     bool         `json:"names"`     // the context carries the sender's display name
+	GlobalIDs bool         `json:"global_ids"`
+	Rate      rateConfig   `json:"rate"`
+	Model     *modelConfig `json:"model"` // nil: it may not ask the bot's model
 
 	watchMax time.Duration // WatchMax, read
 }
+
+// modelConfig lets an addon ask the bot's model, through MCP sampling: at
+// most PerHour requests an hour, of at most MaxTokens each.
+type modelConfig struct {
+	PerHour   int `json:"per_hour"`
+	MaxTokens int `json:"max_tokens"`
+}
+
+// The model permission's defaults, and the most max_tokens may be.
+const (
+	defaultPerHour   = 30
+	defaultMaxTokens = 4000
+	maxMaxTokens     = 32000
+)
 
 // rateConfig caps an addon's posts and reactions in each chat.
 type rateConfig struct {
@@ -43,11 +58,12 @@ type rateConfig struct {
 	Burst     int `json:"burst"`
 }
 
-// addonSettings are the keys an addon block may have, and rateSettings its
-// rate's.
+// addonSettings are the keys an addon block may have, rateSettings its
+// rate's and modelSettings its model's.
 var (
-	addonSettings = []string{"chats", "dms", "post", "react", "watch", "watch_max", "names", "global_ids", "rate"}
+	addonSettings = []string{"chats", "dms", "post", "react", "watch", "watch_max", "names", "global_ids", "rate", "model"}
 	rateSettings  = []string{"per_minute", "burst"}
+	modelSettings = []string{"per_hour", "max_tokens"}
 )
 
 // coreSettings are signalbot's own settings, docs/CONFIGURATION.md's table
@@ -95,6 +111,11 @@ func (a *addonConfig) check(entry map[string]json.RawMessage) error {
 	if err := unknown(rate, rateSettings); err != nil {
 		return fmt.Errorf("addon rate: %v", err)
 	}
+	var model map[string]json.RawMessage
+	json.Unmarshal(entry["model"], &model)
+	if err := unknown(model, modelSettings); err != nil {
+		return fmt.Errorf("addon model: %v", err)
+	}
 	for _, c := range a.Chats {
 		switch {
 		case c == "all" && len(a.Chats) > 1:
@@ -115,6 +136,15 @@ func (a *addonConfig) check(entry map[string]json.RawMessage) error {
 		return errors.New("addon rate: per_minute and burst can't be below 0")
 	}
 	a.Rate.PerMinute, a.Rate.Burst = cmp.Or(a.Rate.PerMinute, 20), cmp.Or(a.Rate.Burst, 5)
+	if m := a.Model; m != nil {
+		switch {
+		case m.PerHour < 0 || m.MaxTokens < 0:
+			return errors.New("addon model: per_hour and max_tokens can't be below 0")
+		case m.MaxTokens > maxMaxTokens:
+			return fmt.Errorf("addon model: max_tokens can't be over %d", maxMaxTokens)
+		}
+		m.PerHour, m.MaxTokens = cmp.Or(m.PerHour, defaultPerHour), cmp.Or(m.MaxTokens, defaultMaxTokens)
+	}
 	return nil
 }
 
@@ -219,6 +249,7 @@ type addon struct {
 	matches chan match    // matched messages, for the watch worker
 	posts   *limiter      // its posts and reactions, per chat
 	calls   *limiter      // the watch worker's calls, per chat
+	asks    *limiter      // its requests to the model, all chats as one; nil without the permission
 
 	mu      sync.Mutex
 	refs    map[string]ref         // by ref
@@ -255,7 +286,7 @@ func newAddon(server, title string, cfg addonConfig, secret []byte, c conn, bot 
 	return &addon{server: server, title: title, cfg: cfg, key: mac.Sum(nil), conn: c, bot: bot,
 		busy: make(chan struct{}, maxDirect), now: time.Now, changed: func() {}, dirty: make(chan struct{}, 1),
 		up: make(chan struct{}, 1), settled: make(chan struct{}, 1),
-		matches: make(chan match, maxMatches), posts: newLimiter(cfg.Rate), calls: newLimiter(watchRate),
+		matches: make(chan match, maxMatches), posts: newLimiter(cfg.Rate), calls: newLimiter(watchRate), asks: hourly(cfg.Model),
 		refs: map[string]ref{}, names: map[string]seen{}, watches: map[string][]*watch{}, claims: map[claimKey]claim{},
 		leases: map[string]lease{}, tombs: map[string]time.Time{}, done: map[string]bool{},
 		sending: map[string]bool{}, failed: map[string]failure{}, waiting: map[string][]*outgoing{}}

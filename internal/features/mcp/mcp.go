@@ -282,15 +282,24 @@ type handshake struct {
 type botInfo struct {
 	version string // the bot's version, "dev" if unknown
 	network string // the chat network, as Info names it, for addons
+	addon   bool   // the server has an addon block: offer what addons get
+	sample  bool   // the addon may ask the bot's model: offer sampling
 }
 
 // initialize performs the MCP handshake, as self, offering signalbot's
-// extension with the chat network the bot is on, and returns what the
+// extension with the chat network the bot is on, reply watches to an
+// addon, and sampling to one that may ask the model, and returns what the
 // server said of itself.
 func initialize(ctx context.Context, c conn, self botInfo) (handshake, error) {
+	caps := map[string]any{"experimental": map[string]any{
+		ext.KeyAddon: ext.Capability{Version: ext.Version, Network: self.network, WatchReplies: self.addon},
+	}}
+	if self.sample {
+		caps["sampling"] = map[string]any{}
+	}
 	res, err := c.call(ctx, "initialize", map[string]any{
 		"protocolVersion": protocol,
-		"capabilities":    map[string]any{"experimental": map[string]any{ext.KeyAddon: ext.Capability{Version: ext.Version, Network: self.network}}},
+		"capabilities":    caps,
 		"clientInfo":      map[string]string{"name": "signalbot", "version": self.version},
 	})
 	if err != nil {
@@ -363,22 +372,43 @@ func modelName(server, tool string) string {
 // run addons as plain servers; each addon started joins it.
 func start(ctx context.Context, h feature.Host, path string, servers map[string]server, k *keeper) error {
 	info := h.Info()
-	self := botInfo{version: cmp.Or(info.Version, "dev"), network: info.Network}
+	base := botInfo{version: cmp.Or(info.Version, "dev"), network: info.Network}
 	type owner struct{ server, tool string }
 	taken := map[string]owner{} // the model's names for tools, and whose they are
 	var cmds []string           // for the startup line
+	var gates []*gate           // opened on return, so no request waits on one for good
+	defer func() {
+		for _, g := range gates {
+			g.open(nil)
+		}
+	}()
 	for _, name := range slices.Sorted(maps.Keys(servers)) {
 		cfg := servers[name]
+		self := base
+		if cfg.Addon != nil {
+			// Sampling only where it can be answered: with a model, and
+			// addon features on.
+			self.addon, self.sample = true, cfg.Addon.Model != nil && info.Model != "" && k != nil
+		}
 		var c conn = &httpConn{url: cfg.URL, headers: cfg.Headers, client: httpx.Client(2), bot: self}
+		var gt *gate
 		if cfg.Command != "" {
 			s := &stdioConn{name: name, cfg: cfg, bot: self, redact: h.Redact}
 			if cfg.Addon != nil {
 				s.prefix, s.updated = envPrefix(name), make(chan struct{}, 1)
 			}
+			if self.sample {
+				// Sampling is offered from initialize on, so its requests are
+				// taken from then on, and wait for the addon to be ready.
+				gt = &gate{ready: make(chan struct{})}
+				gates = append(gates, gt)
+				s.serveRequests(gt.sample)
+			}
 			c = s
 		}
 		listed, hs, err := connect(ctx, c, self)
 		if err != nil {
+			gt.open(nil)
 			logx.Errorf("MCP server %s unavailable, its tools are left out: %s", name, describe(err, cfg.Addon != nil))
 			continue
 		}
@@ -405,8 +435,10 @@ func start(ctx context.Context, h feature.Host, path string, servers map[string]
 			a = newAddon(name, cmp.Or(hs.title, name), *cfg.Addon, k.doc.Secret, c, bot)
 			a.host, a.changed, a.dirty = h, k.changed, c.(*stdioConn).updated
 			a.restore(k.doc.Addons[name])
+			gt.open(a)
 			k.addons = append(k.addons, a)
 		}
+		gt.open(nil) // a plain server: its requests are refused
 		g := feature.ToolGroup{
 			System:   instructions(cfg.Instructions, hs.instructions),
 			Keywords: keywords(cfg.Keywords),

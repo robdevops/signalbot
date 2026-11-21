@@ -119,3 +119,19 @@ func TestStoreNames(t *testing.T) {
 		}
 	}
 }
+
+// CallAPI records the chat a call is charged to, if any.
+func TestCallAPICharged(t *testing.T) {
+	h := New()
+	alice := feature.Chat{User: "alice"}
+	h.CallAPI(context.Background(), "/images", nil)
+	if _, err := h.CallAPI(feature.ChargeTo(context.Background(), alice), "/chat/completions", nil); err == nil {
+		t.Error("no API, yet a call worked")
+	}
+	if got := h.Charged(); len(got) != 1 || got[0] != alice {
+		t.Errorf("charged %v", got)
+	}
+	if c, ok := feature.ChargedChat(context.Background()); ok {
+		t.Errorf("a plain ctx is charged to %v", c)
+	}
+}

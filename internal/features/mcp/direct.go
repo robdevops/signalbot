@@ -83,9 +83,21 @@ func (a *addon) direct(ctx context.Context, m feature.Message, name string, c ch
 		return feature.Action{Answer: a.title + " couldn't do that just now."}
 	}
 	act := a.action(m.Chat, r)
+	var w *watch
 	if r.Meta.Watch != nil {
-		if w := a.watch(m, *r.Meta.Watch); w != nil && len(act.Pictures) > 0 {
-			act.OnSent = func(sent []int64, _ bool) { a.guarding(w, sent) }
+		w = a.watch(m, *r.Meta.Watch)
+	}
+	if !act.IsZero() {
+		// When the answer went out: for the guard, if it has pictures, and
+		// for the chat's reply watches.
+		pics := w != nil && len(act.Pictures) > 0
+		act.OnSent = func(sent []int64, dropped bool) {
+			if pics {
+				a.guarding(w, sent)
+			}
+			if !dropped {
+				a.replied(m.Chat, sent)
+			}
 		}
 	}
 	if act.IsZero() {

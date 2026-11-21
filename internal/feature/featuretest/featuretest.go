@@ -40,6 +40,7 @@ type Host struct {
 	posts     []feature.Post
 	reactions []Reaction
 	stores    []string
+	charged   []feature.Chat
 	commands  feature.Commands
 	life      context.Context // what Go passes; ended by Stop
 	end       context.CancelFunc
@@ -161,12 +162,25 @@ func (h *Host) Env(key, def string) string {
 
 func (h *Host) Info() feature.Info { return h.Bot }
 
-// CallAPI returns what API does; nil fails.
+// CallAPI returns what API does; nil fails. It records the chat ctx is
+// charged to, if any, for Charged.
 func (h *Host) CallAPI(ctx context.Context, path string, body map[string]any) (json.RawMessage, error) {
+	if chat, ok := feature.ChargedChat(ctx); ok {
+		h.mu.Lock()
+		h.charged = append(h.charged, chat)
+		h.mu.Unlock()
+	}
 	if h.API == nil {
 		return nil, errors.New("no API")
 	}
 	return h.API(ctx, path, body)
+}
+
+// Charged lists the chats CallAPI's calls were charged to, in order.
+func (h *Host) Charged() []feature.Chat {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return slices.Clone(h.charged)
 }
 
 // Store opens a saved state as the core does, in the directory

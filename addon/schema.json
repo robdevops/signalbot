@@ -5,11 +5,12 @@
   "description": "The JSON of signalbot's addon extension, for an addon in any language: each object the bot and an addon exchange on top of MCP, under $defs. The keys of the extension start io.github.robdevops.signalbot/. The Go types in addon/types.go are the same messages, and a test keeps the two in step. Each side ignores keys it doesn't know; the objects an addon sends (Watch, Op, Image, Page) forbid them here, so a misspelt key fails validation instead of being ignored.",
   "$defs": {
     "Capability": {
-      "description": "capabilities.experimental[\"io.github.robdevops.signalbot/addon\"] in initialize. The bot offers its chat network; an addon answers with the version alone.",
+      "description": "capabilities.experimental[\"io.github.robdevops.signalbot/addon\"] in initialize. The bot offers its chat network and what it can do; an addon answers with the version alone.",
       "type": "object",
       "properties": {
         "version": {"description": "The extension's version.", "const": 1},
-        "network": {"description": "The bot's chat network, as it names itself.", "type": "string", "examples": ["signal", "telegram"]}
+        "network": {"description": "The bot's chat network, as it names itself.", "type": "string", "examples": ["signal", "telegram"]},
+        "watchReplies": {"description": "The bot's: it takes a watch with replies. A bot without it refuses one.", "type": "boolean"}
       },
       "required": ["version"]
     },
@@ -41,17 +42,20 @@
       "required": ["chat", "sender", "ref", "addressed", "group", "sent", "edited"]
     },
     "Watch": {
-      "description": "A direct command's result's _meta[\"io.github.robdevops.signalbot/watch\"]: the messages matching pattern in the command's chat, until until, go to tool instead of the model. The bot refuses a pattern that would match ordinary chat, and shortens until to the addon block's watch_max.",
+      "description": "A direct command's result's _meta[\"io.github.robdevops.signalbot/watch\"]: the messages matching pattern in the command's chat, until until, go to tool instead of the model. The bot refuses a pattern that would match ordinary chat, and shortens until to the addon block's watch_max. With replies, the watch takes only replies to the addon's own messages, and pattern, then optional, must match them too.",
       "type": "object",
       "properties": {
         "id": {"description": "The watch's name, for an unwatch op; at most 64 characters. A new watch with the ID of a live one in the chat replaces it.", "type": "string", "minLength": 1, "maxLength": 64},
-        "pattern": {"description": "An RE2 regular expression, at most 1,024 characters.", "type": "string", "minLength": 1, "maxLength": 1024},
+        "pattern": {"description": "An RE2 regular expression, at most 1,024 characters. Needed unless replies.", "type": "string", "minLength": 1, "maxLength": 1024},
         "until": {"description": "An RFC 3339 time, in the future.", "type": "string", "format": "date-time"},
         "tool": {"description": "A tool for the bot, called with each message the watch takes, as {\"text\": …}, with its context.", "type": "string", "minLength": 1},
-        "guard": {"description": "While the watch lasts, the answer to a message addressed to the bot that replies to the command's pictures; at most 500 characters.", "type": "string", "maxLength": 500}
+        "guard": {"description": "While the watch lasts, the answer to a message addressed to the bot that replies to the command's pictures; at most 500 characters.", "type": "string", "maxLength": 500},
+        "replies": {"description": "Take only messages in the chat that reply to the command's answer or to the addon's posts there while the watch lives. Only for a bot whose capability has watchReplies; the bot doesn't check such a pattern against ordinary chat.", "type": "boolean"}
       },
-      "required": ["id", "pattern", "until", "tool"],
-      "additionalProperties": false
+      "required": ["id", "until", "tool"],
+      "additionalProperties": false,
+      "if": {"properties": {"replies": {"const": true}}, "required": ["replies"]},
+      "else": {"required": ["pattern"]}
     },
     "Content": {
       "description": "One block of a tool's result. The bot uses text and image blocks.",
@@ -128,6 +132,46 @@
       },
       "required": ["cursor", "more", "ops"],
       "additionalProperties": false
+    },
+    "SampleRequest": {
+      "description": "The params of sampling/createMessage, MCP's request for the bot's model, which an addon may send once the bot offers capabilities.sampling in initialize (with the addon block's model permission). The bot runs it on its own model, charges _meta's chat, and takes text alone; it caps maxTokens at the permission's max_tokens, takes at most 16 messages and 32 KB of text in all, and ignores MCP's other keys, such as modelPreferences and includeContext.",
+      "type": "object",
+      "properties": {
+        "messages": {"type": "array", "items": {"$ref": "#/$defs/SampleMessage"}, "minItems": 1, "maxItems": 16},
+        "systemPrompt": {"type": "string"},
+        "maxTokens": {"type": "integer", "minimum": 1},
+        "temperature": {"type": "number"},
+        "_meta": {"$ref": "#/$defs/SampleMeta"}
+      },
+      "required": ["messages", "maxTokens", "_meta"]
+    },
+    "SampleMeta": {
+      "description": "A sampling request's _meta: the chat that pays.",
+      "type": "object",
+      "properties": {
+        "io.github.robdevops.signalbot/chat": {"description": "The chat whose budget the request is charged to: one the addon may post in now, as for a post op. Without it, the bot refuses the request.", "type": "string", "pattern": "^c_[a-z2-7]{26}$"}
+      },
+      "required": ["io.github.robdevops.signalbot/chat"]
+    },
+    "SampleMessage": {
+      "description": "One message of a sampling request.",
+      "type": "object",
+      "properties": {
+        "role": {"enum": ["user", "assistant"]},
+        "content": {"description": "Text alone.", "$ref": "#/$defs/Content", "properties": {"type": {"const": "text"}}}
+      },
+      "required": ["role", "content"]
+    },
+    "SampleResult": {
+      "description": "The bot's result for sampling/createMessage: MCP's CreateMessageResult.",
+      "type": "object",
+      "properties": {
+        "role": {"type": "string", "const": "assistant"},
+        "content": {"description": "The model's text.", "$ref": "#/$defs/Content", "properties": {"type": {"const": "text"}}},
+        "model": {"description": "The model that wrote it.", "type": "string"},
+        "stopReason": {"description": "Why the model stopped.", "type": "string", "examples": ["endTurn", "maxTokens"]}
+      },
+      "required": ["role", "content", "model"]
     },
     "Held": {
       "description": "An op the bot hasn't read past yet, as an addon may save it, with its ID, to post it after a restart. Not on the wire.",

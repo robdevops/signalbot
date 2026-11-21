@@ -53,6 +53,11 @@ var wireTypes = map[string]reflect.Type{
 	"Image":      reflect.TypeFor[Image](),
 	"Page":       reflect.TypeFor[Page](),
 	"Held":       reflect.TypeFor[Held](),
+
+	"SampleRequest": reflect.TypeFor[SampleRequest](),
+	"SampleMeta":    reflect.TypeFor[SampleMeta](),
+	"SampleMessage": reflect.TypeFor[SampleMessage](),
+	"SampleResult":  reflect.TypeFor[SampleResult](),
 }
 
 // The schema and the Go types say the same: the same objects, each with
@@ -131,7 +136,7 @@ func TestSchemaMatchesTypes(t *testing.T) {
 		}
 	}
 	// The _meta keys are the package's.
-	for key, def := range map[string]string{KeyVisibility: "ToolMeta", KeyWatch: "ResultMeta", KeyReact: "ResultMeta"} {
+	for key, def := range map[string]string{KeyVisibility: "ToolMeta", KeyWatch: "ResultMeta", KeyReact: "ResultMeta", KeyChat: "SampleMeta"} {
 		if _, ok := d[def].(map[string]any)["properties"].(map[string]any)[key]; !ok {
 			t.Errorf("$defs/%s lacks %s", def, key)
 		}
@@ -144,6 +149,9 @@ func TestSchemaMatchesTypes(t *testing.T) {
 		if prop("Op", k) != prop("Context", k) {
 			t.Errorf("Op's %s pattern %v isn't Context's %v", k, prop("Op", k), prop("Context", k))
 		}
+	}
+	if prop("SampleMeta", KeyChat) != prop("Context", "chat") {
+		t.Errorf("SampleMeta's chat pattern %v isn't Context's %v", prop("SampleMeta", KeyChat), prop("Context", "chat"))
 	}
 	if v := d["Capability"].(map[string]any)["properties"].(map[string]any)["version"].(map[string]any)["const"]; v != float64(Version) {
 		t.Errorf("the schema's version is %v; the package's %d", v, Version)
@@ -175,6 +183,8 @@ func goSchema(t reflect.Type) string {
 		return "boolean"
 	case reflect.Int, reflect.Int64:
 		return "integer"
+	case reflect.Float64:
+		return "number"
 	}
 	return "unknown " + t.String()
 }
@@ -352,6 +362,9 @@ func isType(v any, typ string) bool {
 	case "integer":
 		n, ok := v.(float64)
 		return ok && n == float64(int64(n))
+	case "number":
+		_, ok := v.(float64)
+		return ok
 	}
 	return false
 }
@@ -383,6 +396,15 @@ func TestSchemaSamples(t *testing.T) {
 	root := schema(t)
 	until := time.Date(2026, 11, 21, 9, 3, 0, 0, time.UTC).Format(time.RFC3339)
 	post := Op{ID: "a1b2.1", Op: "post", Chat: chatID, Text: "{" + senderID + "} wins"}
+	temp := 0.7
+	sample := SampleRequest{Messages: []SampleMessage{{Role: "user", Content: Content{Type: "text", Text: "a question"}}}, MaxTokens: 100, Meta: SampleMeta{Chat: chatID}}
+	withSample := func(f func(m map[string]any)) map[string]any {
+		data, _ := json.Marshal(sample)
+		var m map[string]any
+		json.Unmarshal(data, &m)
+		f(m)
+		return m
+	}
 	valid := []struct {
 		def string
 		v   any
@@ -408,6 +430,15 @@ func TestSchemaSamples(t *testing.T) {
 		{"Held", Held{Op: post, Queued: time.Now()}},
 		{"ToolMeta", map[string]any{KeyVisibility: []string{"bot"}}},
 		{"ToolMeta", map[string]any{}},
+		{"Capability", Capability{Version: Version, Network: "signal", WatchReplies: true}},
+		{"Watch", Watch{ID: "q1", Until: until, Tool: "answer", Replies: true}},
+		{"Watch", Watch{ID: "q1", Pattern: `(?i)^\s*[a-d]\s*$`, Until: until, Tool: "answer", Replies: true}},
+		{"SampleRequest", sample},
+		{"SampleRequest", SampleRequest{Messages: []SampleMessage{{Role: "user", Content: Content{Type: "text", Text: "a question"}},
+			{Role: "assistant", Content: Content{Type: "text", Text: "{"}}}, SystemPrompt: "Answer in JSON.", MaxTokens: 2000, Temperature: &temp,
+			Meta: SampleMeta{Chat: chatID}}},
+		{"SampleResult", SampleResult{Role: "assistant", Content: Content{Type: "text", Text: "an answer"}, Model: "a-model", StopReason: "endTurn"}},
+		{"SampleResult", SampleResult{Role: "assistant", Content: Content{Type: "text"}, Model: "a-model"}},
 	}
 	for _, c := range valid {
 		if err := check(t, root, c.def, c.v); err != nil {
@@ -445,6 +476,28 @@ func TestSchemaSamples(t *testing.T) {
 		{"Page", "a bad op", Page{Cursor: "x.1", Ops: []Op{{ID: "1", Op: "post"}}}},
 		{"Held", "no time", map[string]any{"op": post}},
 		{"ToolMeta", "an unknown caller", map[string]any{KeyVisibility: []string{"everyone"}}},
+		{"Capability", "watchReplies not a boolean", map[string]any{"version": 1, "watchReplies": "yes"}},
+		{"Watch", "no pattern and no replies", Watch{ID: "r1", Until: until, Tool: "guess"}},
+		{"Watch", "no pattern, replies false", map[string]any{"id": "r1", "until": until, "tool": "guess", "replies": false}},
+		{"Watch", "an empty pattern with replies", map[string]any{"id": "r1", "pattern": "", "until": until, "tool": "guess", "replies": true}},
+		{"Watch", "replies not a boolean", map[string]any{"id": "r1", "until": until, "tool": "guess", "replies": "yes"}},
+		{"SampleRequest", "no chat", withSample(func(m map[string]any) { m["_meta"] = map[string]any{} })},
+		{"SampleRequest", "no _meta", withSample(func(m map[string]any) { delete(m, "_meta") })},
+		{"SampleRequest", "a sender for a chat", withSample(func(m map[string]any) { m["_meta"] = map[string]any{KeyChat: senderID} })},
+		{"SampleRequest", "no maxTokens", withSample(func(m map[string]any) { delete(m, "maxTokens") })},
+		{"SampleRequest", "no tokens", withSample(func(m map[string]any) { m["maxTokens"] = 0 })},
+		{"SampleRequest", "no messages", withSample(func(m map[string]any) { m["messages"] = []any{} })},
+		{"SampleRequest", "17 messages", withSample(func(m map[string]any) { m["messages"] = slices.Repeat(m["messages"].([]any), 17) })},
+		{"SampleRequest", "a temperature in words", withSample(func(m map[string]any) { m["temperature"] = "warm" })},
+		{"SampleRequest", "a system role", withSample(func(m map[string]any) {
+			m["messages"] = []any{map[string]any{"role": "system", "content": map[string]any{"type": "text", "text": "x"}}}
+		})},
+		{"SampleRequest", "an image", withSample(func(m map[string]any) {
+			m["messages"] = []any{map[string]any{"role": "user", "content": map[string]any{"type": "image", "data": "aGk=", "mimeType": "image/png"}}}
+		})},
+		{"SampleResult", "no model", map[string]any{"role": "assistant", "content": map[string]any{"type": "text", "text": "x"}}},
+		{"SampleResult", "the user's", SampleResult{Role: "user", Content: Content{Type: "text", Text: "x"}, Model: "m"}},
+		{"SampleResult", "a text block without its text", map[string]any{"role": "assistant", "content": map[string]any{"type": "text"}, "model": "m"}},
 	}
 	for _, c := range invalid {
 		if check(t, root, c.def, c.v) == nil {
