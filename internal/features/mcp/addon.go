@@ -17,16 +17,10 @@ import (
 	"sync"
 	"time"
 
+	ext "github.com/robdevops/signalbot/addon"
 	"github.com/robdevops/signalbot/internal/feature"
 	"github.com/robdevops/signalbot/internal/kit/txt"
 )
-
-// vendor prefixes the keys of signalbot's MCP extension: the capability,
-// tool visibility and the context of the bot's own calls.
-const vendor = "io.github.robdevops.signalbot/"
-
-// addonVersion is the version of the extension the bot speaks.
-const addonVersion = 1
 
 // addonConfig is a server's "addon" block: what an addon may do, and where.
 type addonConfig struct {
@@ -294,23 +288,10 @@ func (a *addon) userID(chat feature.Chat, sender string) string {
 	return a.pseudonym("u_", "user\x00"+chat.Key()+"\x00"+sender)
 }
 
-// callContext is the context of a call the bot starts, in its _meta.
-type callContext struct {
-	Chat      string `json:"chat"`
-	Sender    string `json:"sender"`
-	Ref       string `json:"ref"`
-	Addressed bool   `json:"addressed"`
-	Group     bool   `json:"group"`
-	Sent      int64  `json:"sent"`   // when the bot got it, in Unix seconds
-	Edited    int64  `json:"edited"` // when the bot got the edit; 0 for an original
-	Name      string `json:"name,omitempty"`
-	Deadline  int64  `json:"deadline,omitempty"` // a direct call's: when the bot stops waiting, in Unix seconds
-}
-
 // context is m's context for the addon, which the bot got at at. It keeps
 // the sender's name, for placeholders, and a ref for m. sent and edited are
 // when the bot got it, never the sender's clock.
-func (a *addon) context(m feature.Message, at time.Time) callContext {
+func (a *addon) context(m feature.Message, at time.Time) ext.Context {
 	now := a.now()
 	user := a.userID(m.Chat, m.Sender)
 	r := make([]byte, 16)
@@ -332,7 +313,7 @@ func (a *addon) context(m feature.Message, at time.Time) callContext {
 		a.names[m.Chat.Key()+"\x00"+user] = seen{m.Name, now.Add(nameLife)}
 	}
 	a.mu.Unlock()
-	c := callContext{Chat: a.chatID(m.Chat), Sender: user, Ref: id, Addressed: m.Addressed, Group: m.Chat.GroupID != "", Sent: at.Unix()}
+	c := ext.Context{Chat: a.chatID(m.Chat), Sender: user, Ref: id, Addressed: m.Addressed, Group: m.Chat.GroupID != "", Sent: at.Unix()}
 	if m.Edited != 0 {
 		c.Edited = c.Sent
 	}

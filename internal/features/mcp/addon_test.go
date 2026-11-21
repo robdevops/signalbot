@@ -25,6 +25,7 @@ import (
 	"testing"
 	"time"
 
+	ext "github.com/robdevops/signalbot/addon"
 	"github.com/robdevops/signalbot/internal/feature"
 	"github.com/robdevops/signalbot/internal/feature/featuretest"
 	"github.com/robdevops/signalbot/internal/kit/logx"
@@ -121,7 +122,7 @@ func TestAddonProcess(t *testing.T) {
 		switch req.Method {
 		case "initialize":
 			caps := `{"tools":{}}`
-			if mode == "addon" && p.Caps.Experimental[vendor+"addon"].Version == 1 { // only if offered
+			if mode == "addon" && p.Caps.Experimental[ext.KeyAddon].Version == 1 { // only if offered
 				caps = `{"tools":{},"resources":{"subscribe":true},"experimental":{"io.github.robdevops.signalbot/addon":{"version":1}}}`
 			}
 			reply(id, `"result":{"protocolVersion":"`+protocol+`","capabilities":`+caps+`,"serverInfo":{"name":"game","title":"Game","version":"1"}}`)
@@ -139,9 +140,9 @@ func TestAddonProcess(t *testing.T) {
 			go func() {
 				switch p.Name {
 				case "play":
-					var meta map[string]callContext
+					var meta map[string]ext.Context
 					json.Unmarshal(p.Meta, &meta)
-					reply(id, text("you said "+p.Arguments["args"]+"\n{"+meta[vendor+"context"].Sender+"} plays"))
+					reply(id, text("you said "+p.Arguments["args"]+"\n{"+meta[ext.KeyContext].Sender+"} plays"))
 				case "context":
 					reply(id, text(string(p.Meta)))
 				case "pics":
@@ -362,11 +363,11 @@ func TestDirect(t *testing.T) {
 		}
 	}
 	got := h.Message(ctx, in(inA, "/ctx"))
-	var meta map[string]callContext
+	var meta map[string]ext.Context
 	if err := json.Unmarshal([]byte(got.Answer), &meta); err != nil {
 		t.Fatalf("ctx %q: %v", got.Answer, err)
 	}
-	c := meta[vendor+"context"]
+	c := meta[ext.KeyContext]
 	id := regexp.MustCompile(`^[cur]_[a-z2-7]{26}$`)
 	if !id.MatchString(c.Chat) || !id.MatchString(c.Sender) || !id.MatchString(c.Ref) || c.Chat[0] != 'c' || c.Sender[0] != 'u' || c.Ref[0] != 'r' ||
 		!c.Addressed || !c.Group || c.Edited != 0 || c.Name != "" || time.Since(time.Unix(c.Sent, 0)) > time.Minute ||
@@ -524,9 +525,9 @@ func TestPseudonyms(t *testing.T) {
 			t.Fatal(err)
 		}
 		defer h.Stop()
-		var meta map[string]callContext
+		var meta map[string]ext.Context
 		json.Unmarshal([]byte(h.Message(context.Background(), in(inDM, "/ctx")).Answer), &meta)
-		return meta[vendor+"context"].Chat
+		return meta[ext.KeyContext].Chat
 	}
 	first := chatIDs()
 	if first == "" || chatIDs() != first {

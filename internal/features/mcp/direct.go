@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	ext "github.com/robdevops/signalbot/addon"
 	"github.com/robdevops/signalbot/internal/feature"
 	"github.com/robdevops/signalbot/internal/kit/img"
 	"github.com/robdevops/signalbot/internal/kit/logx"
@@ -65,7 +66,7 @@ func (a *addon) direct(ctx context.Context, m feature.Message, name string, c ch
 	res, err := a.conn.call(ctx, "tools/call", map[string]any{
 		"name":      c.Tool,
 		"arguments": map[string]string{"args": args},
-		"_meta":     map[string]any{vendor + "context": cc},
+		"_meta":     map[string]any{ext.KeyContext: cc},
 	})
 	var r toolResult
 	outcome := "ok"

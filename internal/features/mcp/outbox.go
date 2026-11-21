@@ -11,15 +11,11 @@ import (
 	"strings"
 	"time"
 
+	ext "github.com/robdevops/signalbot/addon"
 	"github.com/robdevops/signalbot/internal/feature"
 	"github.com/robdevops/signalbot/internal/kit/logx"
 	"github.com/robdevops/signalbot/internal/kit/txt"
 )
-
-// outboxURI is the resource an addon queues its posts and other ops in.
-// The bot subscribes to it, and reads outboxURI/<cursor> for the ops past
-// cursor.
-const outboxURI = "signalbot://outbox"
 
 // maxPages caps the pages of one outbox read, so an addon that always has
 // more can't keep the reader.
@@ -50,7 +46,7 @@ func (a *addon) ready(ctx context.Context, hs handshake) {
 	}
 	ctx, cancel := context.WithTimeout(ctx, callTimeout)
 	defer cancel()
-	if _, err := a.conn.call(ctx, "resources/subscribe", map[string]string{"uri": outboxURI}); err != nil {
+	if _, err := a.conn.call(ctx, "resources/subscribe", map[string]string{"uri": ext.OutboxURI}); err != nil {
 		logx.Warnf("MCP server %s: subscribing to its outbox failed: %s", a.server, errCode(err))
 		return
 	}
@@ -85,32 +81,6 @@ func (a *addon) readOutbox(ctx context.Context) {
 			wait = min(wait*2, maxRetryDelay)
 		}
 	}
-}
-
-// page is a page of an addon's outbox.
-type page struct {
-	Cursor string `json:"cursor"`
-	More   bool   `json:"more"`
-	Ops    []op   `json:"ops"`
-}
-
-// op is one thing an addon asks the bot to do.
-type op struct {
-	ID     string      `json:"id"`
-	Op     string      `json:"op"`   // post, react or unwatch
-	Chat   string      `json:"chat"` // a post's or unwatch's chat pseudonym
-	Text   string      `json:"text"`
-	Images []postImage `json:"images"`
-	Ref    string      `json:"ref"` // a reaction's message
-	Emoji  string      `json:"emoji"`
-	Watch  string      `json:"watch"` // the ID of the watch to end
-}
-
-// postImage is an image in a post.
-type postImage struct {
-	Data     string `json:"data"` // base64
-	MimeType string `json:"mimeType"`
-	Name     string `json:"name"`
 }
 
 // errNotFound is a resource the server doesn't have: -32002 in the
@@ -156,14 +126,14 @@ func (a *addon) drain(ctx context.Context) bool {
 		cursor := cmp.Or(a.cursor, "0")
 		a.mu.Unlock()
 		rctx, cancel := context.WithTimeout(ctx, callTimeout)
-		res, err := a.conn.call(rctx, "resources/read", map[string]string{"uri": outboxURI + "/" + cursor})
+		res, err := a.conn.call(rctx, "resources/read", map[string]string{"uri": ext.OutboxURI + "/" + cursor})
 		cancel()
 		var r struct {
 			Contents []struct {
 				Text string `json:"text"`
 			} `json:"contents"`
 		}
-		var p page
+		var p ext.Page
 		switch {
 		case errNotFound(err):
 			logx.Warnf("MCP server %s has no outbox to read", a.server)
@@ -233,7 +203,7 @@ type failure struct {
 
 // apply does what o asks, once, and returns why it was dropped, if it was.
 // A post counts as applied only once it is sent.
-func (a *addon) apply(o op) (why string) {
+func (a *addon) apply(o ext.Op) (why string) {
 	if o.ID == "" {
 		return "without an id"
 	}
@@ -289,7 +259,7 @@ func (a *addon) apply(o op) (why string) {
 
 // post posts o in its chat, if the addon may. One posted again, after it
 // was dropped, isn't counted against the rate again.
-func (a *addon) post(o op, again bool) (why string) {
+func (a *addon) post(o ext.Op, again bool) (why string) {
 	now := a.now()
 	a.mu.Lock()
 	l, ok := a.leases[o.Chat]

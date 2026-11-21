@@ -10,6 +10,7 @@ import (
 	"sync"
 	"time"
 
+	ext "github.com/robdevops/signalbot/addon"
 	"github.com/robdevops/signalbot/internal/feature"
 	"github.com/robdevops/signalbot/internal/kit/logx"
 	"github.com/robdevops/signalbot/internal/kit/txt"
@@ -30,15 +31,6 @@ const (
 // watchRate caps the watch worker's calls in each chat; a match past it
 // waits its turn. Tests change it.
 var watchRate = rateConfig{PerMinute: 120, Burst: 20}
-
-// watchSpec is the watch a direct command's result asks for, in its _meta.
-type watchSpec struct {
-	ID      string `json:"id"`
-	Pattern string `json:"pattern"` // RE2
-	Until   string `json:"until"`   // RFC 3339
-	Tool    string `json:"tool"`    // called with each message it matches
-	Guard   string `json:"guard"`   // optional: the answer, while it lasts, to a message addressed to the bot that quotes its pictures
-}
 
 // watch is a live watch: an addon's claim, until Until, on the messages
 // matching Pattern in one chat that the bot gets while it lasts, and the
@@ -108,7 +100,7 @@ func (a *addon) lease(chat feature.Chat) {
 // watch makes the watch spec asks for in m's chat, after the command m,
 // and returns it, or nil if it is refused, which is logged without the
 // pattern.
-func (a *addon) watch(m feature.Message, spec watchSpec) *watch {
+func (a *addon) watch(m feature.Message, spec ext.Watch) *watch {
 	refuse := func(why string) *watch {
 		logx.Warnf("MCP server %s: a watch refused: %s", a.server, why)
 		return nil
@@ -311,7 +303,7 @@ func (a *addon) forward(ctx context.Context, m match) (down bool) {
 	res, err := a.conn.call(ctx, "tools/call", map[string]any{
 		"name":      m.tool,
 		"arguments": map[string]string{"text": m.msg.Text},
-		"_meta":     map[string]any{vendor + "context": c},
+		"_meta":     map[string]any{ext.KeyContext: c},
 	})
 	var r toolResult
 	outcome := "ok"

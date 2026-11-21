@@ -20,6 +20,7 @@ import (
 	"strings"
 	"time"
 
+	ext "github.com/robdevops/signalbot/addon"
 	"github.com/robdevops/signalbot/internal/feature"
 	"github.com/robdevops/signalbot/internal/kit/httpx"
 	"github.com/robdevops/signalbot/internal/kit/img"
@@ -287,13 +288,9 @@ type botInfo struct {
 // extension with the chat network the bot is on, and returns what the
 // server said of itself.
 func initialize(ctx context.Context, c conn, self botInfo) (handshake, error) {
-	offer := map[string]any{"version": addonVersion}
-	if self.network != "" {
-		offer["network"] = self.network
-	}
 	res, err := c.call(ctx, "initialize", map[string]any{
 		"protocolVersion": protocol,
-		"capabilities":    map[string]any{"experimental": map[string]any{vendor + "addon": offer}},
+		"capabilities":    map[string]any{"experimental": map[string]any{ext.KeyAddon: ext.Capability{Version: ext.Version, Network: self.network}}},
 		"clientInfo":      map[string]string{"name": "signalbot", "version": self.version},
 	})
 	if err != nil {
@@ -313,10 +310,8 @@ func initialize(ctx context.Context, c conn, self botInfo) (handshake, error) {
 		} `json:"capabilities"`
 	}
 	json.Unmarshal(res, &r) // all optional; a bad result shows up in tools/list
-	var ext struct {
-		Version int `json:"version"`
-	}
-	addon := json.Unmarshal(r.Capabilities.Experimental[vendor+"addon"], &ext) == nil && ext.Version == addonVersion
+	var offered ext.Capability
+	addon := json.Unmarshal(r.Capabilities.Experimental[ext.KeyAddon], &offered) == nil && offered.Version == ext.Version
 	return handshake{
 		instructions: strings.TrimSpace(r.Instructions),
 		title:        txt.SafeName(cmp.Or(r.ServerInfo.Title, r.ServerInfo.Name)),
@@ -399,7 +394,7 @@ func start(ctx context.Context, h feature.Host, path string, servers map[string]
 		switch {
 		case cfg.Addon == nil:
 		case !hs.addon:
-			logx.Warnf("MCP server %s has an addon block but doesn't speak signalbot's addon extension (version %d), so it runs as a plain server", name, addonVersion)
+			logx.Warnf("MCP server %s has an addon block but doesn't speak signalbot's addon extension (version %d), so it runs as a plain server", name, ext.Version)
 		case k != nil:
 			bot := map[string]bool{}
 			for _, t := range listed {
@@ -678,7 +673,7 @@ type toolResult struct {
 	} `json:"content"`
 	IsError bool `json:"isError"`
 	Meta    struct {
-		Watch *watchSpec `json:"io.github.robdevops.signalbot/watch"`
+		Watch *ext.Watch `json:"io.github.robdevops.signalbot/watch"`
 		React string     `json:"io.github.robdevops.signalbot/react"` // an emoji to put on the message
 	} `json:"_meta"`
 }

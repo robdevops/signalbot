@@ -22,6 +22,7 @@ import (
 	"testing"
 	"time"
 
+	ext "github.com/robdevops/signalbot/addon"
 	"github.com/robdevops/signalbot/internal/feature"
 	"github.com/robdevops/signalbot/internal/feature/featuretest"
 	"github.com/robdevops/signalbot/internal/kit/logx"
@@ -112,7 +113,7 @@ func (f *fakeMCP) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		json.Unmarshal(req.Params, &p)
 		f.inits, f.version = f.inits+1, p.ClientInfo.Version
-		f.network = p.Capabilities.Experimental[vendor+"addon"].Network
+		f.network = p.Capabilities.Experimental[ext.KeyAddon].Network
 		f.session = fmt.Sprintf("s%d", f.inits)
 		w.Header().Set("Mcp-Session-Id", f.session)
 	} else if r.Header.Get("Mcp-Session-Id") != f.session {

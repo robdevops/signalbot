@@ -16,6 +16,7 @@ import (
 	"testing"
 	"time"
 
+	ext "github.com/robdevops/signalbot/addon"
 	"github.com/robdevops/signalbot/internal/feature"
 	"github.com/robdevops/signalbot/internal/feature/featuretest"
 	"github.com/robdevops/signalbot/internal/kit/logx"
@@ -47,9 +48,9 @@ func (b *fakeOutbox) call(name string, args map[string]string, meta json.RawMess
 		return `"result":{"content":[{"type":"text","text":"Round on"},{"type":"image","mimeType":"image/png","data":"` + tinyPNG() + `"}],` +
 			`"_meta":{"io.github.robdevops.signalbot/watch":` + args["args"] + `}}`
 	case "guess":
-		var m map[string]callContext
+		var m map[string]ext.Context
 		json.Unmarshal(meta, &m)
-		line, _ := json.Marshal(guessed{args["text"], m[vendor+"context"]})
+		line, _ := json.Marshal(guessed{args["text"], m[ext.KeyContext]})
 		fakeLog("guess " + string(line))
 		if strings.Contains(args["text"], "nopin") {
 			return text("Recorded")
@@ -93,7 +94,7 @@ func (b *fakeOutbox) read(uri string) string {
 	defer b.mu.Unlock()
 	b.reading--
 	from := 0
-	if n, ok := strings.CutPrefix(strings.TrimPrefix(uri, outboxURI+"/"), b.nonce+"."); ok {
+	if n, ok := strings.CutPrefix(strings.TrimPrefix(uri, ext.OutboxURI+"/"), b.nonce+"."); ok {
 		if i, err := strconv.Atoi(n); err == nil && i <= len(b.ops) {
 			from = i
 		}
@@ -108,7 +109,7 @@ func (b *fakeOutbox) read(uri string) string {
 // guessed is what the fake addon's guess tool was sent.
 type guessed struct {
 	Text    string
-	Context callContext
+	Context ext.Context
 }
 
 var fakeLogMu sync.Mutex
@@ -221,7 +222,7 @@ func edit(m feature.Message, at int64, text string) feature.Message {
 
 // spec is a watch called id, for "guess <number>", lasting d, with guard.
 func spec(id string, d time.Duration, guard string) string {
-	b, _ := json.Marshal(watchSpec{ID: id, Pattern: `\bguess \d+`, Until: time.Now().Add(d).Format(time.RFC3339), Tool: "guess", Guard: guard})
+	b, _ := json.Marshal(ext.Watch{ID: id, Pattern: `\bguess \d+`, Until: time.Now().Add(d).Format(time.RFC3339), Tool: "guess", Guard: guard})
 	return string(b)
 }
 
@@ -240,13 +241,13 @@ func round(t *testing.T, h *featuretest.Host, chat feature.Chat, ts int64, spec 
 }
 
 // chatID is the fake addon's pseudonym for chat, from /ctx there.
-func chatID(t *testing.T, h *featuretest.Host, chat feature.Chat) callContext {
+func chatID(t *testing.T, h *featuretest.Host, chat feature.Chat) ext.Context {
 	t.Helper()
-	var meta map[string]callContext
+	var meta map[string]ext.Context
 	if err := json.Unmarshal([]byte(h.Message(context.Background(), in(chat, "/ctx")).Answer), &meta); err != nil {
 		t.Fatal(err)
 	}
-	return meta[vendor+"context"]
+	return meta[ext.KeyContext]
 }
 
 // queue has the fake addon queue ops, telling the bot notify times.
@@ -586,11 +587,11 @@ func TestOutboxDelivery(t *testing.T) {
 	a.host = h
 	a.lease(inA)
 	id := a.chatID(inA)
-	pic := []postImage{{Data: tinyPNG(), MimeType: "image/png"}}
-	postOp := func(n string, images []postImage) op {
-		return op{ID: n, Op: "post", Chat: id, Text: "post " + n, Images: images}
+	pic := []ext.Image{{Data: tinyPNG(), MimeType: "image/png"}}
+	postOp := func(n string, images []ext.Image) ext.Op {
+		return ext.Op{ID: n, Op: "post", Chat: id, Text: "post " + n, Images: images}
 	}
-	for _, o := range []op{postOp("1", nil), postOp("2", pic), postOp("3", pic), postOp("4", pic), postOp("5", nil)} {
+	for _, o := range []ext.Op{postOp("1", nil), postOp("2", pic), postOp("3", pic), postOp("4", pic), postOp("5", nil)} {
 		if why := a.apply(o); why != "" {
 			t.Fatalf("%s: %s", o.ID, why)
 		}
@@ -715,8 +716,8 @@ func unitAddon(cfg addonConfig) (*addon, *time.Time) {
 var everything = addonConfig{Chats: []string{"all"}, DMs: true, Watch: true, Post: true, React: true, watchMax: time.Hour, Rate: rateConfig{20, 5}}
 
 // specAt is a watch spec ending at until.
-func specAt(id string, until time.Time) watchSpec {
-	return watchSpec{ID: id, Pattern: `\bguess \d+`, Until: until.Format(time.RFC3339), Tool: "guess"}
+func specAt(id string, until time.Time) ext.Watch {
+	return ext.Watch{ID: id, Pattern: `\bguess \d+`, Until: until.Format(time.RFC3339), Tool: "guess"}
 }
 
 // A chat has at most maxWatches; a claim lasts claimLife, a watch until its
