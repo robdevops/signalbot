@@ -9,6 +9,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	ext "github.com/robdevops/signalbot/addon"
 	"github.com/robdevops/signalbot/internal/feature"
@@ -19,8 +20,8 @@ import (
 // A watch's limits.
 const (
 	maxWatches = 8       // live in one chat, per addon
-	maxPattern = 1 << 10 // a pattern's size, in bytes
-	maxWatchID = 64      // an ID's size, in bytes
+	maxPattern = 1 << 10 // a pattern's size, in characters, as addon/schema.json counts
+	maxWatchID = 64      // an ID's size, in characters
 	maxGuard   = 500     // a guard's size, in runes
 	maxMatches = 256     // matched messages waiting for the watch worker, per addon
 	claimLife  = 48 * time.Hour
@@ -111,12 +112,12 @@ func (a *addon) watch(m feature.Message, spec ext.Watch) *watch {
 	switch {
 	case !a.cfg.Watch:
 		return refuse("the addon block doesn't allow watch")
-	case spec.ID == "" || len(spec.ID) > maxWatchID:
+	case spec.ID == "" || utf8.RuneCountInString(spec.ID) > maxWatchID:
 		return refuse("its id is empty or too long")
 	case !a.bot[spec.Tool]:
 		return refuse("its tool isn't one the bot may call")
-	case len(spec.Pattern) > maxPattern:
-		return refuse("its pattern is over 1 KB")
+	case utf8.RuneCountInString(spec.Pattern) > maxPattern:
+		return refuse("its pattern is over 1,024 characters")
 	case err != nil:
 		return refuse("its until isn't an RFC 3339 time")
 	case !until.After(now):

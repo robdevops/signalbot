@@ -7,6 +7,7 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/robdevops/signalbot/internal/feature"
 	"github.com/robdevops/signalbot/internal/kit/logx"
@@ -151,7 +152,7 @@ func (a *addon) restore(s addonState) {
 	for _, w := range s.Watches {
 		l, ok := a.leases[w.Chat]
 		re, err := regexp.Compile(w.Pattern)
-		if !ok || !now.Before(w.Until) || !a.allows(l.Chat) || err != nil || len(w.Pattern) > maxPattern || ordinary(re) ||
+		if !ok || !now.Before(w.Until) || !a.allows(l.Chat) || err != nil || utf8.RuneCountInString(w.Pattern) > maxPattern || ordinary(re) ||
 			len(a.watches[l.Chat.Key()]) >= maxWatches {
 			continue
 		}

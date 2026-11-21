@@ -44,8 +44,8 @@
       "description": "A direct command's result's _meta[\"io.github.robdevops.signalbot/watch\"]: the messages matching pattern in the command's chat, until until, go to tool instead of the model. The bot refuses a pattern that would match ordinary chat, and shortens until to the addon block's watch_max.",
       "type": "object",
       "properties": {
-        "id": {"description": "The watch's name, for an unwatch op; at most 64 bytes of UTF-8, which maxLength, counting characters, can't check past ASCII. A new watch with the ID of a live one in the chat replaces it.", "type": "string", "minLength": 1, "maxLength": 64},
-        "pattern": {"description": "An RE2 regular expression, at most 1024 bytes of UTF-8, which maxLength, counting characters, can't check past ASCII.", "type": "string", "minLength": 1, "maxLength": 1024},
+        "id": {"description": "The watch's name, for an unwatch op; at most 64 characters. A new watch with the ID of a live one in the chat replaces it.", "type": "string", "minLength": 1, "maxLength": 64},
+        "pattern": {"description": "An RE2 regular expression, at most 1,024 characters.", "type": "string", "minLength": 1, "maxLength": 1024},
         "until": {"description": "An RFC 3339 time, in the future.", "type": "string", "format": "date-time"},
         "tool": {"description": "A tool for the bot, called with each message the watch takes, as {\"text\": …}, with its context.", "type": "string", "minLength": 1},
         "guard": {"description": "While the watch lasts, the answer to a message addressed to the bot that replies to the command's pictures; at most 500 characters.", "type": "string", "maxLength": 500}

@@ -392,6 +392,7 @@ func TestSchemaSamples(t *testing.T) {
 		{"Context", Context{Chat: chatID, Sender: senderID, Ref: refID, Addressed: true, Group: true, Sent: 1763715600}},
 		{"Context", Context{Chat: chatID, Sender: senderID, Ref: refID, Sent: 1763715600, Edited: 1763715660, Name: "Alice", Deadline: 1763715615}},
 		{"Watch", Watch{ID: "r1", Pattern: `maps\.google`, Until: until, Tool: "guess", Guard: "No hints 😉"}},
+		{"Watch", Watch{ID: strings.Repeat("é", 64), Pattern: `\bdevinette \d+`, Until: until, Tool: "guess"}},
 		{"Result", Text("started")},
 		{"Result", Text("")}, // MCP's TextContent needs its text, even empty
 		{"Op", Op{ID: "5", Op: "post", Chat: chatID, Text: "", Images: []Image{{Data: "aGk=", MimeType: "image/png"}}}},
@@ -423,6 +424,7 @@ func TestSchemaSamples(t *testing.T) {
 		{"Watch", "no tool", Watch{ID: "r1", Pattern: `\d`, Until: until}},
 		{"Watch", "a misspelt key", map[string]any{"id": "r1", "pattern": `\d`, "until": until, "tool": "guess", "gaurd": "x"}},
 		{"Watch", "too long an ID", Watch{ID: strings.Repeat("x", 65), Pattern: `\d`, Until: until, Tool: "guess"}},
+		{"Watch", "too long an ID, accented", Watch{ID: strings.Repeat("é", 65), Pattern: `\d`, Until: until, Tool: "guess"}},
 		{"Result", "an image without its bytes", Result{Content: []Content{{Type: "image", MimeType: "image/jpeg"}}}},
 		{"Result", "a text block without its text", map[string]any{"content": []any{map[string]any{"type": "text"}}}},
 		{"Result", "audio", Result{Content: []Content{{Type: "audio", Data: "aGk=", MimeType: "audio/wav"}}}},

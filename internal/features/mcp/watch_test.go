@@ -357,7 +357,7 @@ func TestWatchRefused(t *testing.T) {
 		t.Fatalf("a refused watch took a message: %+v", got)
 	}
 	for _, want := range []string{"its pattern matches ordinary chat", "its pattern isn't RE2", "its tool isn't one the bot may call",
-		"its until isn't an RFC 3339 time", "its pattern is over 1 KB"} {
+		"its until isn't an RFC 3339 time", "its pattern is over 1,024 characters"} {
 		if !strings.Contains(log.String(), "<4>MCP server game: a watch refused: "+want+"\n") {
 			t.Errorf("log %q, want %q", log.String(), want)
 		}
@@ -748,6 +748,31 @@ var everything = addonConfig{Chats: []string{"all"}, DMs: true, Watch: true, Pos
 // specAt is a watch spec ending at until.
 func specAt(id string, until time.Time) ext.Watch {
 	return ext.Watch{ID: id, Pattern: `\bguess \d+`, Until: until.Format(time.RFC3339), Tool: "guess"}
+}
+
+// A watch's ID and pattern are measured in characters, as addon/schema.json
+// counts them, whatever their script.
+func TestWatchSizesInCharacters(t *testing.T) {
+	var log logx.Buffer
+	t.Cleanup(logx.SetOutput(&log, &log, true))
+	a, now := unitAddon(everything)
+	cmd := said(inA, "alice-id", 1000, "/round")
+	w := func(id, pattern string) ext.Watch {
+		s := specAt(id, now.Add(time.Minute))
+		s.Pattern = pattern
+		return s
+	}
+	pattern := `\bdevinette \d+ ` + strings.Repeat("é", maxPattern-len(`\bdevinette \d+ `))
+	for _, s := range []ext.Watch{w(strings.Repeat("é", maxWatchID), `\bguess \d+`), w("p", pattern)} {
+		if a.watch(cmd, s) == nil {
+			t.Fatalf("refused at the limit, %d bytes: %s", len(s.ID)+len(s.Pattern), log.String())
+		}
+	}
+	for _, s := range []ext.Watch{w(strings.Repeat("é", maxWatchID+1), `\bguess \d+`), w("q", pattern+"é")} {
+		if a.watch(cmd, s) != nil {
+			t.Fatalf("taken past the limit: %d characters of ID", utf8.RuneCountInString(s.ID))
+		}
+	}
 }
 
 // A chat has at most maxWatches; a claim lasts claimLife, a watch until its
