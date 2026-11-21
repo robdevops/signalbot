@@ -373,6 +373,9 @@ func (a *addon) mail(id string, out *outgoing) {
 	p.OnSent = func(sent []int64, dropped bool) {
 		if !dropped {
 			a.replied(p.Chat, sent)
+			if len(p.Pictures) > 0 {
+				a.guardPosted(p.Chat, sent)
+			}
 			a.rememberPosted(id, out.ops, sent)
 		}
 		a.sent(out.ops, !dropped)

@@ -1160,3 +1160,22 @@ func TestNotFound(t *testing.T) {
 		t.Error("a timeout")
 	}
 }
+
+// A later picture the addon posts while a guarded watch lives gets the
+// guard too; a post in another chat, or after the watch, doesn't.
+func TestGuardPosted(t *testing.T) {
+	a, now := unitAddon(everything)
+	s := specAt("g", now.Add(time.Minute))
+	s.Guard = "No hints"
+	w := a.watch(said(inA, "alice-id", 1000, "/round"), s)
+	if w == nil {
+		t.Fatal("watch refused")
+	}
+	a.guardPosted(inA, []int64{777})
+	a.guardPosted(inB, []int64{888})
+	*now = now.Add(2 * time.Minute)
+	a.guardPosted(inA, []int64{999})
+	if !slices.Equal(w.Pictures, []int64{777}) {
+		t.Errorf("pictures %v", w.Pictures)
+	}
+}

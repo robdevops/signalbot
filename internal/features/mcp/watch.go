@@ -168,6 +168,29 @@ func (a *addon) guarding(w *watch, sent []int64) {
 	a.changed()
 }
 
+// guardPosted records that a post of the addon's with pictures went out
+// in chat at sent, on each of the chat's live watches with a guard, so a
+// reply to a later round's picture gets the guard too.
+func (a *addon) guardPosted(chat feature.Chat, sent []int64) {
+	if len(sent) == 0 {
+		return
+	}
+	now := a.now()
+	found := false
+	a.mu.Lock()
+	for _, w := range a.watches[chat.Key()] {
+		if w.Guard != "" && now.Before(w.Until) {
+			w.Pictures = append(w.Pictures, sent...)
+			w.Pictures = w.Pictures[max(len(w.Pictures)-maxSent, 0):]
+			found = true
+		}
+	}
+	a.mu.Unlock()
+	if found {
+		a.changed()
+	}
+}
+
 // replied records that the addon's messages in chat went out at sent, on
 // each of the chat's live reply watches, so they take replies to them.
 func (a *addon) replied(chat feature.Chat, sent []int64) {
