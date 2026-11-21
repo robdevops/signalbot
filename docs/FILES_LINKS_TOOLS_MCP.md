@@ -100,7 +100,7 @@ A server that can't be reached at startup is logged and left out. A config error
 
 An addon is a local MCP server that does more than offer tools: it answers its own commands without the model, reads the messages it asks for, and posts and reacts when it likes. [GeoGuess](https://github.com/robdevops/chat-plugin-geoguess), a photo-guessing game, is one. It is still an ordinary MCP server (protocol 2025-06-18 over stdio), which also speaks signalbot's small extension, under keys starting `io.github.robdevops.signalbot/`. A server is an addon when it has an `addon` block in the MCP file and says it speaks the extension when the bot connects; one with the block that doesn't runs as a plain server, with a warning. Addons run even with [no model](MODELS.md#no-model).
 
-An addon written in Go can use the package [`github.com/robdevops/signalbot/addon`](../addon), which has the extension's types and a ready stdio server: give it the tools, and queue posts, reactions and the end of a watch with `Queue`. An addon in another language speaks the same JSON, described below.
+An addon written in Go can use the package [`github.com/robdevops/signalbot/addon`](../addon), which has the extension's types and a ready stdio server: give it the tools, and queue posts, reactions and the end of a watch with `Queue`. [GeoGuess](https://github.com/robdevops/chat-plugin-geoguess) is built on it. An addon in another language speaks the same JSON, described below.
 
 **An addon is trusted code.** It runs as the bot's user, inside the same systemd or Docker sandbox, and could read what that user can. The bot gives it as little as it can (below), but that guards against bugs and leaks, not a hostile program: install only addons you would let run as the bot.
 
