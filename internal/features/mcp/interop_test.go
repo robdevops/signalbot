@@ -29,7 +29,9 @@ func TestPackageAddonProcess(t *testing.T) {
 				if c == nil {
 					return ext.Text("no chat"), nil
 				}
-				s.Queue(ext.Op{Op: "post", Chat: c.Chat, Text: "{" + c.Sender + "} started a round on " + s.Network()})
+				if err := s.Queue(ext.Op{Op: "post", Chat: c.Chat, Text: "{" + c.Sender + "} started a round on " + s.Network()}); err != nil {
+					return ext.Result{}, err
+				}
 				r := ext.Text("started")
 				r.Meta = &ext.ResultMeta{Watch: &ext.Watch{ID: "r1", Pattern: `\bguess \d+`, Until: time.Now().Add(time.Hour).Format(time.RFC3339), Tool: "guess"}}
 				return r, nil

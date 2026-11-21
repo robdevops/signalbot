@@ -9,6 +9,7 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -657,8 +658,9 @@ func TestDone(t *testing.T) {
 // A command's pictures are sent with its Answer, without the model, by the
 // caption rule; OnSent gets the timestamps Send returned.
 func TestActionPictures(t *testing.T) {
+	var mu sync.Mutex // OnSent runs on the chat's worker
 	var sentAt [][]int64
-	onSent := func(ts []int64, _ bool) { sentAt = append(sentAt, ts) }
+	onSent := func(ts []int64, _ bool) { mu.Lock(); sentAt = append(sentAt, ts); mu.Unlock() }
 	h := start(t, options{features: func(b *Bot) {
 		b.Command("plain", func(context.Context, feature.Message, string) feature.Action {
 			return feature.Action{Answer: "here", Pictures: []feature.Picture{{Data: png}}, OnSent: onSent}
@@ -686,6 +688,8 @@ func TestActionPictures(t *testing.T) {
 	if len(h.requests()) != 0 {
 		t.Fatal("the model was asked")
 	}
+	mu.Lock()
+	defer mu.Unlock()
 	if fmt.Sprint(sentAt) != "[[5001] [5002]]" {
 		t.Fatalf("OnSent got %v", sentAt)
 	}

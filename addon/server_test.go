@@ -350,3 +350,96 @@ func TestBadLine(t *testing.T) {
 	}
 	c.result("ping", struct{}{}, nil)
 }
+
+// Queue refuses an op that could never reach the bot, and queues none of
+// the ops given with it.
+func TestQueueLimits(t *testing.T) {
+	s := New(Config{Name: "game"})
+	img := Image{Data: "aGk=", MimeType: "image/png"}
+	if err := s.Queue(Op{Op: "post", Chat: "c_one", Text: "ok"}, Op{Op: "post", Chat: "c_one", Images: []Image{img, img, img}}); err == nil {
+		t.Error("3 images queued")
+	}
+	if err := s.Queue(Op{Op: "post", Chat: "c_one", Text: strings.Repeat(`"`, pageSize/2)}); err == nil {
+		t.Error("an op too big once escaped was queued")
+	}
+	if n := len(s.Outbox()); n != 0 {
+		t.Fatalf("%d ops queued", n)
+	}
+	if err := s.Queue(Op{Op: "post", Chat: "c_one", Images: []Image{img, img}}); err != nil {
+		t.Errorf("2 images: %v", err)
+	}
+}
+
+// A page of ops full of characters JSON escapes still fits the bot's
+// 4 MiB line.
+func TestPageFitsALine(t *testing.T) {
+	s := New(Config{Name: "game"})
+	for range 1000 {
+		if err := s.Queue(Op{Op: "post", Chat: "c_one", Text: strings.Repeat(`"\`, 1500)}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	c := start(t, s)
+	initialize(c, "")
+	id := c.request("resources/read", uriParams{OutboxURI + "/0"})
+	for line := range c.lines {
+		if len(line) >= 4<<20 {
+			t.Fatalf("a %d-byte line", len(line))
+		}
+		var m struct{ ID *int }
+		if json.Unmarshal(line, &m) == nil && m.ID != nil && *m.ID == id {
+			return
+		}
+	}
+	t.Fatal("no reply")
+}
+
+// Run returns when its context ends, and cancels the calls in flight; when
+// stdin ends it cancels them too before it returns.
+func TestRunStops(t *testing.T) {
+	for _, how := range []string{"ctx", "eof"} {
+		ended := make(chan struct{})
+		slow := Tool{Name: "slow", Call: func(ctx context.Context, _ *Context, _ json.RawMessage) (Result, error) {
+			<-ctx.Done()
+			close(ended)
+			return Text("stopped"), nil
+		}}
+		s := New(Config{Name: "game", Tools: []Tool{slow}})
+		inR, inW := io.Pipe()
+		ctx, cancel := context.WithCancel(context.Background())
+		done := make(chan error, 1)
+		go func() { done <- s.Run(ctx, inR, io.Discard) }()
+		inW.Write([]byte(`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"slow"}}` + "\n"))
+		time.Sleep(50 * time.Millisecond)
+		if how == "ctx" {
+			cancel()
+		} else {
+			inW.Close()
+		}
+		select {
+		case err := <-done:
+			if how == "ctx" && err != context.Canceled || how == "eof" && err != nil {
+				t.Errorf("%s: Run returned %v", how, err)
+			}
+		case <-time.After(5 * time.Second):
+			t.Fatalf("%s: Run didn't return", how)
+		}
+		select {
+		case <-ended:
+		default:
+			t.Errorf("%s: the call in flight wasn't cancelled before Run returned", how)
+		}
+		cancel()
+		inW.Close()
+	}
+}
+
+// A result with no content still sends an array, as MCP requires.
+func TestEmptyResult(t *testing.T) {
+	empty := Tool{Name: "empty", Call: func(context.Context, *Context, json.RawMessage) (Result, error) { return Result{}, nil }}
+	c := start(t, New(Config{Name: "game", Tools: []Tool{empty}}))
+	resp, _ := c.reply(c.request("tools/call", map[string]any{"name": "empty"}))
+	if !strings.Contains(string(resp.Result), `"content":[]`) {
+		t.Errorf("result %s", resp.Result)
+	}
+}

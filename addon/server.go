@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"slices"
 	"strconv"
@@ -36,7 +37,8 @@ type Config struct {
 	Now                  func() time.Time // nil is time.Now; tests set it
 	// Changed, if set, is called when a read of the outbox lets go of ops
 	// the bot has read past, or ones held too long, so the addon can save
-	// Outbox(). It isn't called for Queue: Queue's caller knows to save.
+	// Outbox(). It isn't called for Queue: Queue's caller knows to save. It
+	// can run on several goroutines at once, so saving must allow that.
 	Changed func()
 }
 
@@ -64,11 +66,15 @@ type held struct {
 }
 
 // The outbox's limits: how long an op unread is kept, and the most a page
-// holds, well under the 4 MiB line the bot reads.
+// holds as sent, well under the 4 MiB line the bot reads.
 const (
 	keepOps  = time.Hour
 	pageSize = 3 << 20
 )
+
+// MaxImages is the most images a post may have; the bot also caps them at
+// 2 MB in all.
+const MaxImages = 2
 
 // maxLine caps one incoming line. The bot's requests are small: a
 // command's arguments or one chat message.
@@ -106,10 +112,20 @@ func (s *Server) Network() string {
 
 // Queue adds ops to the outbox, giving each its ID, and tells a subscribed
 // bot. The bot reads them when it can; save Outbox() afterwards to keep
-// them over a restart.
-func (s *Server) Queue(ops ...Op) {
+// them over a restart. It queues none, and says why, if one could never
+// reach the bot: a post with more than MaxImages images, or an op too big
+// for a page as it is sent.
+func (s *Server) Queue(ops ...Op) error {
+	for _, o := range ops {
+		switch {
+		case len(o.Images) > MaxImages:
+			return fmt.Errorf("a post has %d images; the most is %d", len(o.Images), MaxImages)
+		case sentSize(o) > pageSize:
+			return fmt.Errorf("an op is %d bytes as sent; the most is %d", sentSize(o), pageSize)
+		}
+	}
 	if len(ops) == 0 {
-		return
+		return nil
 	}
 	s.mu.Lock()
 	now := s.cfg.Now()
@@ -120,6 +136,15 @@ func (s *Server) Queue(ops ...Op) {
 	}
 	s.mu.Unlock()
 	s.poke()
+	return nil
+}
+
+// sentSize is o's size as the bot gets it: JSON inside the JSON string of
+// a resource's text, where every quote and backslash is escaped again.
+func sentSize(o Op) int {
+	data, _ := json.Marshal(o)
+	quoted, _ := json.Marshal(string(data))
+	return len(quoted)
 }
 
 // Outbox is what the bot hasn't read past yet, oldest first, to save.
@@ -133,7 +158,8 @@ func (s *Server) Outbox() []Held {
 	return out
 }
 
-// Restore puts saved ops back in the outbox, before Run. They keep their
+// Restore puts saved ops back in the outbox. Call it before Run and before
+// any Queue, so the ops stay in the order they were queued. They keep their
 // IDs, so the bot, which remembers the IDs it applied, never applies one
 // twice; a cursor from before the restart is this run's no longer, so the
 // bot's next read gets them all.
@@ -146,33 +172,59 @@ func (s *Server) Restore(ops []Held) {
 	}
 }
 
-// Run serves the bot on in and out until in ends (the bot closed stdin: it
-// returns nil) or ctx does. Each request is answered on its own goroutine,
-// with a context the bot can cancel (notifications/cancelled), and Run
-// waits for the answers in flight before it returns.
+// Run serves the bot on in and out until in ends (the bot closed stdin:
+// it returns nil) or ctx does (it returns ctx's error). Each request is
+// answered on its own goroutine, with a context the bot can cancel
+// (notifications/cancelled). When Run stops, it cancels the calls still
+// running and waits for them, so none acts after it returns. A read from
+// in that is still waiting when ctx ends is left to finish on its own.
 func (s *Server) Run(ctx context.Context, in io.Reader, out io.Writer) error {
 	w := &wire{w: out}
 	ctx, cancel := context.WithCancel(ctx)
-	defer cancel()
-	go s.notifier(ctx, w)
+	var wg sync.WaitGroup
+	notified := make(chan struct{})
+	defer func() {
+		cancel() // first, so the calls in flight stop
+		wg.Wait()
+		<-notified
+	}()
+	go func() { defer close(notified); s.notifier(ctx, w) }()
 	if len(s.Outbox()) > 0 {
 		s.poke()
 	}
-	var wg sync.WaitGroup
-	defer wg.Wait()
+	lines := make(chan []byte)
+	failed := make(chan error, 1)
+	go func() {
+		r := bufio.NewReaderSize(in, 64<<10)
+		for {
+			line, err := readLine(r)
+			if err != nil {
+				failed <- err
+				return
+			}
+			if line == nil { // too long, or blank
+				continue
+			}
+			select {
+			case lines <- line:
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
 	var mu sync.Mutex
 	inFlight := map[string]context.CancelFunc{} // by request ID
-	r := bufio.NewReaderSize(in, 64<<10)
 	for {
-		line, err := readLine(r)
-		if err != nil {
+		var line []byte
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case err := <-failed:
 			if errors.Is(err, io.EOF) {
 				return nil
 			}
 			return err
-		}
-		if line == nil { // too long, or blank
-			continue
+		case line = <-lines:
 		}
 		var m message
 		if json.Unmarshal(line, &m) != nil {
@@ -435,7 +487,11 @@ func (s *Server) methods() map[string]handler {
 			if !ok || t.Call == nil {
 				return nil, &rpcError{codeInvalidParams, "unknown tool"}
 			}
-			return t.Call(ctx, p.Meta.Context, p.Arguments)
+			r, err := t.Call(ctx, p.Meta.Context, p.Arguments)
+			if r.Content == nil {
+				r.Content = []Content{} // MCP's content is an array, never null
+			}
+			return r, err
 		},
 		"resources/list": func(context.Context, json.RawMessage) (any, error) {
 			return struct {
@@ -507,12 +563,12 @@ func (s *Server) read(cursor string) Page {
 	page := Page{Ops: []Op{}}
 	size := 0
 	for _, h := range s.outbox {
-		data, _ := json.Marshal(h.Op)
-		if len(page.Ops) > 0 && size+len(data) > pageSize {
+		data := sentSize(h.Op)
+		if len(page.Ops) > 0 && size+data > pageSize {
 			page.More = true
 			break
 		}
-		size += len(data)
+		size += data
 		page.Ops = append(page.Ops, h.Op)
 		last = h.seq
 	}
