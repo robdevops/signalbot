@@ -156,7 +156,7 @@ func (b *Bot) Deliver(msg feature.Message) {
 func (b *Bot) Post(p feature.Post) {
 	p.OnSent = once(p.OnSent)
 	switch {
-	case b.closing.Load(), p.Text == "" && len(p.Pictures) == 0:
+	case b.closing.Load(), p.Text == "" && len(p.Pictures) == 0 && len(p.Audio) == 0:
 		p.OnSent(nil, true)
 	default:
 		b.post(Outgoing{Post: p})
@@ -188,14 +188,17 @@ func (b *Bot) say(p feature.Post) {
 	}
 	key := p.Chat.Key()
 	text, kept := captioned(p.Text, p.Pictures)
+	if len(p.Audio) > 0 {
+		kept = strings.TrimSpace(kept + " [sent an audio clip]")
+	}
 	if p.Label == "" || b.ai == nil { // with no model, nothing would read it
-		sent := b.net.Send(p.Chat, text, p.Pictures, b.chats.Names(key), p.ReplyTo)
+		sent := b.net.Send(p.Chat, text, p.Pictures, b.chats.Names(key), p.ReplyTo, p.Audio)
 		p.OnSent(sent, len(sent) == 0)
 		return
 	}
 	ref := b.pending()
 	b.chats.Add(key, b.now(), 0, chats.Entry{Role: "assistant", Content: txt.Clamp("["+p.Label+"] "+kept, maxPostKept), Refs: []chats.Ref{ref}})
-	sent := b.net.Send(p.Chat, text, p.Pictures, b.chats.Names(key), p.ReplyTo)
+	sent := b.net.Send(p.Chat, text, p.Pictures, b.chats.Names(key), p.ReplyTo, p.Audio)
 	if len(sent) == 0 {
 		b.chats.Withdraw(key, ref.ID) // the chat never saw it, and it may be posted again
 	} else {
@@ -273,7 +276,7 @@ func (b *Bot) event(e feature.Event) {
 		for _, p := range people {
 			chats.Claim(known, p.Name, p.ID)
 		}
-		b.net.Send(e.Chat, reply, nil, known, 0)
+		b.net.Send(e.Chat, reply, nil, known, 0, nil)
 		return
 	}
 }

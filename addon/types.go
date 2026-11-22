@@ -126,6 +126,14 @@ type Op struct {
 	Emoji   string  `json:"emoji,omitempty"`   // a reaction's
 	Watch   string  `json:"watch,omitempty"`   // the ID of the watch an unwatch ends
 	ReplyTo string  `json:"replyTo,omitempty"` // a post's: the ID of an earlier post of the addon's in the same chat, which it is sent as a reply to
+	Audio   *Audio  `json:"audio,omitempty"`   // a post's: one clip to play, MP3, at most 2 MB
+}
+
+// Audio is a clip in a post, sent to play, with no title of its own: on
+// Telegram a voice message, on Signal an attachment named clip.mp3.
+type Audio struct {
+	Data     string `json:"data"`     // base64
+	MimeType string `json:"mimeType"` // "audio/mpeg"
 }
 
 // Image is an image in a post.

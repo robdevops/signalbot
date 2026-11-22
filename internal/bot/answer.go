@@ -75,7 +75,7 @@ func (b *Bot) respond(msg feature.Message, act feature.Action, text string, refs
 		return
 	case act.Answer != "" || len(act.Pictures) > 0:
 		text, _ := captioned(act.Answer, act.Pictures)
-		sent := b.net.Send(msg.Chat, text, act.Pictures, b.chats.Names(msg.Chat.Key()), 0)
+		sent := b.net.Send(msg.Chat, text, act.Pictures, b.chats.Names(msg.Chat.Key()), 0, nil)
 		if act.OnSent != nil {
 			act.OnSent(sent, len(sent) == 0)
 		}
@@ -90,7 +90,7 @@ func (b *Bot) respond(msg feature.Message, act feature.Action, text string, refs
 		if over, left := b.budget.over(key); over {
 			if b.budget.markTold(key) { // once a day; then a ⏳ until midnight
 				logx.Warnf("a chat reached its daily budget; it is answered again at midnight")
-				b.net.Send(msg.Chat, limitNotice(left), nil, b.chats.Names(key), 0)
+				b.net.Send(msg.Chat, limitNotice(left), nil, b.chats.Names(key), 0, nil)
 			} else if msg.Timestamp != 0 { // a scheduled post can't be reacted to
 				b.net.React(msg.Chat, msg, waiting)
 			}
@@ -109,7 +109,7 @@ func (b *Bot) respond(msg feature.Message, act feature.Action, text string, refs
 	for {
 		if act.ToolChoice != "" && !b.callsTools.Load() {
 			stop()
-			b.net.Send(msg.Chat, noTools, nil, b.chats.Names(key), 0)
+			b.net.Send(msg.Chat, noTools, nil, b.chats.Names(key), 0, nil)
 			return
 		}
 		if t = b.buildTurn(msg, text); t.empty(msg) {
@@ -149,7 +149,7 @@ func (b *Bot) respond(msg feature.Message, act feature.Action, text string, refs
 		if errors.Is(err, model.ErrTooManyRounds) {
 			answer = tooManyRounds
 		}
-		b.net.Send(msg.Chat, answer, nil, b.chats.Names(key), 0)
+		b.net.Send(msg.Chat, answer, nil, b.chats.Names(key), 0, nil)
 		return
 	}
 	b.followUp(key, offered, msg.Text, reply.ToolsUsed)

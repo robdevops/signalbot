@@ -41,8 +41,9 @@ type Network interface {
 	// a send that fails returns no timestamps. If replyTo isn't 0, the
 	// first message sent replies to the bot's own message in chat that an
 	// earlier Send returned it for; one the network can't find is sent
-	// without it.
-	Send(chat feature.Chat, text string, pics []feature.Picture, known map[string]string, replyTo int64) (sent []int64)
+	// without it. audio, if not nil, is one MP3 clip sent with the text,
+	// as audio to play, with no title of its own.
+	Send(chat feature.Chat, text string, pics []feature.Picture, known map[string]string, replyTo int64, audio []byte) (sent []int64)
 	// React puts emoji on msg in chat, as a reaction from the bot.
 	React(chat feature.Chat, msg feature.Message, emoji string)
 	Typing(chat feature.Chat) (stop func())
@@ -245,7 +246,7 @@ func (b *Bot) pending() chats.Ref {
 // and returns Send's timestamps. History is kept first so a message
 // arriving while the send is out lands after the turn, not before it.
 func (b *Bot) sendKept(key string, p chats.Ref, chat feature.Chat, text string, pics []feature.Picture, known map[string]string) []int64 {
-	sent := b.net.Send(chat, text, pics, known, 0)
+	sent := b.net.Send(chat, text, pics, known, 0, nil)
 	b.chats.Retag(key, p.ID, botRefs(sent))
 	return sent
 }

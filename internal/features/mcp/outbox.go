@@ -3,6 +3,7 @@ package mcp
 import (
 	"cmp"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -286,8 +287,15 @@ func (a *addon) post(o ext.Op, again bool) (why string) {
 	}
 	out := &outgoing{Post: feature.Post{Chat: l.Chat, Label: a.title, Text: txt.Clamp(a.fill(l.Chat, strings.TrimSpace(o.Text)), maxAnswer), Pictures: a.pictures(b64)},
 		ops: []string{o.ID}, replyTo: o.ReplyTo}
+	if o.Audio != nil {
+		clip, err := base64.StdEncoding.DecodeString(o.Audio.Data)
+		if err != nil || o.Audio.MimeType != "audio/mpeg" || len(clip) == 0 || len(clip) > maxPictureBytes {
+			return "audio that isn't an MP3 of at most 2 MB"
+		}
+		out.Audio = clip
+	}
 	switch {
-	case out.Text == "" && len(out.Pictures) == 0:
+	case out.Text == "" && len(out.Pictures) == 0 && len(out.Audio) == 0:
 		return "empty posts"
 	case !again && !a.posts.allow(l.Chat.Key(), now):
 		return "posts over the rate limit"
@@ -309,8 +317,8 @@ type outgoing struct {
 // A reply joins no other post, and none joins it, so it stays a message
 // of its own and a later post a new one.
 func (o *outgoing) fits(p *outgoing) bool {
-	if o.replyTo != "" || p.replyTo != "" {
-		return false
+	if o.replyTo != "" || p.replyTo != "" || len(o.Audio) > 0 || len(p.Audio) > 0 {
+		return false // a reply, or a clip, is a message of its own
 	}
 	size := 0
 	for _, pic := range append(slices.Clone(o.Pictures), p.Pictures...) {

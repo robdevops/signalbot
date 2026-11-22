@@ -91,7 +91,7 @@ func (n *fakeNet) WaitID(ctx context.Context) string {
 
 // Send returns one timestamp per call, counting up from 5000, or none
 // while fail is set.
-func (n *fakeNet) Send(chat feature.Chat, text string, images []feature.Picture, known map[string]string, replyTo int64) []int64 {
+func (n *fakeNet) Send(chat feature.Chat, text string, images []feature.Picture, known map[string]string, replyTo int64, audio []byte) []int64 {
 	if n.fail.Load() {
 		return nil
 	}

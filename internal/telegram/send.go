@@ -51,7 +51,7 @@ type sentMsg struct {
 // their caption when it fits, the first message a reply to the bot's own
 // message replyTo if it isn't 0 (sent anyway if that message is gone). It
 // returns the IDs of the messages sent. A failure is logged.
-func (c *Client) Send(ch feature.Chat, text string, pics []feature.Picture, known map[string]string, replyTo int64) (sent []int64) {
+func (c *Client) Send(ch feature.Chat, text string, pics []feature.Picture, known map[string]string, replyTo int64, audio []byte) (sent []int64) {
 	if n := utf8.RuneCountInString(text); n > maxReply {
 		logx.Warnf("reply truncated from %d chars", n)
 	}
@@ -86,8 +86,16 @@ func (c *Client) Send(ch feature.Chat, text string, pics []feature.Picture, know
 			note(i)
 		}
 	}
+	if len(audio) > 0 { // a voice message: it shows no title or performer
+		id, err := c.sendVoice(ctx, ch, audio, replyTo)
+		if err != nil {
+			logx.Errorf("send failed: audio: %v", err) // the text still goes
+		} else {
+			note(id)
+		}
+	}
 	parts := mdstyle.Split(t, maxChars)
-	if len(parts) == 0 && len(pics) == 0 {
+	if len(parts) == 0 && len(pics) == 0 && len(audio) == 0 {
 		logx.Warnf("empty reply, nothing sent")
 		return nil
 	}
@@ -276,6 +284,22 @@ func (c *Client) sendPhotosOnce(ctx context.Context, ch feature.Chat, pics []fea
 	return ids, nil
 }
 
+// sendVoice sends audio, an MP3 clip, as a voice message, which plays in
+// the chat and shows no title or performer, and returns its message ID.
+func (c *Client) sendVoice(ctx context.Context, ch feature.Chat, audio []byte, replyTo int64) (int64, error) {
+	d := c.dest(ch)
+	fields := d.fields(map[string]string{})
+	if replyTo != 0 {
+		rj, _ := json.Marshal(replyParams(replyTo))
+		fields["reply_parameters"] = string(rj)
+	}
+	var m sentMsg
+	err := c.retrying(ctx, d.chat, func(to string) { fields["chat_id"] = to }, func() error {
+		return c.upload(ctx, "sendVoice", fields, map[string][]byte{"voice": audio}, &m)
+	})
+	return m.MessageID, err
+}
+
 // React puts emoji on msg, as a reaction from the bot. Telegram allows only
 // some emoji as reactions, so one it refuses as such is sent as a message
 // instead.
@@ -289,7 +313,7 @@ func (c *Client) React(ch feature.Chat, msg feature.Message, emoji string) {
 	switch {
 	case err == nil:
 	case errors.As(err, &ae) && ae.Code == 400 && strings.Contains(ae.Desc, "REACTION_INVALID"):
-		c.Send(ch, emoji, nil, nil, 0)
+		c.Send(ch, emoji, nil, nil, 0, nil)
 	default:
 		logx.Errorf("reaction failed: %v", err)
 	}

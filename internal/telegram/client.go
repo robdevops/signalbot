@@ -122,7 +122,11 @@ func (c *Client) upload(ctx context.Context, method string, fields map[string]st
 		w.WriteField(k, v)
 	}
 	for name, data := range files {
-		fw, err := w.CreateFormFile(name, name+".png")
+		ext := ".png" // pictures are sent as PNG; a voice message is MP3
+		if name == "voice" {
+			ext = ".mp3"
+		}
+		fw, err := w.CreateFormFile(name, name+ext)
 		if err != nil {
 			return err
 		}

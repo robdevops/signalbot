@@ -51,6 +51,7 @@ var wireTypes = map[string]reflect.Type{
 	"ResultMeta": reflect.TypeFor[ResultMeta](),
 	"Op":         reflect.TypeFor[Op](),
 	"Image":      reflect.TypeFor[Image](),
+	"Audio":      reflect.TypeFor[Audio](),
 	"Page":       reflect.TypeFor[Page](),
 	"Held":       reflect.TypeFor[Held](),
 
@@ -423,6 +424,7 @@ func TestSchemaSamples(t *testing.T) {
 		{"Result", Result{Content: []Content{{Type: "text", Text: "no"}}, IsError: true, Meta: &ResultMeta{React: "📍"}}},
 		{"Op", post},
 		{"Op", Op{ID: "2", Op: "post", Chat: chatID, Images: []Image{{Data: "aGk=", MimeType: "image/png", Name: "a.png"}}}},
+		{"Op", Op{ID: "6", Op: "post", Chat: chatID, Audio: &Audio{Data: "SUQz", MimeType: "audio/mpeg"}}},
 		{"Op", Op{ID: "3", Op: "react", Ref: refID, Emoji: "🎯"}},
 		{"Op", Op{ID: "4", Op: "unwatch", Chat: chatID, Watch: "r1"}},
 		{"Op", Op{ID: "6", Op: "post", Chat: chatID, Text: "It was Paris.", ReplyTo: "a1b2.1"}},
@@ -470,6 +472,7 @@ func TestSchemaSamples(t *testing.T) {
 		{"Op", "three images", Op{ID: "1", Op: "post", Chat: chatID, Images: slices.Repeat([]Image{{Data: "aGk=", MimeType: "image/png"}}, MaxImages+1)}},
 		{"Op", "an image without its type", map[string]any{"id": "1", "op": "post", "chat": chatID, "images": []any{map[string]any{"data": "aGk="}}}},
 		{"Op", "a reaction without an emoji", Op{ID: "1", Op: "react", Ref: refID}},
+		{"Op", "audio that isn't MP3", Op{ID: "1", Op: "post", Chat: chatID, Audio: &Audio{Data: "T2dn", MimeType: "audio/ogg"}}},
 		{"Op", "a reaction to a chat", Op{ID: "1", Op: "react", Ref: chatID, Emoji: "🎯"}},
 		{"Op", "an unwatch without its watch", Op{ID: "1", Op: "unwatch", Chat: chatID}},
 		{"Op", "a group ID for a chat", Op{ID: "1", Op: "unwatch", Chat: "group.abc=", Watch: "r1"}},

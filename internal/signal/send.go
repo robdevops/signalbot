@@ -37,7 +37,7 @@ func (c *Client) Prompt() string {
 // Name or else image_<local time>, quoting the bot's own message sent at
 // replyTo if it isn't 0. A failure is logged, as is a message signal-cli
 // says it could not deliver.
-func (c *Client) Send(chat feature.Chat, text string, pics []feature.Picture, known map[string]string, replyTo int64) (sent []int64) {
+func (c *Client) Send(chat feature.Chat, text string, pics []feature.Picture, known map[string]string, replyTo int64, audio []byte) (sent []int64) {
 	if n := utf8.RuneCountInString(text); n > maxReply {
 		logx.Warnf("reply truncated from %d chars", n)
 	}
@@ -56,6 +56,9 @@ func (c *Client) Send(chat feature.Chat, text string, pics []feature.Picture, kn
 		attachments = append(attachments, fmt.Sprintf("data:%s;filename=%s.%s;base64,%s",
 			mime, name, strings.TrimPrefix(mime, "image/"), base64.StdEncoding.EncodeToString(p.Data)))
 		kept = append(kept, attachment{ContentType: mime, Filename: name + "." + strings.TrimPrefix(mime, "image/"), Size: len(p.Data), data: p.Data})
+	}
+	if len(audio) > 0 { // named plainly, so the file gives nothing away
+		attachments = append(attachments, "data:audio/mpeg;filename=clip.mp3;base64,"+base64.StdEncoding.EncodeToString(audio))
 	}
 	msg, ok := prepare(text, c.BotName())
 	if id := c.self(); id != "" && chat.GroupID != "" { // in a group, "@" and its own name mentions the bot

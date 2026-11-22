@@ -99,6 +99,7 @@
         "chat": {"description": "A post's or unwatch's chat.", "type": "string", "pattern": "^c_[a-z2-7]{26}$"},
         "text": {"description": "A post's text, with {u_…} placeholders the bot fills in with names; at most 4000 characters, names filled in. A post with neither text nor images is dropped.", "type": "string"},
         "images": {"description": "A post's images: at most 2, and 2 MiB in all.", "type": "array", "items": {"$ref": "#/$defs/Image"}, "maxItems": 2},
+        "audio": {"description": "A post's clip to play, MP3, at most 2 MiB: sent with no title of its own. A post with audio is never merged with another.", "$ref": "#/$defs/Audio"},
         "ref": {"description": "The message a reaction is for: a context's ref.", "type": "string", "pattern": "^r_[a-z2-7]{26}$"},
         "emoji": {"description": "A reaction's: one emoji.", "type": "string", "minLength": 1},
         "watch": {"description": "The ID of the watch an unwatch ends.", "type": "string", "minLength": 1, "maxLength": 64},
@@ -107,11 +108,21 @@
       "required": ["id", "op"],
       "additionalProperties": false,
       "allOf": [
-        {"if": {"properties": {"op": {"const": "post"}}}, "then": {"required": ["chat"], "anyOf": [{"required": ["text"], "properties": {"text": {"pattern": "\\S"}}}, {"required": ["images"], "properties": {"images": {"minItems": 1}}}]}},
+        {"if": {"properties": {"op": {"const": "post"}}}, "then": {"required": ["chat"], "anyOf": [{"required": ["text"], "properties": {"text": {"pattern": "\\S"}}}, {"required": ["images"], "properties": {"images": {"minItems": 1}}}, {"required": ["audio"]}]}},
         {"if": {"properties": {"op": {"const": "react"}}}, "then": {"required": ["ref", "emoji"]}},
         {"if": {"properties": {"op": {"const": "unwatch"}}}, "then": {"required": ["chat", "watch"]}},
         {"if": {"required": ["replyTo"]}, "then": {"properties": {"op": {"const": "post"}}}}
       ]
+    },
+    "Audio": {
+      "description": "A clip in a post, to play.",
+      "type": "object",
+      "properties": {
+        "data": {"description": "The MP3's bytes, in base64.", "type": "string", "minLength": 1, "contentEncoding": "base64"},
+        "mimeType": {"type": "string", "const": "audio/mpeg"}
+      },
+      "required": ["data", "mimeType"],
+      "additionalProperties": false
     },
     "Image": {
       "description": "An image in a post. The bot reads its bytes, whatever mimeType says.",

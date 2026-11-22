@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"cmp"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -1177,5 +1178,40 @@ func TestGuardPosted(t *testing.T) {
 	a.guardPosted(inA, []int64{999})
 	if !slices.Equal(w.Pictures, []int64{777}) {
 		t.Errorf("pictures %v", w.Pictures)
+	}
+}
+
+// A post's audio clip reaches the chat as its own message, never merged;
+// one that isn't an MP3 of at most 2 MB is dropped.
+func TestOutboxAudio(t *testing.T) {
+	cfg := everything
+	cfg.Rate = rateConfig{6000, 1000}
+	a, _ := unitAddon(cfg)
+	h := featuretest.New()
+	a.host = h
+	a.lease(inA)
+	id := a.chatID(inA)
+	clip := base64.StdEncoding.EncodeToString([]byte("ID3 clip"))
+	for _, o := range []ext.Op{
+		{ID: "1", Op: "post", Chat: id, Text: "first"},
+		{ID: "2", Op: "post", Chat: id, Text: "🎵 Song 1", Audio: &ext.Audio{Data: clip, MimeType: "audio/mpeg"}},
+		{ID: "3", Op: "post", Chat: id, Text: "after"},
+	} {
+		if why := a.apply(o); why != "" {
+			t.Fatalf("%s: %s", o.ID, why)
+		}
+	}
+	for i := 0; i < len(h.Posts()); i++ {
+		h.Posts()[i].OnSent([]int64{int64(i + 1)}, false)
+	}
+	posts := h.Posts()
+	if len(posts) != 3 || string(posts[1].Audio) != "ID3 clip" || posts[1].Text != "🎵 Song 1" || len(posts[2].Audio) != 0 {
+		t.Fatalf("posts %+v", posts)
+	}
+	for _, bad := range []*ext.Audio{{Data: clip, MimeType: "audio/ogg"}, {Data: "!!", MimeType: "audio/mpeg"},
+		{Data: base64.StdEncoding.EncodeToString(make([]byte, maxPictureBytes+1)), MimeType: "audio/mpeg"}} {
+		if why := a.apply(ext.Op{ID: "x" + bad.MimeType + bad.Data[:2], Op: "post", Chat: id, Audio: bad}); why == "" {
+			t.Errorf("audio %s taken", bad.MimeType)
+		}
 	}
 }
