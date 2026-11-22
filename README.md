@@ -18,7 +18,7 @@ A small, [privacy-conscious](PRIVACY.md) chat bot for Signal, through a running 
 - LLM responds to @mentions, replies to its messages, and DMs from whitelisted contacts
 - Tools: web search, line and pie charts, [pictures](docs/FILES_LINKS_TOOLS_MCP.md#images) (drawings, art, diagrams) with GPT Image 2, and your own [MCP connectors](docs/FILES_LINKS_TOOLS_MCP.md#mcp-connectors)
 - [Reminders](docs/SCHEDULING.md)
-- Plugin games: [geoguesser](https://github.com/robdevops/chat-plugin-geoguess) | [song guesser](https://github.com/robdevops/chat-plugin-songs) | [trivia](https://github.com/robdevops/chat-plugin-quiz)
+- Game plugins: [geoguesser](https://github.com/robdevops/chat-plugin-geoguess) | [song guesser](https://github.com/robdevops/chat-plugin-songs) | [trivia](https://github.com/robdevops/chat-plugin-quiz), or write your own
 - Understands [files](docs/FILES_LINKS_TOOLS_MCP.md#files) (PDFs, text and code, Word, Excel and PowerPoint) and the [pages you link to](docs/FILES_LINKS_TOOLS_MCP.md#links), and if the model supports it, images, stickers, voice notes and other audio
 - Typing indicators, reactions, stickers, @mentions and replies
 - In-memory conversation context (Default: 10 messages). Never logged to disk, forgotten after 24 hours, or sooner if _disappearing messages_ requires.
