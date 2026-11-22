@@ -95,7 +95,13 @@ func (a *addon) state() addonState {
 	defer a.mu.Unlock()
 	s := addonState{Leases: map[string]lease{}, Cursor: a.cursor, Applied: slices.Clone(a.applied)}
 	for key, ws := range a.watches {
-		ws = slices.DeleteFunc(ws, func(w *watch) bool { return !now.Before(w.Until) })
+		ws = slices.DeleteFunc(ws, func(w *watch) bool {
+			gone := !now.Before(w.Until)
+			if gone {
+				a.endedLocked(w, now)
+			}
+			return gone
+		})
 		if len(ws) == 0 {
 			delete(a.watches, key)
 			continue

@@ -527,6 +527,9 @@ func (a *addon) unwatch(chat, id string) {
 	for key, ws := range a.watches {
 		a.watches[key] = slices.DeleteFunc(ws, func(w *watch) bool {
 			gone := w.Chat == chat && w.ID == id
+			if gone {
+				a.endedLocked(w, a.now())
+			}
 			found = found || gone
 			return gone
 		})

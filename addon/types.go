@@ -82,6 +82,10 @@ type Watch struct {
 	// with {"reaction": emoji, "removed": bool} and the reactor's context.
 	// Offer it only to a bot whose Capability has WatchReactions.
 	Reactions bool `json:"reactions,omitempty"`
+	// Over is the answer, for an hour after the watch ends, to a message
+	// addressed to the bot that replies to one of the addon's messages it
+	// knew, in place of the model's: "That game is over."
+	Over string `json:"over,omitempty"`
 }
 
 // Content is one block of a tool's result: text, or an image.

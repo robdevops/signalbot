@@ -51,6 +51,7 @@ type watch struct {
 	Replies  bool      `json:"replies,omitempty"`
 	Reacts   bool      `json:"reactions,omitempty"` // also reactions to the addon's messages it knows
 	Sent     []int64   `json:"sent,omitempty"`      // a reply watch's: when the addon's messages were sent, as Quote.Sent names them; the last maxSent
+	Over     string    `json:"over,omitempty"`      // the answer, for overLife after it ends, to a reply to the addon's messages it knew
 
 	key string         // the chat's key
 	re  *regexp.Regexp // Pattern
@@ -175,7 +176,7 @@ func (a *addon) watch(m feature.Message, spec ext.Watch) *watch {
 	if latest := now.Add(a.cfg.watchMax); until.After(latest) {
 		until = latest
 	}
-	w := &watch{ID: spec.ID, Chat: a.chatID(m.Chat), Pattern: spec.Pattern, Tool: spec.Tool, Guard: txt.Clamp(strings.TrimSpace(spec.Guard), maxGuard),
+	w := &watch{ID: spec.ID, Chat: a.chatID(m.Chat), Pattern: spec.Pattern, Tool: spec.Tool, Guard: txt.Clamp(strings.TrimSpace(spec.Guard), maxGuard), Over: txt.Clamp(strings.TrimSpace(spec.Over), maxGuard),
 		Since: m.Timestamp, Until: until, Replies: spec.Replies, Reacts: spec.Reactions, key: m.Chat.Key(), re: re}
 	a.mu.Lock()
 	tomb := w.Chat + "\x00" + w.ID
@@ -184,7 +185,13 @@ func (a *addon) watch(m feature.Message, spec ext.Watch) *watch {
 		a.mu.Unlock()
 		return refuse("the addon ended it before it began")
 	}
-	live := slices.DeleteFunc(a.watches[w.key], func(o *watch) bool { return o.ID == w.ID || !now.Before(o.Until) })
+	live := slices.DeleteFunc(a.watches[w.key], func(o *watch) bool {
+		gone := o.ID == w.ID || !now.Before(o.Until)
+		if gone {
+			a.endedLocked(o, now)
+		}
+		return gone
+	})
 	if len(live) >= maxWatches {
 		a.watches[w.key] = live
 		a.mu.Unlock()
@@ -339,7 +346,52 @@ func (a *addon) guard(m feature.Message, live []*watch, now time.Time) feature.A
 			return feature.Action{Answer: w.Guard}
 		}
 	}
+	// A reply to a finished watch's messages: its set answer, not the model's.
+	for _, w := range live { // ended by its time, not yet let go of
+		if w.Over != "" && !now.Before(w.Until) && now.Before(w.Until.Add(overLife)) &&
+			(slices.Contains(w.Sent, m.Quote.Sent) || slices.Contains(w.Pictures, m.Quote.Sent)) {
+			return feature.Action{Answer: w.Over}
+		}
+	}
+	for _, e := range a.over[m.Chat.Key()] {
+		if now.Before(e.until) && slices.Contains(e.sent, m.Quote.Sent) {
+			return feature.Action{Answer: e.text}
+		}
+	}
 	return feature.Action{}
+}
+
+// ended is a finished watch's set answer to replies to the addon's
+// messages it knew, until when.
+type ended struct {
+	sent  []int64
+	text  string
+	until time.Time
+}
+
+// How long a finished watch's set answer lasts, and how many a chat keeps.
+const (
+	overLife = time.Hour
+	maxOver  = 8
+)
+
+// endedLocked keeps w's set answer, if it has one, for overLife after it
+// ends: in memory only. a.mu is held.
+func (a *addon) endedLocked(w *watch, now time.Time) {
+	if w.Over == "" {
+		return
+	}
+	if a.over == nil {
+		a.over = map[string][]ended{}
+	}
+	key := w.key
+	until := w.Until
+	if now.Before(until) { // ended early, by an unwatch or a new watch
+		until = now
+	}
+	list := slices.DeleteFunc(a.over[key], func(e ended) bool { return !now.Before(e.until) })
+	list = append(list, ended{slices.Concat(w.Sent, w.Pictures), w.Over, until.Add(overLife)})
+	a.over[key] = list[max(len(list)-maxOver, 0):]
 }
 
 // work passes each matched message to its watch's tool, until ctx ends: in

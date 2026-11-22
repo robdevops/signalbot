@@ -290,6 +290,7 @@ type addon struct {
 	claims  map[claimKey]claim     // messages its watches took
 	leases  map[string]lease       // the chats it may post in, by pseudonym
 	tombs   map[string]time.Time   // unwatches before their watch, by chat pseudonym, "\x00", watch ID: until when
+	over    map[string][]ended     // finished watches' set answers, by chat key; in memory only
 	cursor  string                 // where its outbox was read and delivered up to; "" for the start
 	next    string                 // where the last read of its outbox ended: the cursor once its posts are sent
 	missed  bool                   // a post read from the outbox wasn't sent: read it again before the cursor moves

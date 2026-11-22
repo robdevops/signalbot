@@ -1276,3 +1276,45 @@ func TestReplyWatchInDM(t *testing.T) {
 		t.Error("a message that isn't a reply was taken in a group")
 	}
 }
+
+// A finished watch with Over answers replies to the addon's messages it
+// knew with Over, for an hour, whether it ended by an unwatch or by its
+// time; other messages pass to the model as before.
+func TestWatchOver(t *testing.T) {
+	a, now := unitAddon(everything)
+	reply := func(sent int64) feature.Message {
+		m := to(said(inA, "bob-id", 2000, "losing my religion"))
+		m.Quote = &feature.Quote{Bot: true, Sent: sent}
+		return m
+	}
+	s := ext.Watch{ID: "g1", Until: now.Add(time.Minute).Format(time.RFC3339), Tool: "guess", Replies: true, Over: "That game is over."}
+	if a.watch(said(inA, "alice-id", 1000, "/song"), s) == nil {
+		t.Fatal("watch refused")
+	}
+	a.replied(inA, []int64{555})
+	a.unwatch(a.chatID(inA), "g1")
+	if got := a.claim(reply(555)); got.Answer != "That game is over." {
+		t.Errorf("a reply after the unwatch: %+v", got)
+	}
+	if got := a.claim(reply(556)); !got.IsZero() {
+		t.Errorf("a reply to another message: %+v", got)
+	}
+	if got := a.claim(to(said(inA, "bob-id", 2001, "hello"))); !got.IsZero() {
+		t.Errorf("a message that isn't a reply: %+v", got)
+	}
+	*now = now.Add(overLife + time.Second)
+	if got := a.claim(reply(555)); !got.IsZero() {
+		t.Errorf("a reply after the hour: %+v", got)
+	}
+
+	// Ended by its time, not yet let go of.
+	s.ID, s.Until = "g2", now.Add(time.Minute).Format(time.RFC3339)
+	if a.watch(said(inA, "alice-id", 3000, "/song"), s) == nil {
+		t.Fatal("watch refused")
+	}
+	a.replied(inA, []int64{777})
+	*now = now.Add(2 * time.Minute)
+	if got := a.claim(reply(777)); got.Answer != "That game is over." {
+		t.Errorf("a reply after the watch's time: %+v", got)
+	}
+}
