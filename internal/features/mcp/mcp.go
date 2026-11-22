@@ -137,6 +137,14 @@ func Register(h feature.Host) error {
 			}
 			return feature.Action{}
 		})
+		h.OnEvent(func(_ context.Context, e feature.Event) string {
+			for _, a := range k.addons {
+				if a.reacted(e) {
+					break
+				}
+			}
+			return ""
+		})
 		h.Go(k.run)
 	}
 	return nil
@@ -292,7 +300,7 @@ type botInfo struct {
 // server said of itself.
 func initialize(ctx context.Context, c conn, self botInfo) (handshake, error) {
 	caps := map[string]any{"experimental": map[string]any{
-		ext.KeyAddon: ext.Capability{Version: ext.Version, Network: self.network, WatchReplies: self.addon},
+		ext.KeyAddon: ext.Capability{Version: ext.Version, Network: self.network, WatchReplies: self.addon, WatchReactions: self.addon},
 	}}
 	if self.sample {
 		caps["sampling"] = map[string]any{}

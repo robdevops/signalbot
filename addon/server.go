@@ -55,6 +55,7 @@ type Server struct {
 	network      string
 	sampling     bool // the bot offered sampling in initialize
 	watchReplies bool // the bot takes a watch with Replies
+	watchReacts  bool // the bot takes a watch with Reactions
 	subscribed   bool
 	outbox       []held                 // ops the bot hasn't read past, oldest first
 	seq          int64                  // the last op's sequence number
@@ -137,6 +138,14 @@ func (s *Server) WatchReplies() bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.watchReplies
+}
+
+// WatchReactions reports whether the bot said in initialize that it takes
+// a watch with Reactions.
+func (s *Server) WatchReactions() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.watchReacts
 }
 
 // BotError is the bot's error answer to a request of the addon's, such as
@@ -630,6 +639,7 @@ func (s *Server) methods() map[string]handler {
 			s.mu.Lock()
 			s.network = addon.Network
 			s.watchReplies = addon.WatchReplies
+			s.watchReacts = addon.WatchReactions
 			s.sampling = p.Capabilities.Sampling != nil
 			s.mu.Unlock()
 			r := initializeResult{ProtocolVersion: Protocol, ServerInfo: serverInfo{Name: s.cfg.Name, Title: s.cfg.Title, Version: s.cfg.Version}}

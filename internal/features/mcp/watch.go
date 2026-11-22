@@ -49,7 +49,8 @@ type watch struct {
 	Until    time.Time `json:"until"`
 	Pictures []int64   `json:"pictures,omitempty"` // when the bot's messages with the command's pictures were sent, as Quote.Sent names them
 	Replies  bool      `json:"replies,omitempty"`
-	Sent     []int64   `json:"sent,omitempty"` // a reply watch's: when the addon's messages were sent, as Quote.Sent names them; the last maxSent
+	Reacts   bool      `json:"reactions,omitempty"` // also reactions to the addon's messages it knows
+	Sent     []int64   `json:"sent,omitempty"`      // a reply watch's: when the addon's messages were sent, as Quote.Sent names them; the last maxSent
 
 	key string         // the chat's key
 	re  *regexp.Regexp // Pattern
@@ -85,6 +86,43 @@ type match struct {
 	first int64     // for an edit, when the bot got the original, in Unix seconds; 0 if unknown
 	due   time.Time // when the worker may call its tool, within its chat's rate
 	tries int       // calls that failed with the server down
+	// reaction, for a reaction a watch took: the call's arguments are it,
+	// and msg is the message reacted to, from the reactor.
+	reaction *feature.Reaction
+}
+
+// reacted passes a reaction to one of the addon's own messages to the
+// first of the chat's live watches that takes reactions and knows the
+// message, and reports whether one did.
+func (a *addon) reacted(e feature.Event) bool {
+	r := e.Reaction
+	if r == nil || !r.Bot || r.Sent == 0 || e.By.ID == "" || !a.allows(e.Chat) {
+		return false
+	}
+	now := a.now()
+	tool := ""
+	a.mu.Lock()
+	for _, w := range a.watches[e.Chat.Key()] {
+		if w.Reacts && now.Before(w.Until) && slices.Contains(w.Sent, r.Sent) {
+			tool = w.Tool
+			break
+		}
+	}
+	if tool != "" {
+		a.leases[a.chatID(e.Chat)] = lease{e.Chat, now.Add(leaseLife)}
+	}
+	a.mu.Unlock()
+	if tool == "" {
+		return false
+	}
+	a.changed()
+	m := feature.Message{Chat: e.Chat, Sender: e.By.ID, Name: e.By.Name, Timestamp: r.Sent}
+	select {
+	case a.matches <- match{msg: m, tool: tool, at: now, reaction: r}:
+	default:
+		logx.Warnf("addon %s: watch queue full, a reaction dropped", a.server)
+	}
+	return true
 }
 
 // A match whose call finds the server down waits for it to start again, up
@@ -138,7 +176,7 @@ func (a *addon) watch(m feature.Message, spec ext.Watch) *watch {
 		until = latest
 	}
 	w := &watch{ID: spec.ID, Chat: a.chatID(m.Chat), Pattern: spec.Pattern, Tool: spec.Tool, Guard: txt.Clamp(strings.TrimSpace(spec.Guard), maxGuard),
-		Since: m.Timestamp, Until: until, Replies: spec.Replies, key: m.Chat.Key(), re: re}
+		Since: m.Timestamp, Until: until, Replies: spec.Replies, Reacts: spec.Reactions, key: m.Chat.Key(), re: re}
 	a.mu.Lock()
 	tomb := w.Chat + "\x00" + w.ID
 	if t, ok := a.tombs[tomb]; ok && now.Before(t) {
@@ -201,7 +239,7 @@ func (a *addon) replied(chat feature.Chat, sent []int64) {
 	found := false
 	a.mu.Lock()
 	for _, w := range a.watches[chat.Key()] {
-		if w.Replies && now.Before(w.Until) {
+		if (w.Replies || w.Reacts) && now.Before(w.Until) {
 			w.Sent = append(w.Sent, sent...)
 			w.Sent = w.Sent[max(len(w.Sent)-maxSent, 0):]
 			found = true
@@ -371,7 +409,7 @@ func (a *addon) forward(ctx context.Context, m match) (down bool) {
 	start := time.Now()
 	res, err := a.conn.call(ctx, "tools/call", map[string]any{
 		"name":      m.tool,
-		"arguments": map[string]string{"text": m.msg.Text},
+		"arguments": args(m),
 		"_meta":     map[string]any{ext.KeyContext: c},
 	})
 	var r toolResult
@@ -385,13 +423,21 @@ func (a *addon) forward(ctx context.Context, m match) (down bool) {
 		outcome = "an error result"
 	}
 	logx.Infof("MCP server %s: a watch called %s: %s in %dms, %d bytes", a.server, m.tool, outcome, time.Since(start).Milliseconds(), len(res))
-	if outcome == "ok" && r.Meta.React != "" {
+	if outcome == "ok" && r.Meta.React != "" && m.reaction == nil { // never a reaction to the bot's own message
 		msg := feature.Message{Chat: m.msg.Chat, Sender: m.msg.Sender, Timestamp: m.msg.Timestamp, Edited: m.msg.Edited} // without its text
 		if why := a.react(msg, r.Meta.React); why != "" {
 			logx.Warnf("addon %s: a reaction dropped: %s", a.server, why)
 		}
 	}
 	return errors.Is(err, errNotRunning) || errors.Is(err, errExited)
+}
+
+// args are a watch call's arguments: a message's text, or a reaction.
+func args(m match) map[string]any {
+	if r := m.reaction; r != nil {
+		return map[string]any{"reaction": r.Emoji, "removed": r.Removed}
+	}
+	return map[string]any{"text": m.msg.Text}
 }
 
 // react puts emoji on msg, if the addon may, and returns why not if not.

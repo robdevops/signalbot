@@ -1024,7 +1024,7 @@ func (c *fakeConn) call(_ context.Context, _ string, params any) (json.RawMessag
 		c.fails++
 		return nil, errNotRunning
 	}
-	c.texts = append(c.texts, params.(map[string]any)["arguments"].(map[string]string)["text"])
+	c.texts = append(c.texts, params.(map[string]any)["arguments"].(map[string]any)["text"].(string))
 	return json.RawMessage(`{"content":[]}`), nil
 }
 
@@ -1213,5 +1213,47 @@ func TestOutboxAudio(t *testing.T) {
 		if why := a.apply(ext.Op{ID: "x" + bad.MimeType + bad.Data[:2], Op: "post", Chat: id, Audio: bad}); why == "" {
 			t.Errorf("audio %s taken", bad.MimeType)
 		}
+	}
+}
+
+// A reaction to one of the addon's own messages that a watch with
+// reactions knows goes to its tool, as {"reaction", "removed"}, from the
+// reactor; one to another message, or by the bot, or with no such watch,
+// doesn't.
+func TestWatchReactions(t *testing.T) {
+	a, now := unitAddon(everything)
+	s := specAt("lobby", now.Add(time.Minute))
+	s.Reactions = true
+	if a.watch(said(inA, "alice-id", 1000, "/round"), s) == nil {
+		t.Fatal("watch refused")
+	}
+	a.replied(inA, []int64{555})
+	ev := func(sent int64, bot bool, removed bool) feature.Event {
+		return feature.Event{Chat: inA, By: feature.Person{ID: "bob-id", Name: "Bob"}, Reaction: &feature.Reaction{Emoji: "👍", Bot: bot, Sent: sent, Removed: removed}}
+	}
+	if !a.reacted(ev(555, true, false)) {
+		t.Fatal("a reaction to the addon's message wasn't taken")
+	}
+	m := <-a.matches
+	if m.tool != "guess" || m.msg.Sender != "bob-id" || m.msg.Timestamp != 555 {
+		t.Errorf("match %+v", m)
+	}
+	if got := args(m); got["reaction"] != "👍" || got["removed"] != false {
+		t.Errorf("args %v", got)
+	}
+	if !a.reacted(ev(555, true, true)) || args(<-a.matches)["removed"] != true {
+		t.Error("a reaction taken back")
+	}
+	for _, e := range []feature.Event{ev(556, true, false), ev(555, false, false), {Chat: inB, By: feature.Person{ID: "bob-id"}, Reaction: &feature.Reaction{Emoji: "👍", Bot: true, Sent: 555}}} {
+		if a.reacted(e) {
+			t.Errorf("taken: %+v", e.Reaction)
+		}
+	}
+	*now = now.Add(2 * time.Minute)
+	if a.reacted(ev(555, true, false)) {
+		t.Error("taken after the watch ended")
+	}
+	if got := args(match{msg: feature.Message{Text: "hi"}}); got["text"] != "hi" {
+		t.Errorf("a message's args %v", got)
 	}
 }

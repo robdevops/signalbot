@@ -42,9 +42,10 @@ const (
 // KeyAddon. The bot offers its chat network and what it can do; an addon
 // answers with the version alone.
 type Capability struct {
-	Version      int    `json:"version"`
-	Network      string `json:"network,omitempty"`      // the bot's chat network, as it names itself: "signal", "telegram"
-	WatchReplies bool   `json:"watchReplies,omitempty"` // the bot's: it takes a watch with Replies
+	Version        int    `json:"version"`
+	Network        string `json:"network,omitempty"`        // the bot's chat network, as it names itself: "signal", "telegram"
+	WatchReplies   bool   `json:"watchReplies,omitempty"`   // the bot's: it takes a watch with Replies
+	WatchReactions bool   `json:"watchReactions,omitempty"` // the bot's: it takes a watch with Reactions
 }
 
 // Context is the message a call the bot makes came from, in the call's
@@ -76,6 +77,11 @@ type Watch struct {
 	Tool    string `json:"tool"`              // called with each message it matches, as {"text": …}
 	Guard   string `json:"guard,omitempty"`   // the answer, while it lasts, to a message addressed to the bot that quotes the command's pictures
 	Replies bool   `json:"replies,omitempty"` // only replies to the command's answer and the addon's posts in the chat while it lives
+	// Reactions: also reactions put on, or taken off, the command's answer
+	// and the addon's posts in the chat while it lives, each a call of Tool
+	// with {"reaction": emoji, "removed": bool} and the reactor's context.
+	// Offer it only to a bot whose Capability has WatchReactions.
+	Reactions bool `json:"reactions,omitempty"`
 }
 
 // Content is one block of a tool's result: text, or an image.
