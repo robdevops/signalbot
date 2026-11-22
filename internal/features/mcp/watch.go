@@ -251,11 +251,13 @@ func (a *addon) replied(chat feature.Chat, sent []int64) {
 	}
 }
 
-// takes reports whether w takes m, apart from when: a reply watch only an
-// addressed reply to one of the addon's messages it knows, and its pattern,
-// if it has one, must match.
+// takes reports whether w takes m, apart from when: a reply watch, in a
+// group, only an addressed reply to one of the addon's messages it knows,
+// and in a DM any message; its pattern, if it has one, must match.
 func (a *addon) takes(w *watch, m feature.Message) bool {
-	if w.Replies {
+	// In a DM a reply watch takes every message: the chat is the player's
+	// own with the bot, so there is no group chat to keep out of the game.
+	if w.Replies && m.Chat.GroupID != "" {
 		if !m.Addressed || m.Quote == nil || !m.Quote.Bot || m.Quote.Sent == 0 {
 			return false
 		}

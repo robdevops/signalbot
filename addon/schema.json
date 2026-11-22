@@ -51,7 +51,7 @@
         "until": {"description": "An RFC 3339 time, in the future.", "type": "string", "format": "date-time"},
         "tool": {"description": "A tool for the bot, called with each message the watch takes, as {\"text\": …}, with its context.", "type": "string", "minLength": 1},
         "guard": {"description": "While the watch lasts, the answer to a message addressed to the bot that replies to the command's pictures; at most 500 characters.", "type": "string", "maxLength": 500},
-        "replies": {"description": "Take only messages in the chat that reply to the command's answer or to the addon's posts there while the watch lives. Only for a bot whose capability has watchReplies; the bot doesn't check such a pattern against ordinary chat.", "type": "boolean"},
+        "replies": {"description": "Take only messages in the chat that reply to the command's answer or to the addon's posts there while the watch lives; in a DM, every message. Only for a bot whose capability has watchReplies; the bot doesn't check such a pattern against ordinary chat.", "type": "boolean"},
         "reactions": {"description": "Also take reactions put on, or taken off, the command's answer and the addon's posts in the chat while the watch lives: each a call of tool with {\"reaction\": emoji, \"removed\": bool} and the reactor's context. Only for a bot whose capability has watchReactions. On Telegram the bot sees reactions only as a group's admin.", "type": "boolean"}
       },
       "required": ["id", "until", "tool"],

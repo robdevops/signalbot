@@ -76,7 +76,7 @@ type Watch struct {
 	Until   string `json:"until"`             // RFC 3339
 	Tool    string `json:"tool"`              // called with each message it matches, as {"text": …}
 	Guard   string `json:"guard,omitempty"`   // the answer, while it lasts, to a message addressed to the bot that quotes the command's pictures
-	Replies bool   `json:"replies,omitempty"` // only replies to the command's answer and the addon's posts in the chat while it lives
+	Replies bool   `json:"replies,omitempty"` // only replies to the command's answer and the addon's posts in the chat while it lives; in a DM, every message
 	// Reactions: also reactions put on, or taken off, the command's answer
 	// and the addon's posts in the chat while it lives, each a call of Tool
 	// with {"reaction": emoji, "removed": bool} and the reactor's context.

@@ -1257,3 +1257,22 @@ func TestWatchReactions(t *testing.T) {
 		t.Errorf("a message's args %v", got)
 	}
 }
+
+// In a DM a reply watch takes every message, not only replies; in a group,
+// only replies to the addon's messages.
+func TestReplyWatchInDM(t *testing.T) {
+	a, now := unitAddon(everything)
+	s := ext.Watch{ID: "q", Until: now.Add(time.Minute).Format(time.RFC3339), Tool: "guess", Replies: true}
+	dm := feature.Chat{User: "alice-id"}
+	w := a.watch(said(dm, "alice-id", 1000, "/quiz"), s)
+	if w == nil {
+		t.Fatal("watch refused")
+	}
+	if !a.takes(w, said(dm, "alice-id", 1001, "Brown eyes")) {
+		t.Error("a plain message in a DM wasn't taken")
+	}
+	g := a.watch(said(inA, "alice-id", 1000, "/quiz"), s)
+	if g == nil || a.takes(g, to(said(inA, "bob-id", 1001, "Brown eyes"))) {
+		t.Error("a message that isn't a reply was taken in a group")
+	}
+}
