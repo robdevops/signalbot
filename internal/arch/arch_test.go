@@ -43,7 +43,9 @@ func under(p, dir string) bool { return p == dir || strings.HasPrefix(p, dir+"/"
 // its own packages and kit; internal/signal imports only those,
 // internal/config and internal/bot (for Received: the network depends on
 // the core, never the reverse); internal/config and kit import no other
-// internal package.
+// internal package. addon, the public package of signalbot's MCP addon
+// extension that the bot and every addon written in Go share, imports
+// nothing of the bot's; a feature may import it, as it may import kit.
 func TestImports(t *testing.T) {
 	for _, p := range goFiles(t) {
 		f, err := parser.ParseFile(token.NewFileSet(), root+"/"+p, nil, parser.ImportsOnly)
@@ -57,6 +59,11 @@ func TestImports(t *testing.T) {
 		}
 		for _, spec := range f.Imports {
 			imp, _ := strconv.Unquote(spec.Path.Value)
+			// addon is built into every addon, so it needs nothing beyond the
+			// standard library, whose paths have no dot in their first part.
+			if under(dir, "addon") && !strings.HasPrefix(imp, module) && strings.Contains(strings.Split(imp, "/")[0], ".") {
+				t.Errorf("%s imports %s, outside the standard library", p, imp)
+			}
 			if !strings.HasPrefix(imp, module) {
 				continue
 			}
@@ -64,7 +71,9 @@ func TestImports(t *testing.T) {
 			var ok bool
 			switch {
 			case under(dir, "internal/features"):
-				ok = under(imp, "internal/feature") || under(imp, "internal/kit") || under(imp, own)
+				ok = under(imp, "internal/feature") || under(imp, "internal/kit") || under(imp, own) || under(imp, "addon")
+			case under(dir, "addon"):
+				ok = under(imp, "addon")
 			case under(dir, "internal/feature"):
 				ok = under(imp, "internal/feature") || under(imp, "internal/kit")
 			case under(dir, "internal/signal"), under(dir, "internal/telegram"):

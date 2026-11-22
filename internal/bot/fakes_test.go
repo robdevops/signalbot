@@ -53,8 +53,11 @@ type fakeNet struct {
 	sent    chan sent // what the bot sends, in order
 	mu      sync.Mutex
 	typing  int          // Typing calls
+	stopped int          // their stops called
 	fetched []string     // the media IDs fetched
 	sends   atomic.Int64 // Send calls, for their timestamps
+	fail    atomic.Bool  // while set, Send fails: nothing is sent
+	watch   Watch        // what Watch was told
 }
 
 type sent struct {
@@ -62,9 +65,14 @@ type sent struct {
 	text   string
 	images []feature.Picture
 	known  map[string]string
+	reply  int64
 }
 
-func (n *fakeNet) Watch(bool) {}
+func (n *fakeNet) Watch(w Watch) {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	n.watch = w
+}
 
 func (n *fakeNet) Run(ctx context.Context, handle func(Received)) {
 	n.handle = handle
@@ -81,9 +89,13 @@ func (n *fakeNet) WaitID(ctx context.Context) string {
 	}
 }
 
-// Send returns one timestamp per call, counting up from 5000.
-func (n *fakeNet) Send(chat feature.Chat, text string, images []feature.Picture, known map[string]string) []int64 {
-	n.sent <- sent{chat, text, images, known}
+// Send returns one timestamp per call, counting up from 5000, or none
+// while fail is set.
+func (n *fakeNet) Send(chat feature.Chat, text string, images []feature.Picture, known map[string]string, replyTo int64, audio []byte) []int64 {
+	if n.fail.Load() {
+		return nil
+	}
+	n.sent <- sent{chat, text, images, known, replyTo}
 	return []int64{5000 + n.sends.Add(1)}
 }
 
@@ -96,7 +108,11 @@ func (n *fakeNet) Typing(feature.Chat) func() {
 	n.mu.Lock()
 	defer n.mu.Unlock()
 	n.typing++
-	return func() {}
+	return func() {
+		n.mu.Lock()
+		defer n.mu.Unlock()
+		n.stopped++
+	}
 }
 
 func (n *fakeNet) Delivered(ctx context.Context, msg feature.Message) (Ready, bool) {
@@ -113,6 +129,15 @@ func (n *fakeNet) Delivered(ctx context.Context, msg feature.Message) (Ready, bo
 	return r, true
 }
 
+// Reachable is the group, and the DMs of Alice and Bob.
+func (n *fakeNet) Reachable(_ context.Context, chat feature.Chat) bool {
+	if chat.GroupID != "" {
+		return chat.GroupID == groupID
+	}
+	return chat.User == aliceID || chat.User == bobID
+}
+
+func (n *fakeNet) Name() string    { return "fake" }
 func (n *fakeNet) BotName() string { return "Botty" }
 
 // Prompt is Signal's, so the golden prompt holds with no features.
@@ -312,6 +337,13 @@ func (h *harness) noSend() {
 		h.t.Fatalf("sent %+v", s)
 	case <-time.After(100 * time.Millisecond):
 	}
+}
+
+// stopped is how many of the Typing calls' stops were called.
+func (h *harness) stopped() int {
+	h.net.mu.Lock()
+	defer h.net.mu.Unlock()
+	return h.net.stopped
 }
 
 func (h *harness) typing() int {

@@ -35,9 +35,17 @@ type pending struct {
 	quiet   bool // every update was the bot's own: compared, but not reported
 }
 
-// Watch tells the client whether the core has a hook for events; without
-// one it neither loads nor compares members.
-func (c *Client) Watch(events bool) { c.members.on.Store(events) }
+// Watch tells the client whether the core has a hook for events (without
+// one it neither loads nor compares members) and which commands features
+// registered, so a group message starting with one is addressed.
+func (c *Client) Watch(w bot.Watch) {
+	c.members.on.Store(w.Events)
+	commands := map[string]bool{}
+	for _, name := range w.Commands {
+		commands[name] = true
+	}
+	c.commands.Store(&commands)
+}
 
 // start loads the groups' members once the bot's ID is known, so the first
 // update is compared with them; nothing is reported for those already there.

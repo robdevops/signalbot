@@ -321,6 +321,35 @@ func TestWaitingCommandOnItsOwn(t *testing.T) {
 	}
 }
 
+// A hook that takes over a second on an addressed message shows the bot
+// typing, stopped before the answer goes out; a quick one shows nothing.
+func TestSlowHookTypes(t *testing.T) {
+	h := start(t, options{features: func(b *Bot) {
+		b.OnMessage(func(_ context.Context, m feature.Message) feature.Action {
+			switch m.Text {
+			case "/slow":
+				time.Sleep(1500 * time.Millisecond)
+				return feature.Action{Answer: "slow"}
+			case "/fast":
+				return feature.Action{Answer: "fast"}
+			}
+			return feature.Action{}
+		})
+	}})
+	h.receive(dm("/fast"))
+	if s := h.nextSend(); s.text != "fast" || h.typing() != 0 {
+		t.Fatalf("fast: sent %q, typing %d times", s.text, h.typing())
+	}
+	h.receive(dm("/slow"))
+	if s := h.nextSend(); s.text != "slow" || h.typing() != 1 || h.stopped() != 1 {
+		t.Fatalf("slow: sent %q, typing %d times, stopped %d", s.text, h.typing(), h.stopped())
+	}
+	h.settle()
+	if h.typing() != 1 || h.stopped() != 1 {
+		t.Fatalf("after: typing %d times, stopped %d", h.typing(), h.stopped())
+	}
+}
+
 // While a batch is being answered, 4 more messages can wait, and they are
 // answered together after it, in one batch.
 func TestFourWaitDuringABatch(t *testing.T) {
@@ -420,6 +449,36 @@ func TestShutdownStopsWaiting(t *testing.T) {
 	h.noSend()
 	if n := len(h.requests()); n != 1 || late.Load() {
 		t.Fatalf("%d requests; the hooks saw b: %v", n, late.Load())
+	}
+}
+
+// A hook's answer cut off by shutdown, which began after the hook
+// returned, is never sent, and its OnSent is told it was dropped, once.
+func TestShutdownDropsAnswer(t *testing.T) {
+	outcomes := make(chan bool, 2)
+	stopped := make(chan struct{})
+	h := start(t, options{features: func(b *Bot) {
+		b.Command("ping", func(context.Context, feature.Message, string) feature.Action {
+			go func() { defer close(stopped); b.Shutdown(5 * time.Second) }()
+			for !b.closing.Load() {
+				time.Sleep(time.Millisecond)
+			}
+			return feature.Action{Answer: "pong", OnSent: func(_ []int64, dropped bool) { outcomes <- dropped }}
+		})
+	}})
+	h.receive(dm("/ping"))
+	<-stopped
+	h.noSend()
+	select {
+	case dropped := <-outcomes:
+		if !dropped {
+			t.Fatal("OnSent said it was sent")
+		}
+	default:
+		t.Fatal("OnSent never called")
+	}
+	if len(outcomes) != 0 {
+		t.Fatal("OnSent called again")
 	}
 }
 

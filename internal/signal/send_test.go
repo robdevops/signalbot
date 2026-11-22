@@ -17,7 +17,7 @@ func TestSendOneMessageAndCaps(t *testing.T) {
 	c := newClient(f.sock, nil, nil)
 	run(t, c, f)
 	dm := feature.Chat{User: aliceID}
-	c.Send(dm, strings.Repeat("z ", 6000), []feature.Picture{{Data: []byte("PNG")}}, nil)
+	c.Send(dm, strings.Repeat("z ", 6000), []feature.Picture{{Data: []byte("PNG")}}, nil, 0, nil)
 	eventually(t, "a send", func() bool { return len(f.calls("send")) == 1 })
 	if s := f.calls("send")[0]; s["attachments"] == nil || len([]rune(s["message"].(string))) != maxReply || !strings.HasSuffix(s["message"].(string), "[…truncated]") {
 		t.Errorf("send %d chars, attachments %v", len([]rune(fmt.Sprint(s["message"]))), s["attachments"] != nil)
@@ -25,13 +25,13 @@ func TestSendOneMessageAndCaps(t *testing.T) {
 	if !strings.Contains(logs.String(), "reply truncated from 12000 chars") {
 		t.Errorf("logs %q", logs)
 	}
-	c.Send(dm, " ", nil, nil)
-	c.Send(dm, "", []feature.Picture{{Data: []byte("PNG")}}, nil)
+	c.Send(dm, " ", nil, nil, 0, nil)
+	c.Send(dm, "", []feature.Picture{{Data: []byte("PNG")}}, nil, 0, nil)
 	eventually(t, "the pictures alone", func() bool { return len(f.calls("send")) == 2 })
 	if s := f.calls("send")[1]; s["message"] != "" || s["attachments"] == nil {
 		t.Errorf("pictures sent as %v", s)
 	}
-	newClient("x", nil, nil).Send(dm, "secret words", nil, nil)
+	newClient("x", nil, nil).Send(dm, "secret words", nil, nil, 0, nil)
 	if out := logs.String(); !strings.Contains(out, "empty reply, nothing sent") || !strings.Contains(out, "send failed: not connected") || strings.Contains(out, "secret") {
 		t.Errorf("logs %q", out)
 	}
@@ -68,5 +68,19 @@ func TestFileName(t *testing.T) {
 		if got := fileName(in); got != want {
 			t.Errorf("fileName(%q) = %q, want %q", in, got, want)
 		}
+	}
+}
+
+// An audio clip goes as an MP3 attachment named only clip.mp3, so its file
+// gives nothing away.
+func TestSendAudio(t *testing.T) {
+	f := newFake(t)
+	c := newClient(f.sock, nil, nil)
+	run(t, c, f)
+	c.Send(feature.Chat{User: aliceID}, "🎵 Song 1", nil, nil, 0, []byte("ID3 clip"))
+	eventually(t, "a send", func() bool { return len(f.calls("send")) == 1 })
+	att, _ := f.calls("send")[0]["attachments"].([]any)
+	if len(att) != 1 || att[0] != "data:audio/mpeg;filename=clip.mp3;base64,SUQzIGNsaXA=" {
+		t.Errorf("attachments %v", att)
 	}
 }

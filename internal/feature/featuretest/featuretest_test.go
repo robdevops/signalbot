@@ -31,10 +31,10 @@ func TestActionsCountAsInTheCore(t *testing.T) {
 		return feature.Action{Context: "ctx", Answer: "early"}
 	})
 	h.OnMessage(func(context.Context, feature.Message) feature.Action { return feature.Action{Answer: "late"} })
-	if a := h.Message(context.Background(), feature.Message{Addressed: true}); a != (feature.Action{Answer: "early"}) {
+	if a := h.Message(context.Background(), feature.Message{Addressed: true}); a.Answer != "early" || a.Context != "" {
 		t.Errorf("addressed: got %+v", a)
 	}
-	if a := h.Message(context.Background(), feature.Message{}); a != (feature.Action{Context: "ctx"}) {
+	if a := h.Message(context.Background(), feature.Message{}); a.Context != "ctx" || a.Answer != "" {
 		t.Errorf("unaddressed: got %+v", a)
 	}
 	h = New()
@@ -42,6 +42,20 @@ func TestActionsCountAsInTheCore(t *testing.T) {
 	h.OnMessage(func(context.Context, feature.Message) feature.Action { return feature.Action{Answer: "a"} })
 	if a := h.Message(context.Background(), feature.Message{Addressed: true}); a.Answer != "a" {
 		t.Errorf("Context won on an addressed message: %+v", a)
+	}
+}
+
+// Post and React are recorded in order.
+func TestPostsAndReactions(t *testing.T) {
+	h := New()
+	alice := feature.Chat{User: "alice"}
+	h.Post(feature.Post{Chat: alice, Label: "Label", Text: "hello"})
+	h.React(alice, feature.Message{Chat: alice, Sender: "alice", Timestamp: 1}, "👍")
+	if p := h.Posts(); len(p) != 1 || p[0].Chat != alice || p[0].Text != "hello" || p[0].Label != "Label" {
+		t.Errorf("posts %+v", p)
+	}
+	if r := h.Reactions(); len(r) != 1 || r[0].Chat != alice || r[0].Message.Timestamp != 1 || r[0].Emoji != "👍" {
+		t.Errorf("reactions %+v", r)
 	}
 }
 
@@ -103,5 +117,21 @@ func TestStoreNames(t *testing.T) {
 		if _, err := h.Store(name); err == nil {
 			t.Errorf("%q opened", name)
 		}
+	}
+}
+
+// CallAPI records the chat a call is charged to, if any.
+func TestCallAPICharged(t *testing.T) {
+	h := New()
+	alice := feature.Chat{User: "alice"}
+	h.CallAPI(context.Background(), "/images", nil)
+	if _, err := h.CallAPI(feature.ChargeTo(context.Background(), alice), "/chat/completions", nil); err == nil {
+		t.Error("no API, yet a call worked")
+	}
+	if got := h.Charged(); len(got) != 1 || got[0] != alice {
+		t.Errorf("charged %v", got)
+	}
+	if c, ok := feature.ChargedChat(context.Background()); ok {
+		t.Errorf("a plain ctx is charged to %v", c)
 	}
 }

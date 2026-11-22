@@ -39,10 +39,10 @@ func TestCommand(t *testing.T) {
 	if a := h.Message(ctx, feature.Message{Text: "/PING now", Addressed: true}); a.Answer != "pong now" {
 		t.Errorf("got %+v", a)
 	}
-	if a := h.Message(ctx, feature.Message{Text: "/ping"}); a != (feature.Action{}) {
+	if a := h.Message(ctx, feature.Message{Text: "/ping"}); !a.IsZero() {
 		t.Errorf("an unaddressed message ran the command: %+v", a)
 	}
-	if a := h.Message(ctx, feature.Message{Text: "/pinger", Addressed: true}); a != (feature.Action{}) {
+	if a := h.Message(ctx, feature.Message{Text: "/pinger", Addressed: true}); !a.IsZero() {
 		t.Errorf("another name ran the command: %+v", a)
 	}
 }

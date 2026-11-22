@@ -696,7 +696,7 @@ func TestCall(t *testing.T) {
 		t.Error("called outside a tool")
 	}
 	inTool := context.WithValue(context.Background(), spendKey{}, &spend{})
-	for _, path := range []string{"/chat/completions", "images", "/images?x=1", "/../keys", ""} {
+	for _, path := range []string{"images", "/images?x=1", "/../keys", "", "/chat/completions?x=1"} {
 		if _, err := c.Call(inTool, path, map[string]any{}); err == nil {
 			t.Errorf("called %q", path)
 		}
@@ -719,6 +719,62 @@ func TestCall(t *testing.T) {
 	other := client(t, srv.URL, false)
 	other.Call(inTool, "/images", map[string]any{"model": "m"})
 	if _, ok := called["provider"]; ok || other.Provider() != "" || c.Provider() != "openrouter" {
+		t.Errorf("another API got %v", called)
+	}
+}
+
+// Outside a tool, a Call with a ctx from Meter is made and its cost read
+// from the meter. A chat completion gets the client's own model, whatever
+// the body names, and on OpenRouter asks for the cost and for providers
+// that don't collect the data; on another API only the model is set.
+func TestCallMetered(t *testing.T) {
+	var logs logx.Buffer
+	t.Cleanup(logx.SetOutput(&logs, &logs, false))
+	var mu sync.Mutex
+	var called map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		mu.Lock()
+		defer mu.Unlock()
+		called = nil
+		json.Unmarshal(b, &called)
+		io.WriteString(w, text("a secret answer").body)
+	}))
+	t.Cleanup(srv.Close)
+	c := client(t, srv.URL, true)
+	if Metered(context.Background()) {
+		t.Fatal("a plain ctx is metered")
+	}
+	ctx, spent := Meter(context.Background())
+	if !Metered(ctx) {
+		t.Fatal("a meter's ctx isn't metered")
+	}
+	body := map[string]any{"model": "x/dearer", "messages": []any{map[string]any{"role": "user", "content": "a secret question"}}, "max_tokens": 100}
+	got, err := c.Call(ctx, "/chat/completions", body)
+	if err != nil || !strings.Contains(string(got), "a secret answer") {
+		t.Fatalf("got %s, %v", got, err)
+	}
+	if cost, ok := spent(); cost != 0.002 || !ok {
+		t.Errorf("cost %v, %v", cost, ok)
+	}
+	if cost, ok := spent(); cost != 0 || ok {
+		t.Errorf("taken twice: %v, %v", cost, ok)
+	}
+	if body["model"] != "x/dearer" {
+		t.Error("the caller's body was changed")
+	}
+	if called["model"] != "x/model" || !reflect.DeepEqual(called["usage"], map[string]any{"include": true}) ||
+		!reflect.DeepEqual(called["provider"], map[string]any{"data_collection": "deny"}) || called["max_tokens"] != 100.0 {
+		t.Errorf("request %v", called)
+	}
+	if l := logs.String(); !strings.Contains(l, "api /chat/completions ") || strings.Contains(l, "secret") {
+		t.Errorf("logged %q", l)
+	}
+	other := client(t, srv.URL, false)
+	if _, err := other.Call(ctx, "/chat/completions", map[string]any{"model": "x/dearer"}); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(called, map[string]any{"model": "x/model"}) {
 		t.Errorf("another API got %v", called)
 	}
 }

@@ -253,7 +253,7 @@ func TestStalledWriteReconnects(t *testing.T) {
 	}
 	sent := make(chan error)
 	go func() {
-		_, err := c.send(feature.Chat{User: aliceID}, strings.Repeat("x", 8<<20), nil, nil, nil)
+		_, err := c.send(feature.Chat{User: aliceID}, strings.Repeat("x", 8<<20), nil, nil, nil, 0)
 		sent <- err
 	}()
 	receive(srv, `{"sourceUuid":"`+aliceID+`","dataMessage":{"message":"hi"}}`)
@@ -270,7 +270,8 @@ func TestStalledWriteReconnects(t *testing.T) {
 }
 
 // A reply loses the bot's own @name, links @Name to the names it is given,
-// and carries its images, each named and encoded for signal-cli.
+// and carries its images, each named and encoded for signal-cli; a reply
+// quotes the bot's own message.
 func TestSendAndTyping(t *testing.T) {
 	captureLogs(t)
 	f := newFake(t)
@@ -279,10 +280,10 @@ func TestSendAndTyping(t *testing.T) {
 	run(t, c, f)
 	group, dm := feature.Chat{GroupID: groupID}, feature.Chat{User: aliceID}
 	png := []byte("\x89PNG\r\n\x1a\n")
-	if ts := c.Send(group, "@signalbot hi @Alice", []feature.Picture{{Data: png, Name: "NVDA vs AMD, 1 month"}, {Data: png}}, map[string]string{"alice": aliceID}); !slices.Equal(ts, []int64{1001}) {
+	if ts := c.Send(group, "@signalbot hi @Alice", []feature.Picture{{Data: png, Name: "NVDA vs AMD, 1 month"}, {Data: png}}, map[string]string{"alice": aliceID}, 0, nil); !slices.Equal(ts, []int64{1001}) {
 		t.Fatalf("sent %v", ts)
 	}
-	c.Send(dm, "plain @Alice", nil, nil)
+	c.Send(dm, "plain @Alice", nil, nil, 0, nil)
 	eventually(t, "two sends", func() bool { return len(f.calls("send")) == 2 })
 	s := f.calls("send")
 	if s[0]["groupId"] != groupID || s[0]["message"] != "hi @Alice" || fmt.Sprint(s[0]["mention"]) != "[3:6:"+aliceID+"]" ||
@@ -291,6 +292,15 @@ func TestSendAndTyping(t *testing.T) {
 	}
 	if fmt.Sprint(s[1]["recipient"]) != "["+aliceID+"]" || s[1]["mention"] != nil || s[1]["attachments"] != nil {
 		t.Errorf("DM send %v", s[1])
+	}
+	if s[0]["quoteTimestamp"] != nil || s[1]["quoteAuthor"] != nil {
+		t.Errorf("a plain send quotes: %v", s)
+	}
+	// A reply quotes the bot's own message by its timestamp.
+	c.Send(group, "the answer", nil, nil, 1001, nil)
+	eventually(t, "the reply", func() bool { return len(f.calls("send")) == 3 })
+	if r := f.calls("send")[2]; r["quoteTimestamp"] != float64(1001) || r["quoteAuthor"] != botID || r["message"] != "the answer" || r["groupId"] != groupID {
+		t.Errorf("reply send %v", r)
 	}
 
 	stop := c.Typing(dm)
@@ -465,11 +475,11 @@ func TestSendResults(t *testing.T) {
 	f := newFake(t)
 	c := newClient(f.sock, nil, nil)
 	run(t, c, f)
-	if ts := c.Send(feature.Chat{User: aliceID}, strings.Repeat("word ", 500), nil, nil); len(ts) != 1 {
+	if ts := c.Send(feature.Chat{User: aliceID}, strings.Repeat("word ", 500), nil, nil, 0, nil); len(ts) != 1 {
 		t.Fatalf("a long reply returned %v", ts)
 	}
 	f.set("send", `{"timestamp":77,"results":[{"type":"NETWORK_FAILURE"}]}`)
-	if ts := c.Send(feature.Chat{User: aliceID}, "hi", nil, nil); !slices.Equal(ts, []int64{77}) {
+	if ts := c.Send(feature.Chat{User: aliceID}, "hi", nil, nil, 0, nil); !slices.Equal(ts, []int64{77}) {
 		t.Fatalf("returned %v", ts)
 	}
 	if !strings.Contains(logs.String(), "signal-cli send not delivered: NETWORK_FAILURE") {
@@ -479,7 +489,7 @@ func TestSendResults(t *testing.T) {
 
 func TestCallsFailWhenNotConnected(t *testing.T) {
 	c := newClient("x", nil, nil)
-	if _, err := c.send(feature.Chat{User: aliceID}, "hi", nil, nil, nil); err == nil {
+	if _, err := c.send(feature.Chat{User: aliceID}, "hi", nil, nil, nil, 0); err == nil {
 		t.Error("send while not connected")
 	}
 	if _, err := c.groups(context.Background(), aliceID); err == nil {
@@ -531,7 +541,7 @@ func TestMemberChanges(t *testing.T) {
 	f.set("listContacts", `[{"uuid":"`+bobID+`","profile":{"givenName":"Bob"}},{"uuid":"`+aliceID+`","profile":{"givenName":"Alice"}}]`)
 	listed(botID, aliceID)
 	c := newClient(f.sock, allowAll(), &config.Test{ReloadGap: time.Millisecond})
-	c.Watch(true)
+	c.Watch(bot.Watch{Events: true})
 	got, conn := run(t, c, f)
 	eventually(t, "the first listGroups", func() bool { return len(f.calls("listGroups")) == 1 })
 	update := func(group string) { // and wait for its comparison, so the next answer is the next update's
@@ -593,7 +603,7 @@ func TestMemberChangeRules(t *testing.T) {
 	listed(botID, aliceID)
 	test := &config.Test{ReloadGap: time.Millisecond}
 	c := newClient(f.sock, allowAll(), test)
-	c.Watch(true)
+	c.Watch(bot.Watch{Events: true})
 	got, conn := run(t, c, f)
 	eventually(t, "the first listGroups", func() bool { return len(f.calls("listGroups")) == 1 })
 	frame := func(from string) string {
@@ -665,7 +675,7 @@ func TestMemberChangeRules(t *testing.T) {
 // never taken for one of them.
 func TestMembersWaitForTheBotsID(t *testing.T) {
 	c := newClient("x", nil, nil)
-	c.Watch(true)
+	c.Watch(bot.Watch{Events: true})
 	if gs, ok := c.members.load(context.Background(), func(string, ...any) {}); ok || gs != nil {
 		t.Fatalf("loaded %v before the ID was known", gs)
 	}
