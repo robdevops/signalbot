@@ -28,7 +28,7 @@ A small, [privacy-conscious](PRIVACY.md) chat bot for Signal, through a running 
 - Your group's brain trust: ask it to explain things, check facts or settle debates, or just the fun of a sassy LLM in your Signal groups
 - Explain or translate any message, photo, document, or website by replying to it and @mentioning the bot
 - Connect MCP tools, data, and charting to your group chat
-- Play games in your group: [GeoGuess](https://github.com/robdevops/chat-plugin-geoguess) (guess where a street photo was taken), a [trivia quiz](https://github.com/robdevops/chat-plugin-quiz) the model writes on any topic, and a [song quiz](https://github.com/robdevops/chat-plugin-songs) of short clips from Deezer
+- Play games in your group: [GeoGuess](https://github.com/robdevops/chat-plugin-geoguess), guessing where a street photo was taken; [TriviaQuiz](https://github.com/robdevops/TriviaQuiz), a trivia quiz the model writes on any topic; and [SongGuess](https://github.com/robdevops/SongGuess), a song quiz of short clips from Deezer
 - A private assistant in your DMs
 - Use this project as the basis of your own bot project
 
