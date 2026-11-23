@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"net/http"
 	"strconv"
 	"strings"
@@ -49,9 +50,11 @@ type sentMsg struct {
 // under its own text, each @Name in known (lowercased name to ID) a text
 // mention, split at Telegram's limit, the pictures first with the reply as
 // their caption when it fits, the first message a reply to the bot's own
-// message replyTo if it isn't 0 (sent anyway if that message is gone). It
-// returns the IDs of the messages sent. A failure is logged.
-func (c *Client) Send(ch feature.Chat, text string, pics []feature.Picture, known map[string]string, replyTo int64, audio []byte) (sent []int64) {
+// message replyTo if it isn't 0 (sent anyway if that message is gone). mk's
+// buttons, or in a DM its keyboard, go on the last message, which can't be
+// an album, and with Silent every message is sent without a notification.
+// It returns the IDs of the messages sent. A failure is logged.
+func (c *Client) Send(ch feature.Chat, text string, pics []feature.Picture, known map[string]string, replyTo int64, audio []byte, mk feature.Markup) (sent []int64) {
 	if n := utf8.RuneCountInString(text); n > maxReply {
 		logx.Warnf("reply truncated from %d chars", n)
 	}
@@ -76,7 +79,11 @@ func (c *Client) Send(ch feature.Chat, text string, pics []feature.Picture, know
 			c := t
 			caption = &c
 		}
-		ids, err := c.sendPhotos(ctx, ch, pics, caption, known, replyTo)
+		var last any // the markup, if nothing follows the photo
+		if (caption != nil || len(t.Runes) == 0) && len(audio) == 0 {
+			last = markup(ch, mk)
+		}
+		ids, err := c.sendPhotos(ctx, ch, pics, caption, known, replyTo, mk.Silent, last)
 		if err != nil {
 			logx.Errorf("send failed: pictures: %v", err) // the text still goes
 		} else if caption != nil {
@@ -87,7 +94,11 @@ func (c *Client) Send(ch feature.Chat, text string, pics []feature.Picture, know
 		}
 	}
 	if len(audio) > 0 { // a voice message: it shows no title or performer
-		id, err := c.sendVoice(ctx, ch, audio, replyTo)
+		var last any // the markup, if no text follows the clip
+		if len(t.Runes) == 0 {
+			last = markup(ch, mk)
+		}
+		id, err := c.sendVoice(ctx, ch, audio, replyTo, mk.Silent, last)
 		if err != nil {
 			logx.Errorf("send failed: audio: %v", err) // the text still goes
 		} else {
@@ -99,12 +110,18 @@ func (c *Client) Send(ch feature.Chat, text string, pics []feature.Picture, know
 		logx.Warnf("empty reply, nothing sent")
 		return nil
 	}
-	for _, p := range parts {
+	for i, p := range parts {
 		var m sentMsg
 		d := c.dest(ch)
 		params := d.params(map[string]any{"text": string(p.Runes), "entities": entities(p, known)})
 		if replyTo != 0 {
 			params["reply_parameters"] = replyParams(replyTo)
+		}
+		if mk.Silent {
+			params["disable_notification"] = true
+		}
+		if rm := markup(ch, mk); rm != nil && i == len(parts)-1 {
+			params["reply_markup"] = rm
 		}
 		send := func() error { return c.call(ctx, "sendMessage", params, &m) }
 		move := func(to string) { params["chat_id"] = to }
@@ -120,6 +137,40 @@ func (c *Client) Send(ch feature.Chat, text string, pics []feature.Picture, know
 		note(m.MessageID)
 	}
 	return sent
+}
+
+// markup is mk as Telegram's reply_markup: its buttons as an inline
+// keyboard, or in a DM its keyboard as a persistent reply keyboard, or that
+// keyboard taken away; nil for none.
+func markup(ch feature.Chat, mk feature.Markup) any {
+	switch {
+	case len(mk.Buttons) > 0:
+		return inlineKeyboard(mk.Buttons)
+	case ch.GroupID != "":
+	case len(mk.Keyboard) > 0:
+		rows := make([][]map[string]string, len(mk.Keyboard))
+		for i, row := range mk.Keyboard {
+			for _, k := range row {
+				rows[i] = append(rows[i], map[string]string{"text": k.Label})
+			}
+		}
+		return map[string]any{"keyboard": rows, "resize_keyboard": true, "is_persistent": true}
+	case mk.NoKeyboard:
+		return map[string]bool{"remove_keyboard": true}
+	}
+	return nil
+}
+
+// inlineKeyboard is buttons as Telegram's InlineKeyboardMarkup, each
+// button's Data its callback_data.
+func inlineKeyboard(buttons [][]feature.Button) map[string]any {
+	rows := make([][]map[string]string, len(buttons))
+	for i, row := range buttons {
+		for _, b := range row {
+			rows[i] = append(rows[i], map[string]string{"text": b.Label, "callback_data": b.Data})
+		}
+	}
+	return map[string]any{"inline_keyboard": rows}
 }
 
 // replyParams are Telegram's reply_parameters for a reply to the message
@@ -222,9 +273,10 @@ func utf16Slice(rs []rune, u []int, start, n int) []rune {
 
 // sendPhotos sends pics, one as a photo or several as an album, with
 // caption on the first, without its entities if Telegram refuses them, as
-// a reply to replyTo if it isn't 0, and returns the IDs of the messages
-// sent.
-func (c *Client) sendPhotos(ctx context.Context, ch feature.Chat, pics []feature.Picture, caption *mdstyle.Text, known map[string]string, replyTo int64) ([]int64, error) {
+// a reply to replyTo if it isn't 0, without a notification if silent, and
+// with rm as one photo's reply_markup if not nil (an album takes none), and
+// returns the IDs of the messages sent.
+func (c *Client) sendPhotos(ctx context.Context, ch feature.Chat, pics []feature.Picture, caption *mdstyle.Text, known map[string]string, replyTo int64, silent bool, rm any) ([]int64, error) {
 	pics = pics[:min(len(pics), 10)] // an album's limit
 	files := map[string][]byte{}
 	for i, p := range pics {
@@ -234,14 +286,22 @@ func (c *Client) sendPhotos(ctx context.Context, ch feature.Chat, pics []feature
 	if caption != nil {
 		ents = append(ents, entities(*caption, known)...)
 	}
-	ids, err := c.sendPhotosOnce(ctx, ch, pics, files, caption, ents, replyTo)
+	extra := map[string]string{}
+	if silent {
+		extra["disable_notification"] = "true"
+	}
+	if rm != nil && len(pics) == 1 {
+		j, _ := json.Marshal(rm)
+		extra["reply_markup"] = string(j)
+	}
+	ids, err := c.sendPhotosOnce(ctx, ch, pics, files, caption, ents, replyTo, extra)
 	if caption != nil && len(ents) > 0 && refusedEntities(err) {
-		ids, err = c.sendPhotosOnce(ctx, ch, pics, files, caption, []outEntity{}, replyTo)
+		ids, err = c.sendPhotosOnce(ctx, ch, pics, files, caption, []outEntity{}, replyTo, extra)
 	}
 	return ids, err
 }
 
-func (c *Client) sendPhotosOnce(ctx context.Context, ch feature.Chat, pics []feature.Picture, files map[string][]byte, caption *mdstyle.Text, ents []outEntity, replyTo int64) ([]int64, error) {
+func (c *Client) sendPhotosOnce(ctx context.Context, ch feature.Chat, pics []feature.Picture, files map[string][]byte, caption *mdstyle.Text, ents []outEntity, replyTo int64, extra map[string]string) ([]int64, error) {
 	text := ""
 	if caption != nil {
 		text = string(caption.Runes)
@@ -270,6 +330,7 @@ func (c *Client) sendPhotosOnce(ctx context.Context, ch feature.Chat, pics []fea
 		rj, _ := json.Marshal(replyParams(replyTo))
 		fields["reply_parameters"] = string(rj)
 	}
+	maps.Copy(fields, extra)
 	err := c.retrying(ctx, d.chat, func(to string) { fields["chat_id"] = to }, func() error { return c.upload(ctx, method, fields, files, out) })
 	if err != nil {
 		return nil, err
@@ -285,13 +346,22 @@ func (c *Client) sendPhotosOnce(ctx context.Context, ch feature.Chat, pics []fea
 }
 
 // sendVoice sends audio, an MP3 clip, as a voice message, which plays in
-// the chat and shows no title or performer, and returns its message ID.
-func (c *Client) sendVoice(ctx context.Context, ch feature.Chat, audio []byte, replyTo int64) (int64, error) {
+// the chat and shows no title or performer, without a notification if
+// silent and with rm as its reply_markup if not nil, and returns its
+// message ID.
+func (c *Client) sendVoice(ctx context.Context, ch feature.Chat, audio []byte, replyTo int64, silent bool, rm any) (int64, error) {
 	d := c.dest(ch)
 	fields := d.fields(map[string]string{})
 	if replyTo != 0 {
 		rj, _ := json.Marshal(replyParams(replyTo))
 		fields["reply_parameters"] = string(rj)
+	}
+	if silent {
+		fields["disable_notification"] = "true"
+	}
+	if rm != nil {
+		j, _ := json.Marshal(rm)
+		fields["reply_markup"] = string(j)
 	}
 	var m sentMsg
 	err := c.retrying(ctx, d.chat, func(to string) { fields["chat_id"] = to }, func() error {
@@ -313,7 +383,7 @@ func (c *Client) React(ch feature.Chat, msg feature.Message, emoji string) {
 	switch {
 	case err == nil:
 	case errors.As(err, &ae) && ae.Code == 400 && strings.Contains(ae.Desc, "REACTION_INVALID"):
-		c.Send(ch, emoji, nil, nil, 0, nil)
+		c.Send(ch, emoji, nil, nil, 0, nil, feature.Markup{})
 	default:
 		logx.Errorf("reaction failed: %v", err)
 	}

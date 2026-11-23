@@ -55,6 +55,14 @@ type Reacted struct {
 	Reactions []Reaction
 }
 
+// Pressed is a press of a button under one of the bot's messages. Answer
+// shows the presser text, if not "", for a moment; it is called once, and
+// never blocks.
+type Pressed struct {
+	Press  feature.Press
+	Answer func(text string)
+}
+
 // Reaction is an emoji the bot puts on a message.
 type Reaction struct {
 	Message feature.Message
@@ -69,6 +77,7 @@ func (r GroupChanged) chat() feature.Chat { return r.Chat }
 func (r Deleted) chat() feature.Chat      { return r.Chat }
 func (r Happened) chat() feature.Chat     { return r.Event.Chat }
 func (r Posted) chat() feature.Chat       { return r.Message.Chat }
+func (r Pressed) chat() feature.Chat      { return r.Press.Chat }
 
 // Ready is a posted message as the network readies it: its sender's name
 // filled in, the bot's @name stripped, and in a group its members.

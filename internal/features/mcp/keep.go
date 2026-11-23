@@ -121,7 +121,7 @@ func (a *addon) state() addonState {
 		s.Claims = append(s.Claims, c)
 	}
 	for id, l := range a.leases {
-		if !now.Before(l.Expires) {
+		if !l.live(now) {
 			delete(a.leases, id)
 			continue
 		}
@@ -158,7 +158,8 @@ func (a *addon) restore(s addonState) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	for id, l := range s.Leases {
-		if now.Before(l.Expires) {
+		l.Forever = l.Forever && a.cfg.Announce // until announce is taken away
+		if l.live(now) {
 			a.leases[id] = l
 		}
 	}

@@ -64,7 +64,7 @@ func TestSample(t *testing.T) {
 	var log logx.Buffer
 	t.Cleanup(logx.SetOutput(&log, &log, true))
 	a, h, bodies := sampler(&modelConfig{PerHour: 30, MaxTokens: 100})
-	a.lease(inA)
+	a.lease(inA, false)
 	res, rerr := a.sample(context.Background(), ask(a.chatID(inA), "Alice asks for the capital of Australia", 500))
 	if rerr != nil {
 		t.Fatal(rerr)
@@ -104,11 +104,11 @@ func TestSampleRefused(t *testing.T) {
 		}
 	}
 	a, h, bodies := sampler(nil)
-	a.lease(inA)
+	a.lease(inA, false)
 	refused(a, ask(a.chatID(inA), "hi", 10), -32601)
 
 	a, h, bodies = sampler(&modelConfig{PerHour: 2, MaxTokens: 100})
-	a.lease(inA)
+	a.lease(inA, false)
 	chat := a.chatID(inA)
 	h.Bot.Model = ""
 	refused(a, ask(chat, "hi", 10), -32601)
@@ -145,13 +145,19 @@ func TestSampleRefused(t *testing.T) {
 
 	// A chat the addon is no longer allowed in.
 	a, _, _ = sampler(&modelConfig{PerHour: 2, MaxTokens: 100})
-	a.lease(inA)
+	a.lease(inA, false)
 	a.cfg.Chats = []string{groupB}
+	refused(a, ask(a.chatID(inA), "hi", 10), -32602)
+
+	// A chat announce keeps open, past its lease's day: no sampling.
+	a, _, _ = sampler(&modelConfig{PerHour: 2, MaxTokens: 100})
+	a.cfg.Announce = true
+	a.leases[a.chatID(inA)] = lease{Chat: inA, Expires: a.now().Add(-time.Hour), Forever: true}
 	refused(a, ask(a.chatID(inA), "hi", 10), -32602)
 
 	// The model failing, as when the chat is over its daily budget.
 	a, h, _ = sampler(&modelConfig{PerHour: 2, MaxTokens: 100})
-	a.lease(inA)
+	a.lease(inA, false)
 	h.API = func(context.Context, string, map[string]any) (json.RawMessage, error) {
 		return nil, errors.New("the chat has reached its daily budget")
 	}
@@ -397,7 +403,7 @@ func TestPackageAddonNoSample(t *testing.T) {
 // a gate opened with no addon is refused, not called unsupported.
 func TestSampleGate(t *testing.T) {
 	a, _, _ := sampler(&modelConfig{PerHour: 30, MaxTokens: 100})
-	a.lease(inA)
+	a.lease(inA, false)
 	g := &gate{ready: make(chan struct{})}
 	got := make(chan *rpcError, 1)
 	go func() {
@@ -434,7 +440,7 @@ func TestSampleGate(t *testing.T) {
 // to the chat, and gets no answer.
 func TestSampleCancelledCharges(t *testing.T) {
 	a, h, _ := sampler(&modelConfig{PerHour: 30, MaxTokens: 100})
-	a.lease(inA)
+	a.lease(inA, false)
 	ctx, cancel := context.WithCancel(context.Background())
 	api := h.API
 	var callErr error
@@ -675,7 +681,7 @@ func TestSampleNoAnswer(t *testing.T) {
 		h.API = func(context.Context, string, map[string]any) (json.RawMessage, error) {
 			return json.RawMessage(body), nil
 		}
-		a.lease(inA)
+		a.lease(inA, false)
 		_, rerr := a.sample(context.Background(), ask(a.chatID(inA), "Alice asks for the capital of Australia", 500))
 		restore()
 		if rerr == nil || rerr.Message != "the model gave no answer" {

@@ -11,7 +11,8 @@
         "version": {"description": "The extension's version.", "const": 1},
         "network": {"description": "The bot's chat network, as it names itself.", "type": "string", "examples": ["signal", "telegram"]},
         "watchReplies": {"description": "The bot's: it takes a watch with replies. A bot without it refuses one.", "type": "boolean"},
-        "watchReactions": {"description": "The bot's: it takes a watch with reactions.", "type": "boolean"}
+        "watchReactions": {"description": "The bot's: it takes a watch with reactions.", "type": "boolean"},
+        "buttons": {"description": "The bot's: its network shows a post's buttons and keyboard (Telegram). Elsewhere they are left off.", "type": "boolean"}
       },
       "required": ["version"]
     },
@@ -94,20 +95,25 @@
       }
     },
     "Op": {
-      "description": "One thing an addon's outbox asks the bot to do: post in a chat, react to a message, or end a watch. The bot does each ID once, so an op read again, such as after a restart, is skipped.",
+      "description": "One thing an addon's outbox asks the bot to do: post in a chat, edit a post, react to a message, or end a watch. The bot does each ID once, so an op read again, such as after a restart, is skipped.",
       "type": "object",
       "properties": {
         "id": {"description": "Unique among the addon's ops, for as long as the bot may read it again.", "type": "string", "minLength": 1},
-        "op": {"enum": ["post", "react", "unwatch"]},
-        "chat": {"description": "A post's or unwatch's chat, or that of the post a reaction with post is for.", "type": "string", "pattern": "^c_[a-z2-7]{26}$"},
-        "text": {"description": "A post's text, with {u_…} placeholders the bot fills in with names; at most 4000 characters, names filled in. A post with neither text nor images is dropped.", "type": "string"},
-        "images": {"description": "A post's images: at most 2, and 2 MiB in all.", "type": "array", "items": {"$ref": "#/$defs/Image"}, "maxItems": 2},
+        "op": {"enum": ["post", "edit", "react", "unwatch"]},
+        "chat": {"description": "A post's, edit's or unwatch's chat, or that of the post a reaction with post is for.", "type": "string", "pattern": "^c_[a-z2-7]{26}$"},
+        "text": {"description": "A post's or edit's text, with {u_…} placeholders the bot fills in with names; at most 4000 characters, names filled in. A post with neither text nor images is dropped.", "type": "string"},
+        "images": {"description": "A post's images: at most 2, and 2 MiB in all; an edit's, or a post's with buttons, a keyboard or removeKeyboard, at most 1.", "type": "array", "items": {"$ref": "#/$defs/Image"}, "maxItems": 2},
         "audio": {"description": "A post's clip to play, MP3, at most 2 MiB: sent with no title of its own. A post with audio is never merged with another.", "$ref": "#/$defs/Audio"},
         "ref": {"description": "The message a reaction is for: a context's ref. A reaction has ref or post, not both.", "type": "string", "pattern": "^r_[a-z2-7]{26}$"},
         "emoji": {"description": "A reaction's: one emoji.", "type": "string", "minLength": 1},
         "watch": {"description": "The ID of the watch an unwatch ends.", "type": "string", "minLength": 1, "maxLength": 64},
         "replyTo": {"description": "A post's: the ID of an earlier post op of the addon's, such as a question, so the post is sent as a reply to it. The bot remembers the ID of each post op it sent (every op of a merged post), with its chat, for 24 hours, the last 256 IDs; a post whose replyTo it doesn't know, or that was sent in another chat, is sent as an ordinary post. A post with replyTo is never merged with another.", "type": "string", "minLength": 1},
-        "post": {"description": "A reaction's, in place of ref: the ID of an earlier post op of the addon's in chat, as replyTo names it, so the bot reacts to its own message, such as with ⏰ when a question's time runs out. A reaction to a post the bot doesn't remember sending in chat, such as one not sent yet, is dropped.", "type": "string", "minLength": 1}
+        "post": {"description": "A reaction's, in place of ref: the ID of an earlier post op of the addon's in chat, as replyTo names it, so the bot reacts to its own message, such as with ⏰ when a question's time runs out. An edit's: the post whose text, image and buttons it replaces (all three: an edit without buttons takes them away); on Telegram in place, on Signal the text in place, or with an image as a new message, which later edits and reactions then name. Edits follow a post's rules: the post permission, a lease and the rate. A reaction to or an edit of a post the bot doesn't remember sending in chat, such as one not sent yet, is dropped, as is an edit of a post merged with others or sent as more than one message, or on Signal one past a day or 10 edits. A post with buttons is remembered for 30 days, the newest 1,000.", "type": "string", "minLength": 1},
+        "silent": {"description": "A post's: sent without a notification, on Telegram; Signal ignores it.", "type": "boolean"},
+        "buttons": {"description": "A post's or edit's rows of buttons under it, where the bot's capability has buttons; elsewhere they are left off. Each press calls onPress.", "type": "array", "minItems": 1, "maxItems": 5, "items": {"type": "array", "minItems": 1, "maxItems": 5, "items": {"$ref": "#/$defs/Button"}}},
+        "onPress": {"description": "With buttons, and only with them: one of the addon's tools for the bot alone, called with each press, with Press as its arguments and the presser's context in _meta, as a direct command is. Its result's text, if any, is shown to the presser for a moment. A press needs no watch, and leases its chat.", "type": "string", "minLength": 1},
+        "keyboard": {"description": "A post's, in a DM where the bot's capability has buttons: the chat's reply keyboard from now on, rows of keys. A message of exactly a key's label runs its command, as if sent.", "type": "array", "minItems": 1, "maxItems": 5, "items": {"type": "array", "minItems": 1, "maxItems": 5, "items": {"$ref": "#/$defs/Key"}}},
+        "removeKeyboard": {"description": "A post's, in a DM: takes the reply keyboard away.", "type": "boolean"}
       },
       "required": ["id", "op"],
       "additionalProperties": false,
@@ -115,9 +121,44 @@
         {"if": {"properties": {"op": {"const": "post"}}}, "then": {"required": ["chat"], "anyOf": [{"required": ["text"], "properties": {"text": {"pattern": "\\S"}}}, {"required": ["images"], "properties": {"images": {"minItems": 1}}}, {"required": ["audio"]}]}},
         {"if": {"properties": {"op": {"const": "react"}}}, "then": {"required": ["emoji"], "if": {"required": ["post"]}, "then": {"required": ["chat"], "not": {"required": ["ref"]}}, "else": {"required": ["ref"]}}},
         {"if": {"properties": {"op": {"const": "unwatch"}}}, "then": {"required": ["chat", "watch"]}},
+        {"if": {"properties": {"op": {"const": "edit"}}}, "then": {"required": ["chat", "post"], "properties": {"images": {"maxItems": 1}}, "anyOf": [{"required": ["text"], "properties": {"text": {"pattern": "\\S"}}}, {"required": ["images"], "properties": {"images": {"minItems": 1}}}]}},
         {"if": {"required": ["replyTo"]}, "then": {"properties": {"op": {"const": "post"}}}},
-        {"if": {"required": ["post"]}, "then": {"properties": {"op": {"const": "react"}}}}
+        {"if": {"required": ["post"]}, "then": {"properties": {"op": {"enum": ["react", "edit"]}}}},
+        {"if": {"required": ["buttons"]}, "then": {"required": ["onPress"], "properties": {"op": {"enum": ["post", "edit"]}, "images": {"maxItems": 1}}, "not": {"anyOf": [{"required": ["keyboard"]}, {"required": ["removeKeyboard"]}]}}},
+        {"if": {"required": ["onPress"]}, "then": {"required": ["buttons"]}},
+        {"if": {"anyOf": [{"required": ["silent"], "properties": {"silent": {"const": true}}}, {"required": ["keyboard"]}, {"required": ["removeKeyboard"]}, {"required": ["audio"]}]}, "then": {"properties": {"op": {"const": "post"}}}},
+        {"if": {"anyOf": [{"required": ["keyboard"]}, {"required": ["removeKeyboard"]}]}, "then": {"properties": {"images": {"maxItems": 1}}}},
+        {"if": {"required": ["keyboard"]}, "then": {"not": {"required": ["removeKeyboard"]}}}
       ]
+    },
+    "Button": {
+      "description": "A button under a post.",
+      "type": "object",
+      "properties": {
+        "label": {"description": "What it shows: at most 32 characters, with no space around them.", "type": "string", "minLength": 1, "maxLength": 32, "pattern": "^\\S([\\s\\S]*\\S)?$"},
+        "data": {"description": "What a press passes back to onPress: 1 to 64 bytes in UTF-8.", "type": "string", "minLength": 1, "maxLength": 64}
+      },
+      "required": ["label", "data"],
+      "additionalProperties": false
+    },
+    "Key": {
+      "description": "A key of a DM's reply keyboard.",
+      "type": "object",
+      "properties": {
+        "label": {"description": "What it shows, and sends: at most 32 characters, with no space around them, and no two keys' the same in a keyboard.", "type": "string", "minLength": 1, "maxLength": 32, "pattern": "^\\S([\\s\\S]*\\S)?$"},
+        "command": {"description": "The command a message of exactly label runs, such as \"/rain\": one of the addon's direct commands, with any arguments; at most 256 characters, on one line.", "type": "string", "pattern": "^/[^\\r\\n]*$", "maxLength": 256}
+      },
+      "required": ["label", "command"],
+      "additionalProperties": false
+    },
+    "Press": {
+      "description": "The arguments of a post's onPress tool when one of its buttons is pressed. The presser's context is in _meta, as a direct command's: its ref is the post pressed, for a react op.",
+      "type": "object",
+      "properties": {
+        "press": {"description": "The button's data.", "type": "string"},
+        "post": {"description": "The ID of the post op the button is under, for an edit op's post.", "type": "string"}
+      },
+      "required": ["press", "post"]
     },
     "Audio": {
       "description": "A clip in a post, to play.",

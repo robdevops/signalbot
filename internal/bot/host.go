@@ -34,6 +34,10 @@ func (b *Bot) OnEvent(fn func(context.Context, feature.Event) string) {
 	b.events = append(b.events, fn)
 }
 
+func (b *Bot) OnPress(fn func(context.Context, feature.Press) (string, bool)) {
+	b.presses = append(b.presses, fn)
+}
+
 func (b *Bot) Command(name string, fn func(context.Context, feature.Message, string) feature.Action) error {
 	if err := b.commands.Take(name); err != nil {
 		return err
@@ -93,7 +97,7 @@ func (b *Bot) Store(name string) (feature.Store, error) {
 }
 
 func (b *Bot) Info() feature.Info {
-	info := feature.Info{Name: b.net.BotName(), Network: b.net.Name(), Version: b.cfg.Version, Model: b.cfg.Model,
+	info := feature.Info{Name: b.net.BotName(), Network: b.net.Name(), Buttons: b.net.Buttons(), Version: b.cfg.Version, Model: b.cfg.Model,
 		Images: b.images.Load(), Audio: b.audio.Load(), PDFs: b.files.Load(), CallsTools: b.callsTools.Load(), Tools: b.toolNames(false), Intro: b.intro(false), IntroDM: b.intro(true)}
 	if b.ai == nil {
 		info.Model = ""
@@ -155,6 +159,9 @@ func (b *Bot) Deliver(msg feature.Message) {
 // once, whatever happens to it.
 func (b *Bot) Post(p feature.Post) {
 	p.OnSent = once(p.OnSent)
+	if p.Edit != 0 {
+		p.Label, p.Audio, p.ReplyTo = "", nil, 0
+	}
 	switch {
 	case b.closing.Load(), p.Text == "" && len(p.Pictures) == 0 && len(p.Audio) == 0:
 		p.OnSent(nil, true)
@@ -188,23 +195,69 @@ func (b *Bot) say(p feature.Post) {
 	}
 	key := p.Chat.Key()
 	text, kept := captioned(p.Text, p.Pictures)
+	if p.Edit != 0 {
+		p.OnSent(b.net.Edit(p.Chat, p.Edit, text, p.Pictures, b.chats.Names(key), p.Markup), false)
+		return
+	}
 	if len(p.Audio) > 0 {
 		kept = strings.TrimSpace(kept + " [sent an audio clip]")
 	}
 	if p.Label == "" || b.ai == nil { // with no model, nothing would read it
-		sent := b.net.Send(p.Chat, text, p.Pictures, b.chats.Names(key), p.ReplyTo, p.Audio)
+		sent := b.net.Send(p.Chat, text, p.Pictures, b.chats.Names(key), p.ReplyTo, p.Audio, p.Markup)
+		b.keyboard(p, sent)
 		p.OnSent(sent, len(sent) == 0)
 		return
 	}
 	ref := b.pending()
 	b.chats.Add(key, b.now(), 0, chats.Entry{Role: "assistant", Content: txt.Clamp("["+p.Label+"] "+kept, maxPostKept), Refs: []chats.Ref{ref}})
-	sent := b.net.Send(p.Chat, text, p.Pictures, b.chats.Names(key), p.ReplyTo, p.Audio)
+	sent := b.net.Send(p.Chat, text, p.Pictures, b.chats.Names(key), p.ReplyTo, p.Audio, p.Markup)
 	if len(sent) == 0 {
 		b.chats.Withdraw(key, ref.ID) // the chat never saw it, and it may be posted again
 	} else {
 		b.chats.Retag(key, ref.ID, botRefs(sent))
 	}
+	b.keyboard(p, sent)
 	p.OnSent(sent, len(sent) == 0)
+}
+
+// keyboard remembers the reply keyboard a post sent in a DM set or took
+// away, where the network shows one, so a message of one of its labels is
+// handled as its command.
+func (b *Bot) keyboard(p feature.Post, sent []int64) {
+	mk := p.Markup
+	switch {
+	case len(sent) == 0 || p.Chat.GroupID != "" || !b.net.Buttons():
+	case mk.NoKeyboard:
+		b.keys.set(p.Chat.Key(), nil)
+	case len(mk.Keyboard) > 0:
+		b.keys.set(p.Chat.Key(), mk.Keyboard)
+	}
+}
+
+// pressed runs the OnPress hooks for a press in its chat's slot, and
+// answers it with the answer of the first that takes it, or nothing.
+func (b *Bot) pressed(r Pressed) {
+	answer := ""
+	defer func() { r.Answer(answer) }() // also if a hook panics
+	for _, fn := range b.presses {
+		if a, ok := fn(b.ctx, r.Press); ok {
+			answer = a
+			return
+		}
+	}
+}
+
+// onceAnswer is answer made safe to call more than once, the calls after
+// the first doing nothing; nil does nothing.
+func onceAnswer(answer func(string)) func(string) {
+	var o sync.Once
+	return func(text string) {
+		o.Do(func() {
+			if answer != nil {
+				answer(text)
+			}
+		})
+	}
 }
 
 // maxPostKept caps what history keeps of a post.
@@ -276,7 +329,7 @@ func (b *Bot) event(e feature.Event) {
 		for _, p := range people {
 			chats.Claim(known, p.Name, p.ID)
 		}
-		b.net.Send(e.Chat, reply, nil, known, 0, nil)
+		b.net.Send(e.Chat, reply, nil, known, 0, nil, feature.Markup{})
 		return
 	}
 }

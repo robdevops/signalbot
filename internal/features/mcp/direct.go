@@ -56,7 +56,7 @@ func (a *addon) direct(ctx context.Context, m feature.Message, name string, c ch
 		logx.Warnf("MCP server %s: /%s refused: %d calls already in flight", a.server, name, maxDirect)
 		return feature.Action{Answer: a.title + " is busy, try again in a moment."}
 	}
-	a.lease(m.Chat)
+	a.lease(m.Chat, true)
 	timeout := cmp.Or(c.timeout, directTimeout)
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()

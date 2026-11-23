@@ -299,7 +299,7 @@ func (c *Client) hello(ctx context.Context) error {
 func (c *Client) poll(ctx context.Context, offset int64) ([]update, error) {
 	ctx, cancel := context.WithTimeout(ctx, pollWait+20*time.Second)
 	defer cancel()
-	kinds := []string{"message", "edited_message", "my_chat_member"}
+	kinds := []string{"message", "edited_message", "my_chat_member", "callback_query"}
 	if c.watch.Load() {
 		kinds = append(kinds, "message_reaction", "chat_member")
 	}

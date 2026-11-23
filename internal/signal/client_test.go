@@ -280,10 +280,10 @@ func TestSendAndTyping(t *testing.T) {
 	run(t, c, f)
 	group, dm := feature.Chat{GroupID: groupID}, feature.Chat{User: aliceID}
 	png := []byte("\x89PNG\r\n\x1a\n")
-	if ts := c.Send(group, "@signalbot hi @Alice", []feature.Picture{{Data: png, Name: "NVDA vs AMD, 1 month"}, {Data: png}}, map[string]string{"alice": aliceID}, 0, nil); !slices.Equal(ts, []int64{1001}) {
+	if ts := c.Send(group, "@signalbot hi @Alice", []feature.Picture{{Data: png, Name: "NVDA vs AMD, 1 month"}, {Data: png}}, map[string]string{"alice": aliceID}, 0, nil, feature.Markup{}); !slices.Equal(ts, []int64{1001}) {
 		t.Fatalf("sent %v", ts)
 	}
-	c.Send(dm, "plain @Alice", nil, nil, 0, nil)
+	c.Send(dm, "plain @Alice", nil, nil, 0, nil, feature.Markup{})
 	eventually(t, "two sends", func() bool { return len(f.calls("send")) == 2 })
 	s := f.calls("send")
 	if s[0]["groupId"] != groupID || s[0]["message"] != "hi @Alice" || fmt.Sprint(s[0]["mention"]) != "[3:6:"+aliceID+"]" ||
@@ -297,7 +297,7 @@ func TestSendAndTyping(t *testing.T) {
 		t.Errorf("a plain send quotes: %v", s)
 	}
 	// A reply quotes the bot's own message by its timestamp.
-	c.Send(group, "the answer", nil, nil, 1001, nil)
+	c.Send(group, "the answer", nil, nil, 1001, nil, feature.Markup{})
 	eventually(t, "the reply", func() bool { return len(f.calls("send")) == 3 })
 	if r := f.calls("send")[2]; r["quoteTimestamp"] != float64(1001) || r["quoteAuthor"] != botID || r["message"] != "the answer" || r["groupId"] != groupID {
 		t.Errorf("reply send %v", r)
@@ -500,11 +500,11 @@ func TestSendResults(t *testing.T) {
 	f := newFake(t)
 	c := newClient(f.sock, nil, nil)
 	run(t, c, f)
-	if ts := c.Send(feature.Chat{User: aliceID}, strings.Repeat("word ", 500), nil, nil, 0, nil); len(ts) != 1 {
+	if ts := c.Send(feature.Chat{User: aliceID}, strings.Repeat("word ", 500), nil, nil, 0, nil, feature.Markup{}); len(ts) != 1 {
 		t.Fatalf("a long reply returned %v", ts)
 	}
 	f.set("send", `{"timestamp":77,"results":[{"type":"NETWORK_FAILURE"}]}`)
-	if ts := c.Send(feature.Chat{User: aliceID}, "hi", nil, nil, 0, nil); !slices.Equal(ts, []int64{77}) {
+	if ts := c.Send(feature.Chat{User: aliceID}, "hi", nil, nil, 0, nil, feature.Markup{}); !slices.Equal(ts, []int64{77}) {
 		t.Fatalf("returned %v", ts)
 	}
 	if !strings.Contains(logs.String(), "signal-cli send not delivered: NETWORK_FAILURE") {

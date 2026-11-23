@@ -21,12 +21,13 @@ import (
 
 // update is one getUpdates result: the parts the bot reads.
 type update struct {
-	UpdateID        int64        `json:"update_id"`
-	Message         *message     `json:"message"`
-	EditedMessage   *message     `json:"edited_message"`
-	MessageReaction *reactionUpd `json:"message_reaction"`
-	MyChatMember    *memberUpd   `json:"my_chat_member"`
-	ChatMember      *memberUpd   `json:"chat_member"`
+	UpdateID        int64          `json:"update_id"`
+	Message         *message       `json:"message"`
+	EditedMessage   *message       `json:"edited_message"`
+	MessageReaction *reactionUpd   `json:"message_reaction"`
+	MyChatMember    *memberUpd     `json:"my_chat_member"`
+	ChatMember      *memberUpd     `json:"chat_member"`
+	CallbackQuery   *callbackQuery `json:"callback_query"`
 }
 
 type user struct {
@@ -203,6 +204,8 @@ func (c *Client) event(u update) (bot.Received, bool) {
 		return c.membership(u.ChatMember)
 	case u.MessageReaction != nil && c.watch.Load():
 		return c.reacted(u.MessageReaction)
+	case u.CallbackQuery != nil:
+		return c.pressed(u.CallbackQuery)
 	}
 	return nil, false
 }
