@@ -240,17 +240,11 @@ func (a *addon) apply(o ext.Op) (why string) {
 		if !a.cfg.React {
 			return "reactions not allowed"
 		}
-		a.mu.Lock()
-		r, ok := a.refs[o.Ref]
-		l, leased := a.leases[a.chatID(r.msg.Chat)]
-		a.mu.Unlock()
-		switch {
-		case !ok || !now.Before(r.expires):
-			return "reactions to an unknown message"
-		case !leased || !now.Before(l.Expires) || !a.allows(r.msg.Chat):
-			return "for a chat without a lease"
+		msg, why := a.reactTo(o, now)
+		if why != "" {
+			return why
 		}
-		if why := a.react(r.msg, o.Emoji); why != "" {
+		if why := a.react(msg, o.Emoji); why != "" {
 			return "reactions " + why
 		}
 	case "unwatch":
@@ -259,6 +253,39 @@ func (a *addon) apply(o ext.Op) (why string) {
 		return "of an unknown kind"
 	}
 	return ""
+}
+
+// reactTo is the message a react op is for: one the bot passed the addon,
+// by its ref, or the addon's own post, by its op's ID, as a replyTo names
+// it; or why there is none the addon may react to.
+func (a *addon) reactTo(o ext.Op, now time.Time) (feature.Message, string) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	var msg feature.Message
+	switch {
+	case (o.Ref == "") == (o.Post == ""):
+		return msg, "malformed reactions"
+	case o.Ref != "":
+		r, ok := a.refs[o.Ref]
+		if !ok || !now.Before(r.expires) {
+			return msg, "reactions to an unknown message"
+		}
+		msg = r.msg
+	default:
+		p, ok := a.posted[o.Post]
+		l, leased := a.leases[o.Chat]
+		switch {
+		case !ok || p.Chat != o.Chat || !now.Before(p.Expires):
+			return msg, "reactions to an unknown post"
+		case !leased:
+			return msg, "for a chat without a lease"
+		}
+		msg = feature.Message{Chat: l.Chat, Timestamp: p.Sent, Bot: true}
+	}
+	if l, leased := a.leases[a.chatID(msg.Chat)]; !leased || !now.Before(l.Expires) || !a.allows(msg.Chat) {
+		return msg, "for a chat without a lease"
+	}
+	return msg, ""
 }
 
 // waitsToPost reports whether the post op called id was dropped and waits

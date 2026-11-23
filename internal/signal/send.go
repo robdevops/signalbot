@@ -150,10 +150,18 @@ func (c *Client) send(chat feature.Chat, text string, mentions, styles, attachme
 // which takes longer with attachments.
 var sendTimeout = time.Minute
 
-// React puts emoji on msg, as a reaction from the bot.
+// React puts emoji on msg, as a reaction from the bot. The bot's own
+// message is its account's, so not until signal-cli says which that is.
 func (c *Client) React(chat feature.Chat, msg feature.Message, emoji string) {
+	author := msg.Sender
+	if msg.Bot {
+		if author = c.self(); author == "" {
+			logx.Errorf("reaction failed: the bot's account isn't known yet")
+			return
+		}
+	}
 	p := target(chat)
-	p["emoji"], p["targetAuthor"], p["targetTimestamp"] = emoji, msg.Sender, msg.Timestamp
+	p["emoji"], p["targetAuthor"], p["targetTimestamp"] = emoji, author, msg.Timestamp
 	if err := c.write(c.nextID.Add(1), "sendReaction", p); err != nil {
 		logx.Errorf("reaction failed: %v", err)
 	}

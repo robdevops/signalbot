@@ -232,7 +232,7 @@ func mergeReactions(waiting, m Received) Received {
 	w.Reactions = slices.Clone(w.Reactions)
 	for _, r := range m.(Reacted).Reactions {
 		w.Reactions = slices.DeleteFunc(w.Reactions, func(x Reaction) bool {
-			return x.Message.Sender == r.Message.Sender && x.Message.Timestamp == r.Message.Timestamp
+			return x.Message.Sender == r.Message.Sender && x.Message.Bot == r.Message.Bot && x.Message.Timestamp == r.Message.Timestamp
 		})
 		if len(w.Reactions) >= maxReactions {
 			logx.Warnf("dropped a reaction: %d already wait in its chat", maxReactions)

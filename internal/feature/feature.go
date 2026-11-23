@@ -57,6 +57,7 @@ type Message struct {
 	Timestamp int64         // when it was sent, by the sender's clock, as the network names it; 0 for one the bot made, such as a scheduled post. An edit keeps the original's
 	Edited    int64         // for an edit of the message sent at Timestamp, which it replaces, when it was edited; 0 for an original
 	Addressed bool          // it mentions the bot, replies to it, starts (in a group) with one of the bot's commands, or is a DM from an allowed sender
+	Bot       bool          // for React: the bot's own message, whose Timestamp an OnSent gave; Sender is unused
 }
 
 // Quote is the message another one replies to, as the replier's app sent it.
@@ -288,7 +289,8 @@ type Host interface {
 	// the chat's mailbox at low priority: unless msg was deleted or edited
 	// since, and unless the reaction is dropped to make room. chat mirrors
 	// the network's React; msg's own Chat is ignored. A message the bot
-	// made (Timestamp 0) can't be reacted to; nothing happens.
+	// made (Timestamp 0) can't be reacted to; nothing happens. One the bot
+	// sent, with Bot set, can be.
 	React(chat Chat, msg Message, emoji string)
 	// Groups lists the groups the bot shares with user.
 	Groups(ctx context.Context, user string) ([]Group, error)

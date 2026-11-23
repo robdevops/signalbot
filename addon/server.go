@@ -257,7 +257,7 @@ func (s *Server) Queue(ops ...Op) error {
 }
 
 // QueueIDs is Queue, returning the ID it gave each op, in order, such as
-// for a later post's ReplyTo.
+// for a later post's ReplyTo or a reaction's Post.
 func (s *Server) QueueIDs(ops ...Op) (ids []string, err error) {
 	for _, o := range ops {
 		switch {

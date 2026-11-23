@@ -328,6 +328,31 @@ func TestSendAndTyping(t *testing.T) {
 	})
 }
 
+// A reaction names its message by author and timestamp: the bot's own
+// message by the bot's account, once signal-cli has said which it is.
+func TestReact(t *testing.T) {
+	log := captureLogs(t)
+	group := feature.Chat{GroupID: groupID}
+	early := newClient(newFake(t).sock, nil, nil)
+	early.React(group, feature.Message{Timestamp: 1001, Bot: true}, "⏰")
+	if !strings.Contains(log.String(), "reaction failed: the bot's account isn't known yet") {
+		t.Fatalf("log %q", log.String())
+	}
+	f := newFake(t)
+	c := newClient(f.sock, nil, nil)
+	run(t, c, f)
+	c.React(group, feature.Message{Sender: aliceID, Timestamp: 7}, "👍")
+	c.React(group, feature.Message{Timestamp: 1001, Bot: true}, "⏰")
+	eventually(t, "two reactions", func() bool { return len(f.calls("sendReaction")) == 2 })
+	r := f.calls("sendReaction")
+	if r[0]["targetAuthor"] != aliceID || r[0]["targetTimestamp"] != float64(7) || r[0]["emoji"] != "👍" || r[0]["groupId"] != groupID {
+		t.Errorf("reaction %v", r[0])
+	}
+	if r[1]["targetAuthor"] != botID || r[1]["targetTimestamp"] != float64(1001) || r[1]["emoji"] != "⏰" || r[1]["groupId"] != groupID {
+		t.Errorf("reaction to the bot's own %v", r[1])
+	}
+}
+
 func TestUnmatchedAndBadFramesAreLogged(t *testing.T) {
 	for _, tc := range []struct{ name, line, want string }{
 		{"rpc error", `{"jsonrpc":"2.0","error":{"code":-1,"message":"Failed to send message"},"id":7}`, "Failed to send message"},

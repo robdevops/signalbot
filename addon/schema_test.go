@@ -321,6 +321,10 @@ func validate(root, s map[string]any, v any, at string) error {
 					return err
 				}
 			}
+		case "not":
+			if validate(root, kv.(map[string]any), v, at) == nil {
+				return fmt.Errorf("%s: matches not %v", at, kv)
+			}
 		case "then", "else":
 		default:
 			return fmt.Errorf("%s: the test's validator doesn't know %q", at, k)
@@ -427,6 +431,7 @@ func TestSchemaSamples(t *testing.T) {
 		{"Op", Op{ID: "6", Op: "post", Chat: chatID, Audio: &Audio{Data: "SUQz", MimeType: "audio/mpeg"}}},
 		{"Op", Op{ID: "3", Op: "react", Ref: refID, Emoji: "🎯"}},
 		{"Op", Op{ID: "4", Op: "unwatch", Chat: chatID, Watch: "r1"}},
+		{"Op", Op{ID: "7", Op: "react", Chat: chatID, Post: "a1b2.1", Emoji: "⏰"}},
 		{"Op", Op{ID: "6", Op: "post", Chat: chatID, Text: "It was Paris.", ReplyTo: "a1b2.1"}},
 		{"Page", Page{Cursor: "a1b2.4", Ops: []Op{post}}},
 		{"Page", Page{Cursor: "a1b2.0", More: true, Ops: []Op{}}},
@@ -480,6 +485,12 @@ func TestSchemaSamples(t *testing.T) {
 		{"Op", "a replyTo that isn't a string", map[string]any{"id": "1", "op": "post", "chat": chatID, "text": "hi", "replyTo": 1}},
 		{"Op", "a reaction with a replyTo", Op{ID: "1", Op: "react", Ref: refID, Emoji: "🎯", ReplyTo: "a1b2.1"}},
 		{"Op", "an unwatch with a replyTo", Op{ID: "1", Op: "unwatch", Chat: chatID, Watch: "r1", ReplyTo: "a1b2.1"}},
+		{"Op", "a reaction with neither ref nor post", Op{ID: "1", Op: "react", Chat: chatID, Emoji: "⏰"}},
+		{"Op", "a reaction with both ref and post", Op{ID: "1", Op: "react", Ref: refID, Chat: chatID, Post: "a1b2.1", Emoji: "⏰"}},
+		{"Op", "a reaction to a post without its chat", Op{ID: "1", Op: "react", Post: "a1b2.1", Emoji: "⏰"}},
+		{"Op", "a reaction to a post without an emoji", Op{ID: "1", Op: "react", Chat: chatID, Post: "a1b2.1"}},
+		{"Op", "a reaction to an empty post ID", map[string]any{"id": "1", "op": "react", "chat": chatID, "post": "", "emoji": "⏰"}},
+		{"Op", "a post op with a post", Op{ID: "1", Op: "post", Chat: chatID, Text: "hi", Post: "a1b2.1"}},
 		{"Page", "no cursor", map[string]any{"more": false, "ops": []any{}}},
 		{"Page", "a bad op", Page{Cursor: "x.1", Ops: []Op{{ID: "1", Op: "post"}}}},
 		{"Held", "no time", map[string]any{"op": post}},

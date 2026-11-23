@@ -99,9 +99,14 @@ func (n *fakeNet) Send(chat feature.Chat, text string, images []feature.Picture,
 	return []int64{5000 + n.sends.Add(1)}
 }
 
-// React is sent as "react <emoji> to <sender>@<timestamp>".
+// React is sent as "react <emoji> to <sender>@<timestamp>", the sender
+// "bot" for the bot's own message.
 func (n *fakeNet) React(chat feature.Chat, msg feature.Message, emoji string) {
-	n.sent <- sent{chat: chat, text: fmt.Sprintf("react %s to %s@%d", emoji, msg.Sender, msg.Timestamp)}
+	sender := msg.Sender
+	if msg.Bot {
+		sender = "bot"
+	}
+	n.sent <- sent{chat: chat, text: fmt.Sprintf("react %s to %s@%d", emoji, sender, msg.Timestamp)}
 }
 
 func (n *fakeNet) Typing(feature.Chat) func() {

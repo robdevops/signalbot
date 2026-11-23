@@ -300,9 +300,9 @@ func (c *Client) sendVoice(ctx context.Context, ch feature.Chat, audio []byte, r
 	return m.MessageID, err
 }
 
-// React puts emoji on msg, as a reaction from the bot. Telegram allows only
-// some emoji as reactions, so one it refuses as such is sent as a message
-// instead.
+// React puts emoji on msg, as a reaction from the bot: by its message ID,
+// which the bot's own messages have too. Telegram allows only some emoji as
+// reactions, so one it refuses as such is sent as a message instead.
 func (c *Client) React(ch feature.Chat, msg feature.Message, emoji string) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()

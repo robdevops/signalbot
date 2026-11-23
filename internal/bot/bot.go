@@ -286,7 +286,11 @@ func refs(msgs ...feature.Message) []chats.Ref {
 // gone reports whether m was deleted, or replaced by a later edit, since it
 // arrived.
 func (b *Bot) gone(m feature.Message) bool {
-	return b.chats.Gone(m.Chat.Key(), ref(m.Sender, m.Timestamp), version(m))
+	sender := m.Sender
+	if m.Bot {
+		sender = botSender
+	}
+	return b.chats.Gone(m.Chat.Key(), ref(sender, m.Timestamp), version(m))
 }
 
 // replaced forgets the versions of the message an edit replaces, in history
