@@ -18,7 +18,7 @@ A small, [privacy-conscious](PRIVACY.md) chat bot for Signal, through a running 
 - Responds to @mentions, replies to its messages, and DMs from whitelisted contacts
 - Tools: web search, line and pie charts, [pictures](docs/FILES_LINKS_TOOLS_MCP.md#images) (drawings, art, diagrams) with GPT Image 2, and your own [MCP connectors](docs/FILES_LINKS_TOOLS_MCP.md#mcp-connectors)
 - [`/schedule`](docs/SCHEDULING.md) a reminder or command, once or repeating
-- [Custom MCP servers](docs/FILES_LINKS_TOOLS_MCP.md#addons) that run their own commands and games in chosen groups, such as [GeoGuess](https://github.com/robdevops/chat-plugin-geoguess), seeing only pseudonyms
+- [Custom MCP servers](docs/FILES_LINKS_TOOLS_MCP.md#addons) such as [GeoGuess](https://github.com/robdevops/GeoGuess), [TriviaQuiz](https://github.com/robdevops/TriviaQuiz), [SongGuess](https://github.com/robdevops/SongGuess), or roll your own
 - Understands [files](docs/FILES_LINKS_TOOLS_MCP.md#files) (PDFs, text and code, Word, Excel and PowerPoint) and the [pages you link to](docs/FILES_LINKS_TOOLS_MCP.md#links), and if the model supports it, images, stickers, voice notes and other audio
 - Typing indicators, reactions, stickers, @mentions and replies
 - In-memory conversation context (Default: 10 messages). Never logged to disk, forgotten after 24 hours, or sooner if _disappearing messages_ requires.
@@ -28,7 +28,7 @@ A small, [privacy-conscious](PRIVACY.md) chat bot for Signal, through a running 
 - Your group's brain trust: ask it to explain things, check facts or settle debates, or just the fun of a sassy LLM in your Signal groups
 - Explain or translate any message, photo, document, or website by replying to it and @mentioning the bot
 - Connect MCP tools, data, and charting to your group chat
-- Play games in your group: [GeoGuess](https://github.com/robdevops/chat-plugin-geoguess) (guess where a street photo was taken), a [trivia quiz](https://github.com/robdevops/chat-plugin-quiz) the model writes on any topic, and a [song quiz](https://github.com/robdevops/chat-plugin-songs) of short clips from Deezer
+- Play games in your group: [GeoGuess](https://github.com/robdevops/GeoGuess), guessing where a street photo was taken; [TriviaQuiz](https://github.com/robdevops/TriviaQuiz), a trivia quiz the model writes on any topic; and [SongGuess](https://github.com/robdevops/SongGuess), a song quiz of short clips from Deezer
 - A private assistant in your DMs
 - Use this project as the basis of your own bot project
 
