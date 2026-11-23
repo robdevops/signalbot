@@ -512,6 +512,12 @@ func TestServeRequests(t *testing.T) {
 		t.Fatalf("second in flight: %s", got)
 	}
 	c.dispatch([]byte(`{"jsonrpc":"2.0","method":"notifications/cancelled","params":{"requestId":"q.2"}}`))
+	c.mu.Lock()
+	free := c.serving == nil // at once: a model call it started runs on, but the addon may ask again
+	c.mu.Unlock()
+	if !free {
+		t.Error("a cancelled request still holds the place")
+	}
 	if err := <-ended; !errors.Is(err, context.Canceled) {
 		t.Fatalf("ended with %v", err)
 	}
