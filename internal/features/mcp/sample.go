@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
+	"strings"
 	"sync"
 	"time"
 
@@ -170,15 +171,30 @@ func (a *addon) ask(ctx context.Context, params json.RawMessage) (*answer, int, 
 			Message struct {
 				Content *string `json:"content"`
 			} `json:"message"`
-			FinishReason string `json:"finish_reason"`
+			FinishReason string    `json:"finish_reason"`
+			Error        *apiError `json:"error"` // OpenRouter's, for a provider that failed part way
 		} `json:"choices"`
+		Error *apiError `json:"error"`
 		Usage struct {
 			Tokens int      `json:"completion_tokens"`
 			Cost   *float64 `json:"cost"`
 		} `json:"usage"`
 	}
-	if json.Unmarshal(data, &r) != nil || len(r.Choices) == 0 || r.Choices[0].Message.Content == nil {
-		return nil, size, "no answer", &rpcError{Code: -32603, Message: "the model gave no answer"}
+	if err := json.Unmarshal(data, &r); err != nil || len(r.Choices) == 0 || r.Choices[0].Message.Content == nil {
+		why := "no answer"
+		switch {
+		case err != nil:
+			why += " (unreadable)"
+		case len(r.Choices) > 0 && r.Choices[0].Error != nil:
+			why += " (" + r.Choices[0].Error.String() + ")"
+		case r.Error != nil:
+			why += " (" + r.Error.String() + ")"
+		case len(r.Choices) == 0:
+			why += " (no choices)"
+		default:
+			why += " (finish " + txt.Clamp(cmp.Or(r.Choices[0].FinishReason, "none"), 40) + ")"
+		}
+		return nil, size, why, &rpcError{Code: -32603, Message: "the model gave no answer"}
 	}
 	c := r.Choices[0]
 	res := &answer{
@@ -195,6 +211,21 @@ func (a *addon) ask(ctx context.Context, params json.RawMessage) (*answer, int, 
 		return res, size, "cancelled by the addon", &rpcError{Code: -32603, Message: "cancelled"}
 	}
 	return res, size, "", nil
+}
+
+// apiError is an error the model's API puts in a 200 answer: its code
+// and message, which say what failed, never what was asked.
+type apiError struct {
+	Code    any    `json:"code"`
+	Message string `json:"message"`
+}
+
+// String is e's code and message, short, for the log.
+func (e *apiError) String() string {
+	if e.Code == nil {
+		return txt.Clamp("error: "+strings.TrimSpace(e.Message), 120)
+	}
+	return txt.Clamp(strings.TrimSpace(fmt.Sprintf("error %v: %s", e.Code, e.Message)), 120)
 }
 
 // stopReason is a completion's finish_reason as MCP names it.

@@ -657,3 +657,32 @@ func TestPackageAddonReplies(t *testing.T) {
 	}
 	eventually(t, "the reaction", func() bool { return len(h.Reactions()) == 1 })
 }
+
+// An answer with no text is no answer, and the log says why: the error
+// the API put in it, or its finish_reason, never the prompt.
+func TestSampleNoAnswer(t *testing.T) {
+	for _, tc := range []struct{ body, why string }{
+		{`{"choices":[{"message":{"content":null},"finish_reason":"error","error":{"code":502,"message":"Upstream error"}}],"usage":{"completion_tokens":0}}`, "no answer (error 502: Upstream error)"},
+		{`{"error":{"message":"Provider returned error"}}`, "no answer (error: Provider returned error)"},
+		{`{"choices":[]}`, "no answer (no choices)"},
+		{`{"choices":[{"message":{"content":null},"finish_reason":"length"}]}`, "no answer (finish length)"},
+		{`not json`, "no answer (unreadable)"},
+	} {
+		var log logx.Buffer
+		restore := logx.SetOutput(&log, &log, true)
+		a, h, _ := sampler(&modelConfig{PerHour: 30, MaxTokens: 100})
+		body := tc.body
+		h.API = func(context.Context, string, map[string]any) (json.RawMessage, error) {
+			return json.RawMessage(body), nil
+		}
+		a.lease(inA)
+		_, rerr := a.sample(context.Background(), ask(a.chatID(inA), "Alice asks for the capital of Australia", 500))
+		restore()
+		if rerr == nil || rerr.Message != "the model gave no answer" {
+			t.Errorf("%s: %+v", tc.body, rerr)
+		}
+		if l := log.String(); !strings.Contains(l, "a model request: "+tc.why+" in ") || strings.Contains(l, "Alice") {
+			t.Errorf("%s: log %q", tc.body, l)
+		}
+	}
+}
