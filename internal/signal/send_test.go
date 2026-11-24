@@ -17,7 +17,7 @@ func TestSendOneMessageAndCaps(t *testing.T) {
 	c := newClient(f.sock, nil, nil)
 	run(t, c, f)
 	dm := feature.Chat{User: aliceID}
-	c.Send(dm, strings.Repeat("z ", 6000), []feature.Picture{{Data: []byte("PNG")}}, nil, 0, nil)
+	c.Send(dm, strings.Repeat("z ", 6000), []feature.Picture{{Data: []byte("PNG")}}, nil, 0, nil, feature.Markup{})
 	eventually(t, "a send", func() bool { return len(f.calls("send")) == 1 })
 	if s := f.calls("send")[0]; s["attachments"] == nil || len([]rune(s["message"].(string))) != maxReply || !strings.HasSuffix(s["message"].(string), "[…truncated]") {
 		t.Errorf("send %d chars, attachments %v", len([]rune(fmt.Sprint(s["message"]))), s["attachments"] != nil)
@@ -25,13 +25,13 @@ func TestSendOneMessageAndCaps(t *testing.T) {
 	if !strings.Contains(logs.String(), "reply truncated from 12000 chars") {
 		t.Errorf("logs %q", logs)
 	}
-	c.Send(dm, " ", nil, nil, 0, nil)
-	c.Send(dm, "", []feature.Picture{{Data: []byte("PNG")}}, nil, 0, nil)
+	c.Send(dm, " ", nil, nil, 0, nil, feature.Markup{})
+	c.Send(dm, "", []feature.Picture{{Data: []byte("PNG")}}, nil, 0, nil, feature.Markup{})
 	eventually(t, "the pictures alone", func() bool { return len(f.calls("send")) == 2 })
 	if s := f.calls("send")[1]; s["message"] != "" || s["attachments"] == nil {
 		t.Errorf("pictures sent as %v", s)
 	}
-	newClient("x", nil, nil).Send(dm, "secret words", nil, nil, 0, nil)
+	newClient("x", nil, nil).Send(dm, "secret words", nil, nil, 0, nil, feature.Markup{})
 	if out := logs.String(); !strings.Contains(out, "empty reply, nothing sent") || !strings.Contains(out, "send failed: not connected") || strings.Contains(out, "secret") {
 		t.Errorf("logs %q", out)
 	}
@@ -77,10 +77,39 @@ func TestSendAudio(t *testing.T) {
 	f := newFake(t)
 	c := newClient(f.sock, nil, nil)
 	run(t, c, f)
-	c.Send(feature.Chat{User: aliceID}, "🎵 Song 1", nil, nil, 0, []byte("ID3 clip"))
+	c.Send(feature.Chat{User: aliceID}, "🎵 Song 1", nil, nil, 0, []byte("ID3 clip"), feature.Markup{})
 	eventually(t, "a send", func() bool { return len(f.calls("send")) == 1 })
 	att, _ := f.calls("send")[0]["attachments"].([]any)
 	if len(att) != 1 || att[0] != "data:audio/mpeg;filename=clip.mp3;base64,SUQzIGNsaXA=" {
 		t.Errorf("attachments %v", att)
+	}
+}
+
+// An edit without pictures replaces the text of the bot's message in place
+// (editTimestamp), keeping its timestamp; with pictures, which an edit
+// can't change, it is a new message. Signal shows no buttons.
+func TestEdit(t *testing.T) {
+	captureLogs(t)
+	f := newFake(t)
+	c := newClient(f.sock, nil, nil)
+	run(t, c, f)
+	group := feature.Chat{GroupID: groupID}
+	mk := feature.Markup{Buttons: [][]feature.Button{{{Label: "7d", Data: "rain 7d"}}}}
+	if c.Buttons() {
+		t.Error("Signal shows buttons")
+	}
+	if ts := c.Edit(group, 900, "**Rain**, 7 days", nil, nil, mk); len(ts) != 1 || ts[0] != 900 {
+		t.Fatalf("edit %v", ts)
+	}
+	eventually(t, "the edit", func() bool { return len(f.calls("send")) == 1 })
+	if s := f.calls("send")[0]; s["editTimestamp"] != float64(900) || s["message"] != "Rain, 7 days" || s["groupId"] != groupID || s["textStyle"] == nil {
+		t.Errorf("edit %v", s)
+	}
+	if ts := c.Edit(group, 900, "Rain", []feature.Picture{{Data: []byte("PNG")}}, nil, mk); len(ts) != 1 || ts[0] == 900 {
+		t.Fatalf("an edit with a picture %v", ts)
+	}
+	eventually(t, "the new message", func() bool { return len(f.calls("send")) == 2 })
+	if s := f.calls("send")[1]; s["editTimestamp"] != nil || s["attachments"] == nil {
+		t.Errorf("an edit with a picture %v", s)
 	}
 }

@@ -33,6 +33,7 @@ type Host struct {
 	messages  []func(context.Context, feature.Message) feature.Action
 	turns     []func(context.Context, feature.Message) feature.Additions
 	events    []func(context.Context, feature.Event) string
+	presses   []func(context.Context, feature.Press) (string, bool)
 	groups    []feature.ToolGroup
 	more      []string
 	timers    []*Timer
@@ -91,6 +92,26 @@ func (h *Host) Event(ctx context.Context, e feature.Event) string {
 		}
 	}
 	return ""
+}
+
+func (h *Host) OnPress(fn func(context.Context, feature.Press) (string, bool)) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.presses = append(h.presses, fn)
+}
+
+// Press runs the OnPress hooks on p, as the core does, and returns the
+// answer of the first that takes it, and whether one did.
+func (h *Host) Press(ctx context.Context, p feature.Press) (string, bool) {
+	h.mu.Lock()
+	hooks := slices.Clone(h.presses)
+	h.mu.Unlock()
+	for _, fn := range hooks {
+		if a, ok := fn(ctx, p); ok {
+			return a, true
+		}
+	}
+	return "", false
 }
 
 // IntroLine records line; IntroLineDM records it marked " (DM only)".

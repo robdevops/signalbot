@@ -64,7 +64,7 @@ func TestSample(t *testing.T) {
 	var log logx.Buffer
 	t.Cleanup(logx.SetOutput(&log, &log, true))
 	a, h, bodies := sampler(&modelConfig{PerHour: 30, MaxTokens: 100})
-	a.lease(inA)
+	a.lease(inA, false)
 	res, rerr := a.sample(context.Background(), ask(a.chatID(inA), "Alice asks for the capital of Australia", 500))
 	if rerr != nil {
 		t.Fatal(rerr)
@@ -104,11 +104,11 @@ func TestSampleRefused(t *testing.T) {
 		}
 	}
 	a, h, bodies := sampler(nil)
-	a.lease(inA)
+	a.lease(inA, false)
 	refused(a, ask(a.chatID(inA), "hi", 10), -32601)
 
 	a, h, bodies = sampler(&modelConfig{PerHour: 2, MaxTokens: 100})
-	a.lease(inA)
+	a.lease(inA, false)
 	chat := a.chatID(inA)
 	h.Bot.Model = ""
 	refused(a, ask(chat, "hi", 10), -32601)
@@ -145,13 +145,19 @@ func TestSampleRefused(t *testing.T) {
 
 	// A chat the addon is no longer allowed in.
 	a, _, _ = sampler(&modelConfig{PerHour: 2, MaxTokens: 100})
-	a.lease(inA)
+	a.lease(inA, false)
 	a.cfg.Chats = []string{groupB}
+	refused(a, ask(a.chatID(inA), "hi", 10), -32602)
+
+	// A chat announce keeps open, past its lease's day: no sampling.
+	a, _, _ = sampler(&modelConfig{PerHour: 2, MaxTokens: 100})
+	a.cfg.Announce = true
+	a.leases[a.chatID(inA)] = lease{Chat: inA, Expires: a.now().Add(-time.Hour), Forever: true}
 	refused(a, ask(a.chatID(inA), "hi", 10), -32602)
 
 	// The model failing, as when the chat is over its daily budget.
 	a, h, _ = sampler(&modelConfig{PerHour: 2, MaxTokens: 100})
-	a.lease(inA)
+	a.lease(inA, false)
 	h.API = func(context.Context, string, map[string]any) (json.RawMessage, error) {
 		return nil, errors.New("the chat has reached its daily budget")
 	}
@@ -397,7 +403,7 @@ func TestPackageAddonNoSample(t *testing.T) {
 // a gate opened with no addon is refused, not called unsupported.
 func TestSampleGate(t *testing.T) {
 	a, _, _ := sampler(&modelConfig{PerHour: 30, MaxTokens: 100})
-	a.lease(inA)
+	a.lease(inA, false)
 	g := &gate{ready: make(chan struct{})}
 	got := make(chan *rpcError, 1)
 	go func() {
@@ -434,7 +440,7 @@ func TestSampleGate(t *testing.T) {
 // to the chat, and gets no answer.
 func TestSampleCancelledCharges(t *testing.T) {
 	a, h, _ := sampler(&modelConfig{PerHour: 30, MaxTokens: 100})
-	a.lease(inA)
+	a.lease(inA, false)
 	ctx, cancel := context.WithCancel(context.Background())
 	api := h.API
 	var callErr error
@@ -512,6 +518,12 @@ func TestServeRequests(t *testing.T) {
 		t.Fatalf("second in flight: %s", got)
 	}
 	c.dispatch([]byte(`{"jsonrpc":"2.0","method":"notifications/cancelled","params":{"requestId":"q.2"}}`))
+	c.mu.Lock()
+	free := c.serving == nil // at once: a model call it started runs on, but the addon may ask again
+	c.mu.Unlock()
+	if !free {
+		t.Error("a cancelled request still holds the place")
+	}
 	if err := <-ended; !errors.Is(err, context.Canceled) {
 		t.Fatalf("ended with %v", err)
 	}
@@ -650,4 +662,33 @@ func TestPackageAddonReplies(t *testing.T) {
 		t.Fatalf("after a restart: %+v", got)
 	}
 	eventually(t, "the reaction", func() bool { return len(h.Reactions()) == 1 })
+}
+
+// An answer with no text is no answer, and the log says why: the error
+// the API put in it, or its finish_reason, never the prompt.
+func TestSampleNoAnswer(t *testing.T) {
+	for _, tc := range []struct{ body, why string }{
+		{`{"choices":[{"message":{"content":null},"finish_reason":"error","error":{"code":502,"message":"Upstream error"}}],"usage":{"completion_tokens":0}}`, "no answer (error 502: Upstream error)"},
+		{`{"error":{"message":"Provider returned error"}}`, "no answer (error: Provider returned error)"},
+		{`{"choices":[]}`, "no answer (no choices)"},
+		{`{"choices":[{"message":{"content":null},"finish_reason":"length"}]}`, "no answer (finish length)"},
+		{`not json`, "no answer (unreadable)"},
+	} {
+		var log logx.Buffer
+		restore := logx.SetOutput(&log, &log, true)
+		a, h, _ := sampler(&modelConfig{PerHour: 30, MaxTokens: 100})
+		body := tc.body
+		h.API = func(context.Context, string, map[string]any) (json.RawMessage, error) {
+			return json.RawMessage(body), nil
+		}
+		a.lease(inA, false)
+		_, rerr := a.sample(context.Background(), ask(a.chatID(inA), "Alice asks for the capital of Australia", 500))
+		restore()
+		if rerr == nil || rerr.Message != "the model gave no answer" {
+			t.Errorf("%s: %+v", tc.body, rerr)
+		}
+		if l := log.String(); !strings.Contains(l, "a model request: "+tc.why+" in ") || strings.Contains(l, "Alice") {
+			t.Errorf("%s: log %q", tc.body, l)
+		}
+	}
 }

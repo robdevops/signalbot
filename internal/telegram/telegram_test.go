@@ -296,7 +296,7 @@ func TestEdits(t *testing.T) {
 func TestSend(t *testing.T) {
 	f := newFake(t)
 	c := connected(f.client())
-	ids := c.Send(feature.Chat{GroupID: groupS}, "🎉 **big** news, see [docs](https://x.example) and @Alice", nil, map[string]string{"alice": "1111111"}, 0, nil)
+	ids := c.Send(feature.Chat{GroupID: groupS}, "🎉 **big** news, see [docs](https://x.example) and @Alice", nil, map[string]string{"alice": "1111111"}, 0, nil, feature.Markup{})
 	if !reflect.DeepEqual(ids, []int64{500}) {
 		t.Fatalf("ids %v", ids)
 	}
@@ -309,7 +309,7 @@ func TestSend(t *testing.T) {
 	if string(got) != want {
 		t.Fatalf("entities\n got  %s\n want %s", got, want)
 	}
-	c.Send(feature.Chat{User: "1111111"}, strings.Repeat("word ", 1700), nil, nil, 0, nil)
+	c.Send(feature.Chat{User: "1111111"}, strings.Repeat("word ", 1700), nil, nil, 0, nil, feature.Markup{})
 	if n := len(f.callsTo("sendMessage")); n != 3 { // 8500 chars, capped at 8000: two messages
 		t.Fatalf("a long reply in %d messages", n-1)
 	}
@@ -320,7 +320,7 @@ func TestSend(t *testing.T) {
 	}
 	// Entities Telegram refuses: the text alone.
 	f.errs["sendMessage"] = `{"ok":false,"error_code":400,"description":"Bad Request: can't parse entities"}`
-	if ids := c.Send(feature.Chat{User: "1111111"}, "**x**", nil, nil, 0, nil); len(ids) != 1 {
+	if ids := c.Send(feature.Chat{User: "1111111"}, "**x**", nil, nil, 0, nil, feature.Markup{}); len(ids) != 1 {
 		t.Fatalf("fallback ids %v", ids)
 	}
 	if last := f.callsTo("sendMessage"); last[len(last)-1].Params["entities"] != nil || last[len(last)-1].Params["text"] != "x" {
@@ -336,14 +336,14 @@ func TestSendPictures(t *testing.T) {
 	f.results["sendMediaGroup"] = `[{"message_id":602},{"message_id":603}]`
 	c := connected(f.client())
 	png := []byte("\x89PNG\r\n\x1a\nxx")
-	if ids := c.Send(feature.Chat{User: "1111111"}, "NVDA ▼ 15.2%", []feature.Picture{{Data: png}}, nil, 0, nil); !reflect.DeepEqual(ids, []int64{601}) {
+	if ids := c.Send(feature.Chat{User: "1111111"}, "NVDA ▼ 15.2%", []feature.Picture{{Data: png}}, nil, 0, nil, feature.Markup{}); !reflect.DeepEqual(ids, []int64{601}) {
 		t.Fatalf("ids %v", ids)
 	}
 	ph := f.callsTo("sendPhoto")[0]
 	if ph.Params["caption"] != "NVDA ▼ 15.2%" || string(ph.Files["p0"]) != string(png) || len(f.callsTo("sendMessage")) != 0 {
 		t.Fatalf("photo %v", ph.Params)
 	}
-	if ids := c.Send(feature.Chat{GroupID: groupS}, "", []feature.Picture{{Data: png}, {Data: png}}, nil, 0, nil); !reflect.DeepEqual(ids, []int64{602, 603}) {
+	if ids := c.Send(feature.Chat{GroupID: groupS}, "", []feature.Picture{{Data: png}, {Data: png}}, nil, 0, nil, feature.Markup{}); !reflect.DeepEqual(ids, []int64{602, 603}) {
 		t.Fatalf("album ids %v", ids)
 	}
 	if mg := f.callsTo("sendMediaGroup")[0]; len(mg.Files) != 2 || !strings.Contains(mg.Params["media"].(string), `"attach://p1"`) {
@@ -358,7 +358,7 @@ func TestSendReply(t *testing.T) {
 	f := newFake(t)
 	f.results["sendPhoto"] = `{"message_id":601}`
 	c := connected(f.client())
-	c.Send(feature.Chat{GroupID: groupS}, strings.Repeat("word ", 1700), nil, nil, 42, nil)
+	c.Send(feature.Chat{GroupID: groupS}, strings.Repeat("word ", 1700), nil, nil, 42, nil, feature.Markup{})
 	msgs := f.callsTo("sendMessage")
 	if len(msgs) != 2 {
 		t.Fatalf("%d messages", len(msgs))
@@ -370,26 +370,32 @@ func TestSendReply(t *testing.T) {
 		t.Errorf("second part replies too: %v", msgs[1].Params["reply_parameters"])
 	}
 	png := []byte("\x89PNG\r\n\x1a\nxx")
-	c.Send(feature.Chat{User: "1111111"}, strings.Repeat("x", maxCaption+1), []feature.Picture{{Data: png}}, nil, 43, nil)
+	c.Send(feature.Chat{User: "1111111"}, strings.Repeat("x", maxCaption+1), []feature.Picture{{Data: png}}, nil, 43, nil, feature.Markup{})
 	if ph := f.callsTo("sendPhoto")[0]; ph.Params["reply_parameters"] != `{"allow_sending_without_reply":true,"message_id":43}` {
 		t.Errorf("photo's reply_parameters %v", ph.Params["reply_parameters"])
 	}
 	if msgs := f.callsTo("sendMessage"); len(msgs) != 3 || msgs[2].Params["reply_parameters"] != nil {
 		t.Errorf("the text after the photo replies too: %v", msgs[len(msgs)-1].Params)
 	}
-	c.Send(feature.Chat{User: "1111111"}, "plain", nil, nil, 0, nil)
+	c.Send(feature.Chat{User: "1111111"}, "plain", nil, nil, 0, nil, feature.Markup{})
 	if msgs := f.callsTo("sendMessage"); msgs[len(msgs)-1].Params["reply_parameters"] != nil {
 		t.Errorf("a plain send replies: %v", msgs[len(msgs)-1].Params)
 	}
 }
 
-// A reaction Telegram refuses is sent as a message.
+// A reaction names its message by ID, the bot's own too; one Telegram
+// refuses is sent as a message.
 func TestReact(t *testing.T) {
 	f := newFake(t)
 	c := connected(f.client())
 	msg := feature.Message{Chat: feature.Chat{User: "1111111"}, Timestamp: 42}
 	c.React(msg.Chat, msg, "👍")
 	if r := f.callsTo("setMessageReaction"); len(r) != 1 || r[0].Params["message_id"] != float64(42) {
+		t.Fatalf("reactions %v", r)
+	}
+	own := feature.Message{Chat: msg.Chat, Timestamp: 43, Bot: true} // the bot's own, by its message ID
+	c.React(own.Chat, own, "⏰")
+	if r := f.callsTo("setMessageReaction"); len(r) != 2 || r[1].Params["message_id"] != float64(43) {
 		t.Fatalf("reactions %v", r)
 	}
 	f.errs["setMessageReaction"] = `{"ok":false,"error_code":400,"description":"Bad Request: REACTION_INVALID"}`
@@ -468,7 +474,7 @@ func TestTokenNeverLogged(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
 	defer cancel()
 	c.Run(ctx, func(bot.Received) {})
-	c.Send(feature.Chat{User: "1"}, "hi", nil, nil, 0, nil)
+	c.Send(feature.Chat{User: "1"}, "hi", nil, nil, 0, nil, feature.Markup{})
 	out := logs.String()
 	if !strings.Contains(out, "getMe failed") || !strings.Contains(out, "send failed") || strings.Contains(out, "SECRET") {
 		t.Fatalf("logs %q", out)
@@ -559,8 +565,8 @@ func TestEvents(t *testing.T) {
 		t.Fatal("an event with no hook")
 	}
 	c.Watch(bot.Watch{Events: true})
-	c.groupAllowed(context.Background(), groupS)                     // Alice is in it
-	c.Send(feature.Chat{GroupID: groupS}, "hello", nil, nil, 0, nil) // message 500, the bot's
+	c.groupAllowed(context.Background(), groupS)                                       // Alice is in it
+	c.Send(feature.Chat{GroupID: groupS}, "hello", nil, nil, 0, nil, feature.Markup{}) // message 500, the bot's
 	r, _ := c.event(parse(t, `{"update_id":2,"message_reaction":{`+inGroup+`,"message_id":500,"user":{"id":1111111,"first_name":"Alice"},"old_reaction":[{"type":"emoji","emoji":"👍"}],"new_reaction":[]}}`))
 	e := r.(bot.Happened).Event
 	if e.Reaction == nil || e.Reaction.Emoji != "👍" || !e.Reaction.Removed || !e.Reaction.Bot || e.By.ID != "1111111" || e.Reaction.Sent != 500 {
@@ -640,14 +646,14 @@ func TestSendPicturesFail(t *testing.T) {
 	c := connected(f.client())
 	png := []byte("\x89PNG\r\n\x1a\nxx")
 	f.errs["sendPhoto"] = `{"ok":false,"error_code":400,"description":"Bad Request: PHOTO_INVALID_DIMENSIONS"}`
-	if ids := c.Send(feature.Chat{User: "1111111"}, "**the** caption", []feature.Picture{{Data: png}}, nil, 0, nil); !reflect.DeepEqual(ids, []int64{500}) {
+	if ids := c.Send(feature.Chat{User: "1111111"}, "**the** caption", []feature.Picture{{Data: png}}, nil, 0, nil, feature.Markup{}); !reflect.DeepEqual(ids, []int64{500}) {
 		t.Fatalf("ids %v", ids)
 	}
 	if s := f.callsTo("sendMessage"); len(s) != 1 || s[0].Params["text"] != "the caption" {
 		t.Fatalf("text %v", s)
 	}
 	f.errs["sendPhoto"] = `{"ok":false,"error_code":400,"description":"Bad Request: can't parse entities"}`
-	if ids := c.Send(feature.Chat{User: "1111111"}, "**the** caption", []feature.Picture{{Data: png}}, nil, 0, nil); !reflect.DeepEqual(ids, []int64{601}) {
+	if ids := c.Send(feature.Chat{User: "1111111"}, "**the** caption", []feature.Picture{{Data: png}}, nil, 0, nil, feature.Markup{}); !reflect.DeepEqual(ids, []int64{601}) {
 		t.Fatalf("ids %v", ids)
 	}
 	ph := f.callsTo("sendPhoto")
@@ -664,12 +670,12 @@ func TestSendRetries(t *testing.T) {
 	c := connected(f.client())
 	f.errs["sendMessage"] = `{"ok":false,"error_code":429,"description":"Too Many Requests","parameters":{"retry_after":1}}`
 	start := time.Now()
-	if ids := c.Send(feature.Chat{GroupID: groupS}, "hi", nil, nil, 0, nil); !reflect.DeepEqual(ids, []int64{500}) || time.Since(start) < time.Second {
+	if ids := c.Send(feature.Chat{GroupID: groupS}, "hi", nil, nil, 0, nil, feature.Markup{}); !reflect.DeepEqual(ids, []int64{500}) || time.Since(start) < time.Second {
 		t.Fatalf("ids %v after %s", ids, time.Since(start))
 	}
 	f.errs["sendMessage"] = `{"ok":false,"error_code":400,"description":"Bad Request: group chat was upgraded to a supergroup chat","parameters":{"migrate_to_chat_id":-1009999999999}}`
-	c.Send(feature.Chat{GroupID: "-4444444"}, "one", nil, nil, 0, nil)
-	c.Send(feature.Chat{GroupID: "-4444444"}, "two", nil, nil, 0, nil)
+	c.Send(feature.Chat{GroupID: "-4444444"}, "one", nil, nil, 0, nil, feature.Markup{})
+	c.Send(feature.Chat{GroupID: "-4444444"}, "two", nil, nil, 0, nil, feature.Markup{})
 	var to []any
 	for _, s := range f.callsTo("sendMessage")[2:] {
 		to = append(to, s.Params["chat_id"])
@@ -709,7 +715,7 @@ func TestTopics(t *testing.T) {
 	if m.Quote != nil || m.Text != "hi" {
 		t.Fatalf("message %+v", m)
 	}
-	c.Send(in.Chat, "hello", nil, nil, 0, nil)
+	c.Send(in.Chat, "hello", nil, nil, 0, nil, feature.Markup{})
 	if s := f.callsTo("sendMessage")[0].Params; s["chat_id"] != groupS || s["message_thread_id"] != float64(7) {
 		t.Fatalf("sent %v", s)
 	}
@@ -739,7 +745,7 @@ func TestMigration(t *testing.T) {
 	if gs, _ := c.Groups(context.Background(), "1111111"); len(gs) != 1 || gs[0].ID != "-1009999999999" {
 		t.Fatalf("groups %v", gs)
 	}
-	c.Send(feature.Chat{GroupID: "-4444444"}, "scheduled", nil, nil, 0, nil)
+	c.Send(feature.Chat{GroupID: "-4444444"}, "scheduled", nil, nil, 0, nil, feature.Markup{})
 	if s := f.callsTo("sendMessage")[0].Params; s["chat_id"] != "-1009999999999" {
 		t.Fatalf("sent to %v", s["chat_id"])
 	}
@@ -825,7 +831,7 @@ func TestSendVoice(t *testing.T) {
 	f := newFake(t)
 	f.results["sendVoice"] = `{"message_id":701}`
 	c := connected(f.client())
-	ids := c.Send(feature.Chat{GroupID: groupS}, "🎵 Song 1", nil, nil, 42, []byte("ID3 clip"))
+	ids := c.Send(feature.Chat{GroupID: groupS}, "🎵 Song 1", nil, nil, 42, []byte("ID3 clip"), feature.Markup{})
 	v := f.callsTo("sendVoice")
 	if len(v) != 1 || v[0].Params["reply_parameters"] != `{"allow_sending_without_reply":true,"message_id":42}` {
 		t.Fatalf("sendVoice %+v", v)

@@ -36,8 +36,9 @@ func (c *Client) Prompt() string {
 // @name, made a real mention, and with the images, each named after its
 // Name or else image_<local time>, quoting the bot's own message sent at
 // replyTo if it isn't 0. A failure is logged, as is a message signal-cli
-// says it could not deliver.
-func (c *Client) Send(chat feature.Chat, text string, pics []feature.Picture, known map[string]string, replyTo int64, audio []byte) (sent []int64) {
+// says it could not deliver. Signal shows none of mk: no buttons, no
+// keyboard, and no silent send.
+func (c *Client) Send(chat feature.Chat, text string, pics []feature.Picture, known map[string]string, replyTo int64, audio []byte, _ feature.Markup) (sent []int64) {
 	if n := utf8.RuneCountInString(text); n > maxReply {
 		logx.Warnf("reply truncated from %d chars", n)
 	}
@@ -61,14 +62,7 @@ func (c *Client) Send(chat feature.Chat, text string, pics []feature.Picture, kn
 		attachments = append(attachments, "data:audio/mpeg;filename=clip.mp3;base64,"+base64.StdEncoding.EncodeToString(audio))
 	}
 	msg, ok := prepare(text, c.BotName())
-	if id := c.self(); id != "" && chat.GroupID != "" { // in a group, "@" and its own name mentions the bot
-		k := maps.Clone(known)
-		if k == nil {
-			k = map[string]string{}
-		}
-		k[txt.SafeName(c.BotName())] = id
-		known = k
-	}
+	known = c.withSelf(chat, known)
 	if !ok && len(attachments) == 0 {
 		logx.Warnf("empty reply, nothing sent")
 		return nil
@@ -89,6 +83,45 @@ func (c *Client) Send(chat feature.Chat, text string, pics []feature.Picture, kn
 		}
 	}
 	return sent
+}
+
+// Buttons reports that Signal shows no Markup.
+func (c *Client) Buttons() bool { return false }
+
+// Edit replaces the text of the bot's own message sent at sent, as Signal's
+// apps edit one, keeping its timestamp; with pics, which an edit can't
+// change, they and the text are sent as a new message instead. mk is left
+// off, as Send leaves it.
+func (c *Client) Edit(chat feature.Chat, sent int64, text string, pics []feature.Picture, known map[string]string, mk feature.Markup) []int64 {
+	if len(pics) > 0 {
+		return c.Send(chat, text, pics, known, 0, nil, mk)
+	}
+	msg, ok := prepare(text, c.BotName())
+	if !ok {
+		logx.Warnf("empty edit, nothing sent")
+		return nil
+	}
+	known = c.withSelf(chat, known)
+	body := string(msg.Runes)
+	if _, err := c.post(chat, body, mentions(body, known), textStyles(msg), nil, 0, sent); err != nil {
+		logx.Errorf("edit failed: %v", err)
+		return nil
+	}
+	return []int64{sent}
+}
+
+// withSelf is known with, in a group, the bot's own name for its account,
+// so "@" and its name mentions it.
+func (c *Client) withSelf(chat feature.Chat, known map[string]string) map[string]string {
+	if id := c.self(); id != "" && chat.GroupID != "" {
+		k := maps.Clone(known)
+		if k == nil {
+			k = map[string]string{}
+		}
+		k[txt.SafeName(c.BotName())] = id
+		return k
+	}
+	return known
 }
 
 // fileName is name made safe as a file name in a data URI: characters that
@@ -113,10 +146,19 @@ func fileName(name string) string {
 // still has the message, so a recipient whose app doesn't shows the quote
 // as not found, and the reply still goes.
 func (c *Client) send(chat feature.Chat, text string, mentions, styles, attachments []string, quote int64) (int64, error) {
+	return c.post(chat, text, mentions, styles, attachments, quote, 0)
+}
+
+// post is send, and with edit an edit of the bot's own message sent then
+// (signal-cli's editTimestamp).
+func (c *Client) post(chat feature.Chat, text string, mentions, styles, attachments []string, quote, edit int64) (int64, error) {
 	p := target(chat)
 	p["message"] = text
 	if self := c.self(); quote != 0 && self != "" {
 		p["quoteTimestamp"], p["quoteAuthor"] = quote, self
+	}
+	if edit != 0 {
+		p["editTimestamp"] = edit
 	}
 	if len(mentions) > 0 {
 		p["mention"] = mentions
@@ -150,10 +192,18 @@ func (c *Client) send(chat feature.Chat, text string, mentions, styles, attachme
 // which takes longer with attachments.
 var sendTimeout = time.Minute
 
-// React puts emoji on msg, as a reaction from the bot.
+// React puts emoji on msg, as a reaction from the bot. The bot's own
+// message is its account's, so not until signal-cli says which that is.
 func (c *Client) React(chat feature.Chat, msg feature.Message, emoji string) {
+	author := msg.Sender
+	if msg.Bot {
+		if author = c.self(); author == "" {
+			logx.Errorf("reaction failed: the bot's account isn't known yet")
+			return
+		}
+	}
 	p := target(chat)
-	p["emoji"], p["targetAuthor"], p["targetTimestamp"] = emoji, msg.Sender, msg.Timestamp
+	p["emoji"], p["targetAuthor"], p["targetTimestamp"] = emoji, author, msg.Timestamp
 	if err := c.write(c.nextID.Add(1), "sendReaction", p); err != nil {
 		logx.Errorf("reaction failed: %v", err)
 	}

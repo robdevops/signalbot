@@ -204,22 +204,23 @@ type failure struct {
 }
 
 // apply does what o asks, once, and returns why it was dropped, if it was.
-// A post counts as applied only once it is sent.
+// A post or an edit counts as applied only once it is sent.
 func (a *addon) apply(o ext.Op) (why string) {
 	if o.ID == "" {
 		return "without an id"
 	}
 	now := a.now()
+	mailed := o.Op == "post" || o.Op == "edit"
 	a.mu.Lock()
 	f, failed := a.failed[o.ID]
 	again := a.done[o.ID] || a.sending[o.ID]
 	switch {
 	case again:
-	case o.Op == "post" && failed && now.Before(f.retry):
+	case mailed && failed && now.Before(f.retry):
 		again, a.missed = true, true // not yet: a later read posts it
 	case o.Op == "post" && a.waitsToPost(o.ReplyTo):
 		again, a.missed = true, true // after the post it replies to
-	case o.Op != "post":
+	case !mailed:
 		a.remember(o.ID)
 	}
 	a.mu.Unlock()
@@ -227,8 +228,12 @@ func (a *addon) apply(o ext.Op) (why string) {
 		return ""
 	}
 	switch o.Op {
-	case "post":
-		why = a.post(o, failed)
+	case "post", "edit":
+		if o.Op == "post" {
+			why = a.post(o, failed)
+		} else {
+			why = a.edit(o, failed)
+		}
 		if why != "" {
 			a.mu.Lock()
 			a.remember(o.ID)
@@ -240,17 +245,11 @@ func (a *addon) apply(o ext.Op) (why string) {
 		if !a.cfg.React {
 			return "reactions not allowed"
 		}
-		a.mu.Lock()
-		r, ok := a.refs[o.Ref]
-		l, leased := a.leases[a.chatID(r.msg.Chat)]
-		a.mu.Unlock()
-		switch {
-		case !ok || !now.Before(r.expires):
-			return "reactions to an unknown message"
-		case !leased || !now.Before(l.Expires) || !a.allows(r.msg.Chat):
-			return "for a chat without a lease"
+		msg, why := a.reactTo(o, now)
+		if why != "" {
+			return why
 		}
-		if why := a.react(r.msg, o.Emoji); why != "" {
+		if why := a.react(msg, o.Emoji); why != "" {
 			return "reactions " + why
 		}
 	case "unwatch":
@@ -259,6 +258,39 @@ func (a *addon) apply(o ext.Op) (why string) {
 		return "of an unknown kind"
 	}
 	return ""
+}
+
+// reactTo is the message a react op is for: one the bot passed the addon,
+// by its ref, or the addon's own post, by its op's ID, as a replyTo names
+// it; or why there is none the addon may react to.
+func (a *addon) reactTo(o ext.Op, now time.Time) (feature.Message, string) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	var msg feature.Message
+	switch {
+	case (o.Ref == "") == (o.Post == ""):
+		return msg, "malformed reactions"
+	case o.Ref != "":
+		r, ok := a.refs[o.Ref]
+		if !ok || !now.Before(r.expires) {
+			return msg, "reactions to an unknown message"
+		}
+		msg = r.msg
+	default:
+		p, ok := a.posted[o.Post]
+		l, leased := a.leases[o.Chat]
+		switch {
+		case !ok || p.Chat != o.Chat || !now.Before(p.Expires):
+			return msg, "reactions to an unknown post"
+		case !leased:
+			return msg, "for a chat without a lease"
+		}
+		msg = feature.Message{Chat: l.Chat, Timestamp: p.Sent, Bot: true}
+	}
+	if l, leased := a.leases[a.chatID(msg.Chat)]; !leased || !l.live(now) || !a.allows(msg.Chat) {
+		return msg, "for a chat without a lease"
+	}
+	return msg, ""
 }
 
 // waitsToPost reports whether the post op called id was dropped and waits
@@ -278,15 +310,22 @@ func (a *addon) post(o ext.Op, again bool) (why string) {
 	switch {
 	case !a.cfg.Post:
 		return "posts not allowed"
-	case !ok || !now.Before(l.Expires) || !a.allows(l.Chat):
+	case !ok || !l.live(now) || !a.allows(l.Chat):
 		return "for a chat without a lease"
+	}
+	mk, why := a.markup(o)
+	if why != "" {
+		return "posts with " + why
 	}
 	var b64 []string
 	for _, im := range o.Images {
 		b64 = append(b64, im.Data)
 	}
-	out := &outgoing{Post: feature.Post{Chat: l.Chat, Label: a.title, Text: txt.Clamp(a.fill(l.Chat, strings.TrimSpace(o.Text)), maxAnswer), Pictures: a.pictures(b64)},
-		ops: []string{o.ID}, replyTo: o.ReplyTo}
+	out := &outgoing{Post: feature.Post{Chat: l.Chat, Label: a.title, Text: txt.Clamp(a.fill(l.Chat, strings.TrimSpace(o.Text)), maxAnswer), Pictures: a.pictures(b64), Markup: mk},
+		ops: []string{o.ID}, replyTo: o.ReplyTo, onPress: o.OnPress}
+	if len(mk.Buttons) == 0 {
+		out.onPress = "" // left off: no press can come
+	}
 	if o.Audio != nil {
 		clip, err := base64.StdEncoding.DecodeString(o.Audio.Data)
 		if err != nil || o.Audio.MimeType != "audio/mpeg" || len(clip) == 0 || len(clip) > maxPictureBytes {
@@ -304,21 +343,29 @@ func (a *addon) post(o ext.Op, again bool) (why string) {
 	return ""
 }
 
-// outgoing is a post of the addon's, the ops it carries, and the ID of
-// the post op it replies to, if any.
+// outgoing is a post of the addon's, or an edit, the ops it carries, the
+// ID of the post op it replies to, if any, the tool a press of its buttons
+// calls, and an edit's post op.
 type outgoing struct {
 	feature.Post
 	ops     []string
 	replyTo string
+	onPress string
+	edits   string
 }
 
 // fits reports whether p can join o in one post: their pictures, and
 // their texts whole, so a merge never cuts a post that fit on its own.
 // A reply joins no other post, and none joins it, so it stays a message
-// of its own and a later post a new one.
+// of its own and a later post a new one; so does an edit, and a post with
+// markup but for silence, which both must share.
 func (o *outgoing) fits(p *outgoing) bool {
-	if o.replyTo != "" || p.replyTo != "" || len(o.Audio) > 0 || len(p.Audio) > 0 {
-		return false // a reply, or a clip, is a message of its own
+	own := func(x *outgoing) bool {
+		mk := x.Markup
+		return x.replyTo != "" || len(x.Audio) > 0 || x.Edit != 0 || len(mk.Buttons) > 0 || len(mk.Keyboard) > 0 || mk.NoKeyboard
+	}
+	if own(o) || own(p) || o.Markup.Silent != p.Markup.Silent {
+		return false // a message of its own
 	}
 	size := 0
 	for _, pic := range append(slices.Clone(o.Pictures), p.Pictures...) {
@@ -365,6 +412,17 @@ func (a *addon) send(id string, out *outgoing) {
 // and waits to be posted again waits too, and is posted after it.
 func (a *addon) mail(id string, out *outgoing) {
 	p := out.Post
+	if out.edits != "" { // the post as it stands now, after any edit before
+		a.mu.Lock()
+		t, ok := a.posted[out.edits]
+		a.mu.Unlock()
+		if !ok || t.Chat != id || a.uneditable(t, a.now()) != "" {
+			a.sent(out.ops, true) // forgotten since, or no longer editable: nothing to edit
+			a.mailNext(id)
+			return
+		}
+		p.Edit = t.last()
+	}
 	if out.replyTo != "" {
 		a.mu.Lock()
 		pending, retry := a.waitsToPost(out.replyTo), a.failed[out.replyTo].retry
@@ -379,12 +437,22 @@ func (a *addon) mail(id string, out *outgoing) {
 		}
 	}
 	p.OnSent = func(sent []int64, dropped bool) {
-		if !dropped {
+		switch {
+		case dropped:
+		case out.edits != "":
+			if len(sent) > 0 && sent[0] != p.Edit { // sent anew
+				a.replied(p.Chat, sent)
+				if len(p.Pictures) > 0 {
+					a.guardPosted(p.Chat, sent)
+				}
+			}
+			a.rememberEdit(out.edits, sent, out.onPress)
+		default:
 			a.replied(p.Chat, sent)
 			if len(p.Pictures) > 0 {
 				a.guardPosted(p.Chat, sent)
 			}
-			a.rememberPosted(id, out.ops, sent)
+			a.rememberPosted(p.Chat, out.ops, sent, out.onPress)
 		}
 		a.sent(out.ops, !dropped)
 		a.mailNext(id)
@@ -409,47 +477,133 @@ func (a *addon) mailNext(id string) {
 }
 
 // posted is a post op the addon sent: the pseudonym of its chat, the first
-// of the timestamps it went out in, which a reply names, and until when a
-// later post may reply to it.
+// of the timestamps it went out in, which a reply or a reaction names, the
+// last, which an edit replaces and a press of its buttons names, the tool
+// such a press calls, and until when it is remembered. Shared is set when
+// other ops went out in the same message, Edits counts its edits in place,
+// and Topic is the forum topic a post with buttons is in, as a press under
+// an old message comes from the bare group.
 type posted struct {
-	Chat    string    `json:"chat"`
-	Sent    int64     `json:"sent"`
-	Expires time.Time `json:"expires"`
+	Chat    string        `json:"chat"`
+	Sent    int64         `json:"sent"`
+	Last    int64         `json:"last,omitempty"` // 0 for Sent
+	OnPress string        `json:"onPress,omitempty"`
+	Expires time.Time     `json:"expires"`
+	Shared  bool          `json:"shared,omitempty"`
+	Edits   int           `json:"edits,omitempty"`
+	Topic   *feature.Chat `json:"topic,omitempty"`
 }
 
-// How long a post op is remembered for a later post's replyTo, and how
-// many are.
+// last is the message an edit replaces and a press names.
+func (p posted) last() int64 { return cmp.Or(p.Last, p.Sent) }
+
+// How long a post op is remembered, for a later post's replyTo, a
+// reaction or an edit, and how many are: one with buttons for longer, so
+// a press under a days-old post still works.
 const (
-	postedLife = 24 * time.Hour
-	maxPosted  = 256
+	postedLife  = 24 * time.Hour
+	maxPosted   = 256
+	buttonsLife = 30 * 24 * time.Hour
+	maxButtons  = 1000
 )
 
-// rememberPosted records that the post carrying ops went out in the chat whose
-// pseudonym is chat, first as sent[0], so a later post may reply to it.
-func (a *addon) rememberPosted(chat string, ops []string, sent []int64) {
+// rememberPosted records that the post carrying ops went out in chat, as
+// sent, so a later post may reply to it, react to it or edit it, and a
+// press of its buttons, if it has any, calls onPress.
+func (a *addon) rememberPosted(chat feature.Chat, ops []string, sent []int64, onPress string) {
 	if len(sent) == 0 {
 		return
 	}
 	until := a.now().Add(postedLife)
+	var topic *feature.Chat
+	if onPress != "" {
+		until = a.now().Add(buttonsLife)
+		if strings.Contains(chat.GroupID, "/") {
+			topic = &chat
+		}
+	}
+	id := a.chatID(chat)
 	a.mu.Lock()
-	for _, id := range ops {
-		a.posted[id] = posted{Chat: chat, Sent: sent[0], Expires: until}
+	for _, op := range ops {
+		a.posted[op] = posted{Chat: id, Sent: sent[0], Last: sent[len(sent)-1], OnPress: onPress, Expires: until, Shared: len(ops) > 1, Topic: topic}
 	}
 	a.trimPosted()
 	a.mu.Unlock()
 }
 
-// trimPosted forgets the posts that expire soonest past maxPosted. a.mu is
-// held.
-func (a *addon) trimPosted() {
-	if len(a.posted) <= maxPosted {
-		return
+// rememberEdit records that the post op called id was edited, now standing
+// as sent (a new message where the network sent the edit anew), with
+// buttons whose press calls onPress, if any. It is remembered afresh from
+// now, but for an edit in place where the network shows no buttons
+// (Signal), whose apps show edits only within a day of the first sending.
+func (a *addon) rememberEdit(id string, sent []int64, onPress string) {
+	if len(sent) == 0 {
+		return // refused: the post is as it was
 	}
-	ids := slices.SortedFunc(maps.Keys(a.posted), func(x, y string) int {
-		return cmp.Or(a.posted[x].Expires.Compare(a.posted[y].Expires), strings.Compare(x, y))
-	})
-	for _, id := range ids[:len(ids)-maxPosted] {
-		delete(a.posted, id)
+	until := a.now().Add(postedLife)
+	if onPress != "" {
+		until = a.now().Add(buttonsLife)
+	}
+	a.mu.Lock()
+	if p, ok := a.posted[id]; ok {
+		switch {
+		case sent[0] != p.last(): // a new message
+			p.Sent, p.Edits = sent[0], 0
+		case !a.buttons:
+			until = p.Expires
+			fallthrough
+		default:
+			p.Edits++
+		}
+		p.Last, p.OnPress, p.Expires = sent[len(sent)-1], onPress, until
+		a.posted[id] = p
+		a.trimPosted()
+	}
+	a.mu.Unlock()
+}
+
+// maxSignalEdits is how many edits of a message Signal's apps show.
+const maxSignalEdits = 10
+
+// uneditable is why the addon's post p can't be edited at now, or "".
+func (a *addon) uneditable(p posted, now time.Time) string {
+	switch {
+	case !now.Before(p.Expires):
+		return "edits of an unknown post"
+	case p.Shared:
+		return "edits of a post merged with others"
+	case p.Sent != p.last():
+		return "edits of a post sent in several messages"
+	case !a.buttons && p.Edits >= maxSignalEdits:
+		return "edits past the network's limit"
+	}
+	return ""
+}
+
+// trimPosted forgets the posts that expire soonest past maxPosted without
+// buttons and maxButtons with. a.mu is held.
+func (a *addon) trimPosted() {
+	var plain, buttoned []string
+	for id, p := range a.posted {
+		if p.OnPress != "" {
+			buttoned = append(buttoned, id)
+		} else {
+			plain = append(plain, id)
+		}
+	}
+	for _, c := range []struct {
+		ids []string
+		max int
+	}{{plain, maxPosted}, {buttoned, maxButtons}} {
+		if len(c.ids) <= c.max {
+			continue
+		}
+		slices.SortFunc(c.ids, func(x, y string) int {
+			return cmp.Or(a.posted[x].Expires.Compare(a.posted[y].Expires), strings.Compare(x, y))
+		})
+		for _, id := range c.ids[:len(c.ids)-c.max] {
+			delete(a.posted, id)
+		}
 	}
 }
 

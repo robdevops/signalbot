@@ -145,6 +145,14 @@ func Register(h feature.Host) error {
 			}
 			return ""
 		})
+		h.OnPress(func(ctx context.Context, p feature.Press) (string, bool) {
+			for _, a := range k.addons {
+				if answer, ok := a.press(ctx, p); ok {
+					return answer, true
+				}
+			}
+			return "", false
+		})
 		h.Go(k.run)
 	}
 	return nil
@@ -290,17 +298,19 @@ type handshake struct {
 type botInfo struct {
 	version string // the bot's version, "dev" if unknown
 	network string // the chat network, as Info names it, for addons
+	buttons bool   // the network shows a post's buttons and keyboard, for addons
 	addon   bool   // the server has an addon block: offer what addons get
 	sample  bool   // the addon may ask the bot's model: offer sampling
 }
 
 // initialize performs the MCP handshake, as self, offering signalbot's
-// extension with the chat network the bot is on, reply watches to an
-// addon, and sampling to one that may ask the model, and returns what the
+// extension with the chat network the bot is on, reply watches and, where
+// the network shows them, buttons to an addon, and sampling to one that
+// may ask the model, and returns what the
 // server said of itself.
 func initialize(ctx context.Context, c conn, self botInfo) (handshake, error) {
 	caps := map[string]any{"experimental": map[string]any{
-		ext.KeyAddon: ext.Capability{Version: ext.Version, Network: self.network, WatchReplies: self.addon, WatchReactions: self.addon},
+		ext.KeyAddon: ext.Capability{Version: ext.Version, Network: self.network, WatchReplies: self.addon, WatchReactions: self.addon, Buttons: self.addon && self.buttons},
 	}}
 	if self.sample {
 		caps["sampling"] = map[string]any{}
@@ -380,7 +390,7 @@ func modelName(server, tool string) string {
 // run addons as plain servers; each addon started joins it.
 func start(ctx context.Context, h feature.Host, path string, servers map[string]server, k *keeper) error {
 	info := h.Info()
-	base := botInfo{version: cmp.Or(info.Version, "dev"), network: info.Network}
+	base := botInfo{version: cmp.Or(info.Version, "dev"), network: info.Network, buttons: info.Buttons}
 	type owner struct{ server, tool string }
 	taken := map[string]owner{} // the model's names for tools, and whose they are
 	var cmds []string           // for the startup line
@@ -449,6 +459,10 @@ func start(ctx context.Context, h feature.Host, path string, servers map[string]
 				}
 			}
 			a = newAddon(name, cmp.Or(hs.title, name), *cfg.Addon, k.doc.Secret, c, bot)
+			for _, t := range listed {
+				a.only[t.Name] = t.forBot() && !t.forModel()
+			}
+			a.buttons = info.Buttons
 			a.host, a.changed, a.dirty = h, k.changed, c.(*stdioConn).updated
 			a.restore(k.doc.Addons[name])
 			gt.open(a)
@@ -614,6 +628,9 @@ func command(h feature.Host, server, n string, c chatCommand, models map[string]
 	if err != nil {
 		logx.Warnf("MCP server %s: chat command skipped: %v", server, err)
 		return ""
+	}
+	if c.Direct {
+		a.cmds[name] = true
 	}
 	return "/" + name
 }
