@@ -52,7 +52,7 @@ var dualAxisToolSchema = json.RawMessage(`{
         "axis": {"type": "string", "enum": ["left", "right"], "description": "Which Y axis the series uses (default left)"},
         "points": {"type": "array", "minItems": 2, "maxItems": 1000, "items": {
           "type": "object", "required": ["date", "value"],
-          "properties": {"date": {"type": "string", "description": "YYYY-MM-DD"}, "value": {"type": "number"}}
+          "properties": {"date": {"type": "string", "description": "YYYY-MM-DD, or with a time of day for data within a day: YYYY-MM-DD HH:MM (24-hour, the data's local time)"}, "value": {"type": "number"}}
         }}
       }
     }}
@@ -91,7 +91,7 @@ func oneAxis(dual json.RawMessage) json.RawMessage {
 }
 
 const (
-	chartBody = "Use it when a chart of numbers would help, e.g. to show a trend or compare series; not for a diagram such as a flowchart, org chart or mind map. Pass the raw values: an axis shows them as given unless its mode is change, which computes the % change for you. " +
+	chartBody = "Use it when a chart of numbers would help, e.g. to show a trend or compare series; not for a diagram such as a flowchart, org chart or mind map. Give times for hourly or intraday data. Pass the raw values: an axis shows them as given unless its mode is change, which computes the % change for you. " +
 		"The chart is sent alone with its title as the caption, so write no other text: it would be discarded."
 	chartToolDescription = "Draw a line chart of one or more series over time, on one Y axis, and attach it to your reply as an image. " +
 		"Choose the axis mode by what the chart is meant to show, for one series as much as several: change, which draws each series as % change from its first point, " +
@@ -143,6 +143,8 @@ type chartSpec struct {
 	Series   []chartSeries         `json:"series"`
 
 	left, right *chartAxis
+	timed       bool      // some point has a time of day, not just a date
+	from, to    time.Time // the time axis's span, once drawn
 }
 
 // axisShorthand is arguments with an axis given as just its title taken as
@@ -267,11 +269,11 @@ func parseChart(tool string, dual bool, arguments string) (*chartSpec, error) {
 		}
 		for j := range sr.Points {
 			p := &sr.Points[j]
-			t, err := time.Parse("2006-01-02", p.Date)
-			if err != nil {
-				return nil, fmt.Errorf("series %s: date %q is not YYYY-MM-DD", sr.Name, txt.Clamp(p.Date, 20))
+			t, timed, ok := when(p.Date)
+			if !ok {
+				return nil, fmt.Errorf("series %s: date %q is not YYYY-MM-DD or YYYY-MM-DD HH:MM", sr.Name, txt.Clamp(p.Date, 30))
 			}
-			p.t = t
+			p.t, s.timed = t, s.timed || timed
 		}
 		sort.SliceStable(sr.Points, func(a, b int) bool { return sr.Points[a].t.Before(sr.Points[b].t) })
 		if s.axisOf(*sr).Mode == "change" {
@@ -285,6 +287,38 @@ func parseChart(tool string, dual bool, arguments string) (*chartSpec, error) {
 		}
 	}
 	return &s, nil
+}
+
+// whenLayouts are the forms a point's date may take: a date, or a date
+// and time of day, with or without seconds and an offset.
+var whenLayouts = []string{"2006-01-02 15:04", "2006-01-02T15:04", "2006-01-02 15:04:05", "2006-01-02T15:04:05", time.RFC3339}
+
+// when is a point's date as a time, and whether it has a time of day. The
+// time is the wall-clock time written, in UTC, whatever offset it had, so
+// a chart shows the data's own local times.
+func when(date string) (t time.Time, timed, ok bool) {
+	date = strings.TrimSpace(date)
+	if d, err := time.Parse("2006-01-02", date); err == nil {
+		return d, false, true
+	}
+	for _, layout := range whenLayouts {
+		if t, err := time.Parse(layout, date); err == nil {
+			return time.Date(t.Year(), t.Month(), t.Day(), t.Hour(), t.Minute(), t.Second(), 0, time.UTC), true, true
+		}
+	}
+	return time.Time{}, false, false
+}
+
+// stamp is t as a label beside a value: its date for a chart of dates, its
+// date and time for one with times, its time alone when all is one day.
+func (s *chartSpec) stamp(t time.Time) string {
+	switch {
+	case !s.timed:
+		return t.Format("2 Jan 2006")
+	case s.from.YearDay() == s.to.YearDay() && s.from.Year() == s.to.Year():
+		return t.Format("15:04")
+	}
+	return t.Format("2 Jan 15:04")
 }
 
 // format writes a value as the axis labels it.
@@ -439,10 +473,12 @@ type dateTick struct {
 	label string
 }
 
-// dateTicks picks tick dates for the span: days for up to 10 days, the 1st
-// and 15th for up to two months, months up to two years, then years. They are
-// thinned to at most 8.
-func dateTicks(from, to time.Time) []dateTick {
+// dateTicks picks tick dates for the span: for points with times (timed)
+// under 2 days, hours, a step of 1, 2, 3, 6 or 12 for at most 8, each
+// midnight labelled with its date; else days for up to 10 days, the 1st
+// and 15th for up to two months, months up to two years, then years. They
+// are thinned to at most 8.
+func dateTicks(from, to time.Time, timed bool) []dateTick {
 	days := to.Sub(from).Hours() / 24
 	var ticks []dateTick
 	add := func(t time.Time, label string) {
@@ -451,6 +487,24 @@ func dateTicks(from, to time.Time) []dateTick {
 		}
 	}
 	switch {
+	case timed && days < 2:
+		step := 12
+		for _, h := range []int{1, 2, 3, 6, 12} {
+			if to.Sub(from).Hours()/float64(h) <= 7 {
+				step = h
+				break
+			}
+		}
+		for t := from.Truncate(time.Hour); !t.After(to); t = t.Add(time.Hour) {
+			if t.Hour()%step != 0 {
+				continue
+			}
+			label := t.Format("15:04")
+			if t.Hour() == 0 {
+				label = t.Format("2 Jan")
+			}
+			add(t, label)
+		}
 	case days <= 10:
 		for t := from; !t.After(to); t = t.AddDate(0, 0, 1) {
 			add(t, t.Format("2 Jan"))
@@ -838,6 +892,7 @@ func drawChart(s *chartSpec, th *theme) *canvas {
 			values[a] = append(values[a], p.Value)
 		}
 	}
+	s.from, s.to = from, to
 	s.left.layout(values[s.left], top, bottom)
 	if two {
 		s.right.layout(values[s.right], top, bottom)
@@ -873,7 +928,7 @@ func drawChart(s *chartSpec, th *theme) *canvas {
 	if two {
 		cv.text(axisTitleFace, th.muted, labelX-10, top-14, 1, s.right.Title)
 	}
-	for _, tk := range dateTicks(from, to) {
+	for _, tk := range dateTicks(from, to, s.timed) {
 		x := px(tk.t)
 		cv.line(th.muted, 1.5, x, bottom+14, x, bottom+24)
 		cv.text(axisFace, th.muted, x, bottom+60, 0.5, tk.label)
@@ -952,7 +1007,7 @@ func drawArea(cv *canvas, s *chartSpec, px func(time.Time) float64, bottom, left
 	}{{hi, "High", !a.Invert}, {lo, "Low", a.Invert}} {
 		p := pts[m.i]
 		x, y := px(p.t), a.y(p.Value)
-		lines := [2]string{m.word + " " + a.format(p.Value, decimals), p.t.Format("2 Jan 2006")}
+		lines := [2]string{m.word + " " + a.format(p.Value, decimals), s.stamp(p.t)}
 		cv.fill(th.title, circle(x, y, 6.5))
 		cv.fill(th.bg, circle(x, y, 4.5))
 		// Above the high and below the low (swapped on an inverted axis),
@@ -999,7 +1054,7 @@ func drawArea(cv *canvas, s *chartSpec, px func(time.Time) float64, bottom, left
 	if change != "" {
 		cv.text(valueFace, c, x+14, y+22, 0, change)
 	}
-	cv.text(markFace, th.muted, x+14, y+20+below, 0, last.t.Format("2 Jan 2006"))
+	cv.text(markFace, th.muted, x+14, y+20+below, 0, s.stamp(last.t))
 }
 
 // textWidth is how wide s is in pixels in face f.
