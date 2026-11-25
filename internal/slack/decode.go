@@ -392,16 +392,13 @@ func (c *Client) membership(e *event) []bot.Received {
 			if len(c.left) < 2000 {
 				c.left[e.Channel] = true
 			}
-			if _, ok := c.chans[e.Channel]; ok {
-				delete(c.chans, e.Channel)
-				c.dirty.Store(true)
-			}
+			delete(c.chans, e.Channel)
 		}
-	} else if _, ok := c.chans[e.Channel][e.User]; ok && !joined {
+	} else if !joined {
 		delete(c.chans[e.Channel], e.User)
-		c.dirty.Store(true)
 	}
 	c.mu.Unlock()
+	c.roster.forget(e.Channel)
 	out := []bot.Received{bot.GroupChanged{Chat: ch}}
 	if !c.watch.Load() {
 		return out
@@ -505,9 +502,8 @@ func (c *Client) learnName(user, name string) {
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if old, ok := c.people[user]; (ok || len(c.people) < maxPeople) && old != name {
+	if _, ok := c.people[user]; ok || len(c.people) < 10000 {
 		c.people[user] = name
-		c.dirty.Store(true)
 	}
 }
 
@@ -576,29 +572,27 @@ func (c *Client) userInfo(ctx context.Context, user string) (string, error) {
 	return txt.SafeName(cmp.Or(u.Profile.DisplayName, u.Profile.RealName, u.RealName, u.Name)), nil
 }
 
-// seen notes that user posted in channel today, for Groups, Delivered's
-// members and Redact, and marks the people seen for saving if that is new.
+// seen notes that user posted in channel, for Groups, Delivered's members
+// and Redact.
 func (c *Client) seen(channel, user string) {
-	day := time.Now().Format(time.DateOnly)
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	people := c.chans[channel]
 	if people == nil {
-		if len(c.chans) >= maxChans {
+		if len(c.chans) >= 1000 {
 			return
 		}
-		people = map[string]string{}
+		people = map[string]bool{}
 		c.chans[channel] = people
 	}
-	if last, ok := people[user]; (ok || len(people) < maxChanPeople) && last != day {
-		people[user] = day
-		c.dirty.Store(true)
+	if len(people) < 1000 {
+		people[user] = true
 	}
 }
 
 // Delivered readies a message a feature delivers as its sender, in its
-// slot: its sender's name, the bot's @name taken out, and in a channel the
-// people seen posting there as its members, as the bot can't list them.
+// slot: its sender's name, the bot's @name taken out, and in a channel or
+// a thread in one its members, as members lists them.
 func (c *Client) Delivered(ctx context.Context, msg feature.Message) (bot.Ready, bool) {
 	wait, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
@@ -611,13 +605,7 @@ func (c *Client) Delivered(ctx context.Context, msg feature.Message) (bot.Ready,
 	var r bot.Ready
 	if msg.Chat.GroupID != "" {
 		channel, _ := c.channelOf(msg.Chat)
-		c.mu.Lock()
-		for u := range c.chans[channel] {
-			if n := c.people[u]; n != "" {
-				r.Members = append(r.Members, bot.Member{Name: n, ID: prefix + u})
-			}
-		}
-		c.mu.Unlock()
+		r.Members = c.members(ctx, channel)
 	}
 	rs := []rune(msg.Text)
 	if sp := mdstyle.FindAt(rs, map[string]string{c.handleOf(): "", c.BotName(): ""}); len(sp) > 0 {
@@ -734,7 +722,7 @@ func (c *Client) seenGroups(user string) []feature.Group {
 	c.mu.Lock()
 	var out []feature.Group
 	for ch, people := range c.chans {
-		if _, ok := people[user]; ok && !c.left[ch] {
+		if people[user] && !c.left[ch] {
 			out = append(out, feature.Group{ID: prefix + ch, Name: ch})
 		}
 	}
