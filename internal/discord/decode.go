@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"math"
+	"net/url"
 	"regexp"
 	"slices"
 	"strconv"
@@ -39,6 +40,30 @@ type attachment struct {
 	URL         string `json:"url"`
 }
 
+// embed is a link's preview. A GIF from the GIF picker (gifv, a video with
+// a still) or a picture (image) is shown to the model by the still Discord
+// keeps on its media proxy.
+type embed struct {
+	Type      string `json:"type"`
+	URL       string `json:"url"`
+	Thumbnail *struct {
+		ProxyURL string `json:"proxy_url"`
+	} `json:"thumbnail"`
+}
+
+// picture is the link to e's still on Discord's media proxy, or "" if it
+// is no GIF or picture, or has none there.
+func (e embed) picture() string {
+	if e.Type != "gifv" && e.Type != "image" || e.Thumbnail == nil {
+		return ""
+	}
+	u, err := url.Parse(e.Thumbnail.ProxyURL)
+	if err != nil || u.Scheme != "https" || !strings.HasSuffix(u.Hostname(), ".discordapp.net") {
+		return ""
+	}
+	return u.String()
+}
+
 type message struct {
 	ID          string       `json:"id"`
 	ChannelID   string       `json:"channel_id"`
@@ -52,6 +77,7 @@ type message struct {
 	Mentions    []user       `json:"mentions"`
 	Roles       []string     `json:"mention_roles"`
 	Attachments []attachment `json:"attachments"`
+	Embeds      []embed      `json:"embeds"`
 	Stickers    []struct {
 		ID     string `json:"id"`
 		Name   string `json:"name"`
@@ -186,7 +212,9 @@ func (c *Client) message(m *message, edited int64) feature.Message {
 	msg := feature.Message{Chat: chatOf(m.GuildID, m.ChannelID, m.Author.ID), Sender: prefix + m.Author.ID, Name: nameOf(m.Author, m.Member),
 		Text: body, Timestamp: snowflake(m.ID), Edited: edited}
 	var images, files []feature.Media
-	add := func(m *message, quoted bool) {
+	// add adds m's media, and reports whether text, m's, is only the link
+	// of a GIF or picture it added.
+	add := func(m *message, quoted bool, text string) (linkOnly bool) {
 		for _, a := range m.Attachments {
 			switch {
 			case img.Supported(a.ContentType) && a.Size <= img.MaxReceived && len(images) < feature.MaxPictures:
@@ -199,8 +227,17 @@ func (c *Client) message(m *message, edited int64) feature.Message {
 				files = append(files, feature.Media{ID: u, Quoted: quoted, File: true, Name: a.Filename, MIME: a.ContentType, Size: a.Size})
 			}
 		}
+		for _, e := range m.Embeds {
+			if u := e.picture(); u != "" && len(images) < feature.MaxPictures {
+				images = append(images, feature.Media{ID: u, Quoted: quoted})
+				linkOnly = linkOnly || e.URL != "" && text == e.URL
+			}
+		}
+		return linkOnly
 	}
-	add(m, false)
+	if add(m, false, body) {
+		msg.Text = "" // the model sees the GIF, not its link
+	}
 	var stickers []feature.Media
 	for _, st := range m.Stickers {
 		ext := map[int]string{1: ".png", 2: ".png", 4: ".gif"}[st.Format] // 3 is Lottie, which can't be shown
@@ -218,7 +255,9 @@ func (c *Client) message(m *message, edited int64) feature.Message {
 		replyToBot = r.Author.ID == self || c.authorOf(snowflake(r.ID)) == prefix+self
 		text, _ := c.text(r, m.GuildID)
 		msg.Quote = &feature.Quote{Text: text, Author: nameOf(r.Author, r.Member), Bot: replyToBot, Sender: prefix + r.Author.ID, Sent: snowflake(r.ID)}
-		add(r, true)
+		if add(r, true, text) {
+			msg.Quote.Text = ""
+		}
 	} else if m.Reference != nil {
 		replyToBot = c.authorOf(snowflake(m.Reference.MessageID)) == prefix+self
 	}
@@ -382,7 +421,8 @@ func (c *Client) deleted(d json.RawMessage) []bot.Received {
 }
 
 // reacted is a reaction put on a message or taken off, as the core gets
-// it, but the bot's own; a server's own emoji is left out.
+// it, but the bot's own. A server's own emoji, which has an ID, is
+// :name:, its name made safe.
 func (c *Client) reacted(d json.RawMessage, removed bool) []bot.Received {
 	var e struct {
 		UserID    string  `json:"user_id"`
@@ -396,8 +436,15 @@ func (c *Client) reacted(d json.RawMessage, removed bool) []bot.Received {
 			Name string `json:"name"`
 		} `json:"emoji"`
 	}
-	if json.Unmarshal(d, &e) != nil || e.UserID == "" || e.UserID == c.selfID() || e.Emoji.ID != "" || e.Emoji.Name == "" {
+	if json.Unmarshal(d, &e) != nil || e.UserID == "" || e.UserID == c.selfID() || e.Emoji.Name == "" {
 		return nil
+	}
+	emoji := txt.Clamp(e.Emoji.Name, 16)
+	if e.Emoji.ID != "" {
+		if emoji = txt.SafeName(e.Emoji.Name); emoji == "" {
+			return nil
+		}
+		emoji = ":" + txt.Clamp(emoji, 32) + ":"
 	}
 	sent := snowflake(e.MessageID)
 	author := c.authorOf(sent)
@@ -415,17 +462,20 @@ func (c *Client) reacted(d json.RawMessage, removed bool) []bot.Received {
 		c.mu.Unlock()
 	}
 	return []bot.Received{bot.Happened{Event: feature.Event{Chat: chatOf(e.GuildID, e.ChannelID, e.UserID), By: by, Reaction: &feature.Reaction{
-		Emoji: txt.Clamp(e.Emoji.Name, 16), Removed: removed, Author: author, Bot: byBot, Sent: sent}}}}
+		Emoji: emoji, Removed: removed, Author: author, Bot: byBot, Sent: sent}}}}
 }
 
 // guild is a guild the bot is in, as the gateway sends at the start and
 // when the bot joins one, or one it left: each of its channels changed.
-// A guild that is only unavailable for a while is left as it was.
+// A guild that is only unavailable for a while is left as it was. One
+// that wasn't in READY's list is the bot just added: with an event hook,
+// that is an event in the guild's system channel, if it has one.
 func (c *Client) guild(d json.RawMessage, gone bool) []bot.Received {
 	var g struct {
 		ID          string `json:"id"`
 		Name        string `json:"name"`
 		Unavailable bool   `json:"unavailable"`
+		System      string `json:"system_channel_id"`
 		Channels    []struct {
 			ID   string `json:"id"`
 			Name string `json:"name"`
@@ -444,6 +494,7 @@ func (c *Client) guild(d json.RawMessage, gone bool) []bot.Received {
 	defer c.mu.Unlock()
 	if gone {
 		delete(c.botRoles, g.ID)
+		delete(c.guilds, g.ID) // if the bot is added again, it is new
 		for id, ch := range c.channels {
 			if ch.guild == g.ID {
 				c.leave(id)
@@ -455,9 +506,18 @@ func (c *Client) guild(d json.RawMessage, gone bool) []bot.Received {
 	for _, r := range g.Roles {
 		c.noteRole(g.ID, r)
 	}
+	system := false
 	for _, ch := range slices.Concat(g.Channels, g.Threads) {
 		c.addChannel(ch.ID, channel{guild: g.ID, name: txt.SafeName(ch.Name), guildName: txt.SafeName(g.Name)})
 		out = append(out, bot.GroupChanged{Chat: feature.Chat{GroupID: prefix + ch.ID}})
+		system = system || g.System != "" && ch.ID == g.System
+	}
+	if c.guilds == nil || c.guilds[g.ID] { // before READY, or in its list: not new
+		return out
+	}
+	c.guilds[g.ID] = true
+	if system && c.watch.Load() {
+		out = append(out, bot.Happened{Event: feature.Event{Chat: feature.Chat{GroupID: prefix + g.System}, Members: &feature.Members{BotAdded: true}}})
 	}
 	return out
 }

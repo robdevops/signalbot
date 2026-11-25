@@ -15,6 +15,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/robdevops/signalbot/internal/feature"
+	"github.com/robdevops/signalbot/internal/kit/img"
 	"github.com/robdevops/signalbot/internal/kit/logx"
 	"github.com/robdevops/signalbot/internal/kit/mdstyle"
 	"github.com/robdevops/signalbot/internal/kit/txt"
@@ -347,10 +348,10 @@ func actions(buttons [][]feature.Button) []any {
 	return out
 }
 
-// upload puts data on Slack as a file named name, titled title, and
-// returns its ID: files.getUploadURLExternal, the bytes to the URL it
+// upload puts data, of type mime, on Slack as a file named name, titled
+// title, and returns its ID: files.getUploadURLExternal, the bytes to the URL it
 // gives, then files.completeUploadExternal, shared in channel if not "".
-func (c *Client) upload(ctx context.Context, name, title string, data []byte, channel, thread string) (string, error) {
+func (c *Client) upload(ctx context.Context, name, title, mime string, data []byte, channel, thread string) (string, error) {
 	var u struct {
 		URL    string `json:"upload_url"`
 		FileID string `json:"file_id"`
@@ -362,7 +363,7 @@ func (c *Client) upload(ctx context.Context, name, title string, data []byte, ch
 	if err != nil {
 		return "", errors.New("upload: bad URL")
 	}
-	req.Header.Set("Content-Type", "application/octet-stream")
+	req.Header.Set("Content-Type", mime)
 	resp, err := c.http.Do(req)
 	if err != nil {
 		return "", errors.New("upload failed") // the error quotes the URL
@@ -381,8 +382,9 @@ func (c *Client) upload(ctx context.Context, name, title string, data []byte, ch
 	return u.FileID, c.call(ctx, "files.completeUploadExternal", params, nil)
 }
 
-// uploadPictures uploads pics, at most 10, and returns them as image
-// blocks; one that fails is logged and left out.
+// uploadPictures uploads pics, at most 10, each with the extension and
+// type its data has, and returns them as image blocks; one that fails is
+// logged and left out.
 func (c *Client) uploadPictures(ctx context.Context, pics []feature.Picture) []any {
 	var out []any
 	for i, p := range pics {
@@ -390,7 +392,8 @@ func (c *Client) uploadPictures(ctx context.Context, pics []feature.Picture) []a
 			break
 		}
 		name := cmp.Or(p.Name, "image")
-		id, err := c.upload(ctx, name+".png", name, p.Data, "", "")
+		mime, ext := img.Type(p.Data)
+		id, err := c.upload(ctx, name+"."+ext, name, mime, p.Data, "", "")
 		if err != nil {
 			logx.Errorf("send failed: picture: %v", err)
 			continue
@@ -402,7 +405,7 @@ func (c *Client) uploadPictures(ctx context.Context, pics []feature.Picture) []a
 
 // shareAudio shares audio, an MP3 clip, in channel as a file.
 func (c *Client) shareAudio(ctx context.Context, channel, thread string, audio []byte) error {
-	_, err := c.upload(ctx, "audio.mp3", "audio", audio, channel, thread)
+	_, err := c.upload(ctx, "audio.mp3", "audio", "audio/mpeg", audio, channel, thread)
 	return err
 }
 
@@ -488,6 +491,10 @@ func (c *Client) React(ch feature.Chat, msg feature.Message, emoji string) {
 	channel, _, err := c.dest(ctx, ch)
 	if err == nil {
 		err = c.call(ctx, "reactions.add", map[string]string{"channel": channel, "timestamp": tsString(msg.Timestamp), "name": name}, nil)
+		if base, _, toned := strings.Cut(name, "::"); toned && code(err) == "invalid_name" {
+			// an emoji that takes no skin tone: put it on without one
+			err = c.call(ctx, "reactions.add", map[string]string{"channel": channel, "timestamp": tsString(msg.Timestamp), "name": base}, nil)
+		}
 	}
 	if err != nil && code(err) != "already_reacted" {
 		logx.Errorf("reaction failed: %v", err)

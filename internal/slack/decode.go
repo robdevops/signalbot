@@ -351,10 +351,14 @@ func (c *Client) tombstone(e *event) (bot.Received, bool) {
 	return bot.Deleted{Chat: ch, Sender: prefix + p.User, Bot: self != "" && p.User == self, Sent: tsInt(p.TS), At: math.MaxInt64}, true
 }
 
-// reacted is a reaction as the core gets it, but the bot's own, and one
-// with an emoji the table doesn't know.
+// reacted is a reaction as the core gets it, but the bot's own. A name
+// the table doesn't know, a workspace's own emoji, is :name:, its name
+// made safe, as on Discord.
 func (c *Client) reacted(e *event) (bot.Received, bool) {
 	emoji := emojiOf(e.Reaction)
+	if base, _, _ := strings.Cut(e.Reaction, "::"); emoji == "" && txt.SafeName(base) != "" {
+		emoji = ":" + txt.Clamp(txt.SafeName(base), 32) + ":"
+	}
 	if e.Item == nil || e.Item.Type != "message" || e.User == "" || e.User == c.selfID() || emoji == "" {
 		return nil, false
 	}
@@ -870,39 +874,4 @@ func (c *Client) threadOf(channel, ts string) string {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return c.thread[channel+"/"+ts]
-}
-
-// emojiNames are the reactions the bot reads and makes, by Slack's names;
-// a reaction not here is skipped, and an emoji not here is sent as a
-// message.
-var emojiNames = map[string]string{
-	"+1": "👍", "-1": "👎", "heart": "❤️", "joy": "😂", "smile": "😄", "slightly_smiling_face": "🙂", "grinning": "😀",
-	"heart_eyes": "😍", "tada": "🎉", "fire": "🔥", "eyes": "👀", "white_check_mark": "✅", "x": "❌", "pray": "🙏",
-	"clap": "👏", "rocket": "🚀", "thinking_face": "🤔", "cry": "😢", "sob": "😭", "wave": "👋", "ok_hand": "👌",
-	"100": "💯", "raised_hands": "🙌", "muscle": "💪", "star": "⭐", "sunglasses": "😎", "open_mouth": "😮",
-	"rage": "😡", "warning": "⚠️", "question": "❓", "exclamation": "❗", "sparkles": "✨", "wink": "😉",
-	"partying_face": "🥳", "skull": "💀", "see_no_evil": "🙈", "point_up": "☝️", "zap": "⚡", "sunny": "☀️",
-	"umbrella": "☔", "snowflake": "❄️", "rainbow": "🌈", "coffee": "☕", "beers": "🍻", "pizza": "🍕", "moneybag": "💰",
-	"hourglass": "⌛", "bulb": "💡", "memo": "📝",
-}
-
-// emojiAliases are other names Slack sends for the same emoji.
-var emojiAliases = map[string]string{"thumbsup": "+1", "thumbsdown": "-1", "laughing": "smile", "satisfied": "smile"}
-
-// emojiOf is the emoji a reaction's name stands for, without any skin tone,
-// or "".
-func emojiOf(name string) string {
-	name, _, _ = strings.Cut(name, "::") // "+1::skin-tone-2"
-	return emojiNames[cmp.Or(emojiAliases[name], name)]
-}
-
-// nameOfEmoji is emoji's name, ignoring variation selectors, or "".
-func nameOfEmoji(emoji string) string {
-	bare := strings.ReplaceAll(emoji, "️", "")
-	for n, e := range emojiNames {
-		if strings.ReplaceAll(e, "️", "") == bare {
-			return n
-		}
-	}
-	return ""
 }

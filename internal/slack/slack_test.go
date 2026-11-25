@@ -97,7 +97,7 @@ func (f *fakeSlack) serve(w http.ResponseWriter, r *http.Request) {
 		}
 	case "/upload":
 		b, _ := io.ReadAll(r.Body)
-		f.record(call{Method: "upload", Params: map[string]any{"bytes": float64(len(b)), "auth": r.Header.Get("Authorization")}})
+		f.record(call{Method: "upload", Params: map[string]any{"bytes": float64(len(b)), "auth": r.Header.Get("Authorization"), "type": r.Header.Get("Content-Type")}})
 		return
 	case "/files/x.png":
 		if r.Header.Get("Authorization") != "Bearer "+token {
@@ -344,8 +344,24 @@ func TestReactions(t *testing.T) {
 	if !ok || *h.Event.Reaction != (feature.Reaction{Emoji: "👍", Author: "slack:" + botID, Bot: true, Sent: 1700000000000200}) || h.Event.By.ID != "slack:"+alice {
 		t.Fatalf("reaction %+v", rs)
 	}
-	if rs := c.events(ev(strings.Replace(e, "thumbsup::skin-tone-2", "custom_party", 1))); len(rs) != 0 {
-		t.Fatalf("an unknown emoji: %v", rs)
+	// A workspace's own emoji is :name:, made safe and cut short.
+	for name, want := range map[string]string{
+		"custom_party":              ":custom_party:",
+		"custom_party::skin-tone-3": ":custom_party:",
+		strings.Repeat("long", 10):  ":" + strings.Repeat("long", 8) + "…:",
+		"":                          "",
+		"::skin-tone-2":             "",
+	} {
+		rs := c.events(ev(strings.Replace(e, "thumbsup::skin-tone-2", name, 1)))
+		if want == "" {
+			if len(rs) != 0 {
+				t.Fatalf("%q: %v", name, rs)
+			}
+			continue
+		}
+		if len(rs) != 1 || rs[0].(bot.Happened).Event.Reaction.Emoji != want {
+			t.Fatalf("%q: %+v", name, rs)
+		}
 	}
 	// A reaction names only the channel and ts: one on a message in a
 	// thread, the bot's or one it read there, is in the thread's chat.
@@ -366,8 +382,25 @@ func TestReactions(t *testing.T) {
 	if r := f.callsTo("reactions.add"); len(r) != 1 || r[0].Params["name"] != "heart" || r[0].Params["timestamp"] != "1700000000.000200" || r[0].Params["channel"] != channel {
 		t.Fatalf("reactions.add %v", r)
 	}
-	c.React(ch, feature.Message{Timestamp: 1700000000000200}, "🦜")
-	if p := f.callsTo("chat.postMessage"); len(p) != 1 || p[0].Params["text"] != "🦜" {
+	// One skin tone goes by Slack's name for it, or, if Slack refuses that
+	// (an emoji that takes none), without it.
+	f.mu.Lock()
+	f.calls = nil
+	f.mu.Unlock()
+	c.React(ch, feature.Message{Timestamp: 1700000000000200}, "👍🏽")
+	if r := f.callsTo("reactions.add"); len(r) != 1 || r[0].Params["name"] != "+1::skin-tone-4" {
+		t.Fatalf("a skin tone %v", r)
+	}
+	f.mu.Lock()
+	f.calls = nil
+	f.mu.Unlock()
+	f.fail("reactions.add", "invalid_name")
+	c.React(ch, feature.Message{Timestamp: 1700000000000200}, "🦜🏽")
+	if r := f.callsTo("reactions.add"); len(r) != 2 || r[0].Params["name"] != "parrot::skin-tone-4" || r[1].Params["name"] != "parrot" {
+		t.Fatalf("a skin tone refused %v", r)
+	}
+	c.React(ch, feature.Message{Timestamp: 1700000000000200}, ":party_parrot:") // another network's own emoji, as it names it
+	if p := f.callsTo("chat.postMessage"); len(p) != 1 || p[0].Params["text"] != ":party_parrot:" {
 		t.Fatalf("an unknown emoji was not sent as a message: %v", p)
 	}
 }
@@ -477,6 +510,23 @@ func TestSend(t *testing.T) {
 	c.Send(feature.Chat{User: "slack:" + alice}, "again", nil, nil, 0, nil, feature.Markup{})
 	if o := f.callsTo("conversations.open"); len(o) != 1 {
 		t.Fatal("the DM's channel was not kept")
+	}
+}
+
+// A picture is named and typed as what its data is: a JPEG goes as .jpg.
+func TestSendJPEG(t *testing.T) {
+	f := newFake(t)
+	c := connected(f.client(t))
+	c.Send(feature.Chat{GroupID: "slack:" + channel}, "a photo", []feature.Picture{{Data: []byte("\xff\xd8\xff\xe0\x00\x10JFIF\x00"), Name: "sky"}}, nil, 0, nil, feature.Markup{})
+	if g := f.callsTo("files.getUploadURLExternal"); len(g) != 1 || g[0].Params["filename"] != "sky.jpg" {
+		t.Fatalf("getUploadURLExternal %v", g)
+	}
+	if u := f.callsTo("upload"); len(u) != 1 || u[0].Params["type"] != "image/jpeg" {
+		t.Fatalf("upload %v", u)
+	}
+	c.Send(feature.Chat{GroupID: "slack:" + channel}, "a clip", nil, nil, 0, []byte("mp3"), feature.Markup{})
+	if u := f.callsTo("upload"); len(u) != 2 || u[1].Params["type"] != "audio/mpeg" {
+		t.Fatalf("audio upload %v", u)
 	}
 }
 
