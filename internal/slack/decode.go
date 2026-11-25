@@ -388,10 +388,14 @@ func (c *Client) membership(e *event) []bot.Received {
 			if len(c.left) < 2000 {
 				c.left[e.Channel] = true
 			}
-			delete(c.chans, e.Channel)
+			if _, ok := c.chans[e.Channel]; ok {
+				delete(c.chans, e.Channel)
+				c.dirty.Store(true)
+			}
 		}
-	} else if !joined {
+	} else if _, ok := c.chans[e.Channel][e.User]; ok && !joined {
 		delete(c.chans[e.Channel], e.User)
+		c.dirty.Store(true)
 	}
 	c.mu.Unlock()
 	out := []bot.Received{bot.GroupChanged{Chat: ch}}

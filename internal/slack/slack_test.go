@@ -865,7 +865,7 @@ func TestPeopleSavedByRun(t *testing.T) {
 func TestPeopleForgotten(t *testing.T) {
 	dir := t.TempDir()
 	old, today := time.Now().AddDate(0, 0, -181).Format(time.DateOnly), time.Now().Format(time.DateOnly)
-	data := fmt.Sprintf(`{"channels":{"C0CHANNEL1":{"UALICE001":{"name":"Alice","seen":%q},"UBOB00001":{"name":"Bob","seen":%q}},"C0CHANNEL2":{"UALICE001":{"name":"Alice","seen":%q}}}}`, old, today, today)
+	data := fmt.Sprintf(`{"channels":{"C0CHANNEL1":{"UALICE001":{"name":"Alice","seen":%q},"UBOB00001":{"name":"Bob","seen":%q},"U>x|y":{"name":"Bob","seen":%q}},"C0CHANNEL2":{"UALICE001":{"name":"Alice","seen":%q}}}}`, old, today, today, today)
 	if err := os.WriteFile(filepath.Join(dir, PeopleFile), []byte(data), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -875,11 +875,33 @@ func TestPeopleForgotten(t *testing.T) {
 		t.Fatalf("loaded %v", c.chans)
 	}
 	c.events(ev(`{"type":"member_left_channel","user":"UBOT00001","channel":"C0CHANNEL2"}`))
-	c.dirty.Store(true)
 	c.savePeople()
 	c = connected(newClient("http://x", token, appToken, dir, nil))
 	if want := map[string]map[string]string{channel: {bob: today}}; !reflect.DeepEqual(c.chans, want) {
 		t.Fatalf("after leaving %v", c.chans)
+	}
+
+	// Someone else leaving is saved too.
+	c.events(ev(`{"type":"member_left_channel","user":"UBOB00001","channel":"C0CHANNEL1"}`))
+	c.savePeople()
+	c = connected(newClient("http://x", token, appToken, dir, nil))
+	if len(c.chans) != 0 {
+		t.Fatalf("after Bob left %v", c.chans)
+	}
+
+	// Someone who goes stale while the bot runs is forgotten within a day,
+	// though nothing else changed.
+	c.mu.Lock()
+	c.chans[channel] = map[string]string{bob: old}
+	c.mu.Unlock()
+	c.savePeople()
+	if len(c.chans) != 1 {
+		t.Fatal("pruned again within a day")
+	}
+	c.pruned = time.Now().Add(-25 * time.Hour)
+	c.savePeople()
+	if len(c.chans) != 0 {
+		t.Fatalf("still %v after a day", c.chans)
 	}
 }
 

@@ -73,6 +73,7 @@ type Client struct {
 
 	saved     *state.Doc    // slack-people.json: the people seen in each channel, with their names
 	dirty     atomic.Bool   // people or chans changed since they were saved
+	pruned    time.Time     // when chans last had the people not seen for 180 days taken out; under mu
 	saveEvery time.Duration // how often they are saved while changed; a test's shorter
 	scopeWarn sync.Once     // Groups' missing scopes are logged once
 
