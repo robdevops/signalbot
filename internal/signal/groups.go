@@ -7,6 +7,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode"
 
 	"github.com/robdevops/signalbot/internal/kit/logx"
 	"github.com/robdevops/signalbot/internal/kit/txt"
@@ -86,7 +87,17 @@ const groupsShown = 100
 // groupName is a group's name as the startup lines show it: made safe and
 // cut to 40 characters, its backslashes shown as "/", since in an env file
 // systemd reads, one that ends a line would join the next setting to it.
+// Control and format characters are dropped: anyone can name a group the
+// bot is added to, and one such character would have journalctl show the
+// whole line, the warning included, as "[blob data]", or a terminal run
+// an escape sequence or reorder the line.
 func groupName(name string) string {
+	name = strings.Map(func(r rune) rune {
+		if unicode.IsControl(r) && !unicode.IsSpace(r) || unicode.Is(unicode.Cf, r) {
+			return -1
+		}
+		return r
+	}, name)
 	name = strings.ReplaceAll(txt.SafeName(name), `\`, "/")
 	return cmp.Or(txt.Clamp(name, 40), "(no name)")
 }

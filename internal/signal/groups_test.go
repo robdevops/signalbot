@@ -326,3 +326,23 @@ func TestReportGroupsCapped(t *testing.T) {
 		t.Fatalf("logs %q", out)
 	}
 }
+
+// A group's name is shown with control and format characters dropped, so
+// a stranger's group name can't hide the startup line from journalctl,
+// which shows a line holding one as "[blob data]", nor reorder it in a
+// terminal; whitespace is collapsed, a backslash shown as "/".
+func TestGroupName(t *testing.T) {
+	for in, want := range map[string]string{
+		"Family":                "Family",
+		"Fam\x1b[2Kily":         "Fam[2Kily",
+		"a\x00b\x07c\u0085d":    "abc d",
+		"evil‮dessert⁦x":        "evildessertx",
+		"Ot\nher\t\\x":          "Ot her /x",
+		"\x1b​":                 "(no name)",
+		strings.Repeat("é", 50): strings.Repeat("é", 40) + "…",
+	} {
+		if got := groupName(in); got != want {
+			t.Errorf("groupName(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
