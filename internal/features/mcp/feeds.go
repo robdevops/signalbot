@@ -1,6 +1,7 @@
 package mcp
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -112,9 +113,13 @@ type feedState struct {
 // feedSub is a chat's subscription.
 type feedSub struct {
 	Chat  feature.Chat `json:"chat"`
-	Off   []string     `json:"off,omitempty"` // kinds it doesn't want
-	Sound bool         `json:"sound,omitempty"`
+	Off   []string     `json:"off,omitempty"`   // kinds it doesn't want
+	Sound bool         `json:"sound,omitempty"` // every kind with sound
+	Loud  []string     `json:"loud,omitempty"`  // else the kinds with sound
 }
+
+// loud reports whether an alert of kind notifies with a sound in the chat.
+func (s *feedSub) loud(kind string) bool { return s.Sound || slices.Contains(s.Loud, kind) }
 
 // feed is a server's feed.
 type feed struct {
@@ -331,7 +336,7 @@ func (fs *feeds) send(ctx context.Context, f *feed, it feedItem, subs []feedSub)
 		pics = fs.chart(ctx, f, it.Chart.Tool, it.Chart.Arguments)
 	}
 	for _, s := range want {
-		p := feature.Post{Chat: s.Chat, Label: f.title, Text: text, Pictures: pics, Markup: feature.Markup{Silent: !s.Sound}}
+		p := feature.Post{Chat: s.Chat, Label: f.title, Text: text, Pictures: pics, Markup: feature.Markup{Silent: !s.loud(it.Kind)}}
 		if fs.again != nil && len(pics) > 0 {
 			fs.again.chart(&p, f.server, it.Chart.Tool, maps.Clone(it.Chart.Arguments), it.Chart.Arg, it.Chart.Values)
 		}
@@ -374,6 +379,13 @@ func (fs *feeds) chat(f *feed, chat feature.Chat, args string) feature.Action {
 		fs.set(f, chat, words[0])
 	case len(words) == 2 && words[0] == "sound" && (words[1] == "on" || words[1] == "off"):
 		fs.set(f, chat, "sound"+words[1])
+	case len(words) >= 2 && words[0] == "sound":
+		k := f.kind(strings.Join(words[1:], " "))
+		if k == "" {
+			reply = "I don't know that one. "
+			break
+		}
+		fs.set(f, chat, "s:"+k)
 	default:
 		k := f.kind(strings.Join(words, " "))
 		if k == "" {
@@ -382,7 +394,7 @@ func (fs *feeds) chat(f *feed, chat feature.Chat, args string) feature.Action {
 		}
 		fs.set(f, chat, "k:"+k)
 	}
-	text, buttons := fs.menu(f, chat)
+	text, buttons := fs.menu(f, chat, "")
 	return feature.Action{Answer: reply + text, Markup: feature.Markup{Buttons: buttons}}
 }
 
@@ -440,6 +452,9 @@ func (fs *feeds) set(f *feed, chat feature.Chat, what string) {
 		fs.save()
 		return
 	}
+	if strings.HasPrefix(what, "open:") || what == "close" || strings.HasPrefix(what, "s:") && s == nil {
+		return // a menu opened or closed, or sound for alerts that are off: nothing to keep
+	}
 	delete(st.Declined, key) // asked for some: no longer declined
 	if s == nil {
 		s = &feedSub{Chat: chat}
@@ -460,51 +475,80 @@ func (fs *feeds) set(f *feed, chat feature.Chat, what string) {
 	case ok:
 		s.Off = append(s.Off, kind)
 	case what == "soundon", what == "soundoff":
-		s.Sound = what == "soundon"
+		s.Sound, s.Loud = what == "soundon", nil
+	default:
+		kind, ok := strings.CutPrefix(what, "s:")
+		if !ok {
+			return // only a menu opened or closed
+		}
+		if s.Sound { // every kind had sound: now each its own
+			s.Sound, s.Loud = false, nil
+			for _, k := range f.kinds {
+				s.Loud = append(s.Loud, k.Kind)
+			}
+		}
+		if slices.Contains(s.Loud, kind) {
+			s.Loud = slices.DeleteFunc(s.Loud, func(k string) bool { return k == kind })
+		} else {
+			s.Loud = append(s.Loud, kind)
+		}
 	}
 	fs.save()
 }
 
-// menu is the chat's subscription in words, and, where the network has
-// buttons, the buttons that change it; under mu.
-func (fs *feeds) menu(f *feed, chat feature.Chat) (string, [][]feature.Button) {
+// The menus of /alerts' buttons, and how each is shown.
+const (
+	menuAlerts = "alerts"
+	menuSound  = "sound"
+	perRow     = 2 // toggles to a row
+)
+
+var menuLabels = map[string]string{menuAlerts: "🔔 Alerts", menuSound: "🔊 Sound"}
+
+// menu is the chat's alerts in words: the kinds on and off, and those
+// with sound; and, where the network has buttons, the buttons that change
+// them. Under it, 🔔 Alerts ▸ and, in a DM with some kind on, 🔊 Sound ▸;
+// open (one of them, or "") shows that one's toggles, a kind each, under
+// it, and hides the other: Alerts every kind, Sound those that are on. A
+// toggle that is on is highlighted; one that is off, struck through.
+// Under mu.
+func (fs *feeds) menu(f *feed, chat feature.Chat, open string) (string, [][]feature.Button) {
 	s := fs.state(f.server).Chats[chat.Key()]
-	var b strings.Builder
-	cmd := "/" + f.command
-	if s == nil {
-		fmt.Fprintf(&b, "%s alerts are off here.", f.title)
-		if len(f.kinds) > 0 {
-			var names []string
-			for _, k := range f.kinds {
-				names = append(names, kindLabel(k))
-			}
-			fmt.Fprintf(&b, " There are: %s. Turn them all on, or choose one.", strings.Join(names, ", "))
-		}
-	} else {
-		fmt.Fprintf(&b, "%s alerts are on here, %s.", f.title, map[bool]string{true: "with sound", false: "silently"}[s.Sound])
-		var on, off []string
-		for _, k := range f.kinds {
-			if slices.Contains(s.Off, k.Kind) {
-				off = append(off, kindLabel(k))
-			} else {
-				on = append(on, kindLabel(k))
-			}
-		}
-		if len(on) > 0 {
-			fmt.Fprintf(&b, " On: %s.", strings.Join(on, ", "))
-		}
-		if len(off) > 0 {
-			fmt.Fprintf(&b, " Off: %s.", strings.Join(off, ", "))
+	isOn := func(k string) bool { return s != nil && !slices.Contains(s.Off, k) }
+	var on, off, loud []string
+	for _, k := range f.kinds {
+		switch {
+		case !isOn(k.Kind):
+			off = append(off, kindLabel(k))
+		case s.loud(k.Kind):
+			loud = append(loud, kindLabel(k))
+			fallthrough
+		default:
+			on = append(on, kindLabel(k))
 		}
 	}
+	none := func(l []string) string { return cmp.Or(strings.Join(l, ", "), "nothing") }
+	var b strings.Builder
+	switch {
+	case len(f.kinds) == 0 && s == nil: // the feed not read yet: its kinds unknown
+		fmt.Fprintf(&b, "🔔 %s alerts in this chat: off", f.title)
+	case len(f.kinds) == 0:
+		fmt.Fprintf(&b, "🔔 %s alerts in this chat: on, %s", f.title, map[bool]string{true: "with sound", false: "silently"}[s.Sound])
+	default:
+		fmt.Fprintf(&b, "🔔 %s alerts in this chat\n✅ On: %s\n🔕 Off: %s", f.title, none(on), none(off))
+		if len(on) > 0 {
+			fmt.Fprintf(&b, "\n🔊 With sound: %s", none(loud))
+		}
+	}
+	cmd := "/" + f.command
 	if !fs.h.Net(chat).Caps.Buttons {
-		fmt.Fprintf(&b, "\n%s on or off; %s sound on or off", cmd, cmd)
+		fmt.Fprintf(&b, "\n%s on or off; %s and a kind to turn it off or on (with alerts off, on alone); %s sound on or off, or sound and a kind", cmd, cmd, cmd)
 		if len(f.kinds) > 0 {
 			var names []string
 			for _, k := range f.kinds {
 				names = append(names, strings.ToLower(k.Kind))
 			}
-			fmt.Fprintf(&b, "; %s and a kind to turn it off or on (with alerts off, on alone): %s", cmd, strings.Join(names, ", "))
+			fmt.Fprintf(&b, ": %s", strings.Join(names, ", "))
 		}
 		b.WriteString(".")
 		return b.String(), nil
@@ -516,32 +560,55 @@ func (fs *feeds) menu(f *feed, chat feature.Chat) (string, [][]feature.Button) {
 		}
 		return d
 	}
-	rows := [][]feature.Button{{{Label: "Turn all on", Data: data("on")}}}
-	if s != nil {
-		sound := feature.Button{Label: "🔔 Sound on", Data: data("soundon")}
-		if s.Sound {
-			sound = feature.Button{Label: "🔕 Silent", Data: data("soundoff")}
+	head := func(menu string) feature.Button {
+		if open == menu {
+			return feature.Button{Label: menuLabels[menu] + " ▾", Data: data("close")}
 		}
-		rows = [][]feature.Button{{{Label: "Turn off", Data: data("off")}, sound}}
+		return feature.Button{Label: menuLabels[menu] + " ▸", Data: data("open:" + menu)}
 	}
-	var row []feature.Button
-	for _, k := range f.kinds {
-		if len(data("k:"+k.Kind)) > maxData || len(rows) == maxRows {
-			continue
+	sound := chat.GroupID == "" && len(on) > 0 // groups have no sound to set
+	toggles := func(prefix string, state func(string) bool, show func(string) bool) [][]feature.Button {
+		var rows [][]feature.Button
+		var row []feature.Button
+		for _, k := range f.kinds {
+			if !show(k.Kind) || len(data(prefix+k.Kind)) > maxData || len(rows) == maxRows-1 {
+				continue
+			}
+			row = append(row, toggle(kindLabel(k), state(k.Kind), data(prefix+k.Kind)))
+			if len(row) == perRow {
+				rows, row = append(rows, row), nil
+			}
 		}
-		mark := "✅ "
-		if s == nil || slices.Contains(s.Off, k.Kind) {
-			mark = "▫️ "
+		if len(row) > 0 && len(rows) < maxRows-1 {
+			rows = append(rows, row)
 		}
-		row = append(row, feature.Button{Label: clampLabel(mark + kindLabel(k)), Data: data("k:" + k.Kind)})
-		if len(row) == maxPerRow {
-			rows, row = append(rows, row), nil
-		}
+		return rows
 	}
-	if len(row) > 0 && len(rows) < maxRows {
-		rows = append(rows, row)
+	all := func(string) bool { return true }
+	switch {
+	case open == menuAlerts:
+		return b.String(), append([][]feature.Button{{head(menuAlerts)}}, toggles("k:", isOn, all)...)
+	case open == menuSound && sound:
+		return b.String(), append([][]feature.Button{{head(menuSound)}}, toggles("s:", func(k string) bool { return s.loud(k) }, isOn)...)
+	case sound:
+		return b.String(), [][]feature.Button{{head(menuAlerts), head(menuSound)}}
 	}
-	return b.String(), rows
+	return b.String(), [][]feature.Button{{head(menuAlerts)}}
+}
+
+// toggle is a button that flips a setting: its label highlighted while
+// on, struck through while off.
+func toggle(label string, on bool, data string) feature.Button {
+	label = clampLabel(label)
+	if !on {
+		var b strings.Builder
+		for _, r := range label {
+			b.WriteRune(r)
+			b.WriteRune('\u0336') // a combining long stroke: a line through each letter
+		}
+		label = b.String()
+	}
+	return feature.Button{Label: label, Data: data, Highlight: on}
 }
 
 func kindLabel(k feedKind) string {
@@ -566,14 +633,27 @@ func (fs *feeds) press(_ context.Context, p feature.Press) (string, bool) {
 	fs.mu.Lock()
 	defer fs.mu.Unlock()
 	f := fs.byCmd[cmd]
-	if f == nil || !strings.HasPrefix(what, "k:") && !slices.Contains([]string{"on", "off", "soundon", "soundoff"}, what) {
+	kind, isKind := strings.CutPrefix(what, "k:")
+	if !isKind {
+		kind, isKind = strings.CutPrefix(what, "s:")
+	}
+	if f == nil || !isKind && !slices.Contains([]string{"on", "off", "soundon", "soundoff", "close", "open:" + menuAlerts, "open:" + menuSound}, what) {
 		return "That button no longer works.", true
 	}
-	if k, isKind := strings.CutPrefix(what, "k:"); isKind && !slices.ContainsFunc(f.kinds, func(x feedKind) bool { return x.Kind == k }) {
+	if isKind && !slices.ContainsFunc(f.kinds, func(x feedKind) bool { return x.Kind == kind }) {
 		return "That choice no longer works.", true
 	}
 	fs.set(f, p.Chat, what)
-	text, buttons := fs.menu(f, p.Chat)
+	open := ""
+	switch {
+	case strings.HasPrefix(what, "k:"):
+		open = menuAlerts
+	case strings.HasPrefix(what, "s:"):
+		open = menuSound
+	case strings.HasPrefix(what, "open:"):
+		open = strings.TrimPrefix(what, "open:")
+	}
+	text, buttons := fs.menu(f, p.Chat, open)
 	fs.h.Post(feature.Post{Chat: p.Chat, Text: text, Edit: p.Sent, Markup: feature.Markup{Buttons: buttons}})
 	return "", true
 }

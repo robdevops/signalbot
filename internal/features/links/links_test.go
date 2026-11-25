@@ -91,8 +91,8 @@ func TestClientRefusesPrivate(t *testing.T) {
 			t.Errorf("%s: %v", u, err)
 		}
 	}
-	allowLoopback = true
-	defer func() { allowLoopback = false }()
+	allowLoopback.Store(true)
+	defer allowLoopback.Store(false)
 	srv := httptest.NewServer(http.RedirectHandler("http://169.254.169.254/latest/meta-data/", http.StatusFound))
 	defer srv.Close()
 	o := fetch(context.Background(), c, feature.Info{}, srv.URL)
@@ -129,8 +129,8 @@ func TestFetch(t *testing.T) {
 			t.Errorf("no log line matching %q in %q", pattern, logs.String())
 		}
 	}
-	allowLoopback = true
-	defer func() { allowLoopback = false }()
+	allowLoopback.Store(true)
+	defer allowLoopback.Store(false)
 	article := strings.Repeat("Gold rose today. ", 20)
 	long := strings.Repeat("x", 20_000)
 	mux := http.NewServeMux()
@@ -402,8 +402,8 @@ func TestPrivate(t *testing.T) {
 // URL.
 func TestPrivateLinksAreNotFetched(t *testing.T) {
 	logs := capture(t)
-	allowLoopback = true
-	defer func() { allowLoopback = false }()
+	allowLoopback.Store(true)
+	defer allowLoopback.Store(false)
 	var mu sync.Mutex
 	var hits []string
 	hit := func(r *http.Request) { mu.Lock(); hits = append(hits, r.URL.Path); mu.Unlock() }

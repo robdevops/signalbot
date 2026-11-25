@@ -287,8 +287,9 @@ type Markup struct {
 
 // Button is a button under a post. Pressing it is a Press with its Data.
 type Button struct {
-	Label string
-	Data  string // at most 64 bytes
+	Label     string
+	Data      string // at most 64 bytes
+	Highlight bool   // shown highlighted where the network can, such as a setting that is on (Telegram: blue)
 }
 
 // Key is a key of a DM's reply keyboard: a message of exactly its Label is

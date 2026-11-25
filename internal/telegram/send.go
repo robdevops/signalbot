@@ -162,12 +162,17 @@ func markup(ch feature.Chat, mk feature.Markup) any {
 }
 
 // inlineKeyboard is buttons as Telegram's InlineKeyboardMarkup, each
-// button's Data its callback_data.
+// button's Data its callback_data, and a highlighted one in the "primary"
+// style (blue).
 func inlineKeyboard(buttons [][]feature.Button) map[string]any {
 	rows := make([][]map[string]string, len(buttons))
 	for i, row := range buttons {
 		for _, b := range row {
-			rows[i] = append(rows[i], map[string]string{"text": b.Label, "callback_data": b.Data})
+			btn := map[string]string{"text": b.Label, "callback_data": b.Data}
+			if b.Highlight {
+				btn["style"] = "primary"
+			}
+			rows[i] = append(rows[i], btn)
 		}
 	}
 	return map[string]any{"inline_keyboard": rows}

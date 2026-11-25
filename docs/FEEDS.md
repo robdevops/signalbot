@@ -23,12 +23,12 @@ The bot reads the feed every 30 seconds, so an item reaches the chats at most ab
 
 Alerts are on by default in a DM: every kind, silently, from the chat's first message to the bot (or its first `/alerts`), until someone there turns them off, which is remembered. A group starts with them off, so the bot never posts into a group unasked.
 
-- `/alerts` shows whether alerts are on in this chat, which kinds are on and off, and how to change them.
-- `/alerts on` and `/alerts off` subscribe the chat, or stop it.
-- `/alerts sound on` and `/alerts sound off`: alerts are silent (no notification, where the network can do that) unless the sound is on.
+- `/alerts` shows which kinds are on and off in this chat, and which make a sound, and how to change them.
+- `/alerts on` and `/alerts off` subscribe the chat to every kind, or stop it.
 - `/alerts` and a kind (its `kind`, `label` or one of its `words`) turns that kind off, or on again; with alerts off, it turns them on for that kind alone.
+- `/alerts sound on` and `/alerts sound off` give every kind a sound, or none; `/alerts sound` and a kind toggles that kind's. Alerts without a sound arrive silently (no notification, where the network can do that).
 
-`/alerts` lists every kind, on or off. On Telegram, it answers with buttons that do the same: with alerts off, "Turn all on" and a button per kind (to have that one alone); with them on, "Turn off", sound on or silent, and each kind's ✅ or ▫️ to toggle it. A press redraws the menu in place; in a forum, each topic has its own alerts. Anyone who can address the bot in a chat can change that chat's alerts.
+On Telegram, `/alerts` answers with two menu buttons, **🔔 Alerts ▸** and, in a DM with some kind on, **🔊 Sound ▸**. Opening one (▾) hides the other and shows a toggle per kind under it: every kind under Alerts, the kinds that are on under Sound. A toggle that is on is highlighted (blue), one that is off struck through; a press redraws the menu in place, and pressing the open menu's button closes it. In a forum, each topic has its own alerts. Anyone who can address the bot in a chat can change that chat's alerts.
 
 ## The format
 

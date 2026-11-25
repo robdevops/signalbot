@@ -214,3 +214,12 @@ func TestAnswerPress(t *testing.T) {
 		t.Fatalf("answers %+v", a)
 	}
 }
+
+// A highlighted button is sent in Telegram's "primary" style, blue.
+func TestHighlightedButton(t *testing.T) {
+	kb := inlineKeyboard([][]feature.Button{{{Label: "On", Data: "a", Highlight: true}, {Label: "Off", Data: "b"}}})
+	rows := kb["inline_keyboard"].([][]map[string]string)
+	if rows[0][0]["style"] != "primary" || rows[0][1]["style"] != "" {
+		t.Fatalf("%+v", rows)
+	}
+}

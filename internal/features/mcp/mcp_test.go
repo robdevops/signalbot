@@ -904,18 +904,18 @@ func TestFeed(t *testing.T) {
 	}
 	a := ""
 	for range 200 { // the first read, for the kinds
-		if a = ask(h, group, "/alerts"); strings.Contains(a, "a kind") { // a group starts off
+		if a = ask(h, group, "/alerts"); strings.Contains(a, "Off: Rain, Wind") { // a group starts off
 			break
 		}
 		time.Sleep(5 * time.Millisecond)
 	}
-	if !strings.Contains(a, "Weather alerts are off here.") || !strings.Contains(a, "There are: Rain, Wind.") || !strings.Contains(a, "on alone): rain, wind.") {
+	if !strings.Contains(a, "🔔 Weather alerts in this chat\n✅ On: nothing\n🔕 Off: Rain, Wind") || !strings.Contains(a, "sound and a kind: rain, wind.") {
 		t.Errorf("menu %q", a)
 	}
 	ask(h, alice, "/alerts on")
 	ask(h, group, "/alerts on")
 	ask(h, group, "/alerts sound on")
-	if a := ask(h, group, "/alerts showers"); !strings.Contains(a, "On: Wind. Off: Rain.") || !strings.Contains(a, "with sound") {
+	if a := ask(h, group, "/alerts showers"); !strings.Contains(a, "On: Wind\n🔕 Off: Rain") || !strings.Contains(a, "With sound: Wind") {
 		t.Errorf("group menu %q", a)
 	}
 	if a := ask(h, alice, "/alerts hail"); !strings.HasPrefix(a, "I don't know that one.") {
@@ -956,7 +956,7 @@ func TestFeed(t *testing.T) {
 		t.Fatalf("after a new identity %+v", p)
 	}
 	ask(h, alice, "/alerts off")
-	if a := ask(h, alice, "/alerts"); !strings.Contains(a, "off here") {
+	if a := ask(h, alice, "/alerts"); !strings.Contains(a, "On: nothing") {
 		t.Errorf("off: %q", a)
 	}
 }
@@ -982,8 +982,11 @@ func TestFeedButtons(t *testing.T) {
 		t.Fatalf("press %q %v", a, ok)
 	}
 	p := h.Posts()
-	if len(p) != 1 || p[0].Edit != 7 || !strings.Contains(p[0].Text, "Off: Rain.") || p[0].Markup.Buttons[1][0].Label != "▫️ Rain" {
+	if len(p) != 1 || p[0].Edit != 7 || !strings.Contains(p[0].Text, "Off: Rain") {
 		t.Fatalf("posts %+v", p)
+	}
+	if b := p[0].Markup.Buttons; b[0][0].Label != "🔔 Alerts ▾" || b[1][0].Label != "R\u0336a\u0336i\u0336n\u0336" || b[1][0].Highlight {
+		t.Fatalf("buttons %+v", b)
 	}
 	if a, ok := h.Press(ctx, feature.Press{Chat: alice, Sent: 7, Data: "feed=eco/k:hail"}); !ok || a != "That choice no longer works." {
 		t.Errorf("unknown kind: %q %v", a, ok)
@@ -1068,41 +1071,42 @@ func TestFeedTopicAndLimits(t *testing.T) {
 	topic := feature.Chat{GroupID: "-100/7"}
 	var got feature.Action
 	for range 200 {
-		if got = h.Message(ctx, feature.Message{Chat: topic, Sender: "a", Text: "/alerts on", Addressed: true}); len(got.Markup.Buttons) > 1 {
+		if got = h.Message(ctx, feature.Message{Chat: topic, Sender: "a", Text: "/alerts on", Addressed: true}); strings.Contains(got.Answer, "On: Rain") {
 			break
 		}
 		time.Sleep(5 * time.Millisecond)
 	}
-	var all []feature.Button
-	for _, row := range got.Markup.Buttons {
-		all = append(all, row...)
+	if b := got.Markup.Buttons; len(b) != 1 || len(b[0]) != 1 || b[0][0].Data != "feed=alerts/open:alerts/7" { // a group: no sound
+		t.Fatalf("buttons %+v", b)
 	}
-	if len(all) != 3 || all[0].Data != "feed=alerts/off/7" || all[2].Data != "feed=alerts/k:rain/7" {
-		t.Fatalf("buttons %+v", all)
-	}
-	if _, ok := h.Press(ctx, feature.Press{Chat: feature.Chat{GroupID: "-100"}, Sent: 9, Data: all[0].Data}); !ok {
+	bare := feature.Chat{GroupID: "-100"} // a press under an older message names the group alone
+	if _, ok := h.Press(ctx, feature.Press{Chat: bare, Sent: 9, Data: got.Markup.Buttons[0][0].Data}); !ok {
 		t.Fatal("press not taken")
 	}
-	if a := h.Message(ctx, feature.Message{Chat: topic, Sender: "a", Text: "/alerts", Addressed: true}); !strings.Contains(a.Answer, "off here") {
-		t.Fatalf("the topic's alerts: %q", a.Answer)
-	}
-	if p := h.Posts(); len(p) != 1 || p[0].Chat != topic || p[0].Edit != 9 {
+	if p := h.Posts(); len(p) != 1 || p[0].Chat != topic || p[0].Edit != 9 || p[0].Markup.Buttons[1][0].Data != "feed=alerts/k:rain/7" || !p[0].Markup.Buttons[1][0].Highlight {
 		t.Fatalf("posts %+v", p)
+	}
+	if _, ok := h.Press(ctx, feature.Press{Chat: bare, Sent: 9, Data: "feed=alerts/off/7"}); !ok {
+		t.Fatal("press not taken")
+	}
+	if a := h.Message(ctx, feature.Message{Chat: topic, Sender: "a", Text: "/alerts", Addressed: true}); !strings.Contains(a.Answer, "On: nothing") {
+		t.Fatalf("the topic's alerts: %q", a.Answer)
 	}
 	h.Message(ctx, feature.Message{Chat: topic, Sender: "a", Text: "/alerts on", Addressed: true})
 	now := time.Now().UTC().Format(time.RFC3339)
 	fake.mu.Lock()
 	fake.feed = `{"items":[{"id":"` + strings.Repeat("x", 201) + `","time":"` + now + `","text":"long id"},{"id":"2","time":"` + now + `","text":"ok","link":"https://x/` + strings.Repeat("y", 600) + `"}]}`
 	fake.mu.Unlock()
+	menus := len(h.Posts()) // the menus the presses redrew
 	for range 200 {
-		if len(h.Posts()) > 1 {
+		if len(h.Posts()) > menus {
 			break
 		}
 		time.Sleep(5 * time.Millisecond)
 	}
 	time.Sleep(3 * feedEvery)
 	p := h.Posts()
-	if len(p) != 2 || !strings.HasPrefix(p[1].Text, "ok\nhttps://x/") || utf8.RuneCountInString(p[1].Text) > 3+maxLink+1 {
+	if len(p) != menus+1 || !strings.HasPrefix(p[menus].Text, "ok\nhttps://x/") || utf8.RuneCountInString(p[menus].Text) > 3+maxLink+1 {
 		t.Fatalf("posts %d, last %q", len(p), p[len(p)-1].Text)
 	}
 }
@@ -1319,9 +1323,9 @@ func TestPerNetworkCaps(t *testing.T) {
 	}
 }
 
-// With alerts off, as a group starts, the menu lists every kind, and a
-// kind's button turns alerts on for that kind alone; "Turn all on" turns
-// on every one.
+// With alerts off, as a group starts, the menu lists every kind as off,
+// and 🔔 Alerts opens a toggle per kind: one turns alerts on for that kind
+// alone, highlighted.
 func TestFeedMenuWhileOff(t *testing.T) {
 	fake := &fakeMCP{feed: `{"kinds":[{"kind":"rain","label":"Rain"},{"kind":"wind","label":"Wind"}],"items":[]}`}
 	h, _, err := register(t, `{"mcpServers":{"eco":{"url":"`+serve(t, fake)+`","feed":{"resource":"feed://items"}}}}`,
@@ -1344,15 +1348,22 @@ func TestFeedMenuWhileOff(t *testing.T) {
 			labels = append(labels, b.Label+"="+b.Data)
 		}
 	}
-	if !slices.Equal(labels, []string{"Turn all on=feed=alerts/on", "▫️ Rain=feed=alerts/k:rain", "▫️ Wind=feed=alerts/k:wind"}) ||
-		!strings.Contains(menu.Answer, "off here. There are: Rain, Wind.") {
+	if !slices.Equal(labels, []string{"🔔 Alerts ▸=feed=alerts/open:alerts"}) || !strings.Contains(menu.Answer, "✅ On: nothing\n🔕 Off: Rain, Wind") {
 		t.Fatalf("menu %q, buttons %q", menu.Answer, labels)
+	}
+	if _, ok := h.Press(ctx, feature.Press{Chat: group, Sent: 3, Data: "feed=alerts/open:alerts"}); !ok {
+		t.Fatal("press not taken")
+	}
+	p := h.Posts()
+	if b := p[0].Markup.Buttons; len(b) != 2 || b[0][0].Label != "🔔 Alerts ▾" || len(b[1]) != 2 || b[1][0].Highlight || b[1][1].Data != "feed=alerts/k:wind" {
+		t.Fatalf("opened: %+v", b)
 	}
 	if _, ok := h.Press(ctx, feature.Press{Chat: group, Sent: 3, Data: "feed=alerts/k:wind"}); !ok {
 		t.Fatal("press not taken")
 	}
-	if p := h.Posts(); len(p) != 1 || !strings.Contains(p[0].Text, "on here, silently. On: Wind. Off: Rain.") {
-		t.Fatalf("after choosing wind: %+v", p)
+	p = h.Posts()
+	if last := p[len(p)-1]; !strings.Contains(last.Text, "On: Wind\n🔕 Off: Rain") || !last.Markup.Buttons[1][1].Highlight || last.Markup.Buttons[1][0].Highlight {
+		t.Fatalf("after choosing wind: %+v", last)
 	}
 }
 
@@ -1376,13 +1387,17 @@ func TestFeedOnByDefaultInDMs(t *testing.T) {
 	alice, bob, group := feature.Chat{User: "alice"}, feature.Chat{User: "bob"}, feature.Chat{GroupID: "g1"}
 	say(alice, "hello")
 	say(group, "hello")
-	if a := say(alice, "/alerts"); !strings.Contains(a, "alerts are on here, silently") {
+	isOn := func(a string) bool {
+		return strings.Contains(a, "✅ On: Rain") || strings.Contains(a, "chat: on, silently")
+	}
+	isOff := func(a string) bool { return strings.Contains(a, "✅ On: nothing") || strings.Contains(a, "chat: off") }
+	if a := say(alice, "/alerts"); !isOn(a) {
 		t.Errorf("a DM after its first message: %q", a)
 	}
-	if a := say(bob, "/alerts"); !strings.Contains(a, "alerts are on here") {
+	if a := say(bob, "/alerts"); !isOn(a) {
 		t.Errorf("a DM's first message being /alerts: %q", a)
 	}
-	if a := say(group, "/alerts"); !strings.Contains(a, "off here") {
+	if a := say(group, "/alerts"); !isOff(a) {
 		t.Errorf("a group: %q", a)
 	}
 	say(alice, "/alerts off")
@@ -1393,10 +1408,82 @@ func TestFeedOnByDefaultInDMs(t *testing.T) {
 		t.Fatal(err)
 	}
 	say(alice, "and again")
-	if a := say(alice, "/alerts"); !strings.Contains(a, "off here") {
+	if a := say(alice, "/alerts"); !isOff(a) {
 		t.Errorf("a DM that turned alerts off, after a restart: %q", a)
 	}
-	if a := say(alice, "/alerts on"); !strings.Contains(a, "on here") {
+	if a := say(alice, "/alerts on"); !isOn(a) {
 		t.Errorf("turned on again: %q", a)
+	}
+}
+
+// In a DM, 🔊 Sound opens a toggle per kind that is on, and replaces
+// 🔔 Alerts while open; a kind with sound notifies, the others are silent.
+func TestFeedSoundPerKind(t *testing.T) {
+	old := feedEvery
+	feedEvery = 20 * time.Millisecond
+	t.Cleanup(func() { feedEvery = old })
+	fake := &fakeMCP{feed: `{"kinds":[{"kind":"rain","label":"Rain"},{"kind":"wind","label":"Wind"},{"kind":"uv","label":"UV"}],"items":[]}`}
+	h, _, err := register(t, `{"mcpServers":{"eco":{"url":"`+serve(t, fake)+`","feed":{"resource":"feed://items"}}}}`,
+		func(h *featuretest.Host) { h.Bot.Caps.Buttons, h.Settings["STATE_DIRECTORY"] = true, t.TempDir() })
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	alice := feature.Chat{User: "alice"}
+	var menu feature.Action
+	for range 200 {
+		if menu = h.Message(ctx, feature.Message{Chat: alice, Sender: "alice", Text: "/alerts uv", Addressed: true}); strings.Contains(menu.Answer, "UV") {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	if b := menu.Markup.Buttons; len(b) != 1 || len(b[0]) != 2 || b[0][0].Label != "🔔 Alerts ▸" || b[0][1].Label != "🔊 Sound ▸" {
+		t.Fatalf("closed: %+v", b)
+	}
+	press := func(data string) feature.Post {
+		t.Helper()
+		if a, ok := h.Press(ctx, feature.Press{Chat: alice, Sent: 5, Data: data}); !ok || a != "" {
+			t.Fatalf("%s: %q %v", data, a, ok)
+		}
+		p := h.Posts()
+		return p[len(p)-1]
+	}
+	p := press("feed=alerts/open:sound")
+	var labels []string
+	for _, row := range p.Markup.Buttons {
+		for _, b := range row {
+			labels = append(labels, b.Label)
+		}
+	}
+	if !slices.Equal(labels, []string{"🔊 Sound ▾", "R̶a̶i̶n̶", "W̶i̶n̶d̶"}) { // UV is off, so has no sound
+		t.Fatalf("sound menu %q", labels)
+	}
+	p = press("feed=alerts/s:rain")
+	if b := p.Markup.Buttons; b[0][0].Label != "🔊 Sound ▾" || b[1][0].Label != "Rain" || !b[1][0].Highlight || !strings.Contains(p.Text, "🔊 With sound: Rain") {
+		t.Fatalf("after rain's sound: %q %+v", p.Text, b)
+	}
+	if p = press("feed=alerts/close"); len(p.Markup.Buttons) != 1 || len(p.Markup.Buttons[0]) != 2 {
+		t.Fatalf("closed again: %+v", p.Markup.Buttons)
+	}
+	now := time.Now().UTC().Format(time.RFC3339)
+	fake.mu.Lock()
+	fake.feed = `{"kinds":[{"kind":"rain"},{"kind":"wind"},{"kind":"uv"}],"items":[{"id":"1","kind":"rain","time":"` + now + `","text":"Rain"},{"id":"2","kind":"wind","time":"` + now + `","text":"Wind"}]}`
+	fake.mu.Unlock()
+	before := len(h.Posts())
+	for range 200 {
+		if len(h.Posts()) >= before+2 {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	got := map[string]bool{}
+	for _, p := range h.Posts()[before:] {
+		got[p.Text] = p.Markup.Silent
+	}
+	if silent, ok := got["Rain"]; !ok || silent {
+		t.Errorf("rain alert: %v", got)
+	}
+	if silent, ok := got["Wind"]; !ok || !silent {
+		t.Errorf("wind alert: %v", got)
 	}
 }

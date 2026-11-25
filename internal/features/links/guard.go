@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/netip"
 	"net/url"
+	"sync/atomic"
 	"syscall"
 	"time"
 )
@@ -19,8 +20,9 @@ var (
 	errPortRedirect    = errors.New("redirected to a non-standard port")
 )
 
-// allowLoopback lets this package's own tests reach their local server.
-var allowLoopback bool
+// allowLoopback lets this package's own tests reach their local server;
+// atomic, as a dial an earlier test left may still read it.
+var allowLoopback atomic.Bool
 
 // blocked are the addresses no link may reach, beyond those that aren't
 // global unicast: private, shared, loopback, link-local (GCP's metadata
@@ -56,7 +58,7 @@ func public(ip netip.Addr) bool {
 // may reach, so the bot can't be pointed at another service on a host; the
 // package's tests reach their loopback servers on any port.
 func webPort(u *url.URL) bool {
-	if ip, err := netip.ParseAddr(u.Hostname()); allowLoopback && (err == nil && ip.IsLoopback() || u.Hostname() == "localhost") {
+	if ip, err := netip.ParseAddr(u.Hostname()); allowLoopback.Load() && (err == nil && ip.IsLoopback() || u.Hostname() == "localhost") {
 		return true
 	}
 	p := u.Port()
@@ -76,7 +78,7 @@ func guard(_, address string, _ syscall.RawConn) error {
 	if err != nil {
 		return errBlocked
 	}
-	if allowLoopback && ip.Unmap().IsLoopback() {
+	if allowLoopback.Load() && ip.Unmap().IsLoopback() {
 		return nil
 	}
 	if !public(ip) {
