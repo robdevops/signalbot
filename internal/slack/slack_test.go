@@ -204,6 +204,7 @@ func (f *fakeSlack) client(t *testing.T) *Client {
 
 // connected marks c as knowing who it is, as auth.test does.
 func connected(c *Client) *Client {
+	c.team.Store([2]string{"T1", ""})
 	c.self.Store(botID)
 	c.handle.Store("botty")
 	c.name.Store("Botty")

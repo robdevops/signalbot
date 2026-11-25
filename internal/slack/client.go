@@ -233,10 +233,10 @@ func (c *Client) postOnce(ctx context.Context, method, token, ctype string, body
 }
 
 // teamOf is the bot's workspace and Enterprise Grid org, as auth.test
-// said, or "" for either it didn't.
-func (c *Client) teamOf() (team, enterprise string) {
-	t, _ := c.team.Load().([2]string)
-	return t[0], t[1]
+// said, or "" for either it didn't; known is false until it has answered.
+func (c *Client) teamOf() (team, enterprise string, known bool) {
+	t, known := c.team.Load().([2]string)
+	return t[0], t[1], known
 }
 
 // selfID is the bot's user ID, without the prefix, or "" until auth.test
