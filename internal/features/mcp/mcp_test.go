@@ -904,12 +904,12 @@ func TestFeed(t *testing.T) {
 	}
 	a := ""
 	for range 200 { // the first read, for the kinds
-		if a = ask(h, alice, "/alerts"); strings.Contains(a, "a kind") {
+		if a = ask(h, group, "/alerts"); strings.Contains(a, "a kind") { // a group starts off
 			break
 		}
 		time.Sleep(5 * time.Millisecond)
 	}
-	if !strings.Contains(a, "Weather alerts are off here.") || !strings.Contains(a, "/alerts and a kind to turn it off or on: rain, wind.") {
+	if !strings.Contains(a, "Weather alerts are off here.") || !strings.Contains(a, "There are: Rain, Wind.") || !strings.Contains(a, "on alone): rain, wind.") {
 		t.Errorf("menu %q", a)
 	}
 	ask(h, alice, "/alerts on")
@@ -1316,5 +1316,87 @@ func TestPerNetworkCaps(t *testing.T) {
 	}
 	if tg, sig := ask(tgChat, "/alerts on"), ask(sigChat, "/alerts on"); tg.Markup.Buttons == nil || sig.Markup.Buttons != nil || !strings.Contains(sig.Answer, "/alerts on or off") {
 		t.Errorf("/alerts: telegram %+v, signal %q", tg.Markup, sig.Answer)
+	}
+}
+
+// With alerts off, as a group starts, the menu lists every kind, and a
+// kind's button turns alerts on for that kind alone; "Turn all on" turns
+// on every one.
+func TestFeedMenuWhileOff(t *testing.T) {
+	fake := &fakeMCP{feed: `{"kinds":[{"kind":"rain","label":"Rain"},{"kind":"wind","label":"Wind"}],"items":[]}`}
+	h, _, err := register(t, `{"mcpServers":{"eco":{"url":"`+serve(t, fake)+`","feed":{"resource":"feed://items"}}}}`,
+		func(h *featuretest.Host) { h.Bot.Caps.Buttons, h.Settings["STATE_DIRECTORY"] = true, t.TempDir() })
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	group := feature.Chat{GroupID: "g1"} // a group starts off
+	var menu feature.Action
+	for range 200 {
+		if menu = h.Message(ctx, feature.Message{Chat: group, Sender: "alice", Text: "/alerts", Addressed: true}); strings.Contains(menu.Answer, "Rain") {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	var labels []string
+	for _, row := range menu.Markup.Buttons {
+		for _, b := range row {
+			labels = append(labels, b.Label+"="+b.Data)
+		}
+	}
+	if !slices.Equal(labels, []string{"Turn all on=feed=alerts/on", "▫️ Rain=feed=alerts/k:rain", "▫️ Wind=feed=alerts/k:wind"}) ||
+		!strings.Contains(menu.Answer, "off here. There are: Rain, Wind.") {
+		t.Fatalf("menu %q, buttons %q", menu.Answer, labels)
+	}
+	if _, ok := h.Press(ctx, feature.Press{Chat: group, Sent: 3, Data: "feed=alerts/k:wind"}); !ok {
+		t.Fatal("press not taken")
+	}
+	if p := h.Posts(); len(p) != 1 || !strings.Contains(p[0].Text, "on here, silently. On: Wind. Off: Rain.") {
+		t.Fatalf("after choosing wind: %+v", p)
+	}
+}
+
+// Alerts are on by default in a DM, from its first message to the bot:
+// every kind, silently. One turned off stays off; a group starts off.
+func TestFeedOnByDefaultInDMs(t *testing.T) {
+	old := feedEvery
+	feedEvery = 20 * time.Millisecond
+	t.Cleanup(func() { feedEvery = old })
+	fake := &fakeMCP{feed: `{"kinds":[{"kind":"rain","label":"Rain"}],"items":[]}`}
+	dir := t.TempDir()
+	config := `{"mcpServers":{"eco":{"url":"` + serve(t, fake) + `","feed":{"resource":"feed://items"}}}}`
+	h, _, err := register(t, config, func(h *featuretest.Host) { h.Settings["STATE_DIRECTORY"] = dir })
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	say := func(c feature.Chat, text string) string {
+		return h.Message(ctx, feature.Message{Chat: c, Sender: "alice", Text: text, Addressed: true}).Answer
+	}
+	alice, bob, group := feature.Chat{User: "alice"}, feature.Chat{User: "bob"}, feature.Chat{GroupID: "g1"}
+	say(alice, "hello")
+	say(group, "hello")
+	if a := say(alice, "/alerts"); !strings.Contains(a, "alerts are on here, silently") {
+		t.Errorf("a DM after its first message: %q", a)
+	}
+	if a := say(bob, "/alerts"); !strings.Contains(a, "alerts are on here") {
+		t.Errorf("a DM's first message being /alerts: %q", a)
+	}
+	if a := say(group, "/alerts"); !strings.Contains(a, "off here") {
+		t.Errorf("a group: %q", a)
+	}
+	say(alice, "/alerts off")
+	say(alice, "hello again")
+	h.Stop()
+	h, _, err = register(t, config, func(h *featuretest.Host) { h.Settings["STATE_DIRECTORY"] = dir }) // restarted
+	if err != nil {
+		t.Fatal(err)
+	}
+	say(alice, "and again")
+	if a := say(alice, "/alerts"); !strings.Contains(a, "off here") {
+		t.Errorf("a DM that turned alerts off, after a restart: %q", a)
+	}
+	if a := say(alice, "/alerts on"); !strings.Contains(a, "on here") {
+		t.Errorf("turned on again: %q", a)
 	}
 }

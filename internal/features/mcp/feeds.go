@@ -103,9 +103,10 @@ type feeds struct {
 // feedState is a feed's saved state.
 type feedState struct {
 	Identity string              `json:"identity,omitempty"`
-	Seen     []string            `json:"seen,omitempty"`    // the IDs it has had, oldest first
-	Started  bool                `json:"started,omitempty"` // it has been read once
-	Chats    map[string]*feedSub `json:"chats,omitempty"`   // the chats subscribed, by key
+	Seen     []string            `json:"seen,omitempty"`     // the IDs it has had, oldest first
+	Started  bool                `json:"started,omitempty"`  // it has been read once
+	Chats    map[string]*feedSub `json:"chats,omitempty"`    // the chats subscribed, by key
+	Declined map[string]bool     `json:"declined,omitempty"` // DMs that turned alerts off, by key, so none is subscribed again unasked
 }
 
 // feedSub is a chat's subscription.
@@ -151,6 +152,9 @@ func (fs *feeds) state(server string) *feedState {
 	}
 	if st.Chats == nil {
 		st.Chats = map[string]*feedSub{}
+	}
+	if st.Declined == nil {
+		st.Declined = map[string]bool{}
 	}
 	return st
 }
@@ -361,6 +365,7 @@ func (fs *feeds) chart(ctx context.Context, f *feed, tool string, args map[strin
 func (fs *feeds) chat(f *feed, chat feature.Chat, args string) feature.Action {
 	fs.mu.Lock()
 	defer fs.mu.Unlock()
+	fs.adopt(f, chat)
 	words := strings.Fields(strings.ToLower(args))
 	reply := ""
 	switch {
@@ -381,6 +386,35 @@ func (fs *feeds) chat(f *feed, chat feature.Chat, args string) feature.Action {
 	return feature.Action{Answer: reply + text, Markup: feature.Markup{Buttons: buttons}}
 }
 
+// adopt subscribes chat to f, every kind, silently, if it is a DM that
+// never was and never turned alerts off: alerts are on by default in DMs,
+// from the first message to the bot. Groups choose for themselves. Under
+// mu.
+func (fs *feeds) adopt(f *feed, chat feature.Chat) {
+	if chat.GroupID != "" || chat.User == "" {
+		return
+	}
+	st, key := fs.state(f.server), chat.Key()
+	if st.Chats[key] != nil || st.Declined[key] {
+		return
+	}
+	st.Chats[key] = &feedSub{Chat: chat}
+	fs.save()
+}
+
+// seen adopts the DM of m into every feed, as any message there shows the
+// bot is used there; it never claims m.
+func (fs *feeds) seen(_ context.Context, m feature.Message) feature.Action {
+	if m.Chat.GroupID == "" && m.Addressed {
+		fs.mu.Lock()
+		for _, f := range fs.byCmd {
+			fs.adopt(f, m.Chat)
+		}
+		fs.mu.Unlock()
+	}
+	return feature.Action{}
+}
+
 // kind is the kind word names, by its kind, label or words; "" if none.
 func (f *feed) kind(word string) string {
 	for _, k := range f.kinds {
@@ -392,19 +426,33 @@ func (f *feed) kind(word string) string {
 }
 
 // set does what to chat's subscription: on, off, soundon, soundoff, or
-// "k:" and a kind to turn off, or on again (turning the feed on); under mu.
+// "k:" and a kind to turn off, or on again; in a chat with alerts off, a
+// kind turns them on for that kind alone. Under mu.
 func (fs *feeds) set(f *feed, chat feature.Chat, what string) {
 	st := fs.state(f.server)
 	key := chat.Key()
 	s := st.Chats[key]
 	if what == "off" {
 		delete(st.Chats, key)
+		if chat.GroupID == "" {
+			st.Declined[key] = true
+		}
 		fs.save()
 		return
 	}
+	delete(st.Declined, key) // asked for some: no longer declined
 	if s == nil {
 		s = &feedSub{Chat: chat}
 		st.Chats[key] = s
+		if kind, ok := strings.CutPrefix(what, "k:"); ok { // this kind alone
+			for _, k := range f.kinds {
+				if k.Kind != kind {
+					s.Off = append(s.Off, k.Kind)
+				}
+			}
+			fs.save()
+			return
+		}
 	}
 	switch kind, ok := strings.CutPrefix(what, "k:"); {
 	case ok && slices.Contains(s.Off, kind):
@@ -425,6 +473,13 @@ func (fs *feeds) menu(f *feed, chat feature.Chat) (string, [][]feature.Button) {
 	cmd := "/" + f.command
 	if s == nil {
 		fmt.Fprintf(&b, "%s alerts are off here.", f.title)
+		if len(f.kinds) > 0 {
+			var names []string
+			for _, k := range f.kinds {
+				names = append(names, kindLabel(k))
+			}
+			fmt.Fprintf(&b, " There are: %s. Turn them all on, or choose one.", strings.Join(names, ", "))
+		}
 	} else {
 		fmt.Fprintf(&b, "%s alerts are on here, %s.", f.title, map[bool]string{true: "with sound", false: "silently"}[s.Sound])
 		var on, off []string
@@ -449,7 +504,7 @@ func (fs *feeds) menu(f *feed, chat feature.Chat) (string, [][]feature.Button) {
 			for _, k := range f.kinds {
 				names = append(names, strings.ToLower(k.Kind))
 			}
-			fmt.Fprintf(&b, "; %s and a kind to turn it off or on: %s", cmd, strings.Join(names, ", "))
+			fmt.Fprintf(&b, "; %s and a kind to turn it off or on (with alerts off, on alone): %s", cmd, strings.Join(names, ", "))
 		}
 		b.WriteString(".")
 		return b.String(), nil
@@ -461,21 +516,21 @@ func (fs *feeds) menu(f *feed, chat feature.Chat) (string, [][]feature.Button) {
 		}
 		return d
 	}
-	if s == nil {
-		return b.String(), [][]feature.Button{{{Label: "Turn on", Data: data("on")}}}
+	rows := [][]feature.Button{{{Label: "Turn all on", Data: data("on")}}}
+	if s != nil {
+		sound := feature.Button{Label: "🔔 Sound on", Data: data("soundon")}
+		if s.Sound {
+			sound = feature.Button{Label: "🔕 Silent", Data: data("soundoff")}
+		}
+		rows = [][]feature.Button{{{Label: "Turn off", Data: data("off")}, sound}}
 	}
-	sound := feature.Button{Label: "🔔 Sound on", Data: data("soundon")}
-	if s.Sound {
-		sound = feature.Button{Label: "🔕 Silent", Data: data("soundoff")}
-	}
-	rows := [][]feature.Button{{{Label: "Turn off", Data: data("off")}, sound}}
 	var row []feature.Button
 	for _, k := range f.kinds {
 		if len(data("k:"+k.Kind)) > maxData || len(rows) == maxRows {
 			continue
 		}
 		mark := "✅ "
-		if slices.Contains(s.Off, k.Kind) {
+		if s == nil || slices.Contains(s.Off, k.Kind) {
 			mark = "▫️ "
 		}
 		row = append(row, feature.Button{Label: clampLabel(mark + kindLabel(k)), Data: data("k:" + k.Kind)})

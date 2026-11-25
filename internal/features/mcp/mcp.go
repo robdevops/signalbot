@@ -152,6 +152,7 @@ func Register(h feature.Host) error {
 			fd = newFeeds(h, store)
 			fd.again = again
 			h.OnPress(fd.press)
+			h.OnMessage(fd.seen)
 		}
 	}
 	if err := start(ctx, h, path, servers, k, again, fd); err != nil {
