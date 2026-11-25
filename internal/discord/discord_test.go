@@ -750,6 +750,11 @@ func TestSendJPEG(t *testing.T) {
 	if a, _ := json.Marshal(last.Body["attachments"]); !strings.Contains(string(a), `"filename":"photo.jpg"`) {
 		t.Fatalf("attachments %s", a)
 	}
+	c.Edit(feature.Chat{GroupID: group}, 1200000000000000007, "", []feature.Picture{{Data: jpg}}, nil, feature.Markup{})
+	e := f.callsTo("PATCH /channels/" + chanID + "/messages/1200000000000000007")[0]
+	if strings.Join(e.Files, " ") != "files[0]=picture1.jpg" || strings.Join(e.Types, " ") != "image/jpeg" {
+		t.Fatalf("edit: files %v, types %v", e.Files, e.Types)
+	}
 }
 
 // A 429 is waited out and the request made again.

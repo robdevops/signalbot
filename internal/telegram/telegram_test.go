@@ -796,6 +796,12 @@ func TestVideo(t *testing.T) {
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("quoted %+v", got)
 	}
+	got = load(`{"update_id":4,"message":{"message_id":10,` + fromA + `,` + inDM +
+		`,"video":{"file_id":"vid","mime_type":"video/mp4","file_size":90000,"thumbnail":{"file_id":"still","file_size":20000000}}}}`)
+	want = []feature.Media{{ID: "vid", File: true, MIME: "video/mp4", Size: 90000}}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("thumbnail too big %+v", got)
+	}
 }
 
 // An audio clip goes as a voice message, which shows no title, before the

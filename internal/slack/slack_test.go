@@ -488,6 +488,10 @@ func TestSendJPEG(t *testing.T) {
 	if u := f.callsTo("upload"); len(u) != 1 || u[0].Params["type"] != "image/jpeg" {
 		t.Fatalf("upload %v", u)
 	}
+	c.Send(feature.Chat{GroupID: "slack:" + channel}, "a clip", nil, nil, 0, []byte("mp3"), feature.Markup{})
+	if u := f.callsTo("upload"); len(u) != 2 || u[1].Params["type"] != "audio/mpeg" {
+		t.Fatalf("audio upload %v", u)
+	}
 }
 
 // A picture Slack is still processing is tried again; a 429 waits.
