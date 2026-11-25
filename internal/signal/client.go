@@ -90,7 +90,7 @@ type Client struct {
 // SIGNAL_GROUP_IDS, the groups it answers in: by default any.
 func New(test *config.Test) *Client {
 	addr := config.Env("SIGNALCLI_SOCKET", "127.0.0.1:7583")
-	dm := allow.Parse(config.Renamed("SIGNAL_DM_USERS", "SIGNAL_DM_USER_IDS"))
+	dm := allow.Parse(config.Env("SIGNAL_DM_USERS", ""))
 	if dm.None() {
 		logx.Warnf("Signal DMs are off: SIGNAL_DM_USERS is none; the bot answers only in groups")
 	} else {

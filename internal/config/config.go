@@ -111,26 +111,14 @@ func dollars(key string, def float64) (n float64, set bool) {
 	return def, false
 }
 
-// Renamed is the setting now, else, while it is unset, the one it was
-// renamed from, old, with a warning to rename it, so a renamed setting
-// keeps working until the config file is changed.
-func Renamed(now, old string) string {
-	if v := Env(now, ""); v != "" {
-		return v
-	}
-	v := Env(old, "")
-	if v != "" {
-		logx.Warnf("%s is now %s: read for now, but rename it", old, now)
-	}
-	return v
-}
-
 // retired are settings that were renamed, by their new names; one still
 // set is warned about, as it does nothing now.
 var retired = []struct{ old, now string }{
 	{"OPENROUTER_API_KEY", "MODEL_API_KEY"},
 	{"REASONING", "MODEL_REASONING"},
 	{"SYSTEM_PROMPT", "MODEL_SYSTEM_PROMPT"},
+	{"SIGNAL_DM_USER_IDS", "SIGNAL_DM_USERS"},
+	{"TELEGRAM_DM_USER_IDS", "TELEGRAM_DM_USERS"},
 }
 
 // Load reads the core's settings.

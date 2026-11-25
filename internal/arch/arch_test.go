@@ -139,11 +139,11 @@ func TestNoRolesInTheCode(t *testing.T) {
 }
 
 // Every setting the bot reads is in docs/CONFIGURATION.md's table: each
-// one its code names to Env, the core's (and number's and Renamed's, in config) and each
+// one its code names to Env, the core's (and number's, in config) and each
 // feature's.
 func TestSettingsAreDocumented(t *testing.T) {
 	var settings []string
-	env := regexp.MustCompile(`\b(?:Env|number|Renamed)\("([A-Z0-9_]+)"`)
+	env := regexp.MustCompile(`\b(?:Env|number)\("([A-Z0-9_]+)"`)
 	for _, p := range goFiles(t) {
 		if strings.HasSuffix(p, "_test.go") {
 			continue

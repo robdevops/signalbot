@@ -72,7 +72,7 @@ type Client struct {
 // TELEGRAM_API_URL, a local Bot API server, by default Telegram's. In a
 // group the bot answers anyone.
 func New(test *config.Test) *Client {
-	dm := allow.Parse(config.Renamed("TELEGRAM_DM_USERS", "TELEGRAM_DM_USER_IDS"))
+	dm := allow.Parse(config.Env("TELEGRAM_DM_USERS", ""))
 	switch {
 	case dm.None():
 		logx.Warnf("Telegram DMs are off: TELEGRAM_DM_USERS is none; the bot answers only in groups")

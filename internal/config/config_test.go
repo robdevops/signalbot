@@ -1,7 +1,6 @@
 package config
 
 import (
-	"strings"
 	"testing"
 
 	"github.com/robdevops/signalbot/internal/kit/logx"
@@ -102,11 +101,13 @@ func TestWarnings(t *testing.T) {
 	t.Setenv("TOOL_LINGER_ROUNDS", "6")
 	t.Setenv("DAILY_BUDGET", "lots")
 	t.Setenv("REASONING", "high")
+	t.Setenv("SIGNAL_DM_USER_IDS", "alice")
 	c := Load()
 	if c.ToolLinger != 4 || c.MaxConcurrency != 32 || c.DailyBudget != 1 || c.DailyBudgetSet {
 		t.Errorf("got %+v", c)
 	}
 	want := "REASONING is ignored; rename it to MODEL_REASONING\n" +
+		"SIGNAL_DM_USER_IDS is ignored; rename it to SIGNAL_DM_USERS\n" +
 		"MAX_CONCURRENCY=\"0\" is not a whole number above 0; using 32\n" +
 		"TOOL_LINGER_ROUNDS=6 is more than HISTORY_MAX=4, which is as long as it can help; using 4\n" +
 		"DAILY_BUDGET=\"lots\" is not a number of dollars, 0 or more; using 1\n"
@@ -118,26 +119,12 @@ func TestWarnings(t *testing.T) {
 	t.Setenv("TOOL_LINGER_ROUNDS", "-1")
 	t.Setenv("DAILY_BUDGET", "2")
 	t.Setenv("REASONING", "")
+	t.Setenv("SIGNAL_DM_USER_IDS", "")
 	if c := Load(); !c.DailyBudgetSet || c.DailyBudget != 2 {
 		t.Errorf("got %+v", c)
 	}
 	if got := again.String(); got != "MAX_CONCURRENCY=\"0\" is not a whole number above 0; using 32\n"+
 		"TOOL_LINGER_ROUNDS=\"-1\" is not a whole number 0 or more; using 2\n" {
 		t.Errorf("logs %q", got)
-	}
-}
-
-// A renamed setting is read under its new name, else under its old one,
-// with a warning to rename it.
-func TestRenamed(t *testing.T) {
-	var buf logx.Buffer
-	t.Cleanup(logx.SetOutput(&buf, &buf, false))
-	t.Setenv("OLD_NAME", "alice")
-	if got := Renamed("NEW_NAME", "OLD_NAME"); got != "alice" || !strings.Contains(buf.String(), "OLD_NAME is now NEW_NAME") {
-		t.Fatalf("got %q, log %q", got, buf.String())
-	}
-	t.Setenv("NEW_NAME", "bob")
-	if got := Renamed("NEW_NAME", "OLD_NAME"); got != "bob" || strings.Count(buf.String(), "rename it") != 1 {
-		t.Fatalf("got %q, log %q", got, buf.String())
 	}
 }
