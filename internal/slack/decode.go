@@ -645,7 +645,7 @@ func (c *Client) Delivered(ctx context.Context, msg feature.Message) (bot.Ready,
 	msg.Name = cmp.Or(msg.Name, c.nameOf(sender))
 	var r bot.Ready
 	if msg.Chat.GroupID == "" && !c.dmAllowed(wait, strings.TrimPrefix(msg.Chat.User, prefix), true) {
-		logx.Infof("delivered message dropped: its sender may no longer DM the bot (SLACK_DM_USER_IDS)")
+		logx.Infof("delivered message dropped: its sender may no longer DM the bot (SLACK_DM_USERS)")
 		return bot.Ready{}, false
 	}
 	if msg.Chat.GroupID != "" {

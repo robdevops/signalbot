@@ -1,6 +1,7 @@
 package config
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/robdevops/signalbot/internal/kit/logx"
@@ -123,5 +124,20 @@ func TestWarnings(t *testing.T) {
 	if got := again.String(); got != "MAX_CONCURRENCY=\"0\" is not a whole number above 0; using 32\n"+
 		"TOOL_LINGER_ROUNDS=\"-1\" is not a whole number 0 or more; using 2\n" {
 		t.Errorf("logs %q", got)
+	}
+}
+
+// A renamed setting is read under its new name, else under its old one,
+// with a warning to rename it.
+func TestRenamed(t *testing.T) {
+	var buf logx.Buffer
+	t.Cleanup(logx.SetOutput(&buf, &buf, false))
+	t.Setenv("OLD_NAME", "alice")
+	if got := Renamed("NEW_NAME", "OLD_NAME"); got != "alice" || !strings.Contains(buf.String(), "OLD_NAME is now NEW_NAME") {
+		t.Fatalf("got %q, log %q", got, buf.String())
+	}
+	t.Setenv("NEW_NAME", "bob")
+	if got := Renamed("NEW_NAME", "OLD_NAME"); got != "bob" || strings.Count(buf.String(), "rename it") != 1 {
+		t.Fatalf("got %q, log %q", got, buf.String())
 	}
 }

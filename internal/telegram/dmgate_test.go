@@ -32,7 +32,7 @@ func (f *fakeAPI) fail(method, resp string) {
 	f.errs[method] = resp
 }
 
-// gated is a client with TELEGRAM_DM_USER_IDS value, that has seen the
+// gated is a client with TELEGRAM_DM_USERS value, that has seen the
 // test group, whose owner is Alice.
 func gated(t *testing.T, value string) (*fakeAPI, *Client) {
 	f := newFake(t)
@@ -82,7 +82,7 @@ func TestDMAdmins(t *testing.T) {
 		t.Fatalf("%d admin lookups, want 1, the group's kept", n)
 	}
 	out := logs.String()
-	if strings.Count(out, "2222222 ignored because not allowed by TELEGRAM_DM_USER_IDS") != 2 || strings.Contains(out, "1111111") || strings.Contains(out, "Bob") || strings.Contains(out, "Alice") {
+	if strings.Count(out, "2222222 ignored because not allowed by TELEGRAM_DM_USERS") != 2 || strings.Contains(out, "1111111") || strings.Contains(out, "Bob") || strings.Contains(out, "Alice") {
 		t.Fatalf("logs %q", out)
 	}
 	r, _ := c.event(parse(t, `{"update_id":3,"edited_message":{"message_id":7,`+fromB+`,`+inBobDM+`,"date":100,"edit_date":300,"text":"x"}}`))
@@ -244,15 +244,15 @@ func TestGroupsAdmin(t *testing.T) {
 // The startup log says who may DM the bot, or warns that no one may.
 func TestDMStartupLog(t *testing.T) {
 	for value, want := range map[string]string{
-		"":              "Telegram DMs: allowed from admins and mods (TELEGRAM_DM_USER_IDS)\n",
-		"all":           "Telegram DMs: allowed from anyone (TELEGRAM_DM_USER_IDS)\n",
-		"admins 1 2":    "Telegram DMs: allowed from admins and 2 IDs (TELEGRAM_DM_USER_IDS)\n",
-		"none":          "Telegram DMs are off: TELEGRAM_DM_USER_IDS is none; the bot answers only in groups\n",
-		"mods":          "Telegram DMs are off: TELEGRAM_DM_USER_IDS allows only mods, and Telegram has none; the bot answers only in groups\n",
-		"telegram:1111": "Telegram DMs: allowed from 1 ID (TELEGRAM_DM_USER_IDS)\n",
+		"":              "Telegram DMs: allowed from admins and mods (TELEGRAM_DM_USERS)\n",
+		"all":           "Telegram DMs: allowed from anyone (TELEGRAM_DM_USERS)\n",
+		"admins 1 2":    "Telegram DMs: allowed from admins and 2 IDs (TELEGRAM_DM_USERS)\n",
+		"none":          "Telegram DMs are off: TELEGRAM_DM_USERS is none; the bot answers only in groups\n",
+		"mods":          "Telegram DMs are off: TELEGRAM_DM_USERS allows only mods, and Telegram has none; the bot answers only in groups\n",
+		"telegram:1111": "Telegram DMs: allowed from 1 ID (TELEGRAM_DM_USERS)\n",
 	} {
 		logs := captureLogs(t)
-		t.Setenv("TELEGRAM_DM_USER_IDS", value)
+		t.Setenv("TELEGRAM_DM_USERS", value)
 		New(nil)
 		if logs.String() != want {
 			t.Errorf("%q: %q", value, logs)

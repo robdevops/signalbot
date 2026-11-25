@@ -63,7 +63,7 @@ type savedFile struct {
 // scheduler is every user's schedules, in the order they were made.
 type scheduler struct {
 	h     feature.Host
-	posts allow.Policy // who may schedule posts in a group: SCHEDULE_USER_IDS
+	posts allow.Policy // who may schedule posts in a group: SCHEDULE_ALLOWED_USERS
 	db    feature.Store
 	loc   *time.Location
 	now   func() time.Time
@@ -83,7 +83,7 @@ func register(h feature.Host, loc *time.Location, now func() time.Time) error {
 	if err != nil {
 		return fmt.Errorf("/schedule: %w", err)
 	}
-	s := &scheduler{h: h, db: db, loc: loc, now: now, last: map[string]int{}, posts: allow.Parse(h.Env("SCHEDULE_USER_IDS", ""))}
+	s := &scheduler{h: h, db: db, loc: loc, now: now, last: map[string]int{}, posts: allow.Parse(h.Env("SCHEDULE_ALLOWED_USERS", ""))}
 	if err := s.load(); err != nil {
 		return err
 	}
@@ -198,14 +198,14 @@ func (s *scheduler) run(ctx context.Context, e *entry, dueAt time.Time) {
 		return
 	}
 	if e.Group != "" && !s.mayPost(ctx, e.User, e.Group) {
-		logx.Infof("a scheduled post dropped: its user may no longer schedule posts in the group (SCHEDULE_USER_IDS)")
+		logx.Infof("a scheduled post dropped: its user may no longer schedule posts in the group (SCHEDULE_ALLOWED_USERS)")
 		return
 	}
 	s.h.Deliver(feature.Message{Chat: e.chat(), Sender: e.User, Text: e.Text})
 }
 
 // mayPost reports whether user may schedule posts in group: by
-// SCHEDULE_USER_IDS, as listed or as one of its admins or mods.
+// SCHEDULE_ALLOWED_USERS, as listed or as one of its admins or mods.
 func (s *scheduler) mayPost(ctx context.Context, user, group string) bool {
 	return s.posts.Allows(func() (bool, bool) {
 		gs, err := s.h.Groups(ctx, user)
@@ -271,7 +271,7 @@ func (e *entry) chat() feature.Chat {
 }
 
 // command answers /schedule, in a DM only: the network only passes on a DM
-// from someone its <NETWORK>_DM_USER_IDS allows.
+// from someone its <NETWORK>_DM_USERS allows.
 func (s *scheduler) command(ctx context.Context, m feature.Message, args string) feature.Action {
 	if m.Chat.GroupID != "" {
 		return answer("Schedules are made in a DM with me. /schedule help there says how.")

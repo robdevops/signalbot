@@ -236,7 +236,7 @@ func (c *Client) event(u update) (bot.Received, bool) {
 }
 
 // received is a message, or with edited an edit of one, as the core gets
-// it. A DM from someone TELEGRAM_DM_USER_IDS doesn't allow is refused here
+// it. A DM from someone TELEGRAM_DM_USERS doesn't allow is refused here
 // when that is known without asking Telegram, else in its slot (load); an
 // edit refused here forgets the original and keeps nothing (the Bot API
 // never reports deletes, but edits it does).
@@ -289,7 +289,7 @@ func (c *Client) received(m *message, edited int64) (bot.Received, bool) {
 }
 
 // load completes an addressed message in its slot: in a DM, only from
-// someone TELEGRAM_DM_USER_IDS allows, asking Telegram whether they are an
+// someone TELEGRAM_DM_USERS allows, asking Telegram whether they are an
 // admin if need be; the chat's auto-delete timer; and the names it shows
 // the model, for @Name in the reply.
 func (c *Client) load(ctx context.Context, m *message, msg feature.Message, learn func(name, id string)) (feature.Message, bool) {
@@ -614,7 +614,7 @@ func (c *Client) membership(u *memberUpd) (bot.Received, bool) {
 }
 
 // reacted is a reaction as the core gets it, but the bot's own, and in a DM
-// only from someone listed in TELEGRAM_DM_USER_IDS or an admin by a
+// only from someone listed in TELEGRAM_DM_USERS or an admin by a
 // verdict from the last 10 minutes, as the reader can't ask Telegram.
 // Telegram sends reactions in a group only when the bot is an admin there.
 func (c *Client) reacted(u *reactionUpd) (bot.Received, bool) {
@@ -660,7 +660,7 @@ func (c *Client) person(u *user) feature.Person {
 }
 
 // Delivered readies a message a feature delivers as its sender, in its
-// slot: in a DM, only while TELEGRAM_DM_USER_IDS allows its sender
+// slot: in a DM, only while TELEGRAM_DM_USERS allows its sender
 // (asking Telegram whether they are an admin if need be); in a group,
 // only while its sender is there. Its members are the group's admins and
 // the people seen posting there, as the Bot API can't list a group's

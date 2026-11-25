@@ -29,7 +29,7 @@ const tokenLife = 14 * time.Minute
 // interaction is a button press or a slash command as the core gets it.
 // Either is acknowledged at once, as Discord wants within 3 seconds: a
 // press with nothing shown, a slash command with "thinking…", which the
-// reply to it replaces. In a DM, DISCORD_DM_USER_IDS decides: a press,
+// reply to it replaces. In a DM, DISCORD_DM_USERS decides: a press,
 // handed on at once, counts only from someone listed or with a fresh
 // verdict, as no lookup can wait on the reader; a slash command whose
 // sender must be looked up is decided in its slot. A slash command

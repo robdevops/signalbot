@@ -43,7 +43,7 @@ func rank(p uint64) (admin, mod bool) {
 }
 
 // dmDecided reports whether uid may DM the bot, if that can be told
-// without a lookup: they are listed (or DISCORD_DM_USER_IDS is "all"), or
+// without a lookup: they are listed (or DISCORD_DM_USERS is "all"), or
 // admins and mods may not, or their verdict is still fresh. known is false
 // when a lookup is needed.
 func (c *Client) dmDecided(uid string) (ok, known bool) {
@@ -63,7 +63,7 @@ func (c *Client) dmDecided(uid string) (ok, known bool) {
 }
 
 // mayDM reports whether uid may DM the bot: listed, or, as
-// DISCORD_DM_USER_IDS says, an admin or a mod of a server the bot shares
+// DISCORD_DM_USERS says, an admin or a mod of a server the bot shares
 // with them, asked of the API (so not on the reader goroutine) and kept
 // 10 minutes. A lookup that fails refuses, with a warning naming no one.
 func (c *Client) mayDM(ctx context.Context, uid string) bool {
@@ -86,7 +86,7 @@ func (c *Client) mayDM(ctx context.Context, uid string) bool {
 
 // refuseDM logs a DM refused, by its sender's ID only.
 func refuseDM(uid string) {
-	logx.Infof("%s ignored because not allowed by DISCORD_DM_USER_IDS (add this ID to allow DMs)", prefix+uid)
+	logx.Infof("%s ignored because not allowed by DISCORD_DM_USERS (add this ID to allow DMs)", prefix+uid)
 }
 
 // serverRoles reports whether uid is an admin or a mod of any server the

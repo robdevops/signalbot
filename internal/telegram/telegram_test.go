@@ -179,7 +179,7 @@ const (
 
 // Who the bot answers: in a group, a mention of its @username or a text
 // mention of it, a reply to it, or a command for it; in a DM, anyone, as
-// the test client's TELEGRAM_DM_USER_IDS is "all". Its own mention and a
+// the test client's TELEGRAM_DM_USERS is "all". Its own mention and a
 // command's @username are taken out.
 func TestAddressing(t *testing.T) {
 	logs := captureLogs(t)
@@ -488,7 +488,7 @@ func TestRedact(t *testing.T) {
 
 // A delivered message in a group needs its sender still there; its members
 // are the admins and the people seen posting; the bot's @name is taken
-// out. In a DM, anyone's TELEGRAM_DM_USER_IDS allows (here "all").
+// out. In a DM, anyone's TELEGRAM_DM_USERS allows (here "all").
 func TestDelivered(t *testing.T) {
 	captureLogs(t)
 	f := newFake(t)
@@ -848,7 +848,7 @@ func TestCommandMenu(t *testing.T) {
 }
 
 // Anyone can add the bot to a group and talk to it there, whoever
-// TELEGRAM_DM_USER_IDS allows: it answers, keeps the chatter, and never
+// TELEGRAM_DM_USERS allows: it answers, keeps the chatter, and never
 // looks up members or admins, or leaves.
 func TestAnyoneAnswered(t *testing.T) {
 	f := newFake(t)

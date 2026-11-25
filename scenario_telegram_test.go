@@ -69,7 +69,7 @@ type tgModel struct {
 }
 
 // startTelegram starts the bot on Telegram with its fakes, as main does, and
-// returns once it has connected. TELEGRAM_DM_USER_IDS is Alice unless env
+// returns once it has connected. TELEGRAM_DM_USERS is Alice unless env
 // says otherwise ("" for its default).
 func startTelegram(t *testing.T, env map[string]string) *tgHarness {
 	h := &tgHarness{t: t, updates: make(chan string, 64), nextID: 100}
@@ -78,11 +78,11 @@ func startTelegram(t *testing.T, env map[string]string) *tgHarness {
 	model := httptest.NewServer(http.HandlerFunc(h.serveModel))
 	t.Cleanup(model.Close)
 
-	for _, k := range []string{"SIGNALCLI_SOCKET", "SIGNAL_DM_USER_IDS", "MODEL_API_KEY", "MODEL_SEARCH", "MODEL_REASONING", "MODEL_SYSTEM_PROMPT",
+	for _, k := range []string{"SIGNALCLI_SOCKET", "SIGNAL_DM_USERS", "MODEL_API_KEY", "MODEL_SEARCH", "MODEL_REASONING", "MODEL_SYSTEM_PROMPT",
 		"INTRO", "MAX_CONCURRENCY", "HISTORY_MAX", "TOOL_LINGER_ROUNDS", "MCP_CONFIG", "GROUP_CONTEXT", "FILES", "CHARTS", "JOURNAL_STREAM", "DAILY_BUDGET"} {
 		t.Setenv(k, "")
 	}
-	settings := map[string]string{"TELEGRAM_BOT_TOKEN": tgToken, "TELEGRAM_API_URL": api.URL, "TELEGRAM_DM_USER_IDS": tgAlice,
+	settings := map[string]string{"TELEGRAM_BOT_TOKEN": tgToken, "TELEGRAM_API_URL": api.URL, "TELEGRAM_DM_USERS": tgAlice,
 		"MODEL_API_URL": model.URL, "MODEL": "test/test-model", "STATE_DIRECTORY": t.TempDir()}
 	for k, v := range env {
 		settings[k] = v
@@ -374,10 +374,10 @@ func TestTelegramGroupMention(t *testing.T) {
 	}
 }
 
-// With TELEGRAM_DM_USER_IDS=all anyone's DM is answered, and an edit of one
+// With TELEGRAM_DM_USERS=all anyone's DM is answered, and an edit of one
 // is answered again.
 func TestTelegramDMs(t *testing.T) {
-	h := startTelegram(t, map[string]string{"TELEGRAM_DM_USER_IDS": "all"})
+	h := startTelegram(t, map[string]string{"TELEGRAM_DM_USERS": "all"})
 	h.send("message", tgFromBob+`,"chat":{"id":2222222,"type":"private","first_name":"Bob"},"text":"let me in"`)
 	if s := h.waitCalls("sendMessage", 1)[0].Params; s["chat_id"] != tgBob || s["text"] != "ok" {
 		t.Fatalf("sent to Bob %v", s)
@@ -453,7 +453,7 @@ func TestTelegramIntro(t *testing.T) {
 
 // --- who may DM the bot -----------------------------------------------------------
 
-// tgAliceOwns starts the bot with TELEGRAM_DM_USER_IDS env (or its
+// tgAliceOwns starts the bot with TELEGRAM_DM_USERS env (or its
 // default) and Alice the owner of the test group, which the bot has seen.
 func tgAliceOwns(t *testing.T, env map[string]string) *tgHarness {
 	h := startTelegram(t, env)
@@ -467,10 +467,10 @@ func tgAliceOwns(t *testing.T, env map[string]string) *tgHarness {
 // By default only an admin of a group the bot is in may DM it: a
 // stranger's DM is refused, logged by ID only, and the owner's answered.
 func TestTelegramDMsDefault(t *testing.T) {
-	h := tgAliceOwns(t, map[string]string{"TELEGRAM_DM_USER_IDS": ""})
+	h := tgAliceOwns(t, map[string]string{"TELEGRAM_DM_USERS": ""})
 	h.send("message", tgFromBob+`,"chat":{"id":2222222,"type":"private","first_name":"Bob"},"text":"let me in"`)
 	h.waitFor("Bob's DM refused", func() bool {
-		return strings.Contains(h.logText(), tgBob+" ignored because not allowed by TELEGRAM_DM_USER_IDS")
+		return strings.Contains(h.logText(), tgBob+" ignored because not allowed by TELEGRAM_DM_USERS")
 	})
 	h.send("message", tgFromAlice+","+tgInDM+`,"text":"hello"`)
 	if s := h.waitCalls("sendMessage", 1)[0].Params; s["chat_id"] != tgAlice || s["text"] != "ok" {
@@ -480,23 +480,23 @@ func TestTelegramDMsDefault(t *testing.T) {
 		t.Fatalf("%d sends, %d model requests", n, len(h.requests()))
 	}
 	out := h.logText()
-	if !strings.Contains(out, "Telegram DMs: allowed from admins and mods (TELEGRAM_DM_USER_IDS)") || strings.Contains(out, "let me in") || strings.Contains(out, "Bob") {
+	if !strings.Contains(out, "Telegram DMs: allowed from admins and mods (TELEGRAM_DM_USERS)") || strings.Contains(out, "let me in") || strings.Contains(out, "Bob") {
 		t.Fatalf("logs:\n%s", out)
 	}
 }
 
-// With TELEGRAM_DM_USER_IDS=none no one may DM the bot, not even a group's
+// With TELEGRAM_DM_USERS=none no one may DM the bot, not even a group's
 // owner, and the startup log warns so.
 func TestTelegramDMsNone(t *testing.T) {
-	h := tgAliceOwns(t, map[string]string{"TELEGRAM_DM_USER_IDS": "none"})
+	h := tgAliceOwns(t, map[string]string{"TELEGRAM_DM_USERS": "none"})
 	h.send("message", tgFromAlice+","+tgInDM+`,"text":"hello"`)
 	h.waitFor("Alice's DM refused", func() bool {
-		return strings.Contains(h.logText(), tgAlice+" ignored because not allowed by TELEGRAM_DM_USER_IDS")
+		return strings.Contains(h.logText(), tgAlice+" ignored because not allowed by TELEGRAM_DM_USERS")
 	})
 	if n := len(h.callsTo("sendMessage")) + len(h.callsTo("getChatAdministrators")); n != 0 || len(h.requests()) != 0 {
 		t.Fatalf("calls %v", h.methods())
 	}
-	if !strings.Contains(h.logText(), "Telegram DMs are off: TELEGRAM_DM_USER_IDS is none") {
+	if !strings.Contains(h.logText(), "Telegram DMs are off: TELEGRAM_DM_USERS is none") {
 		t.Fatalf("logs:\n%s", h.logText())
 	}
 }
@@ -505,7 +505,7 @@ func TestTelegramDMsNone(t *testing.T) {
 // they may no longer DM the bot: here, the bot was removed from their
 // group. The drop names no one.
 func TestTelegramDMScheduleDropped(t *testing.T) {
-	h := tgAliceOwns(t, map[string]string{"TELEGRAM_DM_USER_IDS": ""})
+	h := tgAliceOwns(t, map[string]string{"TELEGRAM_DM_USERS": ""})
 	at := time.Now().Truncate(time.Second).Add(3 * time.Second)
 	h.send("message", tgFromAlice+","+tgInDM+`,"text":`+jsonString(`/schedule "hello me" `+at.Format("2006-01-02T15:04:05")))
 	if s := h.waitCalls("sendMessage", 1)[0].Params; s["chat_id"] != tgAlice || !strings.HasPrefix(s["text"].(string), "Scheduled for ") {

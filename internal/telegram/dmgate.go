@@ -31,7 +31,7 @@ type verdict struct {
 }
 
 // dmKnown is whether user may DM the bot, when that is known without asking
-// Telegram: listed in TELEGRAM_DM_USER_IDS (or "all"); refused when no
+// Telegram: listed in TELEGRAM_DM_USERS (or "all"); refused when no
 // role could allow them (no "admins": Telegram has no mods); else a
 // verdict from the last 10 minutes.
 func (c *Client) dmKnown(user string) (ok, known bool) {
@@ -92,9 +92,9 @@ func (c *Client) dmAllowed(ctx context.Context, user string) bool {
 }
 
 // refusedDM logs a DM, or a delivered message for one, refused by
-// TELEGRAM_DM_USER_IDS, by the sender's ID only.
+// TELEGRAM_DM_USERS, by the sender's ID only.
 func refusedDM(user string) {
-	logx.Infof("%s ignored because not allowed by TELEGRAM_DM_USER_IDS (add this ID to allow DMs)", user)
+	logx.Infof("%s ignored because not allowed by TELEGRAM_DM_USERS (add this ID to allow DMs)", user)
 }
 
 // isAdmin reports whether user is the owner or an administrator of a group

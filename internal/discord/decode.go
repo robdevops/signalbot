@@ -163,7 +163,7 @@ func (c *Client) events(t string, d json.RawMessage) []bot.Received {
 
 // received is a message, or with edited an edit of one, as the core gets
 // it; nil for the bot's own, another bot's, those that aren't a person's
-// message or reply, and a DM DISCORD_DM_USER_IDS refuses, which is logged
+// message or reply, and a DM DISCORD_DM_USERS refuses, which is logged
 // by its sender's ID. A DM whose sender must be looked up is decided in
 // its slot, by Load.
 func (c *Client) received(m *message, edited int64) bot.Received {
@@ -638,7 +638,7 @@ func (c *Client) Delivered(ctx context.Context, msg feature.Message) (bot.Ready,
 	info := c.guilds[ch.guild]
 	c.mu.Unlock()
 	// As on Signal, a post goes out only while its sender may still post
-	// there: in a DM, while DISCORD_DM_USER_IDS allows them; in a channel,
+	// there: in a DM, while DISCORD_DM_USERS allows them; in a channel,
 	// still in the server, allowed to send in the channel, and not timed
 	// out; a lookup that fails drops it.
 	if !inGroup && !c.mayDM(wait, strings.TrimPrefix(msg.Chat.User, prefix)) {

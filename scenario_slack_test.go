@@ -72,7 +72,7 @@ func startSlackWith(t *testing.T, env map[string]string, extra ...func(feature.H
 	t.Cleanup(model.Close)
 	for _, k := range []string{"SIGNALCLI_SOCKET", "TELEGRAM_BOT_TOKEN", "MODEL_API_KEY", "MODEL_SEARCH", "MODEL_REASONING", "MODEL_SYSTEM_PROMPT",
 		"INTRO", "MAX_CONCURRENCY", "HISTORY_MAX", "TOOL_LINGER_ROUNDS", "MCP_CONFIG", "GROUP_CONTEXT", "FILES", "CHARTS", "JOURNAL_STREAM", "DAILY_BUDGET",
-		"SLACK_DM_USER_IDS", "SCHEDULE_USER_IDS"} {
+		"SLACK_DM_USERS", "SCHEDULE_ALLOWED_USERS"} {
 		t.Setenv(k, "")
 	}
 	for k, v := range env {
@@ -315,9 +315,9 @@ func (h *slHarness) requests() [][]string {
 
 // --- scenarios --------------------------------------------------------------------
 
-// A DM from someone SLACK_DM_USER_IDS lists is answered, in the DM.
+// A DM from someone SLACK_DM_USERS lists is answered, in the DM.
 func TestSlackDM(t *testing.T) {
-	h := startSlackWith(t, map[string]string{"SLACK_DM_USER_IDS": slAlice})
+	h := startSlackWith(t, map[string]string{"SLACK_DM_USERS": slAlice})
 	h.message(slAlice, "D0ALICEDM1", "hello")
 	s := h.waitCalls("chat.postMessage", 1)[0]
 	if s.Params["channel"] != "D0ALICEDM1" || s.Params["text"] != "ok" || sectionText(s) != "ok" {
@@ -342,10 +342,10 @@ func (h *slHarness) waitLog(s string) {
 // not answered or kept, and logged by their ID alone.
 func TestSlackDMDefault(t *testing.T) {
 	h := startSlack(t)
-	h.waitLog("Slack DMs: allowed from admins and mods (SLACK_DM_USER_IDS)")
+	h.waitLog("Slack DMs: allowed from admins and mods (SLACK_DM_USERS)")
 	h.setAdmin(slAlice, true)
 	h.message(slBob, "D0BOBDM001", "a secret question")
-	h.waitLog("slack:" + slBob + " ignored because not allowed by SLACK_DM_USER_IDS")
+	h.waitLog("slack:" + slBob + " ignored because not allowed by SLACK_DM_USERS")
 	h.message(slAlice, "D0ALICEDM1", "hello")
 	if s := h.waitCalls("chat.postMessage", 1); len(s) != 1 || s[0].Params["channel"] != "D0ALICEDM1" {
 		t.Fatalf("sent %v", s)
@@ -358,13 +358,13 @@ func TestSlackDMDefault(t *testing.T) {
 	}
 }
 
-// With SLACK_DM_USER_IDS=none no one's DM is answered, an admin's either.
+// With SLACK_DM_USERS=none no one's DM is answered, an admin's either.
 func TestSlackDMNone(t *testing.T) {
-	h := startSlackWith(t, map[string]string{"SLACK_DM_USER_IDS": "none"})
-	h.waitLog("Slack DMs are off: SLACK_DM_USER_IDS is none")
+	h := startSlackWith(t, map[string]string{"SLACK_DM_USERS": "none"})
+	h.waitLog("Slack DMs are off: SLACK_DM_USERS is none")
 	h.setAdmin(slAlice, true)
 	h.message(slAlice, "D0ALICEDM1", "hello")
-	h.waitLog("slack:" + slAlice + " ignored because not allowed by SLACK_DM_USER_IDS")
+	h.waitLog("slack:" + slAlice + " ignored because not allowed by SLACK_DM_USERS")
 	h.message(slAlice, slChannel, "<@UBOT00001> hello")
 	if s := h.waitCalls("chat.postMessage", 1); len(s) != 1 || s[0].Params["channel"] != slChannel {
 		t.Fatalf("sent %v", s)
@@ -383,7 +383,7 @@ func TestSlackDMScheduleDropped(t *testing.T) {
 		t.Fatalf("sent %v", s.Params)
 	}
 	h.setAdmin(slAlice, false)
-	h.waitLog("delivered message dropped: its sender may no longer DM the bot (SLACK_DM_USER_IDS)")
+	h.waitLog("delivered message dropped: its sender may no longer DM the bot (SLACK_DM_USERS)")
 	if n := len(h.callsTo("chat.postMessage")); n != 1 {
 		t.Fatalf("%d sends", n)
 	}

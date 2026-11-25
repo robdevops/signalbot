@@ -65,7 +65,7 @@ func TestDMDefaultAdmins(t *testing.T) {
 	if got := load(t, c.events(dmFrom(bob, 4))); got != "none" {
 		t.Fatalf("Bob again: %s", got)
 	}
-	want := "slack:" + bob + " ignored because not allowed by SLACK_DM_USER_IDS (add this ID to allow DMs)\n"
+	want := "slack:" + bob + " ignored because not allowed by SLACK_DM_USERS (add this ID to allow DMs)\n"
 	if l := logs.String(); l != want+want {
 		t.Fatalf("log %q", l)
 	}
@@ -238,7 +238,7 @@ func TestDeliveredToDM(t *testing.T) {
 		t.Fatal("delivered when Slack couldn't say")
 	}
 	l := logs.String()
-	if strings.Count(l, "delivered message dropped: its sender may no longer DM the bot (SLACK_DM_USER_IDS)\n") != 2 || strings.Contains(l, alice) || strings.Contains(l, "Alice") {
+	if strings.Count(l, "delivered message dropped: its sender may no longer DM the bot (SLACK_DM_USERS)\n") != 2 || strings.Contains(l, alice) || strings.Contains(l, "Alice") {
 		t.Fatalf("log %q", l)
 	}
 	c.dm = allow.Parse(alice)
@@ -300,13 +300,13 @@ func TestVerdictsBounded(t *testing.T) {
 func TestDMStartupLog(t *testing.T) {
 	logs := captureLogs(t)
 	for _, v := range []string{"", "all", "none", "admins " + alice} {
-		t.Setenv("SLACK_DM_USER_IDS", v)
+		t.Setenv("SLACK_DM_USERS", v)
 		New(nil)
 	}
-	want := "Slack DMs: allowed from admins and mods (SLACK_DM_USER_IDS)\n" +
-		"Slack DMs: allowed from anyone (SLACK_DM_USER_IDS)\n" +
-		"Slack DMs are off: SLACK_DM_USER_IDS is none; the bot answers only in channels\n" +
-		"Slack DMs: allowed from admins and 1 ID (SLACK_DM_USER_IDS)\n"
+	want := "Slack DMs: allowed from admins and mods (SLACK_DM_USERS)\n" +
+		"Slack DMs: allowed from anyone (SLACK_DM_USERS)\n" +
+		"Slack DMs are off: SLACK_DM_USERS is none; the bot answers only in channels\n" +
+		"Slack DMs: allowed from admins and 1 ID (SLACK_DM_USERS)\n"
 	if l := logs.String(); l != want {
 		t.Fatalf("log %q", l)
 	}

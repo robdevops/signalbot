@@ -242,7 +242,7 @@ func TestEvents(t *testing.T) {
 			t.Errorf("%s reached the core: %+v", env, r)
 		}
 	}
-	if out := logs.String(); out != bobID+" ignored because not in SIGNAL_DM_USER_IDS (add this ID to allow DMs)\n" {
+	if out := logs.String(); out != bobID+" ignored because not in SIGNAL_DM_USERS (add this ID to allow DMs)\n" {
 		t.Errorf("logged %q", out)
 	}
 }
@@ -280,7 +280,7 @@ func TestEventsBeforeTheIDIsKnown(t *testing.T) {
 	if m, ok := rs[1].Load(ctx, learn); !ok || m.Addressed || m.Text != "the moon" {
 		t.Errorf("chatter loaded as %+v %v", m, ok)
 	}
-	if _, ok := rs[2].Load(ctx, learn); ok || !strings.Contains(logs.String(), bobID+" ignored because not in SIGNAL_DM_USER_IDS") {
+	if _, ok := rs[2].Load(ctx, learn); ok || !strings.Contains(logs.String(), bobID+" ignored because not in SIGNAL_DM_USERS") {
 		t.Errorf("a stranger's DM loaded; logs %q", logs)
 	}
 }
@@ -391,7 +391,7 @@ func TestDelivered(t *testing.T) {
 	}
 	out := logs.String()
 	for _, want := range []string{"delivered message dropped: its sender is not in the group\n",
-		"delivered message dropped: its sender may no longer DM the bot (SIGNAL_DM_USER_IDS)\n",
+		"delivered message dropped: its sender may no longer DM the bot (SIGNAL_DM_USERS)\n",
 		"delivered message dropped: not connected to signal-cli after 10s\n"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("no %q in logs %q", want, out)
@@ -503,7 +503,7 @@ func TestQuoteMentionsLearned(t *testing.T) {
 }
 
 // Deletes and edits count whoever the bot answers: a delete or edit from
-// someone not (or no longer) in SIGNAL_DM_USER_IDS forgets the original,
+// someone not (or no longer) in SIGNAL_DM_USERS forgets the original,
 // and keeps nothing new. A group admin's delete forgets the target's.
 func TestDeletesAndEditsFromAnyone(t *testing.T) {
 	captureLogs(t)

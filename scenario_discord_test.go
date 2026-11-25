@@ -63,7 +63,7 @@ type dcHarness struct {
 
 // startDiscord starts the bot on Discord with its fakes, as main does, and
 // env's settings, and a test feature with /buttons, whose buttons' presses
-// it records, and returns once the bot has connected. DISCORD_DM_USER_IDS
+// it records, and returns once the bot has connected. DISCORD_DM_USERS
 // is unset unless env sets it.
 func startDiscord(t *testing.T, env map[string]string) *dcHarness {
 	h := &dcHarness{t: t, events: make(chan string, 64), nextID: 1300000000000000000, members: map[string]string{}}
@@ -71,8 +71,8 @@ func startDiscord(t *testing.T, env map[string]string) *dcHarness {
 	t.Cleanup(api.Close)
 	model := httptest.NewServer(http.HandlerFunc(h.serveModel))
 	t.Cleanup(model.Close)
-	for _, k := range []string{"SIGNALCLI_SOCKET", "SIGNAL_DM_USER_IDS", "TELEGRAM_BOT_TOKEN", "MODEL_API_KEY", "MODEL_SEARCH", "MODEL_REASONING", "MODEL_SYSTEM_PROMPT",
-		"INTRO", "MAX_CONCURRENCY", "HISTORY_MAX", "TOOL_LINGER_ROUNDS", "MCP_CONFIG", "GROUP_CONTEXT", "FILES", "CHARTS", "JOURNAL_STREAM", "DAILY_BUDGET", "DISCORD_DM_USER_IDS"} {
+	for _, k := range []string{"SIGNALCLI_SOCKET", "SIGNAL_DM_USERS", "TELEGRAM_BOT_TOKEN", "MODEL_API_KEY", "MODEL_SEARCH", "MODEL_REASONING", "MODEL_SYSTEM_PROMPT",
+		"INTRO", "MAX_CONCURRENCY", "HISTORY_MAX", "TOOL_LINGER_ROUNDS", "MCP_CONFIG", "GROUP_CONTEXT", "FILES", "CHARTS", "JOURNAL_STREAM", "DAILY_BUDGET", "DISCORD_DM_USERS"} {
 		t.Setenv(k, "")
 	}
 	for k, v := range env {
@@ -350,10 +350,10 @@ func (h *dcHarness) requests() [][]string {
 
 // --- scenarios --------------------------------------------------------------------
 
-// A DM from someone DISCORD_DM_USER_IDS lists is answered in the DM's
+// A DM from someone DISCORD_DM_USERS lists is answered in the DM's
 // channel, and the bot's commands became Discord's slash commands.
 func TestDiscordDM(t *testing.T) {
-	h := startDiscord(t, map[string]string{"DISCORD_DM_USER_IDS": dcBob})
+	h := startDiscord(t, map[string]string{"DISCORD_DM_USERS": dcBob})
 	h.send("MESSAGE_CREATE", `{"id":"$ID","type":0,`+dcInDM+`,`+dcFromBob+`,"content":"hello"}`)
 	if s := h.waitCalls("POST /channels/"+dcDM+"/messages", 1)[0].Body; s["content"] != "ok" {
 		t.Fatalf("sent %v", s)
@@ -458,7 +458,7 @@ func (h *dcHarness) dmSent() []string {
 // mod's, by a role with Manage Messages, are answered.
 func TestDiscordDMAdminsAndMods(t *testing.T) {
 	h := startDiscord(t, nil)
-	if !strings.Contains(h.logText(), "Discord DMs: allowed from admins and mods (DISCORD_DM_USER_IDS)") {
+	if !strings.Contains(h.logText(), "Discord DMs: allowed from admins and mods (DISCORD_DM_USERS)") {
 		t.Fatalf("log %s", h.logText())
 	}
 	h.mu.Lock()
@@ -467,7 +467,7 @@ func TestDiscordDMAdminsAndMods(t *testing.T) {
 	h.mu.Unlock()
 	h.send("MESSAGE_CREATE", `{"id":"$ID","type":0,`+dcInDM+`,`+dcFromBob+`,"content":"hello there"}`)
 	h.waitFor("the refusal", func() bool {
-		return strings.Contains(h.logText(), "discord:"+dcBob+" ignored because not allowed by DISCORD_DM_USER_IDS")
+		return strings.Contains(h.logText(), "discord:"+dcBob+" ignored because not allowed by DISCORD_DM_USERS")
 	})
 	h.send("GUILD_UPDATE", `{"id":"`+dcGuild+`","name":"Test server","owner_id":"`+dcAlice+`"}`)
 	h.send("MESSAGE_CREATE", `{"id":"$ID","type":0,`+dcInDM+`,`+dcFromAlice+`,"content":"hello"}`)
@@ -483,17 +483,17 @@ func TestDiscordDMAdminsAndMods(t *testing.T) {
 	}
 }
 
-// DISCORD_DM_USER_IDS=none refuses everyone's DM, even the owner's, and
+// DISCORD_DM_USERS=none refuses everyone's DM, even the owner's, and
 // says so at startup.
 func TestDiscordDMNone(t *testing.T) {
-	h := startDiscord(t, map[string]string{"DISCORD_DM_USER_IDS": "none"})
+	h := startDiscord(t, map[string]string{"DISCORD_DM_USERS": "none"})
 	if !strings.Contains(h.logText(), "Discord DMs are off") {
 		t.Fatalf("log %s", h.logText())
 	}
 	h.send("GUILD_UPDATE", `{"id":"`+dcGuild+`","name":"Test server","owner_id":"`+dcAlice+`"}`)
 	h.send("MESSAGE_CREATE", `{"id":"$ID","type":0,`+dcInDM+`,`+dcFromAlice+`,"content":"hello"}`)
 	h.waitFor("the refusal", func() bool {
-		return strings.Contains(h.logText(), "discord:"+dcAlice+" ignored because not allowed by DISCORD_DM_USER_IDS")
+		return strings.Contains(h.logText(), "discord:"+dcAlice+" ignored because not allowed by DISCORD_DM_USERS")
 	})
 	if s := h.dmSent(); len(s) != 0 || len(h.requests()) != 0 {
 		t.Fatalf("sent %q", s)

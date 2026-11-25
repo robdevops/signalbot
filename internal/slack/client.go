@@ -55,7 +55,7 @@ type Client struct {
 	hellos atomic.Int64 // Socket Mode connections made
 	team   atomic.Value // [2]string: the bot's workspace and any Enterprise Grid org, as auth.test says
 
-	dm       allow.Policy // SLACK_DM_USER_IDS: who may DM the bot
+	dm       allow.Policy // SLACK_DM_USERS: who may DM the bot
 	verdicts verdicts     // whether people are workspace admins, as users.info lately said
 
 	watch    atomic.Bool                   // the core has an event hook
@@ -99,15 +99,15 @@ func Check() error {
 
 // New makes the client its settings say: SLACK_BOT_TOKEN, the bot's token;
 // SLACK_APP_TOKEN, the app-level token Socket Mode needs; SLACK_API_URL,
-// by default Slack's; and SLACK_DM_USER_IDS, who may DM the bot, by
+// by default Slack's; and SLACK_DM_USERS, who may DM the bot, by
 // default the workspace's owners and admins. The bot answers anyone in
 // any channel it is in: the workspace's settings decide who can reach it.
 func New(test *config.Test) *Client {
-	dm := allow.Parse(config.Env("SLACK_DM_USER_IDS", ""))
+	dm := allow.Parse(config.Env("SLACK_DM_USERS", ""))
 	if dm.None() {
-		logx.Warnf("Slack DMs are off: SLACK_DM_USER_IDS is none; the bot answers only in channels")
+		logx.Warnf("Slack DMs are off: SLACK_DM_USERS is none; the bot answers only in channels")
 	} else {
-		logx.Noticef("Slack DMs: allowed from %s (SLACK_DM_USER_IDS)", dm)
+		logx.Noticef("Slack DMs: allowed from %s (SLACK_DM_USERS)", dm)
 	}
 	return newClient(config.Env("SLACK_API_URL", "https://slack.com/api"), config.Env("SLACK_BOT_TOKEN", ""), config.Env("SLACK_APP_TOKEN", ""), config.StateDir(), dm, test)
 }

@@ -308,7 +308,7 @@ func TestPastStartOfARepeat(t *testing.T) {
 	equal(t, "timers", w.dues(), []string{"2030-02-28T08:00"})
 }
 
-// SCHEDULE_USER_IDS says who may schedule posts in a group: by default a
+// SCHEDULE_ALLOWED_USERS says who may schedule posts in a group: by default a
 // group's admins and mods; "all" anyone; listed IDs, with "admins" or
 // "mods" too if named; a mod may with "mods". A
 // run is dropped once its user may no longer post there; a DM's never.
@@ -341,7 +341,7 @@ func TestWhoMayPost(t *testing.T) {
 
 	w = newWorld(t)
 	w.h.Shared[1] = feature.Group{ID: "g-work", Name: "Work", Mod: true}
-	w.h.Settings["SCHEDULE_USER_IDS"] = "mods"
+	w.h.Settings["SCHEDULE_ALLOWED_USERS"] = "mods"
 	w.start()
 	if got := w.dm(`/schedule "hi" 2030-01-15T13:00 work`); !strings.HasPrefix(got, "Scheduled") {
 		t.Fatalf("a mod: got %q", got)
@@ -356,7 +356,7 @@ func TestWhoMayPost(t *testing.T) {
 	} {
 		w := newWorld(t)
 		w.h.Shared[1].Admin = false
-		w.h.Settings["SCHEDULE_USER_IDS"] = value
+		w.h.Settings["SCHEDULE_ALLOWED_USERS"] = value
 		w.start()
 		if got := w.dm(`/schedule "hi" 2030-01-15T13:00 work`); !strings.HasPrefix(got, want) {
 			t.Errorf("%q: got %q", value, got)

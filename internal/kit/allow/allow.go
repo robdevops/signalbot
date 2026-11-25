@@ -1,6 +1,6 @@
 // Package allow reads a setting that says who may do something: everyone,
-// no one, admins, mods and listed IDs, such as SIGNAL_DM_USER_IDS or
-// SCHEDULE_USER_IDS.
+// no one, admins, mods and listed IDs, such as SIGNAL_DM_USERS or
+// SCHEDULE_ALLOWED_USERS.
 package allow
 
 import (

@@ -229,7 +229,7 @@ func (c *Client) event(env *envelope) (bot.Received, bool) {
 	}
 	// Deletes and edits are honoured as the official Signal app would:
 	// from the author, or a group admin's delete, whoever the bot answers.
-	// SIGNAL_DM_USER_IDS says only who the bot answers, as message requests
+	// SIGNAL_DM_USERS says only who the bot answers, as message requests
 	// do in the app, so it never stops one. What the app refuses, signal-cli
 	// has already dropped: everything from a blocked person or group, a
 	// group message from a non-member, and an admin delete from a
@@ -259,7 +259,7 @@ func (c *Client) event(env *envelope) (bot.Received, bool) {
 	}
 	if env.edited != 0 && !dm {
 		// An edit from someone the bot doesn't answer, such as one removed
-		// from SIGNAL_DM_USER_IDS since: not answered or kept, but the
+		// from SIGNAL_DM_USERS since: not answered or kept, but the
 		// original goes. From someone never allowed there is nothing to go.
 		return bot.Deleted{Chat: chat, Sender: env.sender(), Sent: env.Timestamp, At: env.edited}, true
 	}
@@ -353,7 +353,7 @@ func (c *Client) judge(env *envelope, self string, dm bool) (addressed, other bo
 	case fromSelf(env, self):
 	case env.chat().GroupID == "":
 		if !dm {
-			logx.Infof("%s ignored because not in SIGNAL_DM_USER_IDS (add this ID to allow DMs)", cmp.Or(env.sender(), "unknown sender"))
+			logx.Infof("%s ignored because not in SIGNAL_DM_USERS (add this ID to allow DMs)", cmp.Or(env.sender(), "unknown sender"))
 		}
 	default:
 		return false, true
@@ -504,7 +504,7 @@ func (c *Client) Delivered(ctx context.Context, msg feature.Message) (bot.Ready,
 	}
 	c.loadNames(wait, &envelope{})
 	if msg.Chat.GroupID == "" && !c.dmAllowed(wait, msg.Sender, c.number(msg.Sender)) {
-		logx.Infof("delivered message dropped: its sender may no longer DM the bot (SIGNAL_DM_USER_IDS)")
+		logx.Infof("delivered message dropped: its sender may no longer DM the bot (SIGNAL_DM_USERS)")
 		return bot.Ready{}, false
 	}
 	msg.Name = cmp.Or(msg.Name, c.name(msg.Sender))
@@ -535,7 +535,7 @@ func (c *Client) Delivered(ctx context.Context, msg feature.Message) (bot.Ready,
 
 // Reachable reports whether the bot may still post in chat on its own,
 // waiting up to 10s for signal-cli: in a group, while the bot is a member
-// (listGroups); in a DM, while the user may DM the bot (SIGNAL_DM_USER_IDS),
+// (listGroups); in a DM, while the user may DM the bot (SIGNAL_DM_USERS),
 // by ACI or number, or as a group admin. A failure is logged.
 func (c *Client) Reachable(ctx context.Context, chat feature.Chat) bool {
 	wait, cancel := context.WithTimeout(ctx, 10*time.Second)

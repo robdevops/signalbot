@@ -28,7 +28,7 @@ func (c *Client) Caps() feature.Caps {
 }
 
 // pressed is a press as the core gets it: in a DM, only from someone
-// listed in TELEGRAM_DM_USER_IDS or an admin by a verdict from the last 10
+// listed in TELEGRAM_DM_USERS or an admin by a verdict from the last 10
 // minutes, as the reader can't ask Telegram. A press it drops is answered
 // at once, so the button stops spinning.
 func (c *Client) pressed(q *callbackQuery) (bot.Received, bool) {

@@ -58,7 +58,7 @@ const (
 // world is what a scenario starts the bot in.
 type world struct {
 	// Env holds the bot's settings as environment variables. MODEL defaults
-	// to scenarioModel and SIGNAL_DM_USER_IDS to Alice; everything else to
+	// to scenarioModel and SIGNAL_DM_USERS to Alice; everything else to
 	// the bot's own defaults.
 	Env map[string]string
 	// Vision says the model list shows the model accepting images.
@@ -223,9 +223,9 @@ func newHarness(t *testing.T, w world) *harness {
 // env is the bot's settings: the scenario's, over the harness defaults,
 // with the state directory always w.StateDir.
 func (h *harness) env() map[string]string {
-	// SCHEDULE_USER_IDS is all, so group schedules don't wait on a
+	// SCHEDULE_ALLOWED_USERS is all, so group schedules don't wait on a
 	// network's admins; scenarios of who may schedule set it themselves.
-	e := map[string]string{"MODEL": scenarioModel, "SIGNAL_DM_USER_IDS": idAlice, "SCHEDULE_USER_IDS": "all"}
+	e := map[string]string{"MODEL": scenarioModel, "SIGNAL_DM_USERS": idAlice, "SCHEDULE_ALLOWED_USERS": "all"}
 	maps.Copy(e, h.w.Env)
 	e["STATE_DIRECTORY"] = h.w.StateDir
 	return e
@@ -1105,7 +1105,7 @@ func containsAll(s string, parts []string) bool {
 
 // checkNoSecretsLogged fails if any message or reply text reached the log,
 // or anyone's name or ID but the bot's, except the ID in a line about a DM
-// from someone SIGNAL_DM_USER_IDS doesn't allow.
+// from someone SIGNAL_DM_USERS doesn't allow.
 func (h *harness) checkNoSecretsLogged() {
 	h.mu.Lock()
 	defer h.mu.Unlock()
@@ -1115,7 +1115,7 @@ func (h *harness) checkNoSecretsLogged() {
 				h.t.Errorf("message text %q reached the log: %q", s, l.Text)
 			}
 		}
-		if strings.Contains(l.Text, "not in SIGNAL_DM_USER_IDS") {
+		if strings.Contains(l.Text, "not in SIGNAL_DM_USERS") {
 			continue
 		}
 		for p := range h.people {

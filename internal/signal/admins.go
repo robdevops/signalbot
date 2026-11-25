@@ -84,7 +84,7 @@ func (v *verdicts) forget() {
 
 // dmQuick reports, without calling the network, whether the sender with
 // ids (their ACI first, then any number) may DM the bot: listed in
-// SIGNAL_DM_USER_IDS, or, if admins may, lately found one. known is false
+// SIGNAL_DM_USERS, or, if admins may, lately found one. known is false
 // when only asking signal-cli can tell. Signal groups have no mods.
 func (c *Client) dmQuick(ids ...string) (ok, known bool) {
 	if c.dm.Listed(ids...) {

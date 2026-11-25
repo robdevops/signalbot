@@ -32,7 +32,7 @@ type Client struct {
 	fatal    time.Duration // the wait after Discord refuses the token or the intents
 	typing   time.Duration // how often Typing is renewed; Discord's lasts 10s
 	pending  time.Duration // how long a slash command's "thinking…" waits for a reply
-	dm       allow.Policy  // who may DM the bot: DISCORD_DM_USER_IDS
+	dm       allow.Policy  // who may DM the bot: DISCORD_DM_USERS
 
 	self       atomic.Value // string: the bot's user ID
 	username   atomic.Value // string: its username
@@ -103,16 +103,16 @@ type guildInfo struct {
 
 // New makes the client its settings say: DISCORD_BOT_TOKEN, the bot's token
 // from Discord's developer portal, DISCORD_API_URL, by default Discord's,
-// and DISCORD_DM_USER_IDS, who may DM the bot, by default the admins and
+// and DISCORD_DM_USERS, who may DM the bot, by default the admins and
 // mods of its servers. The bot answers anyone in every channel it is in:
 // Discord's own settings decide who can reach it there.
 func New(test *config.Test) *Client {
 	c := newClient(config.Env("DISCORD_API_URL", "https://discord.com/api/v10"), config.Env("DISCORD_BOT_TOKEN", ""), test)
-	c.dm = allow.Parse(config.Env("DISCORD_DM_USER_IDS", ""))
+	c.dm = allow.Parse(config.Env("DISCORD_DM_USERS", ""))
 	if c.dm.None() {
-		logx.Warnf("Discord DMs are off: DISCORD_DM_USER_IDS is none; the bot answers only in channels")
+		logx.Warnf("Discord DMs are off: DISCORD_DM_USERS is none; the bot answers only in channels")
 	} else {
-		logx.Noticef("Discord DMs: allowed from %s (DISCORD_DM_USER_IDS)", c.dm)
+		logx.Noticef("Discord DMs: allowed from %s (DISCORD_DM_USERS)", c.dm)
 	}
 	return c
 }

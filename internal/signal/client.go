@@ -60,7 +60,7 @@ type rpcMsg struct {
 // Client is a JSON-RPC client for a signal-cli daemon socket.
 type Client struct {
 	addr         string
-	dm           allow.Policy // who may DM the bot (SIGNAL_DM_USER_IDS)
+	dm           allow.Policy // who may DM the bot (SIGNAL_DM_USERS)
 	verdicts     verdicts     // whether a DM's sender is a group admin, lately asked
 	typingEvery  time.Duration
 	writeTimeout time.Duration // writeTimeout; a test's shorter
@@ -83,14 +83,14 @@ type Client struct {
 
 // New makes the client its settings say: SIGNALCLI_SOCKET, host:port
 // (signal-cli's daemon --tcp on this host by default) or a unix socket path,
-// and SIGNAL_DM_USER_IDS, who may DM the bot: by default a group's admins.
+// and SIGNAL_DM_USERS, who may DM the bot: by default a group's admins.
 func New(test *config.Test) *Client {
 	addr := config.Env("SIGNALCLI_SOCKET", "127.0.0.1:7583")
-	dm := allow.Parse(config.Env("SIGNAL_DM_USER_IDS", ""))
+	dm := allow.Parse(config.Renamed("SIGNAL_DM_USERS", "SIGNAL_DM_USER_IDS"))
 	if dm.None() {
-		logx.Warnf("Signal DMs are off: SIGNAL_DM_USER_IDS is none; the bot answers only in groups")
+		logx.Warnf("Signal DMs are off: SIGNAL_DM_USERS is none; the bot answers only in groups")
 	} else {
-		logx.Noticef("Signal DMs: allowed from %s (SIGNAL_DM_USER_IDS)", dm)
+		logx.Noticef("Signal DMs: allowed from %s (SIGNAL_DM_USERS)", dm)
 	}
 	return newClient(addr, dm, test)
 }

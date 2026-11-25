@@ -36,7 +36,7 @@ const pollWait = 50 * time.Second
 type Client struct {
 	base    string       // the API's base URL, without the token
 	token   string       // never logged: scrub every error
-	dm      allow.Policy // who may DM the bot: TELEGRAM_DM_USER_IDS
+	dm      allow.Policy // who may DM the bot: TELEGRAM_DM_USERS
 	http    *http.Client
 	backoff time.Duration // the first wait after a failed poll; a test's shorter
 	typing  time.Duration // how often Typing is renewed; Telegram's lasts 5s
@@ -67,19 +67,19 @@ type Client struct {
 }
 
 // New makes the client its settings say: TELEGRAM_BOT_TOKEN, the bot's
-// token from BotFather; TELEGRAM_DM_USER_IDS, who may DM it, by default
+// token from BotFather; TELEGRAM_DM_USERS, who may DM it, by default
 // the owners and administrators of the groups it is in; and
 // TELEGRAM_API_URL, a local Bot API server, by default Telegram's. In a
 // group the bot answers anyone.
 func New(test *config.Test) *Client {
-	dm := allow.Parse(config.Env("TELEGRAM_DM_USER_IDS", ""))
+	dm := allow.Parse(config.Renamed("TELEGRAM_DM_USERS", "TELEGRAM_DM_USER_IDS"))
 	switch {
 	case dm.None():
-		logx.Warnf("Telegram DMs are off: TELEGRAM_DM_USER_IDS is none; the bot answers only in groups")
+		logx.Warnf("Telegram DMs are off: TELEGRAM_DM_USERS is none; the bot answers only in groups")
 	case !dm.All && !dm.Admins && len(dm.IDs) == 0:
-		logx.Warnf("Telegram DMs are off: TELEGRAM_DM_USER_IDS allows only mods, and Telegram has none; the bot answers only in groups")
+		logx.Warnf("Telegram DMs are off: TELEGRAM_DM_USERS allows only mods, and Telegram has none; the bot answers only in groups")
 	default:
-		logx.Noticef("Telegram DMs: allowed from %s (TELEGRAM_DM_USER_IDS)", dm)
+		logx.Noticef("Telegram DMs: allowed from %s (TELEGRAM_DM_USERS)", dm)
 	}
 	return newClient(config.Env("TELEGRAM_API_URL", "https://api.telegram.org"), config.Env("TELEGRAM_BOT_TOKEN", ""), dm, test)
 }

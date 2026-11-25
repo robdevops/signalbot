@@ -39,20 +39,20 @@ func TestNew(t *testing.T) {
 	var logs logx.Buffer
 	t.Cleanup(logx.SetOutput(&logs, &logs, false))
 	t.Setenv("SIGNALCLI_SOCKET", "")
-	t.Setenv("SIGNAL_DM_USER_IDS", "")
+	t.Setenv("SIGNAL_DM_USERS", "")
 	if c := New(nil); c.addr != "127.0.0.1:7583" || c.network() != "tcp" || !c.dm.Admins || len(c.dm.IDs) != 0 {
 		t.Errorf("default address %q on %s, policy %+v", c.addr, c.network(), c.dm)
 	}
 	t.Setenv("SIGNALCLI_SOCKET", "/run/signal.sock")
-	t.Setenv("SIGNAL_DM_USER_IDS", "alice-id,signal:bob-id;\r\n+15550001\t")
+	t.Setenv("SIGNAL_DM_USERS", "alice-id,signal:bob-id;\r\n+15550001\t")
 	c := New(nil)
 	if c.addr != "/run/signal.sock" || c.dm.Admins || !maps.Equal(c.dm.IDs, map[string]bool{"alice-id": true, "bob-id": true, "+15550001": true}) {
 		t.Errorf("socket %q, policy %+v", c.addr, c.dm)
 	}
-	t.Setenv("SIGNAL_DM_USER_IDS", "none")
+	t.Setenv("SIGNAL_DM_USERS", "none")
 	New(nil)
-	if got := logs.String(); got != "Signal DMs: allowed from admins and mods (SIGNAL_DM_USER_IDS)\n"+"Signal DMs: allowed from 3 IDs (SIGNAL_DM_USER_IDS)\n"+
-		"Signal DMs are off: SIGNAL_DM_USER_IDS is none; the bot answers only in groups\n" {
+	if got := logs.String(); got != "Signal DMs: allowed from admins and mods (SIGNAL_DM_USERS)\n"+"Signal DMs: allowed from 3 IDs (SIGNAL_DM_USERS)\n"+
+		"Signal DMs are off: SIGNAL_DM_USERS is none; the bot answers only in groups\n" {
 		t.Errorf("logs %q", got)
 	}
 }

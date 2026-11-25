@@ -47,7 +47,7 @@ func TestDMAdminsAndMods(t *testing.T) {
 	if tryLoad(t, one(t, c.events("MESSAGE_CREATE", dmFrom(alice, "secret words")))) {
 		t.Fatal("Alice, neither, answered")
 	}
-	if !strings.Contains(logs.String(), prefix+alice+" ignored because not allowed by DISCORD_DM_USER_IDS") || strings.Contains(logs.String(), "secret words") {
+	if !strings.Contains(logs.String(), prefix+alice+" ignored because not allowed by DISCORD_DM_USERS") || strings.Contains(logs.String(), "secret words") {
 		t.Fatalf("log %q", logs.String())
 	}
 	if rs := c.events("MESSAGE_CREATE", dmFrom(alice, "again")); len(rs) != 0 {

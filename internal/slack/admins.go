@@ -78,7 +78,7 @@ func (c *Client) isAdmin(ctx context.Context, user string) (bool, error) {
 }
 
 // dmQuick reports, without calling the network, whether user (a member ID,
-// without the prefix) may DM the bot: listed in SLACK_DM_USER_IDS, or, if
+// without the prefix) may DM the bot: listed in SLACK_DM_USERS, or, if
 // admins may, lately found one. known is false when only users.info can
 // tell. Slack has no mods for a bot, so mods alone let no one by role.
 func (c *Client) dmQuick(user string) (ok, known bool) {
@@ -92,7 +92,7 @@ func (c *Client) dmQuick(user string) (ok, known bool) {
 }
 
 // dmAllowed reports whether user may DM the bot, asking users.info when
-// that decides it: listed in SLACK_DM_USER_IDS, or, if admins may, a
+// that decides it: listed in SLACK_DM_USERS, or, if admins may, a
 // workspace owner or admin. With fresh, a verdict kept is not believed,
 // for a check that must say whether they may now. A failed lookup
 // refuses, with a warning naming no one.
@@ -114,10 +114,10 @@ func (c *Client) dmAllowed(ctx context.Context, user string, fresh bool) bool {
 	return u.admin
 }
 
-// refused logs a DM from user that SLACK_DM_USER_IDS doesn't allow, by
+// refused logs a DM from user that SLACK_DM_USERS doesn't allow, by
 // their ID alone.
 func refused(user string) {
-	logx.Infof("%s%s ignored because not allowed by SLACK_DM_USER_IDS (add this ID to allow DMs)", prefix, user)
+	logx.Infof("%s%s ignored because not allowed by SLACK_DM_USERS (add this ID to allow DMs)", prefix, user)
 }
 
 // dmReader reports whether the reader should hand on a DM message or slash

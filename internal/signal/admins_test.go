@@ -75,7 +75,7 @@ func TestDMFromAnAdmin(t *testing.T) {
 	if n := len(f.calls("listGroups")); n != 2 {
 		t.Fatalf("%d listGroups", n)
 	}
-	if want := bobID + " ignored because not in SIGNAL_DM_USER_IDS (add this ID to allow DMs)\n"; strings.Count(logs.String(), want) != 2 || strings.Contains(logs.String(), aliceID) {
+	if want := bobID + " ignored because not in SIGNAL_DM_USERS (add this ID to allow DMs)\n"; strings.Count(logs.String(), want) != 2 || strings.Contains(logs.String(), aliceID) {
 		t.Fatalf("logs %q", logs)
 	}
 
@@ -88,7 +88,7 @@ func TestDMFromAnAdmin(t *testing.T) {
 	}
 }
 
-// Without admins in SIGNAL_DM_USER_IDS, no one is asked about; with only
+// Without admins in SIGNAL_DM_USERS, no one is asked about; with only
 // mods, no one counts, as Signal groups have none; and a failed lookup
 // refuses, with a warning naming no one.
 func TestDMAdminsNotAsked(t *testing.T) {

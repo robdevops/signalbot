@@ -1067,5 +1067,5 @@ func TestMediaHost(t *testing.T) {
 func c0() *Client                  { return connected(newClient("http://x", token, appToken, "", anyone, nil)) }
 func parse(md string) mdstyle.Text { return mdstyle.Parse(md, true) }
 
-// anyone lets anyone DM the bot, as the tests but those of SLACK_DM_USER_IDS do.
+// anyone lets anyone DM the bot, as the tests but those of SLACK_DM_USERS do.
 var anyone = allow.Parse("all")
