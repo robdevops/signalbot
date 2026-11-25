@@ -1178,7 +1178,7 @@ func TestRerunShapes(t *testing.T) {
 		{feature.Action{Answer: strings.Repeat("😀", 513), Pictures: make([]feature.Picture, 1)}, false}, // 1,026 UTF-16 units
 		{feature.Action{Answer: "two", Pictures: make([]feature.Picture, 2)}, false},
 	} {
-		if got := d.again.oneMessage(c.act); got != c.want {
+		if got := d.again.oneMessage(c.act, feature.Chat{User: "a"}); got != c.want {
 			t.Errorf("%d runes, %d pictures: %v", len([]rune(c.act.Answer)), len(c.act.Pictures), got)
 		}
 	}
@@ -1272,5 +1272,49 @@ func TestFeedChartButtons(t *testing.T) {
 	}
 	if edit.Edit != 77 || edit.Text != "Heavy rain" || len(edit.Pictures) != 1 || !slices.Equal(labels, []string{"1d", "• 7d", "🔄"}) {
 		t.Fatalf("edit %+v, buttons %q", edit, labels)
+	}
+}
+
+// On a bot on two networks, each chat gets what its own can show: buttons
+// and a keyboard on one, words alone on the other.
+func TestPerNetworkCaps(t *testing.T) {
+	fake := &fakeMCP{feed: `{"kinds":[{"kind":"rain","label":"Rain"}],"items":[]}`}
+	tgChat, sigChat := feature.Chat{User: "123"}, feature.Chat{User: "alice"}
+	nets := func(c feature.Chat) feature.Net {
+		if c == tgChat {
+			return feature.Net{Name: "telegram", Caps: feature.Caps{Buttons: true, Keyboard: true, Caption: 1024}}
+		}
+		return feature.Net{Name: "signal"}
+	}
+	config := `{"mcpServers":{"w":{"url":"` + serve(t, fake) + `","allowed_tools":["echo"],"feed":{"resource":"feed://items"},
+		"keyboard":[["Rain","/rain"]],
+		"chat_commands":{"rain":{"tool":"echo","direct":true,"arg":"period","values":["1d","7d"]}}}}}`
+	h, _, err := register(t, config, func(h *featuretest.Host) {
+		h.Bot.Caps = feature.Caps{Buttons: true, Keyboard: true, Caption: 1024} // what any network can do
+		h.Bot.Networks = []string{"signal", "telegram"}
+		h.Nets = nets
+		h.Settings["STATE_DIRECTORY"] = t.TempDir()
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	ask := func(c feature.Chat, text string) feature.Action {
+		return h.Message(ctx, feature.Message{Chat: c, Sender: c.User, Text: text, Addressed: true})
+	}
+	if tg, sig := ask(tgChat, "/rain"), ask(sigChat, "/rain"); tg.Markup.Buttons == nil || sig.Markup.Buttons != nil || tg.Answer != sig.Answer {
+		t.Errorf("/rain: telegram %+v, signal %+v", tg.Markup, sig.Markup)
+	}
+	if tg, sig := ask(tgChat, "/keyboard"), ask(sigChat, "/keyboard"); tg.Markup.Keyboard == nil || sig.Answer != "This chat app has no keyboard of buttons." {
+		t.Errorf("/keyboard: telegram %+v, signal %q", tg.Markup, sig.Answer)
+	}
+	for range 200 { // the feed's first read, for its kinds
+		if strings.Contains(ask(sigChat, "/alerts").Answer, "rain") {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	if tg, sig := ask(tgChat, "/alerts on"), ask(sigChat, "/alerts on"); tg.Markup.Buttons == nil || sig.Markup.Buttons != nil || !strings.Contains(sig.Answer, "/alerts on or off") {
+		t.Errorf("/alerts: telegram %+v, signal %q", tg.Markup, sig.Answer)
 	}
 }

@@ -84,7 +84,7 @@ func (r *reruns) add(d *plainDirect, name string, c chatCommand) {
 // Only an answer that goes out as one message gets them, so the buttons
 // are on it and an edit can replace all of it.
 func (r *reruns) offer(act *feature.Action, chat feature.Chat, d *plainDirect, name, value string) {
-	if act.Answer == "" && len(act.Pictures) == 0 || !r.oneMessage(*act) {
+	if act.Answer == "" && len(act.Pictures) == 0 || !r.h.Net(chat).Caps.Buttons || !r.oneMessage(*act, chat) {
 		return
 	}
 	act.Markup.Buttons = cmdButtons(r.cmds[d.server+"/"+name].c, value)
@@ -99,8 +99,8 @@ func (r *reruns) offer(act *feature.Action, chat feature.Chat, d *plainDirect, n
 // oneMessage reports whether act goes out as one message: text alone, or
 // one picture with its text as the caption, where the network limits one.
 // Markdown can only shorten the text, so a fit counted before it is one.
-func (r *reruns) oneMessage(act feature.Action) bool {
-	limit := r.h.Info().Caps.Caption
+func (r *reruns) oneMessage(act feature.Action, chat feature.Chat) bool {
+	limit := r.h.Net(chat).Caps.Caption
 	switch len(act.Pictures) {
 	case 0:
 		return true
@@ -122,7 +122,7 @@ func cmdButtons(c chatCommand, value string) [][]feature.Button {
 // with args, Arg's values the choices, under the post of text and pics in
 // chat, if it is one message; and remembers the post.
 func (r *reruns) chart(p *feature.Post, server, tool string, args map[string]any, arg string, values []string) {
-	if len(p.Pictures) != 1 || !r.oneMessage(feature.Action{Answer: p.Text, Pictures: p.Pictures}) {
+	if len(p.Pictures) != 1 || !r.h.Net(p.Chat).Caps.Buttons || !r.oneMessage(feature.Action{Answer: p.Text, Pictures: p.Pictures}, p.Chat) {
 		return
 	}
 	current, _ := args[arg].(string)
@@ -239,7 +239,7 @@ func (r *reruns) press(ctx context.Context, p feature.Press) (answer string, ok 
 	next := post
 	next.Value, next.Picture = value, len(act.Pictures) > 0
 	switch {
-	case !r.oneMessage(act):
+	case !r.oneMessage(act, p.Chat):
 		// Too much for one message: sent anew, without buttons, and the
 		// post stays as it was, its buttons working.
 		r.h.Post(feature.Post{Chat: p.Chat, Text: act.Answer, Pictures: act.Pictures})

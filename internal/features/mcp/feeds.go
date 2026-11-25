@@ -442,7 +442,7 @@ func (fs *feeds) menu(f *feed, chat feature.Chat) (string, [][]feature.Button) {
 			fmt.Fprintf(&b, " Off: %s.", strings.Join(off, ", "))
 		}
 	}
-	if !fs.h.Info().Caps.Buttons {
+	if !fs.h.Net(chat).Caps.Buttons {
 		fmt.Fprintf(&b, "\n%s on or off; %s sound on or off", cmd, cmd)
 		if len(f.kinds) > 0 {
 			var names []string

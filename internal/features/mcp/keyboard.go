@@ -46,8 +46,8 @@ func checkKeyboard(keys [][]string) string {
 }
 
 // keyboard registers /keyboard, which shows the servers' keys as a DM's
-// reply keyboard, and /keyboard off, which takes it away, on a network
-// that has one. A label in two servers' keyboards is kept once, the
+// reply keyboard, and /keyboard off, which takes it away, where the bot is
+// on a network that has one (in a chat on another, it says so). A label in two servers' keyboards is kept once, the
 // first's, in their names' order.
 func keyboard(h feature.Host, servers map[string]server) {
 	if !h.Info().Caps.Keyboard {
@@ -74,6 +74,8 @@ func keyboard(h feature.Host, servers map[string]server) {
 		switch a := strings.ToLower(strings.TrimSpace(args)); {
 		case m.Chat.GroupID != "":
 			return feature.Action{Answer: "The keyboard is for DMs."}
+		case !h.Net(m.Chat).Caps.Keyboard:
+			return feature.Action{Answer: "This chat app has no keyboard of buttons."}
 		case a == "off":
 			return feature.Action{Answer: "Keyboard off. /keyboard brings it back.", Markup: feature.Markup{NoKeyboard: true}}
 		case a != "":

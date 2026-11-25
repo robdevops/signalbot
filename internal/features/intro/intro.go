@@ -16,11 +16,8 @@ func Register(h feature.Host) error {
 			return feature.Action{} // only the command itself; anything more carries on
 		}
 		info := h.Info()
-		intro := info.Intro
-		if m.Chat.GroupID == "" {
-			intro = info.IntroDM
-		}
-		if info.Model != "" { // with no model, nothing does
+		intro := h.Net(m.Chat).Intro // its network's: in a group or a DM, with the bot's name there
+		if info.Model != "" {        // with no model, nothing does
 			intro += "\n\nThis message did not use the model."
 		}
 		return feature.Action{Answer: intro}

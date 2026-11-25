@@ -9,7 +9,8 @@
       "type": "object",
       "properties": {
         "version": {"description": "The extension's version.", "const": 1},
-        "network": {"description": "The bot's chat network, as it names itself.", "type": "string", "examples": ["signal", "telegram"]},
+        "network": {"description": "The bot's chat network, as it names itself; on several, the first.", "type": "string", "examples": ["signal", "telegram"]},
+        "networks": {"description": "Every chat network the bot is on, when it is on more than one; each call's context then names its chat's.", "type": "array", "items": {"type": "string"}},
         "watchReplies": {"description": "The bot's: it takes a watch with replies. A bot without it refuses one.", "type": "boolean"},
         "watchReactions": {"description": "The bot's: it takes a watch with reactions.", "type": "boolean"}
       },
@@ -38,6 +39,7 @@
         "sent": {"description": "When the bot got the message, in Unix seconds.", "type": "integer", "minimum": 0},
         "edited": {"description": "When the bot got the edit, in Unix seconds; 0 for an original.", "type": "integer", "minimum": 0},
         "name": {"description": "The sender's display name, with the addon block's names permission.", "type": "string"},
+        "network": {"description": "The chat's network, when the bot is on more than one (Capability's networks).", "type": "string", "examples": ["signal", "telegram"]},
         "deadline": {"description": "A direct command's: when the bot stops waiting, in Unix seconds.", "type": "integer", "minimum": 0}
       },
       "required": ["chat", "sender", "ref", "addressed", "group", "sent", "edited"]

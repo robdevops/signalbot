@@ -28,6 +28,7 @@ type Host struct {
 	Redactor func(string) string                                                                  // what Redact does; nil leaves text as it is
 	StoreErr error                                                                                // if set, Store fails with it, as the core does with no usable state directory
 	Unusable bool                                                                                 // if set, OfferTools drops a group with tools, as the core does when the API can run none
+	Nets     func(feature.Chat) feature.Net                                                       // what Net returns; nil: Bot's network, name and caps, for every chat
 
 	mu        sync.Mutex
 	read      []string
@@ -183,6 +184,18 @@ func (h *Host) Env(key, def string) string {
 }
 
 func (h *Host) Info() feature.Info { return h.Bot }
+
+// Net is Nets' answer, else what Bot says.
+func (h *Host) Net(chat feature.Chat) feature.Net {
+	if h.Nets != nil {
+		return h.Nets(chat)
+	}
+	intro := h.Bot.Intro
+	if chat.GroupID == "" {
+		intro = h.Bot.IntroDM
+	}
+	return feature.Net{Name: h.Bot.Network, Bot: h.Bot.Name, Caps: h.Bot.Caps, Intro: intro}
+}
 
 // Usage returns Use.
 func (h *Host) Usage(context.Context, feature.Chat, bool) feature.Usage { return h.Use }

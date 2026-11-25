@@ -265,23 +265,24 @@ const (
 // keeps for it. Its watches, claims, leases and outbox cursor are saved,
 // by the keeper; the rest is in memory only.
 type addon struct {
-	server  string // its name in MCP_CONFIG
-	title   string // its name for people, as it gave it
-	cfg     addonConfig
-	key     []byte          // HMAC(secret, server): its pseudonyms' key
-	conn    conn            // where to call it
-	bot     map[string]bool // the tools the bot may call itself
-	busy    chan struct{}   // a place for each direct call in flight
-	now     func() time.Time
-	host    feature.Host  // where it posts and reacts; set before it runs
-	changed func()        // its saved state changed: save it soon, without waiting
-	dirty   chan struct{} // its outbox has news: read it
-	up      chan struct{} // it has started again
-	settled chan struct{} // its posts read from the outbox have all been sent or dropped
-	matches chan match    // matched messages, for the watch worker
-	posts   *limiter      // its posts and reactions, per chat
-	calls   *limiter      // the watch worker's calls, per chat
-	asks    *limiter      // its requests to the model, all chats as one; nil without the permission
+	server   string // its name in MCP_CONFIG
+	title    string // its name for people, as it gave it
+	cfg      addonConfig
+	key      []byte          // HMAC(secret, server): its pseudonyms' key
+	conn     conn            // where to call it
+	bot      map[string]bool // the tools the bot may call itself
+	networks bool            // the bot is on several networks: each context names its chat's
+	busy     chan struct{}   // a place for each direct call in flight
+	now      func() time.Time
+	host     feature.Host  // where it posts and reacts; set before it runs
+	changed  func()        // its saved state changed: save it soon, without waiting
+	dirty    chan struct{} // its outbox has news: read it
+	up       chan struct{} // it has started again
+	settled  chan struct{} // its posts read from the outbox have all been sent or dropped
+	matches  chan match    // matched messages, for the watch worker
+	posts    *limiter      // its posts and reactions, per chat
+	calls    *limiter      // the watch worker's calls, per chat
+	asks     *limiter      // its requests to the model, all chats as one; nil without the permission
 
 	mu      sync.Mutex
 	refs    map[string]ref         // by ref
@@ -379,6 +380,9 @@ func (a *addon) context(m feature.Message, at time.Time) ext.Context {
 	}
 	a.mu.Unlock()
 	c := ext.Context{Chat: a.chatID(m.Chat), Sender: user, Ref: id, Addressed: m.Addressed, Group: m.Chat.GroupID != "", Sent: at.Unix()}
+	if a.networks {
+		c.Network = a.host.Net(m.Chat).Name
+	}
 	if m.Edited != 0 {
 		c.Edited = c.Sent
 	}

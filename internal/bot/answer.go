@@ -119,7 +119,7 @@ func (b *Bot) respond(msg feature.Message, act feature.Action, text string, refs
 		var tools []feature.Tool
 		offered, tools = b.offer(key, msg.Text, act.ToolChoice, t.content)
 		reply, err = b.ai.Ask(b.ctx, model.Request{
-			System:     b.system(offered, msg.Chat.GroupID == ""),
+			System:     b.system(msg.Chat, offered),
 			History:    contextBlocks(b.chats.History(key)),
 			Text:       strings.TrimSpace(t.asked) + nudge,
 			Images:     t.images,
@@ -402,12 +402,14 @@ func contextBlocks(h []chats.Entry) []chats.Entry {
 	return out
 }
 
-// system is the system prompt: the base rules with the network's line (and
-// the source rule when there are tools), the tools line, the offered groups' lines, MODEL_SYSTEM_PROMPT and the intro,
-// the DM's one if dm.
-func (b *Bot) system(offered []int, dm bool) string {
+// system is the system prompt for chat: the base rules with its network's
+// line (and the source rule when there are tools), the tools line, the
+// offered groups' lines, MODEL_SYSTEM_PROMPT and the intro there, the DM's
+// one in a DM.
+func (b *Bot) system(chat feature.Chat, offered []int) string {
+	net, dm := b.on(chat), chat.GroupID == ""
 	p := basePrompt
-	if n := b.net.Prompt(); n != "" {
+	if n := net.Prompt(); n != "" {
 		p += " " + n
 	}
 	p += " " + mentionPrompt
@@ -438,13 +440,16 @@ func (b *Bot) system(offered []int, dm bool) string {
 	// the API's cache; the intro last, for its tests.
 	p += "\nToday is " + b.now().Format("Monday 2 January 2006 (MST)") + "."
 	// Quoted, so a newline or quote in the name or INTRO can't escape it.
-	return p + "\nIf asked to introduce yourself, reply with exactly this text and nothing else: " + strconv.Quote(b.intro(dm))
+	return p + "\nIf asked to introduce yourself, reply with exactly this text and nothing else: " + strconv.Quote(b.introOn(net, dm))
 }
 
 // intro is INTRO with {name}, {model}, {tools} and {more} filled in, with
 // the DM-only lines if dm: what the model says when asked to introduce
-// itself, which features may also send.
-func (b *Bot) intro(dm bool) string {
+// itself, which features may also send. On several networks, the first's
+// name; introOn is a network's.
+func (b *Bot) intro(dm bool) string { return b.introOn(b.net, dm) }
+
+func (b *Bot) introOn(net Network, dm bool) string {
 	model := b.cfg.Model[strings.LastIndex(b.cfg.Model, "/")+1:] // without the provider
 	if b.ai == nil {
 		model = "no model"
@@ -456,7 +461,7 @@ func (b *Bot) intro(dm bool) string {
 		}
 	}
 	more := "\n\n" + strings.Join(lines, "\n\n") + "\n\n" // each feature line padded with blank lines
-	s := strings.NewReplacer("{name}", b.net.BotName(), "{model}", model, "{more}", more,
+	s := strings.NewReplacer("{name}", net.BotName(), "{model}", model, "{more}", more,
 		"{tools}", cmp.Or(strings.Join(b.toolNames(false), "\n\n"), "none")).Replace(b.cfg.Intro)
 	s = lineEnds.ReplaceAllString(s, "\n")
 	return strings.TrimSpace(blankLines.ReplaceAllString(s, "\n\n")) // never two blank lines in a row

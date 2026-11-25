@@ -42,10 +42,11 @@ const (
 // KeyAddon. The bot offers its chat network and what it can do; an addon
 // answers with the version alone.
 type Capability struct {
-	Version        int    `json:"version"`
-	Network        string `json:"network,omitempty"`        // the bot's chat network, as it names itself: "signal", "telegram"
-	WatchReplies   bool   `json:"watchReplies,omitempty"`   // the bot's: it takes a watch with Replies
-	WatchReactions bool   `json:"watchReactions,omitempty"` // the bot's: it takes a watch with Reactions
+	Version        int      `json:"version"`
+	Network        string   `json:"network,omitempty"`        // the bot's chat network, as it names itself: "signal", "telegram"; on several, the first
+	Networks       []string `json:"networks,omitempty"`       // every chat network the bot is on, when it is on more than one
+	WatchReplies   bool     `json:"watchReplies,omitempty"`   // the bot's: it takes a watch with Replies
+	WatchReactions bool     `json:"watchReactions,omitempty"` // the bot's: it takes a watch with Reactions
 }
 
 // Context is the message a call the bot makes came from, in the call's
@@ -62,6 +63,7 @@ type Context struct {
 	Edited    int64  `json:"edited"`             // when the bot got the edit; 0 for an original
 	Name      string `json:"name,omitempty"`     // the sender's display name, with the names permission
 	Deadline  int64  `json:"deadline,omitempty"` // a direct call's: when the bot stops waiting, in Unix seconds
+	Network   string `json:"network,omitempty"`  // the chat's network, when the bot is on more than one
 }
 
 // Watch is what a direct command's result asks for, in its _meta under

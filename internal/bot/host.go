@@ -103,7 +103,7 @@ func (b *Bot) Store(name string) (feature.Store, error) {
 }
 
 func (b *Bot) Info() feature.Info {
-	info := feature.Info{Name: b.net.BotName(), Network: b.net.Name(), Caps: b.net.Caps(), Version: b.cfg.Version, Model: b.cfg.Model,
+	info := feature.Info{Name: b.net.BotName(), Network: b.net.Name(), Networks: b.networks(), Caps: b.net.Caps(), Version: b.cfg.Version, Model: b.cfg.Model,
 		Images: b.images.Load(), Audio: b.audio.Load(), PDFs: b.files.Load(), CallsTools: b.callsTools.Load(), Tools: b.toolNames(false), Intro: b.intro(false), IntroDM: b.intro(true)}
 	if b.ai == nil {
 		info.Model = ""
@@ -248,7 +248,7 @@ func (b *Bot) say(p feature.Post) {
 func (b *Bot) keyboard(p feature.Post, sent []int64) {
 	mk := p.Markup
 	switch {
-	case len(sent) == 0 || p.Chat.GroupID != "" || !b.net.Caps().Keyboard:
+	case len(sent) == 0 || p.Chat.GroupID != "" || !b.on(p.Chat).Caps().Keyboard:
 	case mk.NoKeyboard:
 		b.keys.set(p.Chat.Key(), nil)
 	case len(mk.Keyboard) > 0:

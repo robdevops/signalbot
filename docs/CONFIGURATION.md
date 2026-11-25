@@ -4,9 +4,9 @@ Every setting, read from the environment (`/etc/signalbot.env` in the install). 
 
 | Variable | Default | Description |
 |---|---|---|
-| `SIGNALCLI_SOCKET` | `127.0.0.1:7583` | signal-cli's `host:port` (`daemon --tcp`), or its Unix socket path (`daemon --socket`), such as `/run/signal-cli/socket`; see [Unix socket](SOCKET.md) |
+| `SIGNALCLI_SOCKET` | `127.0.0.1:7583` | signal-cli's `host:port` (`daemon --tcp`), or its Unix socket path (`daemon --socket`), such as `/run/signal-cli/socket`; see [Unix socket](SOCKET.md). Set it, even to the default, to run on Signal and Telegram at once |
 | `SIGNAL_DM_USER_IDS` | empty | UUIDs/numbers allowed to DM the bot, separated by commas or whitespace; empty turns DMs off, and the startup log says which |
-| `TELEGRAM_BOT_TOKEN` | empty | The bot's token from Telegram's BotFather. Set, the bot answers on Telegram instead of Signal (one network a bot; setting `SIGNALCLI_SOCKET` too is an error). Never logged; see [Telegram](../README.md#telegram) |
+| `TELEGRAM_BOT_TOKEN` | empty | The bot's token from Telegram's BotFather. Set, the bot answers on Telegram instead of Signal; with `SIGNALCLI_SOCKET` set too, on both at once. Never logged; see [Telegram](../README.md#telegram) |
 | `TELEGRAM_DM_USER_IDS` | empty | Telegram user IDs (numbers) allowed to DM the bot, separated by commas, semicolons or white space. The bot answers in a group only while one of them is a member, and leaves a group where none is. Empty, it answers no one |
 | `TELEGRAM_API_URL` | `https://api.telegram.org` | The Bot API's base URL, for a self-hosted [Bot API server](https://github.com/tdlib/telegram-bot-api) |
 | `MODEL` | `deepseek/deepseek-v4.1-flash-1017` | The model's name at the API: on OpenRouter as `provider/model` |

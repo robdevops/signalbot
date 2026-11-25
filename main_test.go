@@ -34,8 +34,8 @@ func TestBuildVersion(t *testing.T) {
 	}
 }
 
-// The network is the one whose setting is set, else Signal; both set, or
-// one this build leaves out, is an error that says what to do.
+// The networks are those whose settings are set, Signal first, else
+// Signal; one this build leaves out is an error that says what to do.
 func TestChooseNetwork(t *testing.T) {
 	saved := networks
 	defer func() { networks = saved }()
@@ -44,19 +44,20 @@ func TestChooseNetwork(t *testing.T) {
 		name  string
 		built map[string]func(*config.Test) bot.Network
 		env   map[string]string
-		want  string
+		want  string // the networks, joined by ","
 		err   string
 	}{
 		{"neither set", both, nil, "signal", ""},
 		{"socket set", both, map[string]string{"SIGNALCLI_SOCKET": "/run/s"}, "signal", ""},
 		{"token set", both, map[string]string{"TELEGRAM_BOT_TOKEN": "x"}, "telegram", ""},
-		{"both set", both, map[string]string{"TELEGRAM_BOT_TOKEN": "x", "SIGNALCLI_SOCKET": "/run/s"}, "", "TELEGRAM_BOT_TOKEN and SIGNALCLI_SOCKET are both set"},
+		{"both set", both, map[string]string{"TELEGRAM_BOT_TOKEN": "x", "SIGNALCLI_SOCKET": "/run/s"}, "signal,telegram", ""},
 		{"left out", map[string]func(*config.Test) bot.Network{"signal": nil}, map[string]string{"TELEGRAM_BOT_TOKEN": "x"}, "", "telegram is chosen, but this build leaves it out (built with -tags notelegram)"},
+		{"both, one left out", map[string]func(*config.Test) bot.Network{"signal": nil}, map[string]string{"TELEGRAM_BOT_TOKEN": "x", "SIGNALCLI_SOCKET": "/run/s"}, "", "telegram is chosen, but this build leaves it out"},
 		{"default left out", map[string]func(*config.Test) bot.Network{"telegram": nil}, nil, "", "signal is chosen, but this build leaves it out (built with -tags nosignal)"},
 	} {
 		networks = tc.built
-		got, err := chooseNetwork(func(k string) string { return tc.env[k] })
-		if got != tc.want || (err == nil) != (tc.err == "") || err != nil && !strings.Contains(err.Error(), tc.err) {
+		names, err := chooseNetwork(func(k string) string { return tc.env[k] })
+		if got := strings.Join(names, ","); got != tc.want || (err == nil) != (tc.err == "") || err != nil && !strings.Contains(err.Error(), tc.err) {
 			t.Errorf("%s: %q, %v", tc.name, got, err)
 		}
 	}

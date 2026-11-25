@@ -772,3 +772,38 @@ func TestPseudonymsMatchSchema(t *testing.T) {
 		t.Error("a sender's placeholder isn't filled in")
 	}
 }
+
+// On several networks, an addon is told them all at initialize, and each
+// call's context names its chat's; on one, neither.
+func TestAddonNetworks(t *testing.T) {
+	c := &initConn{}
+	if _, err := initialize(context.Background(), c, botInfo{version: "v", network: "signal", networks: []string{"signal", "telegram"}, addon: true}); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(c.params, `"network":"signal","networks":["signal","telegram"]`) {
+		t.Errorf("initialize %s", c.params)
+	}
+	a := newAddon("game", "Game", addonConfig{}, make([]byte, secretSize), nil, nil)
+	a.host, a.networks = netHost{featuretest.New()}, true
+	if got := a.context(feature.Message{Chat: feature.Chat{User: "123"}, Sender: "123"}, time.Now()); got.Network != "telegram" {
+		t.Errorf("context %+v", got)
+	}
+	a.networks = false
+	if got := a.context(feature.Message{Chat: feature.Chat{User: "123"}, Sender: "123"}, time.Now()); got.Network != "" {
+		t.Errorf("one network named: %+v", got)
+	}
+}
+
+// initConn records initialize's params and answers it.
+type initConn struct{ params string }
+
+func (c *initConn) call(_ context.Context, method string, params any) (json.RawMessage, error) {
+	b, _ := json.Marshal(params)
+	c.params = string(b)
+	return json.RawMessage(`{"protocolVersion":"` + protocol + `","capabilities":{},"serverInfo":{"name":"x"}}`), nil
+}
+func (c *initConn) notify(context.Context, string, any) error { return nil }
+
+type netHost struct{ *featuretest.Host }
+
+func (netHost) Net(feature.Chat) feature.Net { return feature.Net{Name: "telegram"} }

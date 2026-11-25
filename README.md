@@ -145,16 +145,32 @@ A block is Signal's own, as on a phone: signal-cli drops everything from that pe
 
 ### Telegram
 
-The same bot can answer on Telegram instead, talking to Telegram's Bot API directly (long polling, so it needs no public address). A bot answers on one network: to run on both, run two, each with its own config and state directory.
+The same bot can answer on Telegram instead, or as well, talking to Telegram's Bot API directly (long polling, so it needs no public address).
 
 1. In Telegram, message [@BotFather](https://t.me/BotFather), send `/newbot`, and copy the token it gives you.
-2. In `/etc/signalbot.env`, set `TELEGRAM_BOT_TOKEN` to the token, and `TELEGRAM_DM_USER_IDS` to the user IDs allowed to DM the bot (a user can find theirs by messaging a bot such as [@userinfobot](https://t.me/userinfobot)). Leave `SIGNALCLI_SOCKET` unset. The token is a password: anyone with it controls the bot.
+2. In `/etc/signalbot.env`, set `TELEGRAM_BOT_TOKEN` to the token, and `TELEGRAM_DM_USER_IDS` to the user IDs allowed to DM the bot (a user can find theirs by messaging a bot such as [@userinfobot](https://t.me/userinfobot)). Leave `SIGNALCLI_SOCKET` unset for Telegram alone. The token is a password: anyone with it controls the bot.
 3. Install as above, skipping signal-cli and its socket.
 4. Add the bot to a group and @mention it, or reply to one of its messages.
 
 Anyone on Telegram can find a bot by its username and add it to a group of their own, so the bot answers in a group only while someone in `TELEGRAM_DM_USER_IDS` is a member, and leaves a group where no one is. To stop it being added at all, send BotFather `/setjoingroups` and choose Disable once it is in your groups. In a group with topics, each topic is its own conversation, with its own history, and the bot answers in the topic it was asked in.
 
 **Privacy mode.** By default Telegram sends a bot in a group only the messages addressed to it, so the bot has no group context. To give it the conversation, send BotFather `/setprivacy` and choose Disable, then remove the bot from the group and add it again; or make it a group admin. As admin it also sees reactions and members joining and leaving.
+
+**On Signal and Telegram at once.** Set both `SIGNALCLI_SOCKET` (even to its default, `127.0.0.1:7583`) and `TELEGRAM_BOT_TOKEN`, with `SIGNAL_DM_USER_IDS` and `TELEGRAM_DM_USER_IDS`: one bot then answers on both, each chat on its own network, with one model, one set of features and MCP servers, and one state directory. Each chat keeps its own history and budget, as before; buttons and the keyboard appear only on Telegram, and Signal chats get the same in words. An addon is told both networks, and each call which one its chat is on.
+
+To move from two bots, one for each network, to one, stop both, then fold the Telegram bot's state into the Signal one's (the IDs of the two networks never collide, so each file is a union), and start one bot with both settings:
+
+```sh
+S=/var/lib/private/signalbot T=/var/lib/private/signalbot-telegram   # the two state directories
+cd /tmp
+sudo jq -s '{schedules: ((.[0].schedules // []) + (.[1].schedules // [])), last_id: ((.[0].last_id // {}) + (.[1].last_id // {}))}' $S/schedules.json $T/schedules.json > schedules.json
+sudo jq -s '.[0] * .[1]' $S/keyboards.json $T/keyboards.json > keyboards.json
+sudo jq -s '.[0] * .[1]' $S/mcp-feeds.json $T/mcp-feeds.json > mcp-feeds.json
+sudo jq -s '.[0] + .[1]' $S/mcp-posts.json $T/mcp-posts.json > mcp-posts.json
+sudo install -m 600 schedules.json keyboards.json mcp-feeds.json mcp-posts.json $S/ && rm schedules.json keyboards.json mcp-feeds.json mcp-posts.json
+```
+
+Skip a line for a file only one bot has (copy it across instead). Today's spending (`budget.json`) starts afresh for the Telegram chats, and an addon's state there (`mcp.json`: its rounds and pseudonyms) starts over, as the Signal bot's is kept.
 
 Telegram differs from Signal in a few ways: bot chats are not end-to-end encrypted, the Bot API never tells a bot about deleted messages, and a reply is capped at 4,096 characters a message. See [PRIVACY.md](PRIVACY.md#telegram).
 

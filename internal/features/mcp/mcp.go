@@ -345,10 +345,11 @@ type handshake struct {
 
 // botInfo is what the bot tells a server of itself in the handshake.
 type botInfo struct {
-	version string // the bot's version, "dev" if unknown
-	network string // the chat network, as Info names it, for addons
-	addon   bool   // the server has an addon block: offer what addons get
-	sample  bool   // the addon may ask the bot's model: offer sampling
+	version  string   // the bot's version, "dev" if unknown
+	network  string   // the chat network, as Info names it, for addons; on several, the first
+	networks []string // every network, when on more than one
+	addon    bool     // the server has an addon block: offer what addons get
+	sample   bool     // the addon may ask the bot's model: offer sampling
 }
 
 // initialize performs the MCP handshake, as self, offering signalbot's
@@ -357,7 +358,7 @@ type botInfo struct {
 // server said of itself.
 func initialize(ctx context.Context, c conn, self botInfo) (handshake, error) {
 	caps := map[string]any{"experimental": map[string]any{
-		ext.KeyAddon: ext.Capability{Version: ext.Version, Network: self.network, WatchReplies: self.addon, WatchReactions: self.addon},
+		ext.KeyAddon: ext.Capability{Version: ext.Version, Network: self.network, Networks: self.networks, WatchReplies: self.addon, WatchReactions: self.addon},
 	}}
 	if self.sample {
 		caps["sampling"] = map[string]any{}
@@ -438,6 +439,9 @@ func modelName(server, tool string) string {
 func start(ctx context.Context, h feature.Host, path string, servers map[string]server, k *keeper, again *reruns, fd *feeds) error {
 	info := h.Info()
 	base := botInfo{version: cmp.Or(info.Version, "dev"), network: info.Network}
+	if len(info.Networks) > 1 {
+		base.networks = info.Networks
+	}
 	type owner struct{ server, tool string }
 	taken := map[string]owner{} // the model's names for tools, and whose they are
 	var cmds []string           // for the startup line
@@ -508,6 +512,7 @@ func start(ctx context.Context, h feature.Host, path string, servers map[string]
 			}
 			a = newAddon(name, cmp.Or(cfg.Name, hs.title, name), *cfg.Addon, k.doc.Secret, c, bot)
 			a.host, a.changed, a.dirty = h, k.changed, c.(*stdioConn).updated
+			a.networks = len(info.Networks) > 1
 			a.restore(k.doc.Addons[name])
 			gt.open(a)
 			k.addons = append(k.addons, a)

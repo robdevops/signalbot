@@ -67,6 +67,7 @@ In a group, signal-cli passes every message to the bot, which checks each one fo
 
 On Telegram (`TELEGRAM_BOT_TOKEN` set) the above holds, with these differences:
 
+- **On both networks at once,** one bot keeps each chat apart as before: a Signal chat's history, context and budget are never shown in a Telegram chat, or the reverse. Its state directory holds both networks' chats, and its log both networks' IDs. A message is only ever sent on the network its chat is on.
 - **Not end-to-end encrypted.** Telegram's servers see every message in a bot's chats, and every reply. Telegram's own policy applies to them.
 - **Deletes don't reach the bot.** The Bot API never tells a bot a message was deleted, so a deleted message stays in the bot's history until it expires (at most a day, or the chat's auto-delete timer). An edit does reach it, and replaces the original as on Signal.
 - **What the bot sees.** With privacy mode on (the default), a group sends the bot only messages addressed to it, so it keeps no group context. With privacy mode off, or as an admin, it gets every message, kept as context as above.

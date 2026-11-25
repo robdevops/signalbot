@@ -227,11 +227,22 @@ type Info struct {
 	PDFs       bool     // the model's API takes PDFs
 	CallsTools bool     // the model can call tools
 	Provider   string   // the model API's provider, as server tools name it: "openrouter", or "" for another
-	Network    string   // the chat network, as it names itself, such as "signal" or "telegram"
-	Caps       Caps     // what the chat network can show and do beyond plain messages
+	Network    string   // the chat network, as it names itself, such as "signal" or "telegram"; the first, on several
+	Networks   []string // every chat network the bot is on, the first first
+	Caps       Caps     // what the chat network can show and do beyond plain messages; on several, what any can (a chat's own: Host.Net)
 	Tools      []string // the Names of every tool group with tools, in feature order; none when it can't call tools
 	Intro      string   // INTRO with {name}, {model}, {tools} and {more} filled in, as in a group
 	IntroDM    string   // the same in a DM, with IntroLine's DM-only lines too
+}
+
+// Net is what the bot is on a chat's network: Info's fields of those names
+// for the network the chat is on, and its intro there (Intro in a group,
+// IntroDM in a DM).
+type Net struct {
+	Name  string // the network, as it names itself, such as "signal"
+	Bot   string // the bot's name there
+	Caps  Caps
+	Intro string
 }
 
 // Store is a feature's saved state: one JSON document, written whole and
@@ -351,6 +362,9 @@ type Host interface {
 	Store(name string) (Store, error)
 	// Info says what the bot is.
 	Info() Info
+	// Net says what the bot is on chat's network: on several networks, each
+	// chat's may differ, such as in its buttons.
+	Net(chat Chat) Net
 	// Media fetches the bytes of msg.Media[i].
 	Media(ctx context.Context, msg Message, i int) ([]byte, error)
 	// Deliver acts on msg as if its sender had just posted it in its chat.
