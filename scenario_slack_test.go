@@ -401,8 +401,7 @@ func TestSlackDMScheduleDropped(t *testing.T) {
 func TestSlackDMAlertDropped(t *testing.T) {
 	h := startSlack(t)
 	h.setAdmin(slAlice, true)
-	at := time.Now().Truncate(time.Second).Add(2 * time.Second)
-	h.message(slAlice, "D0ALICEDM1", `/schedule "lunch is ready" `+at.Format("2006-01-02T15:04:05"))
+	h.message(slAlice, "D0ALICEDM1", "hello")
 	h.waitCalls("chat.postMessage", 1)
 	h.bot.Post(feature.Post{Chat: feature.Chat{User: "slack:" + slAlice}, Text: "rain alert"})
 	if s := h.waitCalls("chat.postMessage", 2)[1]; s.Params["channel"] != "D0ALICEDM1" || s.Params["text"] != "rain alert" {
@@ -410,11 +409,16 @@ func TestSlackDMAlertDropped(t *testing.T) {
 	}
 	h.bot.Post(feature.Post{Chat: feature.Chat{User: "slack:" + slBob}, Text: "wind alert"})
 	h.waitLog("dropped a post: its chat isn't reachable")
+	// Scheduled only now, with nothing between it and the demotion, so
+	// the run can't come before it.
+	at := time.Now().Truncate(time.Second).Add(2 * time.Second)
+	h.message(slAlice, "D0ALICEDM1", `/schedule "lunch is ready" `+at.Format("2006-01-02T15:04:05"))
+	h.waitCalls("chat.postMessage", 3)
 	h.setAdmin(slAlice, false)
 	h.waitLog("delivered message dropped: its sender may no longer DM the bot (SLACK_DM_USERS)")
 	h.bot.Post(feature.Post{Chat: feature.Chat{User: "slack:" + slAlice}, Text: "hail alert"})
 	h.waitFor("the second alert dropped", func() bool { return strings.Count(h.logText(), "dropped a post: its chat isn't reachable") == 2 })
-	if n := len(h.callsTo("chat.postMessage")); n != 2 {
+	if n := len(h.callsTo("chat.postMessage")); n != 3 {
 		t.Fatalf("%d sends", n)
 	}
 	if l := h.logText(); strings.Contains(l, "alert") || strings.Contains(l, slAlice) || strings.Contains(l, slBob) || strings.Contains(l, "Alice") || strings.Contains(l, "Bob") {
