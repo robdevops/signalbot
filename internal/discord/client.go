@@ -45,18 +45,20 @@ type Client struct {
 	resumeURL string
 	seq       atomic.Int64 // the last event's sequence number; 0 for none
 
-	mu       sync.Mutex
-	people   map[string]string            // user ID to name, as last seen
-	chats    map[string]map[string]string // channel ID to the IDs and names seen there
-	seenIn   map[string]map[string]bool   // user ID to the channels they were seen in
-	channels map[string]channel           // the guild channels the bot is in
-	left     map[string]bool              // channels the bot can no longer post in
-	dms      map[string]string            // user ID to their DM channel's ID
-	dmUsers  map[string]string            // a DM channel's ID to its user's ID
-	authors  map[int64]string             // a recent message's ID to its sender, the bot's own too
-	authorQ  []int64                      // authors' keys, oldest first
-	asked    map[string]*interaction      // a chat's slash command waiting for its reply, by chat key
-	hooks    map[int64]*interaction       // a slash command's reply, by its message ID, for an edit
+	mu        sync.Mutex
+	people    map[string]string                 // user ID to name, as last seen
+	chats     map[string]map[string]string      // channel ID to the IDs and names seen there
+	seenIn    map[string]map[string]bool        // user ID to the channels they were seen in
+	channels  map[string]channel                // the guild channels the bot is in
+	left      map[string]bool                   // channels the bot can no longer post in
+	dms       map[string]string                 // user ID to their DM channel's ID
+	dmUsers   map[string]string                 // a DM channel's ID to its user's ID
+	authors   map[int64]string                  // a recent message's ID to its sender, the bot's own too
+	authorQ   []int64                           // authors' keys, oldest first
+	asked     map[string]map[int64]*interaction // slash commands waiting for their reply, by chat key and ID
+	answering map[string]int64                  // the message the core is answering, by chat key
+	botRoles  map[string]string                 // a guild's ID to the bot's own role there
+	hooks     map[int64]*interaction            // a slash command's reply, by its message ID, for an edit
 
 	test *config.Test // nil in production
 }
@@ -79,6 +81,7 @@ func newClient(base, token string, test *config.Test) *Client {
 		backoff: time.Second, fatal: 10 * time.Minute, typing: 8 * time.Second, pending: time.Minute, known: make(chan struct{}),
 		people: map[string]string{}, chats: map[string]map[string]string{}, seenIn: map[string]map[string]bool{},
 		channels: map[string]channel{}, left: map[string]bool{}, dms: map[string]string{}, dmUsers: map[string]string{},
-		authors: map[int64]string{}, asked: map[string]*interaction{}, hooks: map[int64]*interaction{},
+		authors: map[int64]string{}, asked: map[string]map[int64]*interaction{},
+		answering: map[string]int64{}, botRoles: map[string]string{}, hooks: map[int64]*interaction{},
 		test: test}
 }

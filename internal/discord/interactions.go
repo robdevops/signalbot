@@ -29,7 +29,7 @@ const tokenLife = 14 * time.Minute
 // interaction is a button press or a slash command as the core gets it.
 // Either is acknowledged at once, as Discord wants within 3 seconds: a
 // press with nothing shown, a slash command with "thinking…", which the
-// chat's next reply replaces.
+// reply to it replaces.
 func (c *Client) interaction(d json.RawMessage) bot.Received {
 	var e struct {
 		ID        string  `json:"id"`
@@ -114,8 +114,9 @@ func (c *Client) respond(ix *interaction, interactionID string, kind int) {
 }
 
 // followUp shows text to whoever pressed a button, as a reply only they
-// see.
+// see, once the press is acknowledged: Discord refuses it before.
 func (c *Client) followUp(ix *interaction, text string) {
+	ix.acknowledged()
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	if err := c.call(ctx, http.MethodPost, "/webhooks/"+ix.app+"/"+ix.token, map[string]any{"content": txt.Clamp(text, maxChars-1), "flags": 64}, nil); err != nil {
@@ -123,28 +124,71 @@ func (c *Client) followUp(ix *interaction, text string) {
 	}
 }
 
-// await keeps a slash command's interaction for the chat's next reply, and
-// takes its "thinking…" away if none comes in time.
+// await keeps a slash command's interaction for the reply to it, beside
+// any others pending in the chat, and takes its "thinking…" away if no
+// reply comes in time, such as for a command the core never answers.
 func (c *Client) await(ch feature.Chat, ix *interaction) {
 	key := ch.Key()
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if old := c.asked[key]; old != nil {
-		old.timer.Stop()
-		go c.unthink(old)
+	if c.asked[key] == nil {
+		c.asked[key] = map[int64]*interaction{}
 	}
-	c.asked[key] = ix
+	if old := c.asked[key][ix.id]; old != nil { // the same interaction again
+		old.timer.Stop()
+	}
+	c.asked[key][ix.id] = ix
 	ix.timer = time.AfterFunc(c.pending, func() {
 		c.mu.Lock()
-		mine := c.asked[key] == ix
+		mine := c.asked[key][ix.id] == ix
 		if mine {
-			delete(c.asked, key)
+			c.drop(key, ix.id)
 		}
 		c.mu.Unlock()
 		if mine {
 			c.unthink(ix)
 		}
 	})
+}
+
+// drop forgets the slash command msgID pending in the chat key and
+// returns it, or nil, under c.mu.
+func (c *Client) drop(key string, msgID int64) *interaction {
+	ix := c.asked[key][msgID]
+	if ix == nil {
+		return nil
+	}
+	if delete(c.asked[key], msgID); len(c.asked[key]) == 0 {
+		delete(c.asked, key)
+	}
+	ix.timer.Stop()
+	return ix
+}
+
+// Answering notes that the core is answering message msg in chat, so
+// Send fills that message's "thinking…" if it is a slash command, and no
+// other's.
+func (c *Client) Answering(ch feature.Chat, msg int64) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if msg == 0 {
+		delete(c.answering, ch.Key())
+		return
+	}
+	c.answering[ch.Key()] = msg
+}
+
+// Answered notes that the core is done answering in chat: a slash
+// command it answered with nothing has its "thinking…" taken away now.
+func (c *Client) Answered(ch feature.Chat) {
+	key := ch.Key()
+	c.mu.Lock()
+	ix := c.drop(key, c.answering[key])
+	delete(c.answering, key)
+	c.mu.Unlock()
+	if ix != nil {
+		go c.unthink(ix)
+	}
 }
 
 // unthink deletes a slash command's "thinking…".
@@ -157,20 +201,28 @@ func (c *Client) unthink(ix *interaction) {
 	}
 }
 
-// take is the slash command waiting for chat's reply, now taken, or nil.
+// take is the slash command the core is answering in chat, now taken, or
+// nil: there is none, or its token no longer works.
 func (c *Client) take(ch feature.Chat) *interaction {
 	c.mu.Lock()
-	defer c.mu.Unlock()
-	ix := c.asked[ch.Key()]
-	if ix == nil {
-		return nil
-	}
-	delete(c.asked, ch.Key())
-	ix.timer.Stop()
-	if time.Since(ix.at) > tokenLife {
-		return nil
-	}
+	msgID := c.answering[ch.Key()]
+	c.mu.Unlock()
+	ix, _ := c.takeID(ch, msgID)
 	return ix
+}
+
+// takeID is the slash command msgID pending in chat, now taken, or nil if
+// its token no longer works; found says it was pending.
+func (c *Client) takeID(ch feature.Chat, msgID int64) (ix *interaction, found bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if ix = c.drop(ch.Key(), msgID); ix == nil {
+		return nil, false
+	}
+	if time.Since(ix.at) > tokenLife {
+		return nil, true
+	}
+	return ix, true
 }
 
 // acknowledged waits, at most 5s, for ix to be acknowledged, as its answer
@@ -180,15 +232,6 @@ func (ix *interaction) acknowledged() {
 	case <-ix.acked:
 	case <-time.After(5 * time.Second):
 	}
-}
-
-// waiting reports whether msgID is the slash command waiting for chat's
-// reply.
-func (c *Client) waiting(ch feature.Chat, msgID int64) bool {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	ix := c.asked[ch.Key()]
-	return ix != nil && ix.id == msgID
 }
 
 // noteHook remembers that a slash command's reply is message msgID, which
