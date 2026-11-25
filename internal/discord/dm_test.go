@@ -36,7 +36,8 @@ func setRole(c *Client, perms string) {
 // By default only a server's admins and mods may DM the bot: a mod by a
 // role's Manage Messages, an admin as the owner, each looked up in the
 // message's slot and the answer kept, so the next DM is decided on the
-// reader; anyone else's DM is refused and logged by ID, never its text.
+// reader; anyone else's DM is refused and warned of by ID, once, never
+// its text.
 func TestDMAdminsAndMods(t *testing.T) {
 	logs := captureLogs(t)
 	f := newFake(t)
@@ -47,7 +48,7 @@ func TestDMAdminsAndMods(t *testing.T) {
 	if tryLoad(t, one(t, c.events("MESSAGE_CREATE", dmFrom(alice, "secret words")))) {
 		t.Fatal("Alice, neither, answered")
 	}
-	if !strings.Contains(logs.String(), prefix+alice+" ignored because not allowed by DISCORD_DM_USERS") || strings.Contains(logs.String(), "secret words") {
+	if !strings.Contains(logs.String(), "Discord: a DM from "+prefix+alice+" ignored: DISCORD_DM_USERS doesn't allow it") || strings.Contains(logs.String(), "secret words") {
 		t.Fatalf("log %q", logs.String())
 	}
 	if rs := c.events("MESSAGE_CREATE", dmFrom(alice, "again")); len(rs) != 0 {
@@ -55,6 +56,9 @@ func TestDMAdminsAndMods(t *testing.T) {
 	}
 	if n := len(f.callsTo(aliceGet)); n != 1 {
 		t.Fatalf("looked Alice up %d times", n)
+	}
+	if n := strings.Count(logs.String(), "a DM from "+prefix+alice); n != 1 { // once per sender
+		t.Fatalf("warned of Alice's DMs %d times: %q", n, logs.String())
 	}
 	if !tryLoad(t, one(t, c.events("MESSAGE_CREATE", dmFrom(bob, "hi")))) {
 		t.Fatal("Bob, a mod, refused")

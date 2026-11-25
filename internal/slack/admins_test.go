@@ -65,8 +65,8 @@ func TestDMDefaultAdmins(t *testing.T) {
 	if got := load(t, c.events(dmFrom(bob, 4))); got != "none" {
 		t.Fatalf("Bob again: %s", got)
 	}
-	want := "slack:" + bob + " ignored because not allowed by SLACK_DM_USERS (add this ID to allow DMs)\n"
-	if l := logs.String(); l != want+want {
+	want := "Slack: a DM from slack:" + bob + " ignored: SLACK_DM_USERS doesn't allow it; add the ID to SLACK_DM_USERS to allow DMs from them\n"
+	if l := logs.String(); l != want { // once per sender
 		t.Fatalf("log %q", l)
 	}
 	// In a channel anyone is answered, with no lookup.
@@ -121,7 +121,7 @@ func TestDMLookupFails(t *testing.T) {
 	if got := load(t, c.events(dmFrom(alice, 1))); got != "refused" {
 		t.Fatalf("got %s", got)
 	}
-	if l := logs.String(); !strings.Contains(l, "slack users.info failed, so a DM's user is taken for no admin: slack: users.info: internal_error\n") || strings.Count(l, alice) != 1 {
+	if l := logs.String(); !strings.Contains(l, "Slack: users.info failed, so a DM's user is taken for no admin: users.info: internal_error\n") || strings.Count(l, alice) != 1 {
 		t.Fatalf("log %q", l)
 	}
 	if got := load(t, c.events(dmFrom(alice, 2))); got != "hi" {
@@ -294,7 +294,7 @@ func TestReachableDM(t *testing.T) {
 	if c.Reachable(ctx, aliceDM) {
 		t.Fatal("reachable when the lookup failed")
 	}
-	if l := logs.String(); !strings.Contains(l, "slack users.info failed, so a DM's user is taken for no admin") || strings.Contains(l, alice) || strings.Contains(l, "Alice") {
+	if l := logs.String(); !strings.Contains(l, "Slack: users.info failed, so a DM's user is taken for no admin") || strings.Contains(l, alice) || strings.Contains(l, "Alice") {
 		t.Fatalf("logs %q", l)
 	}
 }
@@ -356,17 +356,14 @@ func TestVerdictsBounded(t *testing.T) {
 	}
 }
 
-// The startup log says who may DM the bot, or that no one may.
+// The startup log says only that no one may DM the bot.
 func TestDMStartupLog(t *testing.T) {
 	logs := captureLogs(t)
 	for _, v := range []string{"", "all", "none", "admins " + alice} {
 		t.Setenv("SLACK_DM_USERS", v)
 		New(nil)
 	}
-	want := "Slack DMs: allowed from admins and mods (SLACK_DM_USERS)\n" +
-		"Slack DMs: allowed from anyone (SLACK_DM_USERS)\n" +
-		"Slack DMs are off: SLACK_DM_USERS is none; the bot answers only in channels\n" +
-		"Slack DMs: allowed from admins and 1 ID (SLACK_DM_USERS)\n"
+	want := "Slack: DMs are off: SLACK_DM_USERS is none; the bot answers only in channels\n"
 	if l := logs.String(); l != want {
 		t.Fatalf("log %q", l)
 	}

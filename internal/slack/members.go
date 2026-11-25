@@ -11,7 +11,6 @@ import (
 	"time"
 
 	"github.com/robdevops/signalbot/internal/bot"
-	"github.com/robdevops/signalbot/internal/kit/logx"
 	"github.com/robdevops/signalbot/internal/kit/txt"
 )
 
@@ -131,10 +130,10 @@ func (c *Client) members(ctx context.Context, channel string) []bot.Member {
 	} else if listed, err := c.listed(ctx, channel); err != nil {
 		if code(err) == "missing_scope" {
 			c.membersWarn.Do(func() {
-				logx.Warnf("Slack refused to list a channel's members (missing_scope): the app needs the scopes channels:read, groups:read and users:read, so paste the app manifest again at api.slack.com/apps → your app → App Manifest and reinstall the app; until then a delivered message names only the people seen since the bot started")
+				log.Warnf("refused to list a channel's members (missing_scope): the app needs the scopes channels:read, groups:read and users:read, so paste the app manifest again at api.slack.com/apps → your app → App Manifest and reinstall the app; until then a delivered message names only the people seen since the bot started")
 			})
 		} else {
-			logx.Warnf("slack: listing a channel's members failed (%s); naming only the people seen", cmp.Or(code(err), "no answer"))
+			log.Warnf("listing a channel's members failed (%s); naming only the people seen", cmp.Or(code(err), "no answer"))
 		}
 	} else {
 		for u, n := range listed {

@@ -15,7 +15,6 @@ import (
 	"time"
 
 	"github.com/robdevops/signalbot/internal/bot"
-	"github.com/robdevops/signalbot/internal/kit/logx"
 	"github.com/robdevops/signalbot/internal/kit/txt"
 	"github.com/robdevops/signalbot/internal/kit/ws"
 )
@@ -50,8 +49,8 @@ type payload struct {
 }
 
 var (
-	errReconnect = errors.New("Discord asked the bot to reconnect")
-	errInvalid   = errors.New("Discord ended the session")
+	errReconnect = errors.New("asked to reconnect")
+	errInvalid   = errors.New("the session ended")
 	errMembers   = errors.New("Discord refused the Server Members intent")
 )
 
@@ -60,7 +59,7 @@ type refusal struct{ msg string }
 
 func (r *refusal) Error() string { return r.msg }
 
-var errToken = &refusal{"Discord refused DISCORD_BOT_TOKEN: copy the token again from the developer portal (your application, Bot, Reset Token) and set it"}
+var errToken = &refusal{"refused DISCORD_BOT_TOKEN: copy the token again from the developer portal (your application, Bot, Reset Token) and set it"}
 
 // Run connects to the gateway and hands each event the core may act on to
 // handle, on this goroutine, until ctx ends. A dropped session is resumed,
@@ -83,13 +82,13 @@ func (c *Client) Run(ctx context.Context, handle func(bot.Received)) {
 		switch {
 		case errors.Is(err, errMembers):
 			if c.membersOff.CompareAndSwap(false, true) {
-				logx.Warnf(membersWarning)
+				log.Warnf(membersWarning)
 			}
 			c.session, c.resumeURL = "", ""
 			c.seq.Store(0)
 			continue
 		case errors.As(err, &r):
-			logx.Errorf("%s; trying again in %s", r.msg, c.fatal)
+			log.Errorf("%s; trying again in %s", r.msg, c.fatal)
 			wait = c.fatal
 			if !sleep(ctx, wait) {
 				return
@@ -100,7 +99,7 @@ func (c *Client) Run(ctx context.Context, handle func(bot.Received)) {
 		default:
 			backoff = min(2*backoff, 32*time.Second)
 		}
-		logx.Warnf("discord gateway: %v; reconnecting in %s", err, wait.Round(time.Millisecond))
+		log.Warnf("gateway: %v; reconnecting in %s", err, wait.Round(time.Millisecond))
 		if !sleep(ctx, wait) {
 			return
 		}
@@ -183,10 +182,10 @@ func (c *Client) connect(ctx context.Context, handle func(bot.Received)) (up boo
 				up = c.ready(p.D)
 			case "RESUMED":
 				up = true
-				logx.Noticef("resumed the Discord session as %s", c.usernameOf())
+				log.Noticef("resumed the session as %s", c.usernameOf())
 			}
 			func() {
-				defer logx.Recover("reading an event")
+				defer recoverEvent()
 				for _, r := range c.events(p.T, p.D) {
 					handle(r)
 				}
@@ -228,9 +227,9 @@ func (c *Client) closed(err error, members bool) error {
 		if members {
 			return errMembers
 		}
-		return &refusal{"Discord refused the bot's intents (close 4014): in the developer portal, under your application's Bot, turn on Message Content Intent"}
+		return &refusal{"refused the bot's intents (close 4014): in the developer portal, under your application's Bot, turn on Message Content Intent"}
 	case 4010, 4011, 4012, 4013:
-		return &refusal{fmt.Sprintf("Discord refused the bot's connection (close %d)", ce.Code)}
+		return &refusal{fmt.Sprintf("refused the bot's connection (close %d)", ce.Code)}
 	case 4003, 4007, 4009:
 		c.session, c.resumeURL = "", ""
 		c.seq.Store(0)
@@ -254,7 +253,7 @@ func (c *Client) beat(ctx context.Context, conn *ws.Conn) {
 		s = n
 	}
 	if err := c.write(ctx, conn, opHeartbeat, s); err != nil && ctx.Err() == nil {
-		logx.Debugf("discord heartbeat failed: %v", err)
+		log.Debugf("heartbeat failed: %v", err)
 	}
 }
 
@@ -271,7 +270,7 @@ func (c *Client) heartbeat(ctx context.Context, conn *ws.Conn, every time.Durati
 		case <-t.C:
 		}
 		if !acked.Swap(false) {
-			logx.Warnf("discord: no heartbeat ack, so reconnecting")
+			log.Warnf("no heartbeat ack, so reconnecting")
 			conn.Close(4000, "")
 			return
 		}
@@ -313,7 +312,7 @@ func (c *Client) ready(d json.RawMessage) bool {
 	}
 	c.self.Store(r.User.ID)
 	c.once.Do(func() { close(c.known) })
-	logx.Noticef("connected to Discord as %s", r.User.Username)
+	log.Noticef("connected as %s", r.User.Username)
 	if !c.listed.Swap(true) {
 		go c.publishCommands()
 	}
@@ -339,7 +338,7 @@ func (c *Client) checkApp(ctx context.Context) error {
 	case status(err, http.StatusUnauthorized):
 		return errToken
 	case err != nil:
-		logx.Warnf("discord: reading the application failed: %v", err)
+		log.Warnf("reading the application failed: %v", err)
 		return nil // asked again on the next connection
 	}
 	c.checked.Store(true)
@@ -347,10 +346,10 @@ func (c *Client) checkApp(ctx context.Context) error {
 		c.app.Store(app.ID)
 	}
 	if app.Public {
-		logx.Warnf("discord: anyone can add this bot to their server: in the developer portal, under your application's Installation and Bot, turn off Public Bot")
+		log.Warnf("anyone can add this bot to their server: in the developer portal, under your application's Installation and Bot, turn off Public Bot")
 	}
 	if _, ok := app.Types["1"]; ok {
-		logx.Warnf("discord: anyone can install this bot on their own account and use its commands anywhere, without sharing a server: in the developer portal, under your application's Installation, untick User Install")
+		log.Warnf("anyone can install this bot on their own account and use its commands anywhere, without sharing a server: in the developer portal, under your application's Installation, untick User Install")
 	}
 	return nil
 }
@@ -379,7 +378,7 @@ func (c *Client) publishCommands() {
 		}
 	}
 	if err := c.call(ctx, http.MethodPut, "/applications/"+app+"/commands", list, nil); err != nil {
-		logx.Warnf("discord: listing the slash commands failed: %v", err)
+		log.Warnf("listing the slash commands failed: %v", err)
 	}
 }
 
@@ -427,7 +426,7 @@ func (c *Client) arrivedGuild(id, name string) {
 	}
 	if !c.joined[id] {
 		c.joined[id] = true
-		logx.Warnf("Discord: the bot was added to a server: %s", serverLabel(id, name))
+		log.Warnf("the bot was added to a server: %s", serverLabel(id, name))
 		return
 	}
 	if c.startup == nil || !slices.Contains(c.startup, id) {
@@ -450,15 +449,12 @@ func (c *Client) logServers() {
 	for _, id := range c.startup {
 		parts = append(parts, cmp.Or(c.arrived[id], "(unavailable) ("+id+")"))
 	}
-	logx.Noticef("Discord servers (%d): %s", len(parts), cmp.Or(strings.Join(parts, ", "), "none"))
+	log.Noticef("servers (%d): %s", len(parts), cmp.Or(strings.Join(parts, ", "), "none"))
 	c.startup, c.arrived = nil, nil
 }
 
-// serverLabel is a server as the log names it, "Name (id)": its name made
-// safe, a backslash shown as "/" (one ending the line would join the next
-// in a systemd env file it was pasted into), cut to 40 characters. Server
-// names are logged only in these lines.
+// serverLabel is a server as the log names it, "Name (id)", its name as
+// txt.LogName shows one. Server names are logged only in these lines.
 func serverLabel(id, name string) string {
-	name = strings.ReplaceAll(txt.SafeName(name), `\`, "/")
-	return cmp.Or(txt.Clamp(name, 40), "(no name)") + " (" + id + ")"
+	return txt.LogName(name) + " (" + id + ")"
 }

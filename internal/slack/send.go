@@ -16,7 +16,6 @@ import (
 
 	"github.com/robdevops/signalbot/internal/feature"
 	"github.com/robdevops/signalbot/internal/kit/img"
-	"github.com/robdevops/signalbot/internal/kit/logx"
 	"github.com/robdevops/signalbot/internal/kit/mdstyle"
 	"github.com/robdevops/signalbot/internal/kit/txt"
 )
@@ -58,7 +57,7 @@ func (c *Client) dest(ctx context.Context, chat feature.Chat) (channel, thread s
 		return "", "", err
 	}
 	if r.Channel.ID == "" {
-		return "", "", errors.New("slack: conversations.open: no channel")
+		return "", "", errors.New("conversations.open: no channel")
 	}
 	c.mu.Lock()
 	c.noteIM(user, r.Channel.ID)
@@ -76,7 +75,7 @@ func (c *Client) dest(ctx context.Context, chat feature.Chat) (channel, thread s
 // sent. A failure is logged.
 func (c *Client) Send(ch feature.Chat, text string, pics []feature.Picture, known map[string]string, replyTo int64, audio []byte, mk feature.Markup) (sent []int64) {
 	if n := utf8.RuneCountInString(text); n > maxReply {
-		logx.Warnf("reply truncated from %d chars", n)
+		log.Warnf("reply truncated from %d chars", n)
 	}
 	t := c.trim(mdstyle.Parse(text, true))
 	if len(t.Runes) > maxReply {
@@ -87,13 +86,13 @@ func (c *Client) Send(ch feature.Chat, text string, pics []feature.Picture, know
 	defer cancel()
 	channel, thread, err := c.dest(ctx, ch)
 	if err != nil {
-		logx.Errorf("send failed: %v", err)
+		log.Errorf("send failed: %v", err)
 		return nil
 	}
 	images := c.uploadPictures(ctx, pics)
 	sections := sections(t, known)
 	if len(sections) == 0 && len(images) == 0 && len(audio) == 0 {
-		logx.Warnf("empty reply, nothing sent")
+		log.Warnf("empty reply, nothing sent")
 		return nil
 	}
 	buttons := actions(mk.Buttons)
@@ -112,14 +111,14 @@ func (c *Client) Send(ch feature.Chat, text string, pics []feature.Picture, know
 	for _, blocks := range msgs {
 		ts, err := c.postBlocks(ctx, channel, thread, blocks)
 		if err != nil {
-			logx.Errorf("send failed: %v", err)
+			log.Errorf("send failed: %v", err)
 			return sent
 		}
 		sent = append(sent, tsInt(ts))
 	}
 	if len(audio) > 0 {
 		if err := c.shareAudio(ctx, channel, thread, audio); err != nil {
-			logx.Errorf("send failed: audio: %v", err)
+			log.Errorf("send failed: audio: %v", err)
 		}
 	}
 	return sent
@@ -154,7 +153,7 @@ func (c *Client) postBlocks(ctx context.Context, channel, thread string, blocks 
 		err = c.call(ctx, "chat.postMessage", params, &r)
 	}
 	if code(err) == "invalid_blocks" && hasImage(blocks) {
-		logx.Errorf("send failed: pictures: Slack refused them") // the text still goes
+		log.Errorf("send failed: pictures: Slack refused them") // the text still goes
 		blocks = withoutImages(blocks)
 		if len(blocks) == 0 {
 			return "", err
@@ -395,7 +394,7 @@ func (c *Client) uploadPictures(ctx context.Context, pics []feature.Picture) []a
 		mime, ext := img.Type(p.Data)
 		id, err := c.upload(ctx, name+"."+ext, name, mime, p.Data, "", "")
 		if err != nil {
-			logx.Errorf("send failed: picture: %v", err)
+			log.Errorf("send failed: picture: %v", err)
 			continue
 		}
 		out = append(out, map[string]any{"type": "image", "slack_file": map[string]string{"id": id}, "alt_text": txt.Clamp(name, 2000)})
@@ -441,7 +440,7 @@ func (c *Client) Edit(ch feature.Chat, sent int64, text string, pics []feature.P
 	defer cancel()
 	channel, _, err := c.dest(ctx, ch)
 	if err != nil {
-		logx.Errorf("edit failed: %v", err)
+		log.Errorf("edit failed: %v", err)
 		return nil
 	}
 	ts := tsString(sent)
@@ -452,7 +451,7 @@ func (c *Client) Edit(ch feature.Chat, sent int64, text string, pics []feature.P
 		kept, ok := c.blocks[channel+"/"+ts]
 		c.mu.Unlock()
 		if !ok {
-			logx.Errorf("edit failed: the message's content is not known")
+			log.Errorf("edit failed: the message's content is not known")
 			return nil
 		}
 		blocks = append(blocks, kept...)
@@ -471,7 +470,7 @@ func (c *Client) Edit(ch feature.Chat, sent int64, text string, pics []feature.P
 		err = c.call(ctx, "chat.update", params, nil)
 	}
 	if err != nil {
-		logx.Errorf("edit failed: %v", err)
+		log.Errorf("edit failed: %v", err)
 		return nil
 	}
 	c.keepBlocks(channel, ts, blocks)
@@ -497,7 +496,7 @@ func (c *Client) React(ch feature.Chat, msg feature.Message, emoji string) {
 		}
 	}
 	if err != nil && code(err) != "already_reacted" {
-		logx.Errorf("reaction failed: %v", err)
+		log.Errorf("reaction failed: %v", err)
 	}
 }
 
@@ -514,6 +513,6 @@ func (c *Client) ephemeral(channel, thread, user, text string) {
 		p["thread_ts"] = thread
 	}
 	if err := c.call(ctx, "chat.postEphemeral", p, nil); err != nil {
-		logx.Warnf("slack: answering a press failed: %v", err)
+		log.Warnf("answering a press failed: %v", err)
 	}
 }

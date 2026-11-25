@@ -13,7 +13,6 @@ import (
 	"time"
 
 	"github.com/robdevops/signalbot/internal/feature"
-	"github.com/robdevops/signalbot/internal/kit/logx"
 	"github.com/robdevops/signalbot/internal/kit/txt"
 )
 
@@ -278,7 +277,7 @@ func (c *Client) Groups(ctx context.Context, user string) ([]feature.Group, erro
 			return nil, ctx.Err()
 		}
 		if err != nil {
-			logx.Warnf("discord: reading a server member's roles failed, so only the channels they were seen in are listed: %v", err)
+			log.Warnf("reading a server member's roles failed, so only the channels they were seen in are listed: %v", err)
 		}
 		in[g] = standing{memberInfo: m, failed: err != nil}
 	}

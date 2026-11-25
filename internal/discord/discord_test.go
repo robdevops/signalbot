@@ -45,7 +45,23 @@ func captureLogs(t *testing.T) *logx.Buffer {
 	t.Helper()
 	var buf logx.Buffer
 	t.Cleanup(logx.SetOutput(&buf, &buf, false))
+	t.Cleanup(func() { checkPrefixed(t, buf.String()) }) // runs first
 	return &buf
+}
+
+// checkPrefixed fails t unless every line logged starts "Discord: ", after
+// its priority, and names the network only there.
+func checkPrefixed(t *testing.T, logs string) {
+	t.Helper()
+	for _, line := range strings.Split(strings.TrimSuffix(logs, "\n"), "\n") {
+		if line == "" {
+			continue
+		}
+		rest, ok := strings.CutPrefix(strings.TrimLeft(line, "<01234567>"), "Discord: ")
+		if !ok || strings.HasPrefix(strings.ToLower(rest), "discord") {
+			t.Errorf("log line not prefixed once with %q: %q", "Discord: ", line)
+		}
+	}
 }
 
 // fake is Discord: its REST API, answering each route with a result set
@@ -350,7 +366,7 @@ func TestConnectAndResume(t *testing.T) {
 		t.Fatalf("resume %v on %s", res, g2.path)
 	}
 	waitFor(t, "the warning", func() bool { return strings.Contains(logs.String(), "turn off Public Bot") })
-	if !strings.Contains(logs.String(), "connected to Discord as botty") || strings.Contains(logs.String(), "SECRET") {
+	if !strings.Contains(logs.String(), "Discord: connected as botty") || strings.Contains(logs.String(), "SECRET") {
 		t.Fatalf("logs:\n%s", logs)
 	}
 }
@@ -436,15 +452,16 @@ func TestRefused(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
 	go func() { defer close(done); c.Run(ctx, func(bot.Received) {}) }()
-	waitFor(t, "the line", func() bool { return strings.Contains(logs.String(), "Discord refused DISCORD_BOT_TOKEN") })
+	waitFor(t, "the line", func() bool { return strings.Contains(logs.String(), "Discord: refused DISCORD_BOT_TOKEN") })
 	cancel()
 	<-done
 }
 
 // A missed heartbeat ack, Discord's reconnect, and an invalid session each
-// reconnect: the first two resume, the last identifies afresh.
+// reconnect: the first two resume, the last identifies afresh, each
+// logged with Discord's name once, at the start.
 func TestReconnects(t *testing.T) {
-	captureLogs(t)
+	logs := captureLogs(t)
 	f := newFake(t)
 	c := f.client()
 	ctx, cancel := context.WithCancel(context.Background())
@@ -474,6 +491,14 @@ func TestReconnects(t *testing.T) {
 	g = f.conn()
 	if m := g.next(t); m["op"] != float64(opIdentify) || g.path != "/gw" {
 		t.Fatalf("after op 9: %v on %s", m, g.path)
+	}
+	for _, want := range []string{"Discord: gateway: asked to reconnect; reconnecting in ", "Discord: no heartbeat ack, so reconnecting", "Discord: gateway: the session ended; reconnecting in "} {
+		if !strings.Contains(logs.String(), want) {
+			t.Errorf("no %q in %q", want, logs.String())
+		}
+	}
+	if strings.Count(logs.String(), "Discord") != strings.Count(logs.String(), "\n") {
+		t.Errorf("Discord named other than once a line: %q", logs.String())
 	}
 }
 
@@ -751,12 +776,12 @@ func TestServersLogged(t *testing.T) {
 		t.Fatal("READY not read")
 	}
 	c.events("GUILD_CREATE", guildJSON(guild, "Test server"))
-	if count("Discord servers") != 0 {
+	if count("Discord: servers") != 0 {
 		t.Fatalf("logged before every guild came: %s", logs)
 	}
 	c.events("GUILD_CREATE", guildJSON(g2, "Back\\slash\n"+strings.Repeat("x", 50)))
-	want := "Discord servers (2): Test server (" + guild + "), Back/slash " + strings.Repeat("x", 29) + "… (" + g2 + ")"
-	if !strings.Contains(logs.String(), "<5>"+want) || count("Discord servers") != 1 || count("added") != 0 {
+	want := "Discord: servers (2): Test server (" + guild + "), Back/slash " + strings.Repeat("x", 29) + "… (" + g2 + ")"
+	if !strings.Contains(logs.String(), "<5>"+want) || count("Discord: servers") != 1 || count("added") != 0 {
 		t.Fatalf("want %q in %s", want, logs)
 	}
 	c.events("GUILD_CREATE", guildJSON(g3, "New server"))
@@ -779,7 +804,7 @@ func TestServersLogged(t *testing.T) {
 	for _, id := range []string{guild, g2, g4} {
 		c.events("GUILD_CREATE", guildJSON(id, "Server "+id))
 	}
-	if count("Discord servers") != 1 || count("added to a server: Server "+g4) != 1 || count("added to a server") != 3 {
+	if count("Discord: servers") != 1 || count("added to a server: Server "+g4) != 1 || count("added to a server") != 3 {
 		t.Fatalf("after a new session: %s", logs)
 	}
 	c.events("GUILD_CREATE", guildJSON(g3, "New server"))
@@ -798,10 +823,10 @@ func TestServersLoggedLate(t *testing.T) {
 	const g2 = "1400000000000000001"
 	c.ready(json.RawMessage(`{"session_id":"s","user":{"id":"` + botID + `","username":"botty"},"guilds":[{"id":"` + guild + `"},{"id":"` + g2 + `"}]}`))
 	c.events("GUILD_CREATE", json.RawMessage(`{"id":"`+guild+`","name":"","channels":[]}`))
-	want := "Discord servers (2): (no name) (" + guild + "), (unavailable) (" + g2 + ")"
+	want := "Discord: servers (2): (no name) (" + guild + "), (unavailable) (" + g2 + ")"
 	waitFor(t, "the servers line", func() bool { return strings.Contains(logs.String(), want) })
 	c.events("GUILD_CREATE", json.RawMessage(`{"id":"`+g2+`","name":"Late","channels":[]}`))
-	if strings.Count(logs.String(), "Discord servers") != 1 || strings.Contains(logs.String(), "added") {
+	if strings.Count(logs.String(), "Discord: servers") != 1 || strings.Contains(logs.String(), "added") {
 		t.Fatalf("a late guild: %s", logs)
 	}
 
@@ -809,8 +834,27 @@ func TestServersLoggedLate(t *testing.T) {
 	c = connected(newFake(t).client())
 	c.listed.Store(true)
 	c.ready(json.RawMessage(`{"session_id":"s","user":{"id":"` + botID + `","username":"botty"},"guilds":[]}`))
-	if !strings.Contains(logs.String(), "Discord servers (0): none") {
+	if !strings.Contains(logs.String(), "Discord: servers (0): none") {
 		t.Fatalf("no servers: %s", logs)
+	}
+}
+
+// A server's name, in the startup list and the added-server warning, is
+// logged without its control and format characters: no escape for a
+// terminal to run, no right-to-left override to reorder the line.
+func TestServerNamesCleaned(t *testing.T) {
+	logs := captureLogs(t)
+	c := connected(newFake(t).client())
+	c.listed.Store(true)
+	c.settle = time.Hour
+	const g2 = "1400000000000000001"
+	evil, _ := json.Marshal("\x1b[31mAlice\u202eevil")
+	c.ready(json.RawMessage(`{"session_id":"s","user":{"id":"` + botID + `","username":"botty"},"guilds":[{"id":"` + guild + `"}]}`))
+	c.events("GUILD_CREATE", json.RawMessage(`{"id":"`+guild+`","name":`+string(evil)+`,"channels":[]}`))
+	c.events("GUILD_CREATE", json.RawMessage(`{"id":"`+g2+`","name":`+string(evil)+`,"channels":[]}`))
+	l := logs.String()
+	if !strings.Contains(l, "Discord: servers (1): [31mAliceevil ("+guild+")") || !strings.Contains(l, "Discord: the bot was added to a server: [31mAliceevil ("+g2+")") || strings.ContainsAny(l, "\x1b\u202e") {
+		t.Fatalf("log %q", l)
 	}
 }
 

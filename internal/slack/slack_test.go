@@ -39,7 +39,23 @@ func captureLogs(t *testing.T) *logx.Buffer {
 	t.Helper()
 	var buf logx.Buffer
 	t.Cleanup(logx.SetOutput(&buf, &buf, false))
+	t.Cleanup(func() { checkPrefixed(t, buf.String()) }) // runs first
 	return &buf
+}
+
+// checkPrefixed fails t unless every line logged starts "Slack: ", after
+// its priority, and names the network only there.
+func checkPrefixed(t *testing.T, logs string) {
+	t.Helper()
+	for _, line := range strings.Split(strings.TrimSuffix(logs, "\n"), "\n") {
+		if line == "" {
+			continue
+		}
+		rest, ok := strings.CutPrefix(strings.TrimLeft(line, "<01234567>"), "Slack: ")
+		if !ok || strings.HasPrefix(strings.ToLower(rest), "slack") {
+			t.Errorf("log line not prefixed once with %q: %q", "Slack: ", line)
+		}
+	}
 }
 
 // fakeSlack is the Web API and a Socket Mode server: each method answers
@@ -596,7 +612,7 @@ func TestSocket(t *testing.T) {
 	defer func() { cancel(); <-done }()
 	conn := <-f.conns
 	conn.Write(`{"type":"hello"}`)
-	waitFor(t, "connected", func() bool { return strings.Contains(logs.String(), "connected to Slack as @botty") })
+	waitFor(t, "connected", func() bool { return strings.Contains(logs.String(), "Slack: connected as @botty") })
 	if c.WaitID(ctx) != "slack:"+botID || c.BotName() != "Botty" {
 		t.Fatalf("who: %s %s", c.WaitID(ctx), c.BotName())
 	}
@@ -756,10 +772,10 @@ func TestDialErrorHidesTicket(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
 	go func() { defer close(done); c.Run(ctx, func(bot.Received) {}) }()
-	waitFor(t, "a failed dial", func() bool { return strings.Contains(logs.String(), "slack connection lost") })
+	waitFor(t, "a failed dial", func() bool { return strings.Contains(logs.String(), "Slack: connection lost") })
 	cancel()
 	<-done
-	if l := logs.String(); strings.Contains(l, "SECRET") || strings.Contains(l, "socket?") || !strings.Contains(l, "slack: socket: Get:") {
+	if l := logs.String(); strings.Contains(l, "SECRET") || strings.Contains(l, "socket?") || !strings.Contains(l, "connection lost: socket: Get:") {
 		t.Fatalf("log:\n%s", l)
 	}
 }
@@ -775,7 +791,7 @@ func TestRefusedToken(t *testing.T) {
 	defer cancel()
 	c.Run(ctx, func(bot.Received) {})
 	l := logs.String()
-	if !strings.Contains(l, "Slack refused SLACK_BOT_TOKEN (invalid_auth)") || strings.Contains(l, "SECRET") {
+	if !strings.Contains(l, "Slack: refused SLACK_BOT_TOKEN (invalid_auth)") || strings.Contains(l, "SECRET") {
 		t.Fatalf("log:\n%s", l)
 	}
 	if n := strings.Count(l, "refused"); n > 6 {
@@ -1055,8 +1071,10 @@ func TestGroupsMissingScope(t *testing.T) {
 
 // At startup the bot lists, in one warning, the channels it is in that
 // are shared with another organisation, or invited to be, every page
-// read, sorted by name: each made safe, cut to 40 characters, a backslash
-// shown as "/". One shared only within its Enterprise Grid org isn't one.
+// read, sorted by name: each as txt.LogName shows it, made safe, without
+// control or format characters (an escape, a right-to-left override), cut
+// to 40 characters, a backslash shown as "/". One shared only within its
+// Enterprise Grid org isn't one.
 func TestAuditChannels(t *testing.T) {
 	logs := captureLogs(t)
 	f := newFake(t)
@@ -1064,12 +1082,13 @@ func TestAuditChannels(t *testing.T) {
 	f.convs = map[string]string{
 		" ": `"channels":[{"id":"C0CHANNEL1","name":"team"},{"id":"C0CHANNEL2","name":"partners\\","is_ext_shared":true},` +
 			`{"id":"C0CHANNEL3","name":"grid","is_org_shared":true,"is_shared":true}],"response_metadata":{"next_cursor":"p2"}`,
-		" p2": `"channels":[{"id":"C0CHANNEL4","name":"` + long + `","is_pending_ext_shared":true},{"id":"C0CHANNEL5","name":"a\nb","is_ext_shared":true}]`,
+		" p2": `"channels":[{"id":"C0CHANNEL4","name":"` + long + `","is_pending_ext_shared":true},{"id":"C0CHANNEL5","name":"a\nb","is_ext_shared":true},` +
+			`{"id":"C0CHANNEL6","name":"\u001b[31mevil\u202eab","is_ext_shared":true}]`,
 	}
 	c := connected(f.client(t))
 	c.auditChannels(context.Background())
-	want := "Slack: the bot is in 3 channel(s) shared with other organisations, whose people can talk to it: " +
-		"#a b (C0CHANNEL5), #partners/ (C0CHANNEL2), #" + strings.Repeat("x", 40) + "… (C0CHANNEL4)\n"
+	want := "Slack: the bot is in 4 channel(s) shared with other organisations, whose people can talk to it: " +
+		"#[31mevilab (C0CHANNEL6), #a b (C0CHANNEL5), #partners/ (C0CHANNEL2), #" + strings.Repeat("x", 40) + "… (C0CHANNEL4)\n"
 	if l := logs.String(); l != want {
 		t.Fatalf("log %q", l)
 	}
@@ -1100,13 +1119,13 @@ func TestAuditChannelsFails(t *testing.T) {
 	f.fail("users.conversations", "missing_scope")
 	c.Groups(context.Background(), "slack:"+alice)
 	l := logs.String()
-	if strings.Count(l, "Slack refused to list channels (missing_scope)") != 1 || !strings.Contains(l, "aren't listed at startup") || strings.Count(l, "\n") != 1 {
+	if strings.Count(l, "Slack: refused to list channels (missing_scope)") != 1 || !strings.Contains(l, "aren't listed at startup") || strings.Count(l, "\n") != 1 {
 		t.Fatalf("log %q", l)
 	}
 	logs = captureLogs(t)
 	f.fail("users.conversations", "internal_error")
 	c.auditChannels(context.Background())
-	if l := logs.String(); !strings.HasPrefix(l, "slack users.conversations failed, so the channels shared with other organisations aren't listed: ") {
+	if l := logs.String(); !strings.HasPrefix(l, "Slack: users.conversations failed, so the channels shared with other organisations aren't listed: ") {
 		t.Fatalf("log %q", l)
 	}
 }

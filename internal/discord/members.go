@@ -5,8 +5,6 @@ import (
 	"errors"
 	"net/http"
 	"time"
-
-	"github.com/robdevops/signalbot/internal/kit/logx"
 )
 
 // guildMembers is the gateway intent for a guild's members, privileged:
@@ -51,7 +49,7 @@ func (l *memberList) done() bool {
 
 // membersWarning is logged, once, when Discord refuses the Server Members
 // intent.
-const membersWarning = "discord: Server Members Intent is off, so @mentions in scheduled and delivered posts link only people seen since startup; turn it on in the developer portal, under your application's Bot"
+const membersWarning = "Server Members Intent is off, so @mentions in scheduled and delivered posts link only people seen since startup; turn it on in the developer portal, under your application's Bot"
 
 // guildList is guild's members, but bots, read at most once each listTTL
 // and one read at a time: a caller meanwhile waits for it, until ctx ends.
@@ -90,7 +88,7 @@ func (c *Client) guildList(ctx context.Context, guild string) ([]listed, bool) {
 	var ae *apiError
 	refused := errors.As(err, &ae) && (ae.Status == http.StatusForbidden || ae.Code == 50001)
 	if err != nil && ctx.Err() == nil && !refused && c.listWarned.CompareAndSwap(false, true) {
-		logx.Warnf("discord: listing a server's members failed, so @mentions link only the people seen since startup: %v", err)
+		log.Warnf("listing a server's members failed, so @mentions link only the people seen since startup: %v", err)
 	}
 	return members, err == nil
 }

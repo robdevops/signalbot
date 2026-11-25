@@ -9,7 +9,6 @@ import (
 
 	"github.com/robdevops/signalbot/internal/bot"
 	"github.com/robdevops/signalbot/internal/feature"
-	"github.com/robdevops/signalbot/internal/kit/logx"
 	"github.com/robdevops/signalbot/internal/kit/txt"
 )
 
@@ -75,7 +74,7 @@ func (c *Client) interaction(d json.RawMessage) bot.Received {
 	switch {
 	case dmOK || !known:
 	case e.Type == 2 && e.Data.Name != "": // a slash command refused: its "thinking…" taken away, nothing said
-		refuseDM(who.ID)
+		c.refuseDM(who.ID)
 		go func() {
 			c.respond(ix, e.ID, 5)
 			c.unthink(ix)
@@ -114,7 +113,7 @@ func (c *Client) interaction(d json.RawMessage) bot.Received {
 		msg := feature.Message{Chat: ch, Sender: by.ID, Name: by.Name, Text: text, Timestamp: ix.id, Addressed: true}
 		return bot.Incoming{Chat: ch, Load: func(ctx context.Context, learn func(name, id string)) (feature.Message, bool) {
 			if !known && !c.mayDM(ctx, who.ID) { // a lookup, so in the slot
-				refuseDM(who.ID)
+				c.refuseDM(who.ID)
 				if taken, _ := c.takeID(ch, ix.id); taken != nil {
 					go c.unthink(taken)
 				}
@@ -137,7 +136,7 @@ func (c *Client) respond(ix *interaction, interactionID string, kind int) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	if err := c.call(ctx, http.MethodPost, "/interactions/"+interactionID+"/"+ix.token+"/callback", map[string]int{"type": kind}, nil); err != nil {
-		logx.Warnf("discord: acknowledging an interaction failed: %v", err)
+		log.Warnf("acknowledging an interaction failed: %v", err)
 	}
 }
 
@@ -148,7 +147,7 @@ func (c *Client) followUp(ix *interaction, text string) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	if err := c.call(ctx, http.MethodPost, "/webhooks/"+ix.app+"/"+ix.token, map[string]any{"content": txt.Clamp(text, maxChars-1), "flags": 64}, nil); err != nil {
-		logx.Warnf("discord: answering a press failed: %v", err)
+		log.Warnf("answering a press failed: %v", err)
 	}
 }
 
@@ -225,7 +224,7 @@ func (c *Client) unthink(ix *interaction) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	if err := c.call(ctx, http.MethodDelete, "/webhooks/"+ix.app+"/"+ix.token+"/messages/@original", nil, nil); err != nil {
-		logx.Debugf("discord: taking away a slash command's answer failed: %v", err)
+		log.Debugf("taking away a slash command's answer failed: %v", err)
 	}
 }
 

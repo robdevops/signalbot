@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"github.com/robdevops/signalbot/internal/feature"
-	"github.com/robdevops/signalbot/internal/kit/logx"
 )
 
 // verdictAge is how long whether someone is a workspace admin is believed,
@@ -77,7 +76,7 @@ func (c *Client) isAdmin(ctx context.Context, user string) (bool, error) {
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
 	if c.WaitID(ctx) == "" { // auth.test says whose workspace it is
-		return false, errors.New("slack: not connected after 10s")
+		return false, errors.New("not connected after 10s")
 	}
 	u, err := c.userInfo(ctx, user)
 	if err != nil {
@@ -117,25 +116,23 @@ func (c *Client) dmAllowed(ctx context.Context, user string, fresh bool) bool {
 	defer cancel()
 	u, err := c.userInfo(ctx, user)
 	if err != nil {
-		logx.Warnf("slack users.info failed, so a DM's user is taken for no admin: %v", err)
+		log.Warnf("users.info failed, so a DM's user is taken for no admin: %v", err)
 		return false
 	}
 	c.learnName(user, u.name)
 	return u.admin
 }
 
-// refused logs a DM from user that SLACK_DM_USERS doesn't allow, by
-// their ID alone.
-func refused(user string) {
-	logx.Infof("%s%s ignored because not allowed by SLACK_DM_USERS (add this ID to allow DMs)", prefix, user)
-}
+// refuse logs a DM from user that SLACK_DM_USERS doesn't allow, by their
+// ID alone, once per sender.
+func (c *Client) refuse(user string) { c.refused.Log(prefix + user) }
 
 // dmReader reports whether the reader should hand on a DM message or slash
 // command from user: not if dmQuick knows they may not, which is logged;
 // if it can't tell, the message's Load asks users.info in its slot.
 func (c *Client) dmReader(user string) bool {
 	if ok, known := c.dmQuick(user); known && !ok {
-		refused(user)
+		c.refuse(user)
 		return false
 	}
 	return true
@@ -152,6 +149,6 @@ func (c *Client) dmGate(chat feature.Chat, user string) bool {
 	if ok, _ := c.dmQuick(user); ok {
 		return true
 	}
-	refused(user)
+	c.refuse(user)
 	return false
 }

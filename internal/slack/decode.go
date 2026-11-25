@@ -19,7 +19,6 @@ import (
 	"github.com/robdevops/signalbot/internal/bot"
 	"github.com/robdevops/signalbot/internal/feature"
 	"github.com/robdevops/signalbot/internal/kit/img"
-	"github.com/robdevops/signalbot/internal/kit/logx"
 	"github.com/robdevops/signalbot/internal/kit/mdstyle"
 	"github.com/robdevops/signalbot/internal/kit/txt"
 )
@@ -233,7 +232,7 @@ func (c *Client) received(e, m *event, edited int64) (bot.Received, bool) {
 		msg.Addressed = true
 		return bot.Incoming{Chat: ch, Load: func(ctx context.Context, learn func(name, id string)) (feature.Message, bool) {
 			if dm && !c.dmAllowed(ctx, m.User, false) {
-				refused(m.User)
+				c.refuse(m.User)
 				return feature.Message{}, false
 			}
 			c.names(ctx, append([]string{m.User}, mentions(m.Text)...))
@@ -485,7 +484,7 @@ func (c *Client) command(s *slash) []bot.Received {
 	user := s.UserID
 	return []bot.Received{bot.Incoming{Chat: ch, Load: func(ctx context.Context, learn func(name, id string)) (feature.Message, bool) {
 		if dm && !c.dmAllowed(ctx, user, false) {
-			refused(user)
+			c.refuse(user)
 			return feature.Message{}, false
 		}
 		c.names(ctx, []string{user})
@@ -538,7 +537,7 @@ func (c *Client) names(ctx context.Context, users []string) {
 			continue
 		}
 		if in, err := c.userInfo(ctx, u); err != nil {
-			logx.Debugf("slack users.info failed: %v", err)
+			log.Debugf("users.info failed: %v", err)
 		} else {
 			c.learnName(u, in.name)
 		}
@@ -642,14 +641,14 @@ func (c *Client) Delivered(ctx context.Context, msg feature.Message) (bot.Ready,
 	wait, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
 	if c.WaitID(wait) == "" {
-		logx.Warnf("delivered message dropped: not connected to Slack after 10s")
+		log.Warnf("delivered message dropped: not connected after 10s")
 		return bot.Ready{}, false
 	}
 	sender := strings.TrimPrefix(msg.Sender, prefix)
 	msg.Name = cmp.Or(msg.Name, c.nameOf(sender))
 	var r bot.Ready
 	if msg.Chat.GroupID == "" && !c.dmAllowed(wait, strings.TrimPrefix(msg.Chat.User, prefix), true) {
-		logx.Infof("delivered message dropped: its sender may no longer DM the bot (SLACK_DM_USERS)")
+		log.Infof("delivered message dropped: its sender may no longer DM the bot (SLACK_DM_USERS)")
 		return bot.Ready{}, false
 	}
 	if msg.Chat.GroupID != "" {
@@ -681,21 +680,21 @@ func (c *Client) Delivered(ctx context.Context, msg feature.Message) (bot.Ready,
 // admins posting in #general, so those aren't checked.
 func (c *Client) stillIn(ctx context.Context, user, channel string) bool {
 	if !userID.MatchString(user) || !channelID.MatchString(channel) {
-		logx.Infof("delivered message dropped: the channel or its sender is unknown")
+		log.Infof("delivered message dropped: the channel or its sender is unknown")
 		return false
 	}
 	theirs, err := c.conversations(ctx, user)
 	switch {
 	case code(err) == "missing_scope":
 		c.channelsScope()
-		logx.Warnf("delivered message dropped: Slack won't say whether its sender is still in the channel")
+		log.Warnf("delivered message dropped: Slack won't say whether its sender is still in the channel")
 		return false
 	case err != nil:
-		logx.Warnf("delivered message dropped: checking its sender is still in the channel failed: %v", err)
+		log.Warnf("delivered message dropped: checking its sender is still in the channel failed: %v", err)
 		return false
 	}
 	if _, ok := theirs[channel]; !ok {
-		logx.Infof("delivered message dropped: its sender can no longer post in the channel")
+		log.Infof("delivered message dropped: its sender can no longer post in the channel")
 		return false
 	}
 	return true
@@ -710,7 +709,7 @@ func (c *Client) Reachable(ctx context.Context, chat feature.Chat) bool {
 	wait, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
 	if c.WaitID(wait) == "" {
-		logx.Warnf("not connected to Slack after 10s")
+		log.Warnf("not connected after 10s")
 		return false
 	}
 	if chat.GroupID == "" {
@@ -736,7 +735,7 @@ func (c *Client) Groups(ctx context.Context, user string) ([]feature.Group, erro
 	defer cancel()
 	admin, err := c.isAdmin(ctx, user)
 	if err != nil {
-		logx.Warnf("slack users.info failed, so a user is taken for no admin of their channels: %v", err)
+		log.Warnf("users.info failed, so a user is taken for no admin of their channels: %v", err)
 	}
 	mine, err := c.conversations(ctx, "")
 	var theirs map[string]conv
@@ -747,7 +746,7 @@ func (c *Client) Groups(ctx context.Context, user string) ([]feature.Group, erro
 		if code(err) == "missing_scope" {
 			c.channelsScope()
 		} else {
-			logx.Warnf("slack users.conversations failed: %v; listing the channels seen instead", err)
+			log.Warnf("users.conversations failed: %v; listing the channels seen instead", err)
 		}
 		return c.seenGroups(user, admin), nil
 	}
@@ -769,7 +768,7 @@ func (c *Client) Groups(ctx context.Context, user string) ([]feature.Group, erro
 // the app's scopes, and how to give it them.
 func (c *Client) channelsScope() {
 	c.scopeWarn.Do(func() {
-		logx.Warnf("Slack refused to list channels (missing_scope): the app needs the scopes channels:read and groups:read, so paste the app manifest again at api.slack.com/apps → your app → App Manifest and reinstall the app; until then channels are named by their IDs, scheduled posts in channels are dropped, and the channels shared with other organisations aren't listed at startup")
+		log.Warnf("refused to list channels (missing_scope): the app needs the scopes channels:read and groups:read, so paste the app manifest again at api.slack.com/apps → your app → App Manifest and reinstall the app; until then channels are named by their IDs, scheduled posts in channels are dropped, and the channels shared with other organisations aren't listed at startup")
 	})
 }
 
@@ -975,9 +974,7 @@ func (c *Client) threadOf(channel, ts string) string {
 // shared with another organisation (Slack Connect), whose people can talk
 // to it, each by name and ID, so whoever runs the bot sees one it was
 // added to unawares; if none is, how many channels it is in. A name is
-// the one a log line may hold, made safe, cut to 40 characters, a
-// backslash shown as "/" (one that ends a line pasted into an env file
-// would join the next line to it).
+// shown as txt.LogName shows one.
 func (c *Client) auditChannels(ctx context.Context) {
 	wait, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
@@ -989,25 +986,24 @@ func (c *Client) auditChannels(ctx context.Context) {
 		c.channelsScope()
 		return
 	case err != nil:
-		logx.Warnf("slack users.conversations failed, so the channels shared with other organisations aren't listed: %v", err)
+		log.Warnf("users.conversations failed, so the channels shared with other organisations aren't listed: %v", err)
 		return
 	}
 	type named struct{ id, name string }
 	var shared []named
 	for id, ch := range mine {
 		if ch.shared {
-			name := strings.ReplaceAll(txt.SafeName(ch.name), `\`, "/")
-			shared = append(shared, named{id, txt.Clamp(name, 40)})
+			shared = append(shared, named{id, txt.LogName(ch.name)})
 		}
 	}
 	if len(shared) == 0 {
-		logx.Noticef("Slack: the bot is in %d channel(s), none shared with other organisations", len(mine))
+		log.Noticef("the bot is in %d channel(s), none shared with other organisations", len(mine))
 		return
 	}
 	slices.SortFunc(shared, func(a, b named) int { return cmp.Or(strings.Compare(a.name, b.name), strings.Compare(a.id, b.id)) })
 	list := make([]string, len(shared))
 	for i, ch := range shared {
-		list[i] = "#" + cmp.Or(ch.name, "(no name)") + " (" + ch.id + ")"
+		list[i] = "#" + ch.name + " (" + ch.id + ")"
 	}
-	logx.Warnf("Slack: the bot is in %d channel(s) shared with other organisations, whose people can talk to it: %s", len(shared), strings.Join(list, ", "))
+	log.Warnf("the bot is in %d channel(s) shared with other organisations, whose people can talk to it: %s", len(shared), strings.Join(list, ", "))
 }
