@@ -54,7 +54,7 @@ type fake struct {
 	srv     *httptest.Server
 	mu      sync.Mutex
 	calls   []call
-	results map[string]string // "METHOD /path" to its answer
+	results map[string]string // "METHOD /path", or "METHOD /path?query" first, to its answer
 	errs    map[string][]int  // "METHOD /path" to statuses to answer first, once each
 	public  bool              // the application's bot_public
 	nextID  int64
@@ -65,6 +65,7 @@ type fake struct {
 
 type call struct {
 	Route string         // "METHOD /path"
+	Query string         // the URL's query, if any
 	Body  map[string]any // JSON, or a multipart form's payload_json
 	Raw   []byte         // the JSON as sent
 	Files []string       // the files uploaded, by name
@@ -102,7 +103,7 @@ func (f *fake) serve(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte(`{"message":"401: Unauthorized","code":0}`))
 		return
 	}
-	c := call{Route: route, Body: map[string]any{}}
+	c := call{Route: route, Query: r.URL.RawQuery, Body: map[string]any{}}
 	if mt, ps, _ := mime.ParseMediaType(r.Header.Get("Content-Type")); mt == "multipart/form-data" {
 		mr := multipart.NewReader(r.Body, ps["boundary"])
 		for p, err := mr.NextPart(); err == nil; p, err = mr.NextPart() {
@@ -124,7 +125,10 @@ func (f *fake) serve(w http.ResponseWriter, r *http.Request) {
 	if s := f.errs[route]; len(s) > 0 {
 		status, f.errs[route] = s[0], s[1:]
 	}
-	res, ok := f.results[route]
+	res, ok := f.results[route+"?"+r.URL.RawQuery]
+	if !ok {
+		res, ok = f.results[route]
+	}
 	f.nextID++
 	n := f.nextID
 	public := f.public
@@ -324,7 +328,7 @@ func TestConnectAndResume(t *testing.T) {
 	g := f.conn()
 	id := g.next(t)
 	d, _ := id["d"].(map[string]any)
-	if id["op"] != float64(opIdentify) || d["token"] != token || d["intents"] != float64(1<<0|1<<9|1<<10|1<<12|1<<13|1<<15) || g.path != "/gw" {
+	if id["op"] != float64(opIdentify) || d["token"] != token || d["intents"] != float64(1<<0|1<<1|1<<9|1<<10|1<<12|1<<13|1<<15) || g.path != "/gw" {
 		t.Fatalf("identify %v on %s", id, g.path)
 	}
 	g.ready(strings.TrimPrefix(f.srv.URL, "http://"))
@@ -401,6 +405,7 @@ func TestRefused(t *testing.T) {
 		logs := captureLogs(t)
 		f := newFake(t)
 		c := f.client()
+		c.membersOff.Store(true) // a 4014 with the Server Members intent is TestMembersIntentRefused's
 		ctx, cancel := context.WithCancel(context.Background())
 		done := make(chan struct{})
 		go func() { defer close(done); c.Run(ctx, func(bot.Received) {}) }()
@@ -1258,13 +1263,179 @@ func TestGroupsFallBack(t *testing.T) {
 	}
 }
 
-func members(t *testing.T, c *Client) []bot.Member {
+// members is Delivered's members in channel ch, as "Name ID" each.
+func members(t *testing.T, c *Client, ch string) []string {
 	t.Helper()
-	r, ok := c.Delivered(context.Background(), feature.Message{Chat: feature.Chat{GroupID: group}, Text: "hello"})
+	r, ok := c.Delivered(context.Background(), feature.Message{Chat: feature.Chat{GroupID: prefix + ch}, Text: "hello"})
 	if !ok {
 		t.Fatal("not delivered")
 	}
-	return r.Members
+	return memberNames(r.Members)
+}
+
+func memberNames(ms []bot.Member) []string {
+	var out []string
+	for _, m := range ms {
+		out = append(out, m.Name+" "+strings.TrimPrefix(m.ID, prefix))
+	}
+	return out
+}
+
+// listRoute is TestGroups' server's member list.
+const listRoute = "GET /guilds/" + guild + "/members"
+
+// listQuery is a page of the member list after the ID after, as the fake
+// answers it.
+func listQuery(after string) string { return listRoute + "?limit=1000&after=" + after }
+
+// Refused the Server Members intent (4014), the client identifies again at
+// once without it, warns once, and never asks for it again; refused again,
+// it is the Message Content intent, and waits.
+func TestMembersIntentRefused(t *testing.T) {
+	logs := captureLogs(t)
+	f := newFake(t)
+	c := f.client()
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() { defer close(done); c.Run(ctx, func(bot.Received) {}) }()
+	defer func() { cancel(); <-done }()
+	g := f.conn()
+	if d, _ := g.next(t)["d"].(map[string]any); d["intents"].(float64) != intents {
+		t.Fatalf("first identify %v", d)
+	}
+	g.CloseWith(4014, "Disallowed intent(s).")
+	g = f.conn() // at once: the fatal wait is an hour
+	id := g.next(t)
+	if d, _ := id["d"].(map[string]any); id["op"] != float64(opIdentify) || int(d["intents"].(float64))&guildMembers != 0 || int(d["intents"].(float64))&(1<<15) == 0 {
+		t.Fatalf("second identify %v", id)
+	}
+	g.CloseWith(4014, "Disallowed intent(s).")
+	waitFor(t, "the line", func() bool { return strings.Contains(logs.String(), "Message Content Intent") })
+	select {
+	case <-f.conns:
+		t.Fatal("reconnected at once after the second 4014")
+	case <-time.After(100 * time.Millisecond):
+	}
+	if n := strings.Count(logs.String(), "Server Members Intent is off"); n != 1 {
+		t.Fatalf("warned %d times:\n%s", n, logs)
+	}
+	if !c.membersOff.Load() {
+		t.Fatal("the intent not remembered as off")
+	}
+}
+
+// With the Server Members intent, Delivered's members are the server's
+// members who can see the channel (a thread's, its parent's), but bots, a
+// name seen winning over the list's; the list is read once in 10 minutes,
+// by one caller while the others wait.
+func TestDeliveredMembers(t *testing.T) {
+	f := newFake(t)
+	f.results[listQuery("0")] = `[{"user":{"id":"` + alice + `","username":"alice","global_name":"Alice"},"roles":[]},
+		{"user":{"id":"` + bob + `","username":"bob"},"nick":"Bobby","roles":["` + roleID + `"]},
+		{"user":{"id":"` + botID + `","username":"botty","bot":true},"roles":["` + roleID + `"]}]`
+	c := groupsClient(f)
+	hold := make(chan struct{})
+	f.mu.Lock()
+	f.hold[listRoute] = hold
+	f.mu.Unlock()
+	var wg sync.WaitGroup
+	got := make([][]string, 3)
+	for i := range got {
+		wg.Go(func() {
+			r, _ := c.Delivered(context.Background(), feature.Message{Chat: feature.Chat{GroupID: group}, Text: "hello"})
+			got[i] = memberNames(r.Members)
+		})
+	}
+	f.waitCalls(listRoute, 1)
+	time.Sleep(20 * time.Millisecond) // the others are waiting
+	close(hold)
+	wg.Wait()
+	for _, g := range got {
+		if !slices.Equal(g, []string{"Alice " + alice, "Bobby " + bob}) {
+			t.Fatalf("#general's %q", g)
+		}
+	}
+	if got := members(t, c, secret); !slices.Equal(got, []string{"Bobby " + bob}) {
+		t.Fatalf("#secret's %q", got)
+	}
+	if got := members(t, c, thread); !slices.Equal(got, []string{"Bobby " + bob}) {
+		t.Fatalf("the thread's %q", got)
+	}
+	c.events("MESSAGE_CREATE", json.RawMessage(`{"id":"1200000000000000001",`+inGuild+`,`+fromBob+`,"content":"chatter"}`))
+	if got := members(t, c, chanID); !slices.Equal(got, []string{"Alice " + alice, "Bob " + bob}) {
+		t.Fatalf("#general's once Bob is seen %q", got)
+	}
+	if n := len(f.callsTo(listRoute)); n != 1 {
+		t.Fatalf("listed %d times", n)
+	}
+	c.mu.Lock()
+	c.lists[guild].at = time.Now().Add(-listTTL)
+	c.mu.Unlock()
+	members(t, c, chanID)
+	if n := len(f.callsTo(listRoute)); n != 2 {
+		t.Fatalf("listed %d times after 10 minutes", n)
+	}
+}
+
+// The member list is read a page of 1,000 at a time, each after the last
+// page's highest ID, at most 5 pages.
+func TestDeliveredMembersPages(t *testing.T) {
+	f := newFake(t)
+	after := "0"
+	for page := range 6 {
+		var ms []string
+		for i := range 1000 {
+			ms = append(ms, fmt.Sprintf(`{"user":{"id":"%d","username":"b","bot":true}}`, 200000000000000000+page*1000+i))
+		}
+		switch page {
+		case 1:
+			ms[0] = `{"user":{"id":"` + bob + `","username":"bob","global_name":"Bob"}}`
+		case 5:
+			ms[0] = `{"user":{"id":"` + alice + `","username":"alice","global_name":"Alice"}}`
+		}
+		f.results[listQuery(after)] = "[" + strings.Join(ms, ",") + "]"
+		after = fmt.Sprint(200000000000000000 + page*1000 + 999)
+	}
+	c := groupsClient(f)
+	if got := members(t, c, chanID); !slices.Equal(got, []string{"Bob " + bob}) {
+		t.Fatalf("members %q", got)
+	}
+	calls := f.callsTo(listRoute)
+	if len(calls) != 5 || calls[1].Query != "limit=1000&after=200000000000000999" {
+		t.Fatalf("calls %+v", calls)
+	}
+}
+
+// Where the list can't be read, Delivered's members are the people seen:
+// a 403 quietly, for 10 minutes, and another failure with one warning
+// that names no one.
+func TestDeliveredMembersFallBack(t *testing.T) {
+	logs := captureLogs(t)
+	f := newFake(t)
+	f.errs[listRoute] = []int{403}
+	c := groupsClient(f)
+	c.events("MESSAGE_CREATE", json.RawMessage(`{"id":"1200000000000000001",`+inGuild+`,`+fromBob+`,"content":"chatter"}`))
+	for range 2 {
+		if got := members(t, c, chanID); !slices.Equal(got, []string{"Bob " + bob}) {
+			t.Fatalf("members %q", got)
+		}
+	}
+	if n := len(f.callsTo(listRoute)); n != 1 || strings.Contains(logs.String(), "members") {
+		t.Fatalf("listed %d times; log %q", n, logs.String())
+	}
+
+	f.errs[listRoute] = []int{500, 500}
+	for range 2 {
+		c.mu.Lock()
+		c.lists[guild].at = time.Time{}
+		c.mu.Unlock()
+		if got := members(t, c, chanID); !slices.Equal(got, []string{"Bob " + bob}) {
+			t.Fatalf("members %q", got)
+		}
+	}
+	if n := strings.Count(logs.String(), "listing a server's members failed"); n != 1 || strings.Contains(logs.String(), guild) || strings.Contains(logs.String(), "Bob") {
+		t.Fatalf("log %q", logs.String())
+	}
 }
 
 // A Groups whose context ends fails, rather than warning for each server

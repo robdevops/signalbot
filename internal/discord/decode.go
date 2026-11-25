@@ -600,7 +600,9 @@ func (c *Client) roleChanged(d json.RawMessage, deleted bool) {
 
 // Delivered readies a message a feature delivers as its sender, in its
 // slot: its sender's name, the bot's @name taken out, and in a channel its
-// members, the people seen posting there.
+// members: the people seen posting there, and with the Server Members
+// intent those in the server's member list who can see the channel, but
+// bots; a name seen wins over the list's.
 func (c *Client) Delivered(ctx context.Context, msg feature.Message) (bot.Ready, bool) {
 	wait, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
@@ -611,12 +613,25 @@ func (c *Client) Delivered(ctx context.Context, msg feature.Message) (bot.Ready,
 	var r bot.Ready
 	c.mu.Lock()
 	msg.Name = cmp.Or(msg.Name, c.people[strings.TrimPrefix(msg.Sender, prefix)])
-	if g, ok := strings.CutPrefix(msg.Chat.GroupID, prefix); ok {
-		for uid, n := range c.chats[g] {
-			r.Members = append(r.Members, bot.Member{Name: n, ID: prefix + uid})
+	g, inGroup := strings.CutPrefix(msg.Chat.GroupID, prefix)
+	seen := map[string]bool{}
+	for uid, n := range c.chats[g] {
+		r.Members, seen[uid] = append(r.Members, bot.Member{Name: n, ID: prefix + uid}), true
+	}
+	ch, known := c.channels[g]
+	info := c.guilds[ch.guild]
+	c.mu.Unlock()
+	if inGroup && known && ch.kind != unknown && info != nil {
+		if list, ok := c.guildList(wait, ch.guild); ok {
+			c.mu.Lock()
+			for _, m := range list {
+				if !seen[m.id] && c.canView(info, ch, m.id, m.roles) {
+					r.Members = append(r.Members, bot.Member{Name: m.name, ID: prefix + m.id})
+				}
+			}
+			c.mu.Unlock()
 		}
 	}
-	c.mu.Unlock()
 	slices.SortFunc(r.Members, func(a, b bot.Member) int { return strings.Compare(a.ID, b.ID) })
 	rs := []rune(msg.Text)
 	if sp := mdstyle.FindAt(rs, map[string]string{c.usernameOf(): "", c.BotName(): ""}); len(sp) > 0 {

@@ -31,9 +31,10 @@ const (
 )
 
 // intents are the events the bot asks the gateway for: guilds, their
-// messages and reactions, DMs and their reactions, and messages' content,
-// which is privileged: it must be turned on in the developer portal.
-const intents = 1<<0 | 1<<9 | 1<<10 | 1<<12 | 1<<13 | 1<<15
+// members, their messages and reactions, DMs and their reactions, and
+// messages' content. Messages' content is privileged and must be turned
+// on in the developer portal; so must members, but the bot does without.
+const intents = 1<<0 | guildMembers | 1<<9 | 1<<10 | 1<<12 | 1<<13 | 1<<15
 
 // readLimit caps one gateway message.
 const readLimit = 4 << 20
@@ -49,6 +50,7 @@ type payload struct {
 var (
 	errReconnect = errors.New("Discord asked the bot to reconnect")
 	errInvalid   = errors.New("Discord ended the session")
+	errMembers   = errors.New("Discord refused the Server Members intent")
 )
 
 // refusal is Discord refusing the bot's settings: retrying soon won't help.
@@ -62,7 +64,8 @@ var errToken = &refusal{"Discord refused DISCORD_BOT_TOKEN: copy the token again
 // handle, on this goroutine, until ctx ends. A dropped session is resumed,
 // after a wait that doubles from 1s to 32s while it keeps failing; a token
 // or intents Discord refuses are logged as such, and tried again only
-// after a long wait.
+// after a long wait; but if it refuses the Server Members intent, the bot
+// identifies again at once without it, and never asks for it again.
 func (c *Client) Run(ctx context.Context, handle func(bot.Received)) {
 	backoff := c.backoff
 	for ctx.Err() == nil {
@@ -76,6 +79,13 @@ func (c *Client) Run(ctx context.Context, handle func(bot.Received)) {
 		var r *refusal
 		wait := backoff
 		switch {
+		case errors.Is(err, errMembers):
+			if c.membersOff.CompareAndSwap(false, true) {
+				logx.Warnf(membersWarning)
+			}
+			c.session, c.resumeURL = "", ""
+			c.seq.Store(0)
+			continue
 		case errors.As(err, &r):
 			logx.Errorf("%s; trying again in %s", r.msg, c.fatal)
 			wait = c.fatal
@@ -130,7 +140,7 @@ func (c *Client) connect(ctx context.Context, handle func(bot.Received)) (up boo
 		} `json:"d"`
 	}
 	if err != nil {
-		return false, c.closed(err)
+		return false, c.closed(err, false)
 	}
 	if json.Unmarshal(data, &hello) != nil || hello.Op != opHello || hello.D.Interval <= 0 {
 		return false, errors.New("no hello from the gateway")
@@ -138,10 +148,15 @@ func (c *Client) connect(ctx context.Context, handle func(bot.Received)) (up boo
 	var acked atomic.Bool
 	acked.Store(true)
 	go c.heartbeat(ctx, conn, time.Duration(hello.D.Interval)*time.Millisecond, &acked)
+	members := !c.membersOff.Load()
 	if resume {
 		err = c.write(ctx, conn, opResume, map[string]any{"token": c.token, "session_id": c.session, "seq": c.seq.Load()})
 	} else {
-		err = c.write(ctx, conn, opIdentify, map[string]any{"token": c.token, "intents": intents,
+		in := intents
+		if !members {
+			in &^= guildMembers
+		}
+		err = c.write(ctx, conn, opIdentify, map[string]any{"token": c.token, "intents": in,
 			"properties": map[string]string{"os": "linux", "browser": "signalbot", "device": "signalbot"}})
 	}
 	if err != nil {
@@ -150,7 +165,7 @@ func (c *Client) connect(ctx context.Context, handle func(bot.Received)) (up boo
 	for {
 		_, data, err := conn.Read(ctx)
 		if err != nil {
-			return up, c.closed(err)
+			return up, c.closed(err, members)
 		}
 		var p payload
 		if json.Unmarshal(data, &p) != nil {
@@ -196,9 +211,10 @@ func (c *Client) connect(ctx context.Context, handle func(bot.Received)) (up boo
 }
 
 // closed is the error a dropped connection stands for: Discord's close
-// codes for a refused token or intents are refusals, and those for a
-// session it won't resume start a new one.
-func (c *Client) closed(err error) error {
+// codes for a refused token or intents are refusals, but refused intents
+// that had the Server Members intent, which may be what it refused; and
+// those for a session it won't resume start a new one.
+func (c *Client) closed(err error, members bool) error {
 	var ce *ws.CloseError
 	if !errors.As(err, &ce) {
 		return c.scrub(err)
@@ -207,6 +223,9 @@ func (c *Client) closed(err error) error {
 	case 4004:
 		return errToken
 	case 4014:
+		if members {
+			return errMembers
+		}
 		return &refusal{"Discord refused the bot's intents (close 4014): in the developer portal, under your application's Bot, turn on Message Content Intent"}
 	case 4010, 4011, 4012, 4013:
 		return &refusal{fmt.Sprintf("Discord refused the bot's connection (close %d)", ce.Code)}
