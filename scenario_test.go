@@ -295,16 +295,16 @@ func TestScenarioDMAllowListPrefix(t *testing.T) {
 }
 
 // Unset, SIGNAL_DM_USERS lets a group's admins DM the bot: an admin of
-// a group it is in is answered, and anyone else refused, logged by ID only.
+// a group it is in is answered, and anyone else refused, warned of by ID
+// only.
 func TestScenarioDMFromAnAdminByDefault(t *testing.T) {
 	h := startBot(t, world{Env: map[string]string{"SIGNAL_DM_USERS": ""}, Admins: []string{idAlice}})
-	h.waitLog("Signal DMs: allowed from admins and mods (SIGNAL_DM_USERS)")
 	if s := h.ask(fromAlice("a test direct message")); s.Recipient != idAlice || s.Message != "ok" {
 		t.Fatalf("sent %+v", s)
 	}
 	h.ignored(dmFrom(idBob, "Bob", "hello from a stranger"))
-	if l, ok := h.logged(idBob, "not in SIGNAL_DM_USERS"); !ok || l.Pri != 6 {
-		t.Fatalf("no info line with the stranger's id: %v", h.logLines())
+	if l, ok := h.logged("Signal: a DM from " + idBob + " ignored: SIGNAL_DM_USERS doesn't allow it"); !ok || l.Pri != 4 {
+		t.Fatalf("no warning with the stranger's id: %v", h.logLines())
 	}
 	if n := len(h.requests()); n != 1 {
 		t.Fatalf("the model was asked %d times", n)
@@ -314,10 +314,10 @@ func TestScenarioDMFromAnAdminByDefault(t *testing.T) {
 // "none" lets no one DM the bot, an admin neither.
 func TestScenarioDMsOff(t *testing.T) {
 	h := startBot(t, world{Env: map[string]string{"SIGNAL_DM_USERS": "none"}, Admins: []string{idAlice}})
-	h.waitLog("Signal DMs are off")
+	h.waitLog("Signal: DMs are off")
 	h.ignored(fromAlice("a test direct message"))
-	if l, ok := h.logged(idAlice, "not in SIGNAL_DM_USERS"); !ok || l.Pri != 6 {
-		t.Fatalf("no info line for Alice: %v", h.logLines())
+	if l, ok := h.logged("Signal: a DM from " + idAlice + " ignored: SIGNAL_DM_USERS doesn't allow it"); !ok || l.Pri != 4 {
+		t.Fatalf("no warning for Alice: %v", h.logLines())
 	}
 }
 
@@ -332,8 +332,8 @@ func TestScenarioDMsOff(t *testing.T) {
 // the bot is in warns of the other, marked as ignored.
 func TestScenarioUnlistedGroupIgnored(t *testing.T) {
 	h := startBot(t, world{OtherGroup: true}) // SIGNAL_GROUP_IDS lists the test group
-	h.waitLog("Signal groups: answering in 1 listed in SIGNAL_GROUP_IDS, and ignoring any other")
-	if l := h.waitLog("Signal groups (2): Other group (" + idOther + ") — not in SIGNAL_GROUP_IDS, ignored, Test group (" + idGroup + ")"); l.Pri != 4 {
+	h.waitLog("Signal: groups: answering in 1 listed in SIGNAL_GROUP_IDS, and ignoring any other")
+	if l := h.waitLog("Signal: groups (2): Other group (" + idOther + ") — not in SIGNAL_GROUP_IDS, ignored, Test group (" + idGroup + ")"); l.Pri != 4 {
 		t.Fatalf("logged %+v", l)
 	}
 	there := func(m incoming) incoming { m.Group = idOther; return m }
@@ -346,12 +346,12 @@ func TestScenarioUnlistedGroupIgnored(t *testing.T) {
 	update := there(inGroup(""))
 	update.Update = true
 	h.ignored(update)
-	if l := h.waitLog("a message in group " + idOther + " ignored: not in SIGNAL_GROUP_IDS"); l.Pri != 6 {
+	if l := h.waitLog("Signal: a message in group " + idOther + " ignored: not in SIGNAL_GROUP_IDS"); l.Pri != 6 {
 		t.Fatalf("logged %+v", l)
 	}
 	n := 0
 	for _, l := range h.logLines() {
-		if strings.Contains(l.Text, idOther) && !strings.HasPrefix(l.Text, "Signal groups (") {
+		if strings.Contains(l.Text, idOther) && !strings.HasPrefix(l.Text, "Signal: groups (") {
 			n++
 		}
 	}
@@ -380,7 +380,7 @@ func TestScenarioAdminOfAnUnlistedGroupMayNotDM(t *testing.T) {
 		t.Fatalf("sent %+v", s)
 	}
 	h.ignored(dmFrom(idBob, "Bob", "hello from an admin elsewhere"))
-	if _, ok := h.logged(idBob, "not in SIGNAL_DM_USERS"); !ok {
+	if _, ok := h.logged("Signal: a DM from " + idBob + " ignored: SIGNAL_DM_USERS doesn't allow it"); !ok {
 		t.Fatalf("Bob's DM not logged: %v", h.logLines())
 	}
 }
@@ -397,7 +397,7 @@ func TestScenarioSuggestGroupIDs(t *testing.T) {
 	if l := h.waitLog("SIGNAL_GROUP_IDS=" + idGroup + "," + idOther + "  # Test group, Other group"); l.Pri != 4 {
 		t.Fatalf("logged %+v", l)
 	}
-	if l, ok := h.logged("Signal groups (2): Test group (" + idGroup + "), Other group (" + idOther + ")"); !ok || l.Pri != 5 {
+	if l, ok := h.logged("Signal: groups (2): Test group (" + idGroup + "), Other group (" + idOther + ")"); !ok || l.Pri != 5 {
 		t.Fatalf("the groups listed %+v %v: %v", l, ok, h.logLines())
 	}
 	there := atBot("what is up")
@@ -418,7 +418,7 @@ func TestScenarioSuggestGroupIDs(t *testing.T) {
 // notice, once a run, and nothing warns.
 func TestScenarioGroupsListedAtStartup(t *testing.T) {
 	h := startBot(t, world{Env: map[string]string{"SIGNAL_GROUP_IDS": idOther + "," + idGroup}, OtherGroup: true})
-	if l := h.waitLog("Signal groups (2): Test group (" + idGroup + "), Other group (" + idOther + ")"); l.Pri != 5 {
+	if l := h.waitLog("Signal: groups (2): Test group (" + idGroup + "), Other group (" + idOther + ")"); l.Pri != 5 {
 		t.Fatalf("logged %+v", l)
 	}
 	if s := h.ask(atBot("what is up")); s.GroupID != idGroup {
@@ -429,7 +429,7 @@ func TestScenarioGroupsListedAtStartup(t *testing.T) {
 	}
 	n := 0
 	for _, l := range h.logLines() {
-		if strings.HasPrefix(l.Text, "Signal groups (") {
+		if strings.HasPrefix(l.Text, "Signal: groups (") {
 			n++
 		}
 	}
@@ -446,7 +446,7 @@ func TestScenarioGroupsListFails(t *testing.T) {
 		t.Fatalf("logged %+v", l)
 	}
 	for _, l := range h.logLines() {
-		if strings.Contains(l.Text, "Test group") || strings.Contains(l.Text, "Other group") || strings.HasPrefix(l.Text, "Signal groups (") {
+		if strings.Contains(l.Text, "Test group") || strings.Contains(l.Text, "Other group") || strings.HasPrefix(l.Text, "Signal: groups (") {
 			t.Fatalf("a group named: %v", l)
 		}
 	}
@@ -472,7 +472,7 @@ func TestScenarioDMScheduleDroppedOnceNotAllowed(t *testing.T) {
 	}
 }
 
-// A DM from someone not in SIGNAL_DM_USERS does no work, and the log says
+// A DM from someone not in SIGNAL_DM_USERS does no work, and the log warns
 // who sent it, by id only.
 func TestScenarioDMFromStrangerIsDroppedAndLoggedByID(t *testing.T) {
 	h := startBot(t, world{})
@@ -480,9 +480,9 @@ func TestScenarioDMFromStrangerIsDroppedAndLoggedByID(t *testing.T) {
 	stranger := dmFrom(idBob, "Bob", "\uFFFC hello from a stranger")
 	stranger.Mentions = []atMention{{ID: "11111111-2222-3333-4444-555555555555", Start: 0, Length: 1}}
 	h.ignored(stranger)
-	l, ok := h.logged(idBob, "not in SIGNAL_DM_USERS")
-	if !ok || l.Pri != 6 {
-		t.Fatalf("no info line with the stranger's id: %v", h.logLines())
+	l, ok := h.logged("Signal: a DM from " + idBob + " ignored: SIGNAL_DM_USERS doesn't allow it")
+	if !ok || l.Pri != 4 {
+		t.Fatalf("no warning with the stranger's id: %v", h.logLines())
 	}
 	for _, l := range h.logLines() {
 		if strings.Contains(l.Text, "Bob") {
@@ -499,8 +499,8 @@ func TestScenarioDMFromStrangerIsDroppedAndLoggedByID(t *testing.T) {
 func TestScenarioLoggedValuesCannotForgeLines(t *testing.T) {
 	h := startBot(t, world{})
 	h.ignored(dmFrom("x\n<2>forged", "", "hello from a stranger"))
-	if l, ok := h.logged("forged", "not in SIGNAL_DM_USERS"); !ok || l.Pri != 6 {
-		t.Fatalf("no info line for the stranger: %v", h.logLines())
+	if l, ok := h.logged("forged", "SIGNAL_DM_USERS doesn't allow it"); !ok || l.Pri != 4 {
+		t.Fatalf("no warning for the stranger: %v", h.logLines())
 	}
 	for _, l := range h.logLines() {
 		if l.Pri < 0 || l.Pri == 2 || strings.HasPrefix(l.Text, "forged") || strings.HasPrefix(l.Text, "<2>") {

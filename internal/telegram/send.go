@@ -15,7 +15,6 @@ import (
 
 	"github.com/robdevops/signalbot/internal/feature"
 	"github.com/robdevops/signalbot/internal/kit/img"
-	"github.com/robdevops/signalbot/internal/kit/logx"
 	"github.com/robdevops/signalbot/internal/kit/mdstyle"
 )
 
@@ -56,7 +55,7 @@ type sentMsg struct {
 // It returns the IDs of the messages sent. A failure is logged.
 func (c *Client) Send(ch feature.Chat, text string, pics []feature.Picture, known map[string]string, replyTo int64, audio []byte, mk feature.Markup) (sent []int64) {
 	if n := utf8.RuneCountInString(text); n > maxReply {
-		logx.Warnf("reply truncated from %d chars", n)
+		log.Warnf("reply truncated from %d chars", n)
 	}
 	t := mdstyle.Parse(text, true)
 	if sp := mdstyle.FindAt(t.Runes, map[string]string{c.usernameOf(): "", c.BotName(): ""}); len(sp) > 0 && strings.TrimSpace(string(t.Runes[:sp[0].Start])) == "" {
@@ -85,7 +84,7 @@ func (c *Client) Send(ch feature.Chat, text string, pics []feature.Picture, know
 		}
 		ids, err := c.sendPhotos(ctx, ch, pics, caption, known, replyTo, mk.Silent, last)
 		if err != nil {
-			logx.Errorf("send failed: pictures: %v", err) // the text still goes
+			log.Errorf("send failed: pictures: %v", err) // the text still goes
 		} else if caption != nil {
 			t = mdstyle.Text{}
 		}
@@ -100,14 +99,14 @@ func (c *Client) Send(ch feature.Chat, text string, pics []feature.Picture, know
 		}
 		id, err := c.sendVoice(ctx, ch, audio, replyTo, mk.Silent, last)
 		if err != nil {
-			logx.Errorf("send failed: audio: %v", err) // the text still goes
+			log.Errorf("send failed: audio: %v", err) // the text still goes
 		} else {
 			note(id)
 		}
 	}
 	parts := mdstyle.Split(t, maxChars)
 	if len(parts) == 0 && len(pics) == 0 && len(audio) == 0 {
-		logx.Warnf("empty reply, nothing sent")
+		log.Warnf("empty reply, nothing sent")
 		return nil
 	}
 	for i, p := range parts {
@@ -131,7 +130,7 @@ func (c *Client) Send(ch feature.Chat, text string, pics []feature.Picture, know
 			err = c.retrying(ctx, d.chat, move, send)
 		}
 		if err != nil {
-			logx.Errorf("send failed: %v", err)
+			log.Errorf("send failed: %v", err)
 			return sent
 		}
 		note(m.MessageID)
@@ -390,7 +389,7 @@ func (c *Client) React(ch feature.Chat, msg feature.Message, emoji string) {
 	case errors.As(err, &ae) && ae.Code == 400 && strings.Contains(ae.Desc, "REACTION_INVALID"):
 		c.Send(ch, emoji, nil, nil, 0, nil, feature.Markup{})
 	default:
-		logx.Errorf("reaction failed: %v", err)
+		log.Errorf("reaction failed: %v", err)
 	}
 }
 
@@ -402,7 +401,7 @@ func (c *Client) Typing(ch feature.Chat) (stop func()) {
 		tctx, tcancel := context.WithTimeout(ctx, 10*time.Second)
 		defer tcancel()
 		if err := c.call(tctx, "sendChatAction", c.dest(ch).params(map[string]any{"action": "typing"}), nil); err != nil && ctx.Err() == nil {
-			logx.Debugf("telegram typing failed: %v", err)
+			log.Debugf("typing failed: %v", err)
 		}
 	}
 	go func() {

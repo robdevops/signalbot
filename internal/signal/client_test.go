@@ -51,8 +51,7 @@ func TestNew(t *testing.T) {
 	}
 	t.Setenv("SIGNAL_DM_USERS", "none")
 	New(nil)
-	if got := logs.String(); got != "Signal DMs: allowed from admins and mods (SIGNAL_DM_USERS)\n"+"Signal DMs: allowed from 3 IDs (SIGNAL_DM_USERS)\n"+
-		"Signal DMs are off: SIGNAL_DM_USERS is none; the bot answers only in groups\n" {
+	if got := logs.String(); got != "Signal: DMs are off: SIGNAL_DM_USERS is none; the bot answers only in groups\n" {
 		t.Errorf("logs %q", got)
 	}
 }

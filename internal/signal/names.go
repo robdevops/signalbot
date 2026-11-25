@@ -11,7 +11,6 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/robdevops/signalbot/internal/kit/logx"
 	"github.com/robdevops/signalbot/internal/kit/mdstyle"
 	"github.com/robdevops/signalbot/internal/kit/txt"
 )
@@ -258,7 +257,7 @@ func (c *Client) loadNames(ctx context.Context, env *envelope) {
 		}
 	}
 	if need && c.refresh(ctx) && c.name(self) == "" {
-		logx.Warnf("own profile name not found; calling itself %s (INTRO can name it)", defaultName)
+		log.Warnf("own profile name not found; calling itself %s (INTRO can name it)", defaultName)
 	}
 }
 
@@ -300,10 +299,10 @@ func (c *Client) refresh(ctx context.Context) bool {
 	defer cancel()
 	var cs []contact
 	if err := c.call(ctx, "listContacts", map[string]any{"allRecipients": true}, &cs); err != nil {
-		logx.Warnf("listContacts failed: %v", err)
+		log.Warnf("listContacts failed: %v", err)
 		return true
 	}
-	logx.Debugf("loaded %d contacts", len(cs))
+	log.Debugf("loaded %d contacts", len(cs))
 	n.replace(cs)
 	return true
 }

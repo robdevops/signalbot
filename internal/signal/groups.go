@@ -1,15 +1,12 @@
 package signal
 
 import (
-	"cmp"
 	"context"
 	"fmt"
 	"strings"
 	"sync"
 	"time"
-	"unicode"
 
-	"github.com/robdevops/signalbot/internal/kit/logx"
 	"github.com/robdevops/signalbot/internal/kit/txt"
 )
 
@@ -76,7 +73,7 @@ func (c *Client) unlisted(group string) bool {
 	}
 	c.ignored.mu.Unlock()
 	if first {
-		logx.Infof("a message in group %s ignored: not in SIGNAL_GROUP_IDS", txt.Clamp(txt.SafeName(group), 64))
+		log.Infof("a message in group %s ignored: not in SIGNAL_GROUP_IDS", txt.Clamp(txt.SafeName(group), 64))
 	}
 	return true
 }
@@ -84,27 +81,9 @@ func (c *Client) unlisted(group string) bool {
 // groupsShown caps the groups the startup line names; the rest are counted.
 const groupsShown = 100
 
-// groupName is a group's name as the startup lines show it: made safe and
-// cut to 40 characters, its backslashes shown as "/", since in an env file
-// systemd reads, one that ends a line would join the next setting to it.
-// Control and format characters are dropped: anyone can name a group the
-// bot is added to, and one such character would have journalctl show the
-// whole line, the warning included, as "[blob data]", or a terminal run
-// an escape sequence or reorder the line.
-func groupName(name string) string {
-	name = strings.Map(func(r rune) rune {
-		if unicode.IsControl(r) && !unicode.IsSpace(r) || unicode.Is(unicode.Cf, r) {
-			return -1
-		}
-		return r
-	}, name)
-	name = strings.ReplaceAll(txt.SafeName(name), `\`, "/")
-	return cmp.Or(txt.Clamp(name, 40), "(no name)")
-}
-
 // reportGroups lists, once a run (New sets report), the groups the bot is
 // a member of, by name and ID, so whoever runs it sees a group it was added
-// to by someone else: "Signal groups (N): Name (id), ...", the one place
+// to by someone else: "Signal: groups (N): Name (id), ...", the one place
 // the bot logs a group's name. With SIGNAL_GROUP_IDS a list (none
 // included), a group it doesn't list is marked as ignored and makes the
 // line a warning. With all, the bot warns that it answers in any group,
@@ -115,16 +94,16 @@ func (c *Client) reportGroups(ctx context.Context) {
 		return
 	}
 	if c.groupIDs.all {
-		logx.Warnf("Signal: the bot answers in any group anyone adds it to, as SIGNAL_GROUP_IDS is unset or all; list the groups it should answer in")
+		log.Warnf("the bot answers in any group anyone adds it to, as SIGNAL_GROUP_IDS is unset or all; list the groups it should answer in")
 	}
 	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
 	var gs []group
 	if err := c.call(ctx, "listGroups", nil, &gs); err != nil {
 		if c.groupIDs.all {
-			logx.Warnf("Signal: listGroups failed, so the groups the bot is in aren't listed, nor SIGNAL_GROUP_IDS suggested: %v", err)
+			log.Warnf("listGroups failed, so the groups the bot is in aren't listed, nor SIGNAL_GROUP_IDS suggested: %v", err)
 		} else {
-			logx.Warnf("Signal: listGroups failed, so the groups the bot is in aren't listed: %v", err)
+			log.Warnf("listGroups failed, so the groups the bot is in aren't listed: %v", err)
 		}
 		return
 	}
@@ -133,7 +112,7 @@ func (c *Client) reportGroups(ctx context.Context) {
 		if !g.IsMember || g.ID == "" {
 			continue
 		}
-		name := groupName(g.Name)
+		name := txt.LogName(g.Name)
 		entry := name + " (" + txt.Clamp(txt.SafeName(g.ID), 64) + ")"
 		if c.groupIDs.has(g.ID) {
 			listed = append(listed, entry)
@@ -144,7 +123,7 @@ func (c *Client) reportGroups(ctx context.Context) {
 	}
 	// The unlisted first, so a cut never hides one.
 	shown := append(unlisted, listed...)
-	line := fmt.Sprintf("Signal groups (%d): ", len(shown))
+	line := fmt.Sprintf("groups (%d): ", len(shown))
 	switch {
 	case len(shown) == 0:
 		line += "none"
@@ -154,16 +133,16 @@ func (c *Client) reportGroups(ctx context.Context) {
 		line += strings.Join(shown, ", ")
 	}
 	if len(unlisted) > 0 {
-		logx.Warnf("%s", line)
+		log.Warnf("%s", line)
 	} else {
-		logx.Noticef("%s", line)
+		log.Noticef("%s", line)
 	}
 	if !c.groupIDs.all {
 		return
 	}
 	if len(ids) == 0 {
-		logx.Warnf("Signal: the bot is in no group yet; once it is added to yours, list their IDs in SIGNAL_GROUP_IDS (restart the bot to have it suggest the line)")
+		log.Warnf("the bot is in no group yet; once it is added to yours, list their IDs in SIGNAL_GROUP_IDS (restart the bot to have it suggest the line)")
 		return
 	}
-	logx.Warnf("Signal: to answer only in the groups the bot is in now, set: SIGNAL_GROUP_IDS=%s  # %s", strings.Join(ids, ","), strings.Join(names, ", "))
+	log.Warnf("to answer only in the groups the bot is in now, set: SIGNAL_GROUP_IDS=%s  # %s", strings.Join(ids, ","), strings.Join(names, ", "))
 }

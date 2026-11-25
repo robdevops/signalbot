@@ -13,7 +13,6 @@ import (
 	"github.com/robdevops/signalbot/internal/bot"
 	"github.com/robdevops/signalbot/internal/feature"
 	"github.com/robdevops/signalbot/internal/kit/img"
-	"github.com/robdevops/signalbot/internal/kit/logx"
 	"github.com/robdevops/signalbot/internal/kit/mdstyle"
 	"github.com/robdevops/signalbot/internal/kit/txt"
 )
@@ -299,7 +298,7 @@ func (c *Client) received(m *message, edited int64) (bot.Received, bool) {
 			if edited != 0 {
 				return bot.Deleted{Chat: ch, Sender: id(m.From.ID), Sent: m.MessageID, At: edited}, true
 			}
-			refusedDM(id(m.From.ID))
+			c.refused.Log(id(m.From.ID))
 			return nil, false
 		}
 	}
@@ -330,7 +329,7 @@ func (c *Client) received(m *message, edited int64) (bot.Received, bool) {
 // the model, for @Name in the reply.
 func (c *Client) load(ctx context.Context, m *message, msg feature.Message, learn func(name, id string)) (feature.Message, bool) {
 	if msg.Chat.GroupID == "" && !c.dmAllowed(ctx, msg.Sender) {
-		refusedDM(msg.Sender)
+		c.refused.Log(msg.Sender)
 		return msg, false
 	}
 	msg.Expires = c.timer(ctx, m.Chat.ID)
@@ -364,7 +363,7 @@ func (c *Client) timer(ctx context.Context, chatID int64) time.Duration {
 		Time int `json:"message_auto_delete_time"`
 	}
 	if err := c.call(ctx, "getChat", map[string]int64{"chat_id": chatID}, &full); err != nil {
-		logx.Warnf("telegram getChat failed: %v", err)
+		log.Warnf("getChat failed: %v", err)
 		return 0
 	}
 	t = time.Duration(full.Time) * time.Second
@@ -716,11 +715,11 @@ func (c *Client) Delivered(ctx context.Context, msg feature.Message) (bot.Ready,
 	wait, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
 	if c.WaitID(wait) == "" {
-		logx.Warnf("delivered message dropped: not connected to Telegram after 10s")
+		log.Warnf("delivered message dropped: not connected to Telegram after 10s")
 		return bot.Ready{}, false
 	}
 	if msg.Chat.GroupID == "" && !c.dmAllowed(wait, msg.Sender) {
-		logx.Infof("delivered message dropped: its sender may no longer DM the bot")
+		log.Infof("delivered message dropped: its sender may no longer DM the bot")
 		return bot.Ready{}, false
 	}
 	c.mu.Lock()
@@ -730,13 +729,13 @@ func (c *Client) Delivered(ctx context.Context, msg feature.Message) (bot.Ready,
 	if msg.Chat.GroupID != "" {
 		g := c.dest(msg.Chat).chat
 		if !c.member(wait, g, msg.Sender) {
-			logx.Infof("delivered message dropped: its sender is not in the group")
+			log.Infof("delivered message dropped: its sender is not in the group")
 			return bot.Ready{}, false
 		}
 		g = c.dest(msg.Chat).chat // at its new ID, if it moved
 		admins, err := c.groupAdmins(wait, g)
 		if err != nil {
-			logx.Warnf("telegram getChatAdministrators failed: %v", err)
+			log.Warnf("getChatAdministrators failed: %v", err)
 		}
 		seen := map[string]bool{}
 		for _, a := range admins {
@@ -782,7 +781,7 @@ func (c *Client) Reachable(ctx context.Context, chat feature.Chat) bool {
 	wait, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
 	if c.WaitID(wait) == "" {
-		logx.Warnf("not connected to Telegram after 10s")
+		log.Warnf("not connected to Telegram after 10s")
 		return false
 	}
 	if chat.GroupID == "" {
@@ -799,7 +798,7 @@ func (c *Client) Reachable(ctx context.Context, chat feature.Chat) bool {
 func (c *Client) member(ctx context.Context, group, user string) bool {
 	there, err := c.isMember(ctx, group, user)
 	if err != nil {
-		logx.Warnf("telegram getChatMember failed: %v", err)
+		log.Warnf("getChatMember failed: %v", err)
 	}
 	return there
 }
@@ -839,7 +838,7 @@ func (c *Client) Groups(ctx context.Context, user string) ([]feature.Group, erro
 		}
 		admins, err := c.groupAdmins(ctx, x.id)
 		if err != nil {
-			logx.Warnf("telegram getChatAdministrators failed: %v", err)
+			log.Warnf("getChatAdministrators failed: %v", err)
 		}
 		out = append(out, feature.Group{ID: x.id, Name: x.name, Admin: slices.ContainsFunc(admins, isUser(user))})
 	}

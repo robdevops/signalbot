@@ -156,6 +156,7 @@ func (p Policy) String() string {
 // run, so a stranger's every message doesn't fill the log.
 type Refused struct {
 	Setting string // the setting that refused them, such as SIGNAL_DM_USERS
+	L       logx.L // the log it warns in, its network's; the zero L adds no prefix
 
 	mu   sync.Mutex
 	seen map[string]bool
@@ -173,6 +174,6 @@ func (r *Refused) Log(id string) {
 	}
 	r.mu.Unlock()
 	if first {
-		logx.Warnf("a DM from %s ignored: %s doesn't allow it; add the ID to %s to allow DMs from them", id, r.Setting, r.Setting)
+		r.L.Warnf("a DM from %s ignored: %s doesn't allow it; add the ID to %s to allow DMs from them", id, r.Setting, r.Setting)
 	}
 }

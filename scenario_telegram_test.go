@@ -124,7 +124,7 @@ func startTelegram(t *testing.T, env map[string]string) *tgHarness {
 			t.Errorf("the token was logged:\n%s", h.logText())
 		}
 	})
-	h.waitFor("the bot to connect", func() bool { return strings.Contains(h.logText(), "connected to Telegram as @botty_bot") })
+	h.waitFor("the bot to connect", func() bool { return strings.Contains(h.logText(), "Telegram: connected as @botty_bot") })
 	return h
 }
 
@@ -468,12 +468,12 @@ func tgAliceOwns(t *testing.T, env map[string]string) *tgHarness {
 }
 
 // By default only an admin of a group the bot is in may DM it: a
-// stranger's DM is refused, logged by ID only, and the owner's answered.
+// stranger's DM is refused, warned of by ID only, and the owner's answered.
 func TestTelegramDMsDefault(t *testing.T) {
 	h := tgAliceOwns(t, map[string]string{"TELEGRAM_DM_USERS": ""})
 	h.send("message", tgFromBob+`,"chat":{"id":2222222,"type":"private","first_name":"Bob"},"text":"let me in"`)
 	h.waitFor("Bob's DM refused", func() bool {
-		return strings.Contains(h.logText(), tgBob+" ignored because not allowed by TELEGRAM_DM_USERS")
+		return strings.Contains(h.logText(), "Telegram: a DM from "+tgBob+" ignored: TELEGRAM_DM_USERS doesn't allow it")
 	})
 	h.send("message", tgFromAlice+","+tgInDM+`,"text":"hello"`)
 	if s := h.waitCalls("sendMessage", 1)[0].Params; s["chat_id"] != tgAlice || s["text"] != "ok" {
@@ -483,7 +483,7 @@ func TestTelegramDMsDefault(t *testing.T) {
 		t.Fatalf("%d sends, %d model requests", n, len(h.requests()))
 	}
 	out := h.logText()
-	if !strings.Contains(out, "Telegram DMs: allowed from admins and mods (TELEGRAM_DM_USERS)") || strings.Contains(out, "let me in") || strings.Contains(out, "Bob") {
+	if strings.Contains(out, "DMs: allowed") || strings.Contains(out, "let me in") || strings.Contains(out, "Bob") {
 		t.Fatalf("logs:\n%s", out)
 	}
 }
@@ -494,12 +494,12 @@ func TestTelegramDMsNone(t *testing.T) {
 	h := tgAliceOwns(t, map[string]string{"TELEGRAM_DM_USERS": "none"})
 	h.send("message", tgFromAlice+","+tgInDM+`,"text":"hello"`)
 	h.waitFor("Alice's DM refused", func() bool {
-		return strings.Contains(h.logText(), tgAlice+" ignored because not allowed by TELEGRAM_DM_USERS")
+		return strings.Contains(h.logText(), "Telegram: a DM from "+tgAlice+" ignored: TELEGRAM_DM_USERS doesn't allow it")
 	})
 	if n := len(h.callsTo("sendMessage")) + len(h.callsTo("getChatAdministrators")); n != 0 || len(h.requests()) != 0 {
 		t.Fatalf("calls %v", h.methods())
 	}
-	if !strings.Contains(h.logText(), "Telegram DMs are off: TELEGRAM_DM_USERS is none") {
+	if !strings.Contains(h.logText(), "Telegram: DMs are off: TELEGRAM_DM_USERS is none") {
 		t.Fatalf("logs:\n%s", h.logText())
 	}
 }
@@ -541,7 +541,7 @@ func TestTelegramDMAlertDropped(t *testing.T) {
 	h.send("my_chat_member", tgInGroup+","+tgFromBob+`,"old_chat_member":{"status":"member"},"new_chat_member":{"status":"kicked","user":{"id":777000}}`)
 	h.send("message", tgFromAlice+","+tgInDM+`,"text":"hello again"`)
 	h.waitFor("Alice's DM refused", func() bool {
-		return strings.Contains(h.logText(), tgAlice+" ignored because not allowed by TELEGRAM_DM_USERS")
+		return strings.Contains(h.logText(), "Telegram: a DM from "+tgAlice+" ignored: TELEGRAM_DM_USERS doesn't allow it")
 	})
 	h.bot.Post(feature.Post{Chat: feature.Chat{User: tgAlice}, Text: "hail alert"})
 	h.waitFor("the alert dropped", func() bool {

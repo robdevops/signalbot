@@ -13,7 +13,6 @@ import (
 	"unicode/utf8"
 
 	"github.com/robdevops/signalbot/internal/feature"
-	"github.com/robdevops/signalbot/internal/kit/logx"
 	"github.com/robdevops/signalbot/internal/kit/mdstyle"
 	"github.com/robdevops/signalbot/internal/kit/txt"
 )
@@ -40,7 +39,7 @@ func (c *Client) Prompt() string {
 // keyboard, and no silent send.
 func (c *Client) Send(chat feature.Chat, text string, pics []feature.Picture, known map[string]string, replyTo int64, audio []byte, _ feature.Markup) (sent []int64) {
 	if n := utf8.RuneCountInString(text); n > maxReply {
-		logx.Warnf("reply truncated from %d chars", n)
+		log.Warnf("reply truncated from %d chars", n)
 	}
 	var attachments []string
 	var kept []attachment // for a reply that quotes them: signal-cli would give it thumbnails
@@ -64,13 +63,13 @@ func (c *Client) Send(chat feature.Chat, text string, pics []feature.Picture, kn
 	msg, ok := prepare(text, c.BotName())
 	known = c.withSelf(chat, known)
 	if !ok && len(attachments) == 0 {
-		logx.Warnf("empty reply, nothing sent")
+		log.Warnf("empty reply, nothing sent")
 		return nil
 	}
 	body := string(msg.Runes)
 	ts, err := c.send(chat, body, mentions(body, known), textStyles(msg), attachments, replyTo)
 	if err != nil {
-		logx.Errorf("send failed: %v", err)
+		log.Errorf("send failed: %v", err)
 		return nil
 	}
 	if ts != 0 {
@@ -107,13 +106,13 @@ func (c *Client) Edit(chat feature.Chat, sent int64, text string, pics []feature
 	}
 	msg, ok := prepare(text, c.BotName())
 	if !ok {
-		logx.Warnf("empty edit, nothing sent")
+		log.Warnf("empty edit, nothing sent")
 		return nil
 	}
 	known = c.withSelf(chat, known)
 	body := string(msg.Runes)
 	if _, err := c.post(chat, body, mentions(body, known), textStyles(msg), nil, 0, sent); err != nil {
-		logx.Errorf("edit failed: %v", err)
+		log.Errorf("edit failed: %v", err)
 		return nil
 	}
 	return []int64{sent}
@@ -191,7 +190,7 @@ func (c *Client) post(chat feature.Chat, text string, mentions, styles, attachme
 	}
 	for _, res := range r.Results {
 		if res.Type != "" && res.Type != "SUCCESS" {
-			logx.Warnf("signal-cli send not delivered: %s", txt.SafeName(res.Type))
+			log.Warnf("signal-cli send not delivered: %s", txt.SafeName(res.Type))
 		}
 	}
 	return r.Timestamp, nil
@@ -207,14 +206,14 @@ func (c *Client) React(chat feature.Chat, msg feature.Message, emoji string) {
 	author := msg.Sender
 	if msg.Bot {
 		if author = c.self(); author == "" {
-			logx.Errorf("reaction failed: the bot's account isn't known yet")
+			log.Errorf("reaction failed: the bot's account isn't known yet")
 			return
 		}
 	}
 	p := target(chat)
 	p["emoji"], p["targetAuthor"], p["targetTimestamp"] = emoji, author, msg.Timestamp
 	if err := c.write(c.nextID.Add(1), "sendReaction", p); err != nil {
-		logx.Errorf("reaction failed: %v", err)
+		log.Errorf("reaction failed: %v", err)
 	}
 }
 
