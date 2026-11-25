@@ -122,7 +122,23 @@ A server can answer the model and people differently with MCP's `audience` annot
 
 The call carries nothing about the chat or who asked: the server sees only the arguments.
 
-A server can also offer a [feed](FEEDS.md) of items, such as alerts, that the bot posts to the chats that subscribe with `/alerts`. At most 2 run at once per server; a third is told the server is busy. A failure is answered with a short line naming the server (its `name`), never the server's own error text, and the log records the command, the tool, the outcome, the time and the size, never the text or the result.
+A server can also offer a [feed](FEEDS.md) of items, such as alerts, that the bot posts to the chats that subscribe with `/alerts`.
+
+**Example: a weather station as a bot of its own.** One server entry makes the commands, the alerts and the keyboard, with no addon and no model needed. `?charts=png` here is that server's own setting for returning charts as images; the bot only reads standard MCP content:
+
+```json
+"weather": {
+  "url": "https://weather.example/mcp?charts=png",
+  "headers": {"Authorization": "Bearer ${WEATHER_TOKEN}"},
+  "name": "Weather",
+  "chat_commands": {
+    "rain": {"tool": "summary", "direct": true, "args": {"readings": ["rain"], "period": "1d", "chart": true}, "arg": "period", "values": ["1d", "7d", "1m", "3m", "1y"]},
+    "status": {"resource": "weather://status", "direct": true}
+  },
+  "feed": {"resource": "weather://feed"},
+  "keyboard": [["Status", "/status"], ["Rain", "/rain"], ["Alerts", "/alerts"]]
+}
+``` At most 2 run at once per server; a third is told the server is busy. A failure is answered with a short line naming the server (its `name`), never the server's own error text, and the log records the command, the tool, the outcome, the time and the size, never the text or the result.
 
 A server that can't be reached at startup is logged and left out. A config error stops the bot with the file's path and the server's name: a setting it doesn't know (such as `allowedTools` for `allowed_tools`), with the settings it could be; both `allowed_tools` and `blocked_tools`; or a tool named in either list that the server doesn't have, with the list it was in and the server's tools, so a typo can't leave a blocked tool offered. Keys other MCP clients write and the bot has no use for (`type`, `transport`, `timeout`, `alwaysAllow`, `autoApprove`, `description`) are ignored, so an entry pasted from another client starts. A tool call that takes over 30 seconds tells the model it didn't answer in time, so it can try a narrower request. Local servers get only `PATH`, `HOME` and their `env`, never the bot's own environment.
 

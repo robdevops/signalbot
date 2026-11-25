@@ -1134,7 +1134,7 @@ func TestKeyboardDownAndNoState(t *testing.T) {
 	if got := dm("/alerts"); !got.IsZero() {
 		t.Errorf("/alerts %+v", got)
 	}
-	if !strings.Contains(log.String(), "feeds are off") || !strings.Contains(log.String(), "direct commands have no buttons") {
+	if !strings.Contains(log.String(), "feeds are off") || !strings.Contains(log.String(), "direct commands and feed charts have no buttons") {
 		t.Errorf("log %q", log.String())
 	}
 }
@@ -1216,5 +1216,61 @@ func TestPlainDirectAudience(t *testing.T) {
 	}
 	if got := dm("/now"); got.Answer != "**All good**" {
 		t.Errorf("/now: %q", got.Answer)
+	}
+}
+
+// On a network with buttons, an alert's chart that names its arg and
+// values has a button per value and 🔄; a press draws it again with the
+// value and edits the post, the alert's words kept.
+func TestFeedChartButtons(t *testing.T) {
+	old := feedEvery
+	feedEvery = 20 * time.Millisecond
+	t.Cleanup(func() { feedEvery = old })
+	fake := &fakeMCP{feed: `{"items":[]}`}
+	h, _, err := register(t, `{"mcpServers":{"eco":{"url":"`+serve(t, fake)+`","feed":{"resource":"feed://items"}}}}`,
+		func(h *featuretest.Host) {
+			h.Bot.Caps.Buttons, h.Bot.Caps.Caption, h.Settings["STATE_DIRECTORY"] = true, 1024, t.TempDir()
+		})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	alice := feature.Chat{User: "alice"}
+	h.Message(ctx, feature.Message{Chat: alice, Sender: "a", Text: "/alerts on", Addressed: true})
+	time.Sleep(3 * feedEvery)
+	fake.mu.Lock()
+	fake.feed = `{"items":[{"id":"1","time":"` + time.Now().UTC().Format(time.RFC3339) + `","text":"Heavy rain",` +
+		`"chart":{"tool":"pic","arguments":{"period":"1d"},"arg":"period","values":["1d","7d"]}}]}`
+	fake.mu.Unlock()
+	var p []feature.Post
+	for range 200 {
+		if p = h.Posts(); len(p) > 1 {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	alert := p[len(p)-1]
+	var labels []string
+	for _, row := range alert.Markup.Buttons {
+		for _, b := range row {
+			labels = append(labels, b.Label)
+		}
+	}
+	if alert.Text != "Heavy rain" || len(alert.Pictures) != 1 || !slices.Equal(labels, []string{"• 1d", "7d", "🔄"}) || alert.OnSent == nil {
+		t.Fatalf("alert %q, %d pictures, buttons %q", alert.Text, len(alert.Pictures), labels)
+	}
+	alert.OnSent([]int64{77}, false)
+	if a, ok := h.Press(ctx, feature.Press{Chat: alice, Sent: 77, Data: "rerun=7d"}); !ok || a != "" {
+		t.Fatalf("press %q %v", a, ok)
+	}
+	edit := h.Posts()[len(h.Posts())-1]
+	labels = nil
+	for _, row := range edit.Markup.Buttons {
+		for _, b := range row {
+			labels = append(labels, b.Label)
+		}
+	}
+	if edit.Edit != 77 || edit.Text != "Heavy rain" || len(edit.Pictures) != 1 || !slices.Equal(labels, []string{"1d", "• 7d", "🔄"}) {
+		t.Fatalf("edit %+v, buttons %q", edit, labels)
 	}
 }

@@ -135,10 +135,10 @@ func Register(h feature.Host) error {
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	h.Go(func(life context.Context) { <-life.Done(); cancel() })
-	var again *reruns // with buttons, plain servers' direct commands' posts, to make again
-	if h.Info().Caps.Buttons && slices.ContainsFunc(slices.Collect(maps.Values(servers)), plainDirects) {
+	var again *reruns // with buttons, direct commands' and feed charts' posts, to make again
+	if h.Info().Caps.Buttons && slices.ContainsFunc(slices.Collect(maps.Values(servers)), func(s server) bool { return plainDirects(s) || s.Feed != nil }) {
 		if store, err := h.Store("mcp-posts"); err != nil {
-			logx.Errorf("direct commands have no buttons: their posts can't be kept: %v", err)
+			logx.Errorf("direct commands and feed charts have no buttons: their posts can't be kept: %v", err)
 		} else {
 			again = newReruns(h, store)
 			h.OnPress(again.press)
@@ -150,6 +150,7 @@ func Register(h feature.Host) error {
 			logx.Errorf("feeds are off: what they sent and who subscribed can't be kept: %v", err)
 		} else {
 			fd = newFeeds(h, store)
+			fd.again = again
 			h.OnPress(fd.press)
 		}
 	}

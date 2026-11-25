@@ -2,6 +2,7 @@ package mcp
 
 import (
 	"context"
+	"maps"
 	"slices"
 	"strings"
 	"sync"
@@ -21,14 +22,16 @@ const (
 	pressValue   = "rerun="
 )
 
-// reruns are the posts of plain servers' direct commands, each with the
-// call it answered, so a button under one makes the call again, with
-// another of the command's values or the same, and edits the post. Only on
-// a network with buttons; where there are none, /name value does it.
+// reruns are the posts of plain servers' direct commands, and feed items'
+// charts, each with the call it shows, so a button under one makes the
+// call again, with another of its values or the same, and edits the post.
+// Only on a network with buttons; where there are none, /name value does
+// it.
 type reruns struct {
-	store feature.Store
-	h     feature.Host
-	cmds  map[string]rerunCmd // by server and command, "server/name"
+	store  feature.Store
+	h      feature.Host
+	cmds   map[string]rerunCmd // by server and command, "server/name"
+	charts map[string]drawer   // by server, those with a feed
 
 	mu    sync.Mutex
 	posts []rerunPost // oldest first
@@ -40,19 +43,30 @@ type rerunCmd struct {
 	c chatCommand
 }
 
-// rerunPost is a post and the call it shows, as saved.
+// drawer draws a chart: tool called with args, its pictures; none if it
+// can't.
+type drawer func(ctx context.Context, tool string, args map[string]any) []feature.Picture
+
+// rerunPost is a post and the call it shows, as saved: a direct command,
+// or a feed item's chart (Tool set), whose text stays as the item's.
 type rerunPost struct {
 	Chat    feature.Chat `json:"chat"`
 	Sent    int64        `json:"sent"` // the message its buttons are under
 	Server  string       `json:"server"`
-	Command string       `json:"command"`
+	Command string       `json:"command,omitempty"`
 	Value   string       `json:"value,omitempty"`   // its arg's value, if any
 	Picture bool         `json:"picture,omitempty"` // it is a picture, its text the caption
+
+	Tool      string         `json:"tool,omitempty"`
+	Arguments map[string]any `json:"arguments,omitempty"` // with Arg's value as it is now
+	Arg       string         `json:"arg,omitempty"`
+	Values    []string       `json:"values,omitempty"`
+	Text      string         `json:"text,omitempty"`
 }
 
 // newReruns are the posts saved in store, if it can be read.
 func newReruns(h feature.Host, store feature.Store) *reruns {
-	r := &reruns{store: store, h: h, cmds: map[string]rerunCmd{}}
+	r := &reruns{store: store, h: h, cmds: map[string]rerunCmd{}, charts: map[string]drawer{}}
 	if _, err := store.Load(&r.posts); err != nil {
 		logx.Warnf("MCP: the direct commands' posts can't be read, so buttons under them do nothing: %v", err)
 		r.posts = nil
@@ -73,7 +87,7 @@ func (r *reruns) offer(act *feature.Action, chat feature.Chat, d *plainDirect, n
 	if act.Answer == "" && len(act.Pictures) == 0 || !r.oneMessage(*act) {
 		return
 	}
-	act.Markup.Buttons = buttons(r.cmds[d.server+"/"+name].c, value)
+	act.Markup.Buttons = cmdButtons(r.cmds[d.server+"/"+name].c, value)
 	pic := len(act.Pictures) > 0
 	act.OnSent = func(sent []int64, dropped bool) {
 		if !dropped && len(sent) == 1 {
@@ -96,22 +110,48 @@ func (r *reruns) oneMessage(act feature.Action) bool {
 	return false
 }
 
-// buttons are a post's buttons, for c with value ("" for its default):
-// one per value, the current one marked, if they fit, and refresh.
-func buttons(c chatCommand, value string) [][]feature.Button {
+// cmdButtons are the buttons of c's post with value ("" for its default).
+func cmdButtons(c chatCommand, value string) [][]feature.Button {
 	if value == "" {
 		value, _ = c.Args[c.Arg].(string)
 	}
+	return buttons(c.Values, value)
+}
+
+// chart offers the buttons of a feed item's chart, drawn by server's tool
+// with args, Arg's values the choices, under the post of text and pics in
+// chat, if it is one message; and remembers the post.
+func (r *reruns) chart(p *feature.Post, server, tool string, args map[string]any, arg string, values []string) {
+	if len(p.Pictures) != 1 || !r.oneMessage(feature.Action{Answer: p.Text, Pictures: p.Pictures}) {
+		return
+	}
+	current, _ := args[arg].(string)
+	if !slices.Contains(values, current) {
+		values = nil // no arg, or its value isn't one of them: refresh alone
+	}
+	p.Markup.Buttons = buttons(values, current)
+	post := rerunPost{Chat: p.Chat, Server: server, Picture: true, Tool: tool, Arguments: args, Arg: arg, Values: values, Text: p.Text}
+	p.OnSent = func(sent []int64, dropped bool) {
+		if !dropped && len(sent) == 1 {
+			post.Sent = sent[0]
+			r.keep(post, 0)
+		}
+	}
+}
+
+// buttons are a post's buttons: one per value, the current one marked, if
+// they fit, and refresh.
+func buttons(values []string, value string) [][]feature.Button {
 	var row []feature.Button
 	var rows [][]feature.Button
-	fit := len(c.Values) < maxRows*maxPerRow
-	for _, v := range c.Values {
+	fit := len(values) < maxRows*maxPerRow
+	for _, v := range values {
 		if len(pressValue)+len(v) > maxData {
 			fit = false
 		}
 	}
 	if fit {
-		for _, v := range c.Values {
+		for _, v := range values {
 			label := v
 			if v == value {
 				label = "• " + v
@@ -180,6 +220,9 @@ func (r *reruns) press(ctx context.Context, p feature.Press) (answer string, ok 
 		return "", false // an addon's, or forgotten
 	}
 	p.Chat = post.Chat // in a forum, its topic, which a press on an older message doesn't name
+	if post.Tool != "" {
+		return r.redraw(ctx, p, post, value, chose)
+	}
 	cmd, known := r.cmds[post.Server+"/"+post.Command]
 	switch {
 	case !known:
@@ -205,7 +248,7 @@ func (r *reruns) press(ctx context.Context, p feature.Press) (answer string, ok 
 		// message can't become the other, so it is a new post, with its own
 		// buttons, and the old one keeps its own.
 		r.h.Post(feature.Post{Chat: p.Chat, Text: act.Answer, Pictures: act.Pictures,
-			Markup: feature.Markup{Buttons: buttons(cmd.c, value)},
+			Markup: feature.Markup{Buttons: cmdButtons(cmd.c, value)},
 			OnSent: func(sent []int64, dropped bool) {
 				if !dropped && len(sent) == 1 {
 					next.Sent = sent[0]
@@ -214,7 +257,7 @@ func (r *reruns) press(ctx context.Context, p feature.Press) (answer string, ok 
 			}})
 	default:
 		r.h.Post(feature.Post{Chat: p.Chat, Text: act.Answer, Pictures: act.Pictures, Edit: p.Sent,
-			Markup: feature.Markup{Buttons: buttons(cmd.c, value)},
+			Markup: feature.Markup{Buttons: cmdButtons(cmd.c, value)},
 			OnSent: func(sent []int64, dropped bool) {
 				if len(sent) == 1 {
 					next.Sent = sent[0]
@@ -222,5 +265,40 @@ func (r *reruns) press(ctx context.Context, p feature.Press) (answer string, ok 
 				}
 			}})
 	}
+	return "", true
+}
+
+// redraw makes a feed item's chart again, with value as its arg if chose,
+// else as it was, and edits the post: the item's text over the new chart.
+func (r *reruns) redraw(ctx context.Context, p feature.Press, post rerunPost, value string, chose bool) (string, bool) {
+	draw, known := r.charts[post.Server]
+	switch {
+	case !known:
+		return "That button no longer works.", true
+	case chose && !slices.Contains(post.Values, value):
+		return "That choice no longer works.", true
+	}
+	args := maps.Clone(post.Arguments)
+	if args == nil {
+		args = map[string]any{}
+	}
+	if chose {
+		args[post.Arg] = value
+	}
+	pics := draw(ctx, post.Tool, args)
+	if len(pics) == 0 {
+		return "The chart couldn't be drawn just now.", true
+	}
+	next := post
+	next.Arguments = args
+	current, _ := args[post.Arg].(string)
+	r.h.Post(feature.Post{Chat: p.Chat, Text: post.Text, Pictures: pics[:1], Edit: p.Sent,
+		Markup: feature.Markup{Buttons: buttons(post.Values, current)},
+		OnSent: func(sent []int64, dropped bool) {
+			if len(sent) == 1 {
+				next.Sent = sent[0]
+				r.keep(next, p.Sent)
+			}
+		}})
 	return "", true
 }

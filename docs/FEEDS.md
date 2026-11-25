@@ -17,6 +17,8 @@ An MCP server can offer a **feed**: a resource listing items, such as weather wa
 
 A server with a feed starts even with [no model](MODELS.md#no-model). A second feed is a second server entry, with its own URL or command and headers.
 
+The bot reads the feed every 30 seconds, so an item reaches the chats at most about 30 seconds after the server lists it. It doesn't use MCP's push subscriptions: a small read every 30 seconds costs little, and works with every server.
+
 ## In chat
 
 - `/alerts` shows whether alerts are on in this chat, which kinds are on and off, and how to change them.
@@ -56,10 +58,10 @@ The resource's first content is text, a JSON object:
 | `expires` | when it stops being news; unset, an hour after `time` |
 | `text` | what the bot posts, in Markdown; an item without text is skipped |
 | `link` | if set, posted under the text, cut to 500 characters |
-| `chart` | a tool of the same server the bot calls, with these arguments, for the pictures posted with it (drawn once per item). Put any time the picture must match, such as `as_of`, in the arguments |
+| `chart` | a tool of the same server the bot calls, `{"tool", "arguments"}`, for the picture posted with it (drawn once per item). Put any time the picture must match, such as `as_of`, in the arguments. On Telegram, an alert with one picture and a caption that fits gets 🔄 under it, and with `"arg"` and `"values"` (such as `"arg": "period", "values": ["1d", "7d", "1m"]`) a button per value: a press draws the chart again and edits it in place, the alert's words kept |
 
 An expired item is never sent, so the server decides what still matters: a passing warning can expire in minutes, a condition such as "battery low" can stay until it clears. On its first read the bot sends the items not yet expired (an item with neither `time` nor `expires` is only sent if it appears later). One read sends at most 10 new items; more are logged and the oldest skipped. A feed that can't be read is logged once, and again when it can be.
 
 ## State
 
-The bot keeps, in `mcp-feeds.json` in the state directory, each feed's `identity` and the IDs it has had, and the chats subscribed: their IDs, the kinds turned off and the sound setting, until `/alerts off`. See [PRIVACY.md](../PRIVACY.md). Without a usable state directory, feeds are off, with an error in the log.
+The buttons under alerts' charts are kept with direct commands' (newest 300, in `mcp-posts.json`, with the alert's text and the chart's call). The bot keeps, in `mcp-feeds.json` in the state directory, each feed's `identity` and the IDs it has had, and the chats subscribed: their IDs, the kinds turned off and the sound setting, until `/alerts off`. See [PRIVACY.md](../PRIVACY.md). Without a usable state directory, feeds are off, with an error in the log.

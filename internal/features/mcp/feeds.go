@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"maps"
 	"slices"
 	"strings"
 	"sync"
@@ -70,6 +71,8 @@ type feedItem struct {
 	Chart   *struct {
 		Tool      string         `json:"tool"`
 		Arguments map[string]any `json:"arguments"`
+		Arg       string         `json:"arg"`    // the argument a button may change
+		Values    []string       `json:"values"` // the values it may take, the buttons
 	} `json:"chart"`
 }
 
@@ -90,6 +93,7 @@ type feeds struct {
 	h     feature.Host
 	store feature.Store
 	now   func() time.Time
+	again *reruns // with buttons: where a chart's post is kept for them
 
 	mu    sync.Mutex
 	doc   map[string]*feedState // by server
@@ -164,6 +168,11 @@ func (fs *feeds) add(server, title string, cfg feedConfig, c conn, has map[strin
 	}
 	fs.mu.Lock()
 	fs.byCmd[f.command] = f
+	if fs.again != nil {
+		fs.again.charts[server] = func(ctx context.Context, tool string, args map[string]any) []feature.Picture {
+			return fs.chart(ctx, f, tool, args)
+		}
+	}
 	fs.mu.Unlock()
 	fs.h.Go(func(ctx context.Context) {
 		t := time.NewTicker(feedEvery)
@@ -318,7 +327,11 @@ func (fs *feeds) send(ctx context.Context, f *feed, it feedItem, subs []feedSub)
 		pics = fs.chart(ctx, f, it.Chart.Tool, it.Chart.Arguments)
 	}
 	for _, s := range want {
-		fs.h.Post(feature.Post{Chat: s.Chat, Label: f.title, Text: text, Pictures: pics, Markup: feature.Markup{Silent: !s.Sound}})
+		p := feature.Post{Chat: s.Chat, Label: f.title, Text: text, Pictures: pics, Markup: feature.Markup{Silent: !s.Sound}}
+		if fs.again != nil && len(pics) > 0 {
+			fs.again.chart(&p, f.server, it.Chart.Tool, maps.Clone(it.Chart.Arguments), it.Chart.Arg, it.Chart.Values)
+		}
+		fs.h.Post(p)
 	}
 }
 
