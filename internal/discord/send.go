@@ -65,12 +65,9 @@ func (c *Client) post(ch feature.Chat, text string, pics []feature.Picture, know
 		logx.Warnf("reply truncated from %d chars", n)
 	}
 	parts := c.parts(text, known, true)
-	var files []upload
-	for i, p := range pics[:min(len(pics), maxFiles)] {
-		files = append(files, upload{name: fileName(cmp.Or(p.Name, "picture"+strconv.Itoa(i+1))) + ".png", data: p.Data})
-	}
+	files := pictures(pics)
 	if len(audio) > 0 && len(files) < maxFiles {
-		files = append(files, upload{name: "clip.mp3", data: audio})
+		files = append(files, upload{name: "clip.mp3", mime: "audio/mpeg", data: audio})
 	}
 	if len(parts) == 0 && len(files) == 0 {
 		logx.Warnf("empty reply, nothing sent")
@@ -273,6 +270,17 @@ func hasPrefix(rs []rune, s string) bool {
 	return len(rs) >= len(s) && strings.EqualFold(string(rs[:len(s)]), s)
 }
 
+// pictures is pics as files, at most maxFiles, each named after its Name or
+// else pictureN, with the extension and type its data has.
+func pictures(pics []feature.Picture) []upload {
+	var files []upload
+	for i, p := range pics[:min(len(pics), maxFiles)] {
+		mime, ext := img.Type(p.Data)
+		files = append(files, upload{name: fileName(cmp.Or(p.Name, "picture"+strconv.Itoa(i+1))) + "." + ext, mime: mime, data: p.Data})
+	}
+	return files
+}
+
 // fileName is name made safe as a file's: letters, digits, - and _ kept,
 // the rest _.
 func fileName(name string) string {
@@ -389,10 +397,7 @@ func (c *Client) Edit(ch feature.Chat, sent int64, text string, pics []feature.P
 		}
 		payload["content"], payload["allowed_mentions"] = p.text, allowed(p.users)
 	}
-	var files []upload
-	for i, p := range pics[:min(len(pics), maxFiles)] {
-		files = append(files, upload{name: fileName(cmp.Or(p.Name, "picture"+strconv.Itoa(i+1))) + ".png", data: p.Data})
-	}
+	files := pictures(pics)
 	if len(files) > 0 {
 		payload["attachments"] = attachments(files) // only these: the old ones go
 	}

@@ -61,6 +61,12 @@ Behaviour changes, approved: the prompt asks for Markdown, and replies can show 
 8. **Refuse to start when the state directory can't be written** (done). At startup, `/schedule` checks that its directory (`$STATE_DIRECTORY`, or the working directory) can be listed and written. If not, the bot exits with a clear message saying to add `StateDirectory=signalbot` to the systemd unit, the way the Docker `/data` check already does. Approved.
 9. **Tell the model about the scheduling commands** (done). The prompt's "If asked what tools you have" list names `/schedule`, `/timer`, `/reminder` and `/job`, so a near-miss like `/time …` gets pointed to the right command instead of "I can't set reminders". This needs a command-only entry the core keeps although it has no model tools. No `/time` alias. Approved. A `ToolGroup` with only `Names` is kept for that list alone, not `{tools}`.
 
+10. **Slack: read GIFs posted with `/giphy`** (waiting for a test on a real workspace). The Slack adapter skips any message with a `bot_id` (`internal/slack/decode.go`, `received`), to stop the bot answering other bots. A `/giphy` post is published by the Giphy app on behalf of the person who typed it, so as far as we know it carries Giphy's `bot_id` *and* a `user`: the person. It is skipped with the bots' posts, and the GIF never reaches the model.
+    - **Fix:** skip a message only when its author is a bot. A message with a `bot_id` is kept when its `user` is set, isn't the bot itself, and `users.info` (already called and cached for names) says `is_bot` is false. Its picture is taken from the message's image (an `image_url` attachment or an `image` block) as an image the model sees, and a bare Giphy link as the only text is dropped, as for Discord's GIF picker.
+    - **Still skipped:** other bots' posts (a bot user, or no `user`) and the bot's own (by ID), so no loops.
+    - **Before building:** capture one real `/giphy` event from the workspace (the app's event log; the bot never logs message content) to confirm the fields above. Add it, with names and IDs replaced, as the test's fixture.
+    - About 30 lines and a test.
+
 ---
 
 [Back to README.md](../README.md)

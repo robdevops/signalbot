@@ -266,8 +266,9 @@ func (c *Client) heartbeat(ctx context.Context, conn *ws.Conn, every time.Durati
 	}
 }
 
-// ready is the gateway's READY: who the bot is, and the session to resume.
-// It reports whether READY was read.
+// ready is the gateway's READY: who the bot is, the session to resume, and
+// the guilds it is in, so that a GUILD_CREATE for another is the bot being
+// added. It reports whether READY was read.
 func (c *Client) ready(d json.RawMessage) bool {
 	var r struct {
 		SessionID string `json:"session_id"`
@@ -276,10 +277,20 @@ func (c *Client) ready(d json.RawMessage) bool {
 		App       struct {
 			ID string `json:"id"`
 		} `json:"application"`
+		Guilds []struct {
+			ID string `json:"id"`
+		} `json:"guilds"`
 	}
 	if json.Unmarshal(d, &r) != nil || r.User.ID == "" {
 		return false
 	}
+	guilds := make(map[string]bool, len(r.Guilds))
+	for _, g := range r.Guilds {
+		guilds[g.ID] = true
+	}
+	c.mu.Lock()
+	c.joined = guilds
+	c.mu.Unlock()
 	c.session, c.resumeURL = r.SessionID, r.ResumeURL
 	c.username.Store(r.User.Username)
 	c.name.Store(cmp.Or(txt.SafeName(r.User.GlobalName), r.User.Username))

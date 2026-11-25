@@ -65,6 +65,7 @@ type Client struct {
 	answering map[string]int64                  // the message the core is answering, by chat key
 	botRoles  map[string]string                 // a guild's ID to the bot's own role there
 	hooks     map[int64]*interaction            // a slash command's reply, by its message ID, for an edit
+	joined    map[string]bool                   // the guilds the bot is in, from READY's list on; nil before READY
 
 	names     *state.Doc    // discord-people.json, where chats are saved
 	saveEvery time.Duration // how often chats are saved while changed; a test's shorter
