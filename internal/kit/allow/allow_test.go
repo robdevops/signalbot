@@ -1,6 +1,11 @@
 package allow
 
-import "testing"
+import (
+	"strings"
+	"testing"
+
+	"github.com/robdevops/signalbot/internal/kit/logx"
+)
 
 func TestParse(t *testing.T) {
 	admin := func() (bool, bool) { return true, false }
@@ -64,5 +69,19 @@ func TestNorm(t *testing.T) {
 	}
 	if p.Listed("discord:123456789") {
 		t.Error("a Telegram ID taken for Discord's")
+	}
+}
+
+// A refused DM is warned of once per sender, naming the setting.
+func TestRefused(t *testing.T) {
+	var buf logx.Buffer
+	t.Cleanup(logx.SetOutput(&buf, &buf, false))
+	r := Refused{Setting: "SIGNAL_DM_USERS"}
+	r.Log("bob")
+	r.Log("bob")
+	r.Log("alice")
+	want := "a DM from bob ignored: SIGNAL_DM_USERS doesn't allow it; add the ID to SIGNAL_DM_USERS to allow DMs from them\n"
+	if got := buf.String(); strings.Count(got, want) != 1 || strings.Count(got, "a DM from") != 2 {
+		t.Fatalf("log %q", got)
 	}
 }

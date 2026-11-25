@@ -7,6 +7,9 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
+
+	"github.com/robdevops/signalbot/internal/kit/logx"
 )
 
 // Policy is who may do something. With All anyone may; an ID is listed if
@@ -146,4 +149,30 @@ func (p Policy) String() string {
 		return parts[0]
 	}
 	return strings.Join(parts[:len(parts)-1], ", ") + " and " + parts[len(parts)-1]
+}
+
+// Refused logs DMs a setting refuses: a warning naming the sender's ID and
+// the setting to add it to, once per sender, for at most 10,000 senders a
+// run, so a stranger's every message doesn't fill the log.
+type Refused struct {
+	Setting string // the setting that refused them, such as SIGNAL_DM_USERS
+
+	mu   sync.Mutex
+	seen map[string]bool
+}
+
+// Log logs id's refused DM, the first time.
+func (r *Refused) Log(id string) {
+	r.mu.Lock()
+	first := !r.seen[id] && len(r.seen) < 10000
+	if first {
+		if r.seen == nil {
+			r.seen = map[string]bool{}
+		}
+		r.seen[id] = true
+	}
+	r.mu.Unlock()
+	if first {
+		logx.Warnf("a DM from %s ignored: %s doesn't allow it; add the ID to %s to allow DMs from them", id, r.Setting, r.Setting)
+	}
 }
