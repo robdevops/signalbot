@@ -461,6 +461,26 @@ func TestRun(t *testing.T) {
 	}
 }
 
+// While getMe says anyone may add the bot to a group, startup warns so,
+// with how to stop it; otherwise it doesn't.
+func TestCanJoinGroupsWarning(t *testing.T) {
+	for _, canJoin := range []bool{true, false} {
+		logs := &logx.Buffer{}
+		t.Cleanup(logx.SetOutput(logs, logs, true)) // with each line's priority
+		f := newFake(t)
+		if canJoin {
+			f.set("getMe", `{"id":777000,"is_bot":true,"first_name":"Botty","username":"botty_bot","can_join_groups":true}`)
+		}
+		if err := f.client().hello(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+		warned := strings.Contains(logs.String(), "<4>telegram: anyone can add the bot to a group") && strings.Contains(logs.String(), "/setjoingroups")
+		if warned != canJoin {
+			t.Errorf("can_join_groups %v: logs %q", canJoin, logs)
+		}
+	}
+}
+
 // The token is in every URL, so no error that reaches the log quotes it.
 func TestTokenNeverLogged(t *testing.T) {
 	logs := captureLogs(t)
@@ -512,8 +532,8 @@ func TestDelivered(t *testing.T) {
 	}
 }
 
-// The bot may post on its own in any DM, and in a group until it is
-// removed from it, with no member lookups.
+// The bot may post on its own in any DM (here TELEGRAM_DM_USERS is "all"),
+// and in a group until it is removed from it, with no member lookups.
 func TestReachable(t *testing.T) {
 	captureLogs(t)
 	f := newFake(t)

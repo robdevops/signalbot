@@ -72,7 +72,7 @@ func (c *Client) dmAllowed(ctx context.Context, user string) bool {
 	c.mu.Unlock()
 	admin, err := c.isAdmin(ctx, user)
 	if err != nil {
-		logx.Warnf("telegram: a DM refused: checking whether its sender is an admin failed: %v", err)
+		logx.Warnf("telegram: a DM refused: checking whether its user is an admin failed: %v", err)
 		return false
 	}
 	c.mu.Lock()

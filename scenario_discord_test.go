@@ -59,6 +59,7 @@ type dcHarness struct {
 	logs    strings.Builder
 	presses []feature.Press   // what the test feature's OnPress saw
 	members map[string]string // a server member's JSON, by user ID; anyone else is no member
+	bot     *bot.Bot          // the host features post through
 }
 
 // startDiscord starts the bot on Discord with its fakes, as main does, and
@@ -93,6 +94,7 @@ func startDiscord(t *testing.T, env map[string]string) *dcHarness {
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	b := bot.New(ctx, cfg, net)
+	h.bot = b
 	buttons := func(fh feature.Host) error {
 		fh.OnPress(func(_ context.Context, p feature.Press) (string, bool) {
 			h.mu.Lock()
@@ -527,6 +529,41 @@ func TestDiscordDMScheduleDropped(t *testing.T) {
 	for _, l := range strings.Split(h.logText(), "\n") {
 		if strings.Contains(l, "dropped") && strings.Contains(l, dcAlice) {
 			t.Fatalf("log names her: %q", l)
+		}
+	}
+}
+
+// An alert, a feature's post, goes to a DM only while its user may DM the
+// bot: the server's owner gets one, and once she no longer owns it, the
+// next is dropped, logged naming no one.
+func TestDiscordDMAlertDropped(t *testing.T) {
+	h := startDiscord(t, nil)
+	h.mu.Lock()
+	h.members[dcAlice] = `{"roles":[]}`
+	h.mu.Unlock()
+	h.send("GUILD_UPDATE", `{"id":"`+dcGuild+`","name":"Test server","owner_id":"`+dcAlice+`"}`)
+	h.send("MESSAGE_CREATE", `{"id":"$ID","type":0,`+dcInDM+`,`+dcFromAlice+`,"content":"hello"}`)
+	h.waitFor("the owner's answer", func() bool { return len(h.dmSent()) == 1 })
+	h.bot.Post(feature.Post{Chat: feature.Chat{User: "discord:" + dcAlice}, Text: "rain alert"})
+	h.waitFor("the alert", func() bool { return len(h.dmSent()) == 2 })
+	if s := h.dmSent()[1]; s != "rain alert" {
+		t.Fatalf("sent %q", s)
+	}
+	h.send("GUILD_UPDATE", `{"id":"`+dcGuild+`","name":"Test server","owner_id":"700000000000000001"}`)
+	h.send("MESSAGE_CREATE", `{"id":"$ID","type":0,`+dcInDM+`,`+dcFromAlice+`,"content":"hello again"}`)
+	h.waitFor("Alice's DM refused", func() bool {
+		return strings.Contains(h.logText(), "discord:"+dcAlice+" ignored because not allowed by DISCORD_DM_USERS")
+	})
+	h.bot.Post(feature.Post{Chat: feature.Chat{User: "discord:" + dcAlice}, Text: "hail alert"})
+	h.waitFor("the alert dropped", func() bool {
+		return strings.Contains(h.logText(), "dropped a post: its chat isn't reachable")
+	})
+	if s := h.dmSent(); len(s) != 2 {
+		t.Fatalf("sent %q", s)
+	}
+	for _, l := range strings.Split(h.logText(), "\n") {
+		if strings.Contains(l, "alert") || strings.Contains(l, "dropped") && strings.Contains(l, dcAlice) {
+			t.Fatalf("log %q", l)
 		}
 	}
 }

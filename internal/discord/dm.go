@@ -79,7 +79,7 @@ func (c *Client) mayDM(ctx context.Context, uid string) bool {
 	case err == nil:
 		c.keepVerdict(uid, verdict{admin: admin, mod: mod, at: time.Now()}, gen)
 	case !ok:
-		logx.Warnf("discord: reading a DM sender's roles failed, so the DM is refused: %v", err)
+		logx.Warnf("discord: reading a DM user's roles failed, so the DM is refused: %v", err)
 	}
 	return ok
 }
