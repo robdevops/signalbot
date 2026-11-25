@@ -2,6 +2,7 @@ package signal
 
 import (
 	"context"
+	"fmt"
 	"maps"
 	"strings"
 	"testing"
@@ -10,6 +11,7 @@ import (
 	"github.com/robdevops/signalbot/internal/bot"
 	"github.com/robdevops/signalbot/internal/feature"
 	"github.com/robdevops/signalbot/internal/kit/allow"
+	"github.com/robdevops/signalbot/internal/kit/logx"
 )
 
 // otherID is a group the bot is in but SIGNAL_GROUP_IDS doesn't list.
@@ -47,11 +49,11 @@ func TestNewGroups(t *testing.T) {
 	logs := captureLogs(t)
 	t.Setenv("SIGNAL_DM_USERS", "none")
 	t.Setenv("SIGNAL_GROUP_IDS", "")
-	if c := New(nil); !c.groupIDs.all || !c.suggest.Load() {
+	if c := New(nil); !c.groupIDs.all || !c.report.Load() {
 		t.Errorf("unset: %+v", c.groupIDs)
 	}
 	t.Setenv("SIGNAL_GROUP_IDS", groupID+","+otherID)
-	if c := New(nil); c.groupIDs.all || len(c.groupIDs.ids) != 2 || c.suggest.Load() {
+	if c := New(nil); c.groupIDs.all || len(c.groupIDs.ids) != 2 || !c.report.Load() {
 		t.Errorf("listed: %+v", c.groupIDs)
 	}
 	t.Setenv("SIGNAL_GROUP_IDS", "None")
@@ -182,63 +184,145 @@ func TestListedGroupsOnly(t *testing.T) {
 	}
 }
 
+// captureLevels is captureLogs with each line's priority, "<4>" a warning.
+func captureLevels(t *testing.T) *logx.Buffer {
+	t.Helper()
+	var buf logx.Buffer
+	t.Cleanup(logx.SetOutput(&buf, &buf, true))
+	return &buf
+}
+
 // Once connected with SIGNAL_GROUP_IDS all, the bot warns that it answers
-// in any group, and suggests the line listing the groups it is in, with
-// their names; once a run. With none, it says so; if listGroups fails, it
-// warns without the line.
-func TestSuggestGroups(t *testing.T) {
-	logs := captureLogs(t)
+// in any group, lists the groups it is in, and suggests the line listing
+// them, with their names; once a run. With none, it says so; if listGroups
+// fails, it warns without the list or the line.
+func TestReportGroupsAll(t *testing.T) {
+	logs := captureLevels(t)
 	f := newFake(t)
 	// A newline in a name is collapsed; a backslash, which ending a line
 	// in a systemd env file would join the next line to it, is shown as "/".
 	f.set("listGroups", strings.NewReplacer(`"name":"Other"`, `"name":"Ot\nher"`, `"name":"Family"`, `"name":"Fam\\ily \\"`).Replace(twoGroups))
 	c := newClient(f.sock, allow.Parse("none"), nil)
-	c.suggest.Store(true)
+	c.report.Store(true)
 	_, conn := run(t, c, f)
-	line := "Signal: to answer only in the groups the bot is in now, set: SIGNAL_GROUP_IDS=" + groupID + "," + otherID + "  # Fam/ily /, Ot her\n"
+	line := "<4>Signal: to answer only in the groups the bot is in now, set: SIGNAL_GROUP_IDS=" + groupID + "," + otherID + "  # Fam/ily /, Ot her\n"
 	eventually(t, "the suggestion", func() bool { return strings.Contains(logs.String(), line) })
-	if !strings.Contains(logs.String(), "Signal: the bot answers in any group anyone adds it to, as SIGNAL_GROUP_IDS is unset or all") {
-		t.Fatalf("logs %q", logs)
+	if out := logs.String(); !strings.Contains(out, "<4>Signal: the bot answers in any group anyone adds it to, as SIGNAL_GROUP_IDS is unset or all") ||
+		!strings.Contains(out, "<5>Signal groups (2): Fam/ily / ("+groupID+"), Ot her ("+otherID+")\n") || strings.Contains(out, "ignored") {
+		t.Fatalf("logs %q", out)
 	}
-	conn.Close() // reconnects: not suggested again
+	conn.Close() // reconnects: not listed or suggested again
 	eventually(t, "the reconnect", func() bool { return len(f.calls("listAccounts")) == 2 })
-	c.suggestGroups(context.Background())
-	if n := strings.Count(logs.String(), "SIGNAL_GROUP_IDS="); n != 1 {
-		t.Fatalf("suggested %d times", n)
+	c.reportGroups(context.Background())
+	if n, m := strings.Count(logs.String(), "SIGNAL_GROUP_IDS="), strings.Count(logs.String(), "Signal groups ("); n != 1 || m != 1 {
+		t.Fatalf("suggested %d times, listed %d", n, m)
 	}
 
 	before := len(logs.String())
 	f.set("listGroups", `[{"id":"bGVmdA==","name":"Old","isMember":false}]`)
-	c.suggest.Store(true)
-	c.suggestGroups(context.Background())
-	if out := logs.String()[before:]; !strings.Contains(out, "the bot is in no group yet") || strings.Contains(out, "SIGNAL_GROUP_IDS=") || strings.Contains(out, "Old") {
+	c.report.Store(true)
+	c.reportGroups(context.Background())
+	if out := logs.String()[before:]; !strings.Contains(out, "<5>Signal groups (0): none\n") || !strings.Contains(out, "<4>Signal: the bot is in no group yet") ||
+		strings.Contains(out, "SIGNAL_GROUP_IDS=") || strings.Contains(out, "Old") {
 		t.Fatalf("logs %q", out)
 	}
 
 	before = len(logs.String())
 	f.set("listGroups", `{"error":"x"`) // not even JSON: the call times out
-	c.suggest.Store(true)
+	c.report.Store(true)
 	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
 	defer cancel()
-	c.suggestGroups(ctx)
-	if out := logs.String()[before:]; !strings.Contains(out, "answers in any group") || !strings.Contains(out, "listGroups failed, so no SIGNAL_GROUP_IDS is suggested") || strings.Contains(out, "SIGNAL_GROUP_IDS=") {
+	c.reportGroups(ctx)
+	if out := logs.String()[before:]; !strings.Contains(out, "answers in any group") ||
+		!strings.Contains(out, "<4>Signal: listGroups failed, so the groups the bot is in aren't listed, nor SIGNAL_GROUP_IDS suggested") ||
+		strings.Contains(out, "SIGNAL_GROUP_IDS=") || strings.Contains(out, "Signal groups (") {
 		t.Fatalf("logs %q", out)
 	}
 }
 
-// With groups listed, nothing is suggested.
-func TestNoSuggestionWhenListed(t *testing.T) {
-	logs := captureLogs(t)
+// With groups listed, the bot lists the groups it is in once connected, as
+// a notice while every one is listed; a group not listed is marked, and
+// makes the line a warning. Nothing is suggested. If listGroups fails, it
+// warns, naming no group.
+func TestReportGroupsListed(t *testing.T) {
+	logs := captureLevels(t)
 	t.Setenv("SIGNAL_DM_USERS", "none")
-	t.Setenv("SIGNAL_GROUP_IDS", groupID)
+	t.Setenv("SIGNAL_GROUP_IDS", groupID+","+otherID)
 	f := newFake(t)
 	f.set("listGroups", twoGroups)
 	t.Setenv("SIGNALCLI_SOCKET", f.sock)
 	c := New(nil)
 	c.names.refreshedAt = time.Now()
 	run(t, c, f)
-	c.suggestGroups(context.Background())
-	if n := len(f.calls("listGroups")); n != 0 || strings.Contains(logs.String(), "any group") {
-		t.Fatalf("%d listGroups, logs %q", n, logs)
+	all := "<5>Signal groups (2): Family (" + groupID + "), Other (" + otherID + ")\n"
+	eventually(t, "the list", func() bool { return strings.Contains(logs.String(), all) })
+	c.reportGroups(context.Background()) // once a run
+	if out := logs.String(); strings.Count(out, "Signal groups (") != 1 || strings.Contains(out, "any group") || strings.Contains(out, "SIGNAL_GROUP_IDS=") || strings.Contains(out, "<4>Signal groups") {
+		t.Fatalf("logs %q", out)
+	}
+
+	// Each case is a client of its own, connected with its setting.
+	connect := func(ids, groups string) *Client {
+		f := newFake(t)
+		f.set("listGroups", groups)
+		c := newClient(f.sock, allow.Parse("none"), nil)
+		c.groupIDs = parseGroups(ids)
+		c.names.refreshedAt = time.Now()
+		run(t, c, f)
+		return c
+	}
+
+	before := len(logs.String())
+	c = connect(groupID, twoGroups)
+	c.report.Store(true)
+	c.reportGroups(context.Background())
+	want := "<4>Signal groups (2): Other (" + otherID + ") — not in SIGNAL_GROUP_IDS, ignored, Family (" + groupID + ")\n"
+	if out := logs.String()[before:]; !strings.Contains(out, want) || strings.Count(out, "Signal groups (") != 1 {
+		t.Fatalf("logs %q, want %q", out, want)
+	}
+
+	before = len(logs.String())
+	c = connect("none", twoGroups)
+	c.report.Store(true)
+	c.reportGroups(context.Background())
+	if out := logs.String()[before:]; !strings.Contains(out, "<4>Signal groups (2): ") || strings.Count(out, "not in SIGNAL_GROUP_IDS, ignored") != 2 {
+		t.Fatalf("logs %q", out)
+	}
+
+	before = len(logs.String())
+	c = connect(groupID, `{"error":"x"`) // not even JSON: the call times out
+	c.report.Store(true)
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+	c.reportGroups(ctx)
+	if out := logs.String()[before:]; !strings.Contains(out, "<4>Signal: listGroups failed, so the groups the bot is in aren't listed: ") ||
+		strings.Contains(out, "Family") || strings.Contains(out, "SIGNAL_GROUP_IDS=") || strings.Contains(out, "Signal groups (") {
+		t.Fatalf("logs %q", out)
+	}
+}
+
+// The startup line names at most groupsShown groups, the unlisted first,
+// and counts the rest.
+func TestReportGroupsCapped(t *testing.T) {
+	logs := captureLevels(t)
+	f := newFake(t)
+	var gs []string
+	for i := range groupsShown + 3 {
+		gs = append(gs, fmt.Sprintf(`{"id":"g%d=","name":"G%d","isMember":true}`, i, i))
+	}
+	f.set("listGroups", "["+strings.Join(gs, ",")+"]")
+	c := newClient(f.sock, allow.Parse("none"), nil)
+	c.groupIDs = parseGroups("g0=")
+	for i := 1; i < groupsShown+2; i++ {
+		c.groupIDs.ids[fmt.Sprintf("g%d=", i)] = true
+	}
+	c.report.Store(true)
+	run(t, c, f)
+	last := fmt.Sprintf("G%d (g%d=) — not in SIGNAL_GROUP_IDS, ignored", groupsShown+2, groupsShown+2)
+	eventually(t, "the list", func() bool { return strings.Contains(logs.String(), "Signal groups (") })
+	out := logs.String()
+	if !strings.Contains(out, fmt.Sprintf("<4>Signal groups (%d): %s, G0 (g0=), ", groupsShown+3, last)) || !strings.Contains(out, ", and 3 more\n") ||
+		strings.Contains(out, fmt.Sprintf("G%d (", groupsShown+1)) {
+		t.Fatalf("logs %q", out)
 	}
 }

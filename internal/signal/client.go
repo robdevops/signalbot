@@ -63,7 +63,7 @@ type Client struct {
 	dm           allow.Policy // who may DM the bot (SIGNAL_DM_USERS)
 	groupIDs     groupSet     // the groups the bot answers in (SIGNAL_GROUP_IDS)
 	ignored      ignored      // the unlisted groups a message was ignored in, logged once each
-	suggest      atomic.Bool  // SIGNAL_GROUP_IDS is all, and the line to set it is yet to be suggested
+	report       atomic.Bool  // the groups the bot is in are yet to be logged this run
 	verdicts     verdicts     // whether a DM's sender is a group admin, lately asked
 	typingEvery  time.Duration
 	writeTimeout time.Duration // writeTimeout; a test's shorter
@@ -98,9 +98,9 @@ func New(test *config.Test) *Client {
 	}
 	c := newClient(addr, dm, test)
 	c.groupIDs = parseGroups(config.Env("SIGNAL_GROUP_IDS", "all"))
+	c.report.Store(true) // once connected, the groups it is in
 	switch {
-	case c.groupIDs.all:
-		c.suggest.Store(true) // once connected, with the line to set
+	case c.groupIDs.all: // once connected, it warns, with the line to set
 	case len(c.groupIDs.ids) == 0:
 		logx.Warnf("Signal groups are off: SIGNAL_GROUP_IDS is none; the bot answers only in DMs")
 	default:
@@ -196,7 +196,7 @@ func (c *Client) serve(ctx context.Context, conn net.Conn, handle func(bot.Recei
 		mctx, mcancel := context.WithTimeout(ctx, 15*time.Second)
 		defer mcancel()
 		c.members.start(mctx, handle) // so the first group update can be told apart
-		c.suggestGroups(ctx)
+		c.reportGroups(ctx)
 	}()
 
 	err := readFrames(conn, maxLine, func(line []byte) { c.dispatch(line, handle) }, c.skipped)

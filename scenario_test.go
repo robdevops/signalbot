@@ -328,10 +328,14 @@ func TestScenarioDMsOff(t *testing.T) {
 // command, a reaction or an update there does nothing, and is logged once,
 // by the group's ID only. The listed group is answered, its history
 // holding none of the other's, and /schedule offers only it. Nothing
-// warns that the bot answers in any group.
+// warns that the bot answers in any group; the startup list of the groups
+// the bot is in warns of the other, marked as ignored.
 func TestScenarioUnlistedGroupIgnored(t *testing.T) {
 	h := startBot(t, world{OtherGroup: true}) // SIGNAL_GROUP_IDS lists the test group
 	h.waitLog("Signal groups: answering in 1 listed in SIGNAL_GROUP_IDS, and ignoring any other")
+	if l := h.waitLog("Signal groups (2): Other group (" + idOther + ") — not in SIGNAL_GROUP_IDS, ignored, Test group (" + idGroup + ")"); l.Pri != 4 {
+		t.Fatalf("logged %+v", l)
+	}
 	there := func(m incoming) incoming { m.Group = idOther; return m }
 	h.ignored(there(atBot("what is up")))
 	h.ignored(there(inGroup("the moon is out tonight")))
@@ -347,7 +351,7 @@ func TestScenarioUnlistedGroupIgnored(t *testing.T) {
 	}
 	n := 0
 	for _, l := range h.logLines() {
-		if strings.Contains(l.Text, idOther) {
+		if strings.Contains(l.Text, idOther) && !strings.HasPrefix(l.Text, "Signal groups (") {
 			n++
 		}
 	}
@@ -393,6 +397,9 @@ func TestScenarioSuggestGroupIDs(t *testing.T) {
 	if l := h.waitLog("SIGNAL_GROUP_IDS=" + idGroup + "," + idOther + "  # Test group, Other group"); l.Pri != 4 {
 		t.Fatalf("logged %+v", l)
 	}
+	if l, ok := h.logged("Signal groups (2): Test group (" + idGroup + "), Other group (" + idOther + ")"); !ok || l.Pri != 5 {
+		t.Fatalf("the groups listed %+v %v: %v", l, ok, h.logLines())
+	}
 	there := atBot("what is up")
 	there.Group = idOther
 	if s := h.ask(there); s.GroupID != idOther {
@@ -403,6 +410,45 @@ func TestScenarioSuggestGroupIDs(t *testing.T) {
 	}
 	if n := h.warnings("SIGNAL_GROUP_IDS="); n != 1 {
 		t.Fatalf("suggested %d times", n)
+	}
+}
+
+// At startup the bot lists the groups it is in, by name and ID, so a group
+// someone else added it to shows: with every one in SIGNAL_GROUP_IDS, as a
+// notice, once a run, and nothing warns.
+func TestScenarioGroupsListedAtStartup(t *testing.T) {
+	h := startBot(t, world{Env: map[string]string{"SIGNAL_GROUP_IDS": idOther + "," + idGroup}, OtherGroup: true})
+	if l := h.waitLog("Signal groups (2): Test group (" + idGroup + "), Other group (" + idOther + ")"); l.Pri != 5 {
+		t.Fatalf("logged %+v", l)
+	}
+	if s := h.ask(atBot("what is up")); s.GroupID != idGroup {
+		t.Fatalf("sent %+v", s)
+	}
+	if n := h.warnings("Signal"); n != 0 {
+		t.Fatalf("%d warnings: %v", n, h.logLines())
+	}
+	n := 0
+	for _, l := range h.logLines() {
+		if strings.HasPrefix(l.Text, "Signal groups (") {
+			n++
+		}
+	}
+	if n != 1 {
+		t.Fatalf("listed %d times", n)
+	}
+}
+
+// If listGroups fails at startup, the bot warns that it can't list the
+// groups it is in, naming none.
+func TestScenarioGroupsListFails(t *testing.T) {
+	h := startBot(t, world{GroupsFail: true, OtherGroup: true})
+	if l := h.waitLog("Signal: listGroups failed, so the groups the bot is in aren't listed"); l.Pri != 4 {
+		t.Fatalf("logged %+v", l)
+	}
+	for _, l := range h.logLines() {
+		if strings.Contains(l.Text, "Test group") || strings.Contains(l.Text, "Other group") || strings.HasPrefix(l.Text, "Signal groups (") {
+			t.Fatalf("a group named: %v", l)
+		}
 	}
 }
 
