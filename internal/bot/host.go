@@ -52,6 +52,12 @@ func (b *Bot) ListCommands(label string, names ...string) {
 	if len(names) > 0 {
 		b.groups = append(b.groups, feature.ToolGroup{Names: []string{"**" + label + "**: /" + strings.Join(names, ", /")}})
 	}
+	if b.about == nil {
+		b.about = map[string]string{}
+	}
+	for _, n := range names {
+		b.about[n] = label
+	}
 }
 
 func (b *Bot) IntroLine(line string)   { b.introLines = append(b.introLines, introLine{line, false}) }
@@ -97,7 +103,7 @@ func (b *Bot) Store(name string) (feature.Store, error) {
 }
 
 func (b *Bot) Info() feature.Info {
-	info := feature.Info{Name: b.net.BotName(), Network: b.net.Name(), Buttons: b.net.Buttons(), Version: b.cfg.Version, Model: b.cfg.Model,
+	info := feature.Info{Name: b.net.BotName(), Network: b.net.Name(), Caps: b.net.Caps(), Version: b.cfg.Version, Model: b.cfg.Model,
 		Images: b.images.Load(), Audio: b.audio.Load(), PDFs: b.files.Load(), CallsTools: b.callsTools.Load(), Tools: b.toolNames(false), Intro: b.intro(false), IntroDM: b.intro(true)}
 	if b.ai == nil {
 		info.Model = ""
@@ -242,7 +248,7 @@ func (b *Bot) say(p feature.Post) {
 func (b *Bot) keyboard(p feature.Post, sent []int64) {
 	mk := p.Markup
 	switch {
-	case len(sent) == 0 || p.Chat.GroupID != "" || !b.net.Buttons():
+	case len(sent) == 0 || p.Chat.GroupID != "" || !b.net.Caps().Keyboard:
 	case mk.NoKeyboard:
 		b.keys.set(p.Chat.Key(), nil)
 	case len(mk.Keyboard) > 0:

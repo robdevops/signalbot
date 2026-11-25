@@ -549,7 +549,7 @@ func (a *addon) rememberEdit(id string, sent []int64, onPress string) {
 		switch {
 		case sent[0] != p.last(): // a new message
 			p.Sent, p.Edits = sent[0], 0
-		case !a.buttons:
+		case a.caps.EditWindow > 0: // no longer editable than the first send allowed
 			until = p.Expires
 			fallthrough
 		default:
@@ -562,9 +562,6 @@ func (a *addon) rememberEdit(id string, sent []int64, onPress string) {
 	a.mu.Unlock()
 }
 
-// maxSignalEdits is how many edits of a message Signal's apps show.
-const maxSignalEdits = 10
-
 // uneditable is why the addon's post p can't be edited at now, or "".
 func (a *addon) uneditable(p posted, now time.Time) string {
 	switch {
@@ -574,7 +571,7 @@ func (a *addon) uneditable(p posted, now time.Time) string {
 		return "edits of a post merged with others"
 	case p.Sent != p.last():
 		return "edits of a post sent in several messages"
-	case !a.buttons && p.Edits >= maxSignalEdits:
+	case a.caps.EditLimit > 0 && p.Edits >= a.caps.EditLimit:
 		return "edits past the network's limit"
 	}
 	return ""

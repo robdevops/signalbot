@@ -50,7 +50,7 @@ func TestChooseNetwork(t *testing.T) {
 		{"neither set", both, nil, "signal", ""},
 		{"socket set", both, map[string]string{"SIGNALCLI_SOCKET": "/run/s"}, "signal", ""},
 		{"token set", both, map[string]string{"TELEGRAM_BOT_TOKEN": "x"}, "telegram", ""},
-		{"both set", both, map[string]string{"TELEGRAM_BOT_TOKEN": "x", "SIGNALCLI_SOCKET": "/run/s"}, "", "both TELEGRAM_BOT_TOKEN and SIGNALCLI_SOCKET are set"},
+		{"both set", both, map[string]string{"TELEGRAM_BOT_TOKEN": "x", "SIGNALCLI_SOCKET": "/run/s"}, "", "TELEGRAM_BOT_TOKEN and SIGNALCLI_SOCKET are both set"},
 		{"left out", map[string]func(*config.Test) bot.Network{"signal": nil}, map[string]string{"TELEGRAM_BOT_TOKEN": "x"}, "", "telegram is chosen, but this build leaves it out (built with -tags notelegram)"},
 		{"default left out", map[string]func(*config.Test) bot.Network{"telegram": nil}, nil, "", "signal is chosen, but this build leaves it out (built with -tags nosignal)"},
 	} {

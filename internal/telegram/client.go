@@ -6,13 +6,16 @@ package telegram
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/robdevops/signalbot/internal/kit/txt"
 	"io"
 	"mime/multipart"
 	"net/http"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -43,7 +46,8 @@ type Client struct {
 	name     atomic.Value // string: its first name
 	known    chan struct{}
 	once     sync.Once
-	watch    atomic.Bool // the core has an event hook
+	watch    atomic.Bool                   // the core has an event hook
+	commands atomic.Pointer[[]bot.Command] // the commands features registered, for Telegram's "/" menu
 
 	mu       sync.Mutex
 	people   map[string]string            // user ID to name, as last seen
@@ -206,7 +210,10 @@ func (c *Client) Prompt() string {
 // Watch says whether the core has an event hook, so updates only events
 // would use are skipped without one. Its commands go unused: Telegram marks
 // a command at the start of a message itself (bot_command).
-func (c *Client) Watch(w bot.Watch) { c.watch.Store(w.Events) }
+func (c *Client) Watch(w bot.Watch) {
+	c.watch.Store(w.Events)
+	c.commands.Store(&w.Commands)
+}
 
 // Run learns who the bot is, then long-polls getUpdates and hands each
 // update the core may act on to handle, on this goroutine, until ctx ends.
@@ -292,7 +299,35 @@ func (c *Client) hello(ctx context.Context) error {
 	c.self.Store(strconv.FormatInt(me.ID, 10))
 	c.once.Do(func() { close(c.known) })
 	logx.Noticef("connected to Telegram as @%s", me.Username)
+	c.publishCommands(ctx)
 	return nil
+}
+
+// menuCommand is a name Telegram's command menu takes: lowercase letters,
+// digits and underscores, up to 32.
+var menuCommand = regexp.MustCompile(`^[a-z0-9_]{1,32}$`)
+
+// publishCommands lists the commands features registered in Telegram's "/"
+// menu, each with what it is about, or its own name for a command with no
+// label; a name Telegram doesn't take is left out, as are any past its 100.
+// A failure is only logged: the commands still work when typed.
+func (c *Client) publishCommands(ctx context.Context) {
+	cmds := c.commands.Load()
+	if cmds == nil {
+		return
+	}
+	var menu []map[string]string
+	for _, cmd := range *cmds {
+		if menuCommand.MatchString(cmd.Name) && len(menu) < 100 {
+			menu = append(menu, map[string]string{"command": cmd.Name, "description": txt.Clamp(cmp.Or(cmd.About, cmd.Name), 256)})
+		}
+	}
+	if menu == nil {
+		menu = []map[string]string{}
+	}
+	if err := c.call(ctx, "setMyCommands", map[string]any{"commands": menu}, nil); err != nil {
+		logx.Warnf("telegram setMyCommands failed: %v", err)
+	}
 }
 
 // poll is one getUpdates.

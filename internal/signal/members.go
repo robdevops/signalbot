@@ -41,8 +41,8 @@ type pending struct {
 func (c *Client) Watch(w bot.Watch) {
 	c.members.on.Store(w.Events)
 	commands := map[string]bool{}
-	for _, name := range w.Commands {
-		commands[name] = true
+	for _, cmd := range w.Commands {
+		commands[cmd.Name] = true
 	}
 	c.commands.Store(&commands)
 }

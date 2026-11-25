@@ -21,7 +21,8 @@ import (
 // posting to h.
 func buttonsAddon(cfg addonConfig) (*addon, *time.Time, *featuretest.Host) {
 	a, now := unitAddon(cfg)
-	a.only["period"], a.bot["period"], a.buttons, a.cmds["rain"] = true, true, true, true
+	a.only["period"], a.bot["period"], a.cmds["rain"] = true, true, true
+	a.caps = feature.Caps{Buttons: true, Keyboard: true, Silent: true, EditMedia: true}
 	h := featuretest.New()
 	a.host = h
 	return a, now, h
@@ -157,7 +158,7 @@ func TestOutboxMarkup(t *testing.T) {
 	}
 
 	// Signal: the buttons left off, and the post remembered as a plain one.
-	a.buttons = false
+	a.caps = feature.Caps{EditLimit: 10, EditWindow: 24 * time.Hour} // Signal's
 	if why := op(ext.Op{ID: "plain", Buttons: rainButtons, OnPress: "period", Keyboard: nil}); why != "" {
 		t.Fatal(why)
 	}
@@ -483,17 +484,17 @@ func TestOutboxEditRefused(t *testing.T) {
 		t.Fatalf("several: %q", why)
 	}
 
-	a.buttons = false
+	a.caps = feature.Caps{EditLimit: 10, EditWindow: 24 * time.Hour} // Signal's
 	a.rememberPosted(inA, []string{"s"}, []int64{300}, "")
 	first := a.posted["s"].Expires
-	for i := range maxSignalEdits {
+	for i := range a.caps.EditLimit {
 		*now = now.Add(time.Minute)
 		if why := edit(10+i, "s"); why != "" {
 			t.Fatalf("edit %d: %q", i, why)
 		}
 		h.Posts()[len(h.Posts())-1].OnSent([]int64{300}, false)
 	}
-	if p := a.posted["s"]; !p.Expires.Equal(first) || p.Edits != maxSignalEdits {
+	if p := a.posted["s"]; !p.Expires.Equal(first) || p.Edits != a.caps.EditLimit {
 		t.Fatalf("remembered %+v", p)
 	}
 	if why := edit(30, "s"); why != "edits past the network's limit" {

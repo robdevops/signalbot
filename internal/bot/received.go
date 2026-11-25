@@ -57,7 +57,10 @@ type Reacted struct {
 
 // Pressed is a press of a button under one of the bot's messages. Answer
 // shows the presser text, if not "", for a moment; it is called once, and
-// never blocks.
+// never blocks. A network whose presses must be acknowledged quickly
+// (Discord's and Slack's within 3 seconds) acknowledges them itself as it
+// hands them on, and shows Answer's text when it comes, as a reply only the
+// presser sees; Telegram waits for Answer, which closes the press.
 type Pressed struct {
 	Press  feature.Press
 	Answer func(text string)

@@ -872,3 +872,24 @@ func TestSendVoice(t *testing.T) {
 		t.Errorf("ids %v", ids)
 	}
 }
+
+// The commands features registered go to Telegram's "/" menu once the bot
+// knows who it is, each with its group's label or its own name; one
+// Telegram's menu can't take is left out.
+func TestCommandMenu(t *testing.T) {
+	captureLogs(t)
+	f := newFake(t)
+	c := f.client("1111111")
+	c.Watch(bot.Watch{Commands: []bot.Command{{Name: "intro"}, {Name: "schedule", About: "schedules and reminders"}, {Name: "my-cmd"}}})
+	if err := c.hello(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	m := f.callsTo("setMyCommands")
+	if len(m) != 1 {
+		t.Fatalf("%d setMyCommands calls", len(m))
+	}
+	got, _ := json.Marshal(m[0].Params["commands"])
+	if string(got) != `[{"command":"intro","description":"intro"},{"command":"schedule","description":"schedules and reminders"}]` {
+		t.Fatalf("menu %s", got)
+	}
+}

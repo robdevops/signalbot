@@ -274,7 +274,7 @@ type addon struct {
 	bot     map[string]bool // the tools the bot may call itself
 	only    map[string]bool // those of them for the bot alone, which a press may call
 	cmds    map[string]bool // its direct commands' names, which a key may run; set before it runs
-	buttons bool            // the network shows a post's buttons and keyboard
+	caps    feature.Caps    // what the network shows and does: buttons, a keyboard, its edit limits
 	busy    chan struct{}   // a place for each direct call in flight
 	now     func() time.Time
 	host    feature.Host  // where it posts and reacts; set before it runs

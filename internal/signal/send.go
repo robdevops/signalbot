@@ -86,7 +86,16 @@ func (c *Client) Send(chat feature.Chat, text string, pics []feature.Picture, kn
 }
 
 // Buttons reports that Signal shows no Markup.
-func (c *Client) Buttons() bool { return false }
+func (c *Client) Caps() feature.Caps {
+	return feature.Caps{EditLimit: maxEdits, EditWindow: editWindow}
+}
+
+// Signal's apps show at most maxEdits edits of a message, and only within
+// editWindow of its sending.
+const (
+	maxEdits   = 10
+	editWindow = 24 * time.Hour
+)
 
 // Edit replaces the text of the bot's own message sent at sent, as Signal's
 // apps edit one, keeping its timestamp; with pics, which an edit can't

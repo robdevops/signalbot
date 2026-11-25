@@ -202,6 +202,17 @@ type Tool struct {
 	Run               func(ctx context.Context, args string) (string, []Picture, error)
 }
 
+// Caps is what a chat network can show and do beyond plain messages, so a
+// feature can offer each where it works and something else where not.
+type Caps struct {
+	Buttons    bool          // buttons under a post, whose presses come back (OnPress)
+	Keyboard   bool          // a DM's reply keyboard of commands (Markup.Keyboard)
+	Silent     bool          // a post that doesn't notify (Markup.Silent)
+	EditMedia  bool          // an edit can replace a post's picture in place; otherwise it is sent anew
+	EditLimit  int           // how many times a message may be edited; 0 for no limit
+	EditWindow time.Duration // how long after it is sent a message may be edited; 0 for no limit
+}
+
 // Info is what the core knows about itself. All but Name and Tools are
 // known when features register, though Images, Audio, PDFs and CallsTools turn off for
 // the rest of the run if the model's API rejects them.
@@ -215,7 +226,7 @@ type Info struct {
 	CallsTools bool     // the model can call tools
 	Provider   string   // the model API's provider, as server tools name it: "openrouter", or "" for another
 	Network    string   // the chat network, as it names itself, such as "signal" or "telegram"
-	Buttons    bool     // the network shows a post's Markup: buttons, a DM's keyboard, silent sends
+	Caps       Caps     // what the chat network can show and do beyond plain messages
 	Tools      []string // the Names of every tool group with tools, in feature order; none when it can't call tools
 	Intro      string   // INTRO with {name}, {model}, {tools} and {more} filled in, as in a group
 	IntroDM    string   // the same in a DM, with IntroLine's DM-only lines too
@@ -253,7 +264,7 @@ type Post struct {
 }
 
 // Markup is what a post carries besides its content, on a network that
-// shows it (Info.Buttons); another sends the post without it.
+// shows it (Info.Caps); another sends the post without it.
 type Markup struct {
 	Silent     bool       // sent without a notification
 	Buttons    [][]Button // rows of buttons under the post's last message; a press is a Press

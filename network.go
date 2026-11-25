@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/robdevops/signalbot/internal/bot"
 	"github.com/robdevops/signalbot/internal/config"
@@ -31,16 +32,20 @@ func newNetwork(t *config.Test) (bot.Network, error) {
 // chooseNetwork picks the network by which settings env has, among those
 // this build has.
 func chooseNetwork(env func(string) string) (string, error) {
-	var set []string
+	var set, settings []string
 	for _, n := range networkSettings {
 		if env(n.setting) != "" {
-			set = append(set, n.name)
+			set, settings = append(set, n.name), append(settings, n.setting)
 		}
 	}
 	switch {
 	case len(set) > 1:
-		return "", fmt.Errorf("both %s and %s are set: a bot answers on one network, so set one (run two bots, each with its own STATE_DIRECTORY, for both)",
-			networkSettings[0].setting, networkSettings[1].setting)
+		all := "both"
+		if len(settings) > 2 {
+			all = "all"
+		}
+		return "", fmt.Errorf("%s and %s are %s set: a bot answers on one network, so set one (run a bot for each, each with its own STATE_DIRECTORY)",
+			strings.Join(settings[:len(settings)-1], ", "), settings[len(settings)-1], all)
 	case len(set) == 0:
 		set = []string{"signal"}
 	}

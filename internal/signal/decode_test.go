@@ -90,7 +90,7 @@ func TestWatchCommands(t *testing.T) {
 	} else if _, isChatter := r.(bot.Chatter); !isChatter {
 		t.Errorf("before Watch the reader made %T, want chatter", r)
 	}
-	c.Watch(bot.Watch{Commands: []string{"geo"}})
+	c.Watch(bot.Watch{Commands: []bot.Command{{Name: "geo"}}})
 	if m := c.message(env, botID); !m.Addressed || m.Text != "/geo 90s" {
 		t.Errorf("after Watch: addressed %v, text %q", m.Addressed, m.Text)
 	}

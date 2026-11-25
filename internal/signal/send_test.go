@@ -95,7 +95,7 @@ func TestEdit(t *testing.T) {
 	run(t, c, f)
 	group := feature.Chat{GroupID: groupID}
 	mk := feature.Markup{Buttons: [][]feature.Button{{{Label: "7d", Data: "rain 7d"}}}}
-	if c.Buttons() {
+	if c.Caps().Buttons {
 		t.Error("Signal shows buttons")
 	}
 	if ts := c.Edit(group, 900, "**Rain**, 7 days", nil, nil, mk); len(ts) != 1 || ts[0] != 900 {

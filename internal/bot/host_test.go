@@ -151,7 +151,9 @@ func TestCommands(t *testing.T) {
 	h.net.mu.Lock()
 	w := h.net.watch
 	h.net.mu.Unlock()
-	equal(t, "commands the network watches for", w.Commands, []string{"hi", "pick"})
+	if !slices.Equal(w.Commands, []Command{{Name: "hi"}, {Name: "pick"}}) {
+		t.Fatalf("commands the network watches for: %+v", w.Commands)
+	}
 }
 
 // A group with Keywords is offered when a message matches, and for the

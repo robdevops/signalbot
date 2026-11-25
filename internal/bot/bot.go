@@ -43,16 +43,16 @@ type Network interface {
 	// earlier Send returned it for; one the network can't find is sent
 	// without it. audio, if not nil, is one MP3 clip sent with the text,
 	// as audio to play, with no title of its own. mk is shown where the
-	// network can (Buttons), and left off where it can't.
+	// network can (Caps), and left off where it can't.
 	Send(chat feature.Chat, text string, pics []feature.Picture, known map[string]string, replyTo int64, audio []byte, mk feature.Markup) (sent []int64)
 	// Edit replaces the bot's own message in chat that Send returned sent
 	// for with text, pics and mk's buttons, and returns the timestamps that
 	// now stand for it: sent, or a new message's where the network can't
 	// edit it in place; none if it failed, which is logged.
 	Edit(chat feature.Chat, sent int64, text string, pics []feature.Picture, known map[string]string, mk feature.Markup) []int64
-	// Buttons reports whether the network shows a post's Markup; it never
-	// blocks.
-	Buttons() bool
+	// Caps is what the network can show and do beyond plain messages; it
+	// never blocks.
+	Caps() feature.Caps
 	// React puts emoji on msg in chat, as a reaction from the bot.
 	React(chat feature.Chat, msg feature.Message, emoji string)
 	Typing(chat feature.Chat) (stop func())
@@ -78,9 +78,14 @@ type Network interface {
 
 // Watch is what the network should look out for, set once before Run.
 type Watch struct {
-	Events   bool     // a feature has an OnEvent hook
-	Commands []string // the commands features registered, lowercase, without "/"
+	Events   bool      // a feature has an OnEvent hook
+	Commands []Command // the commands features registered
 }
+
+// Command is a command a feature registered: its name, lowercase, without
+// "/", and what it is about, for a network's command menu (Telegram's "/"
+// menu): the label of its ListCommands group, or "" for none.
+type Command struct{ Name, About string }
 
 // Member is a group member: a display name and the network's ID for them,
 // "" if they can never be linked.
@@ -112,9 +117,10 @@ type Bot struct {
 	messages   []func(context.Context, feature.Message) feature.Action
 	turns      []func(context.Context, feature.Message) feature.Additions
 	groups     []feature.ToolGroup
-	commands   feature.Commands // the command names taken
-	introLines []introLine      // features' lines for the introduction
-	stores     []string         // the names of the saved states features opened
+	commands   feature.Commands  // the command names taken
+	about      map[string]string // a command's ListCommands label, by name
+	introLines []introLine       // features' lines for the introduction
+	stores     []string          // the names of the saved states features opened
 	events     []func(context.Context, feature.Event) string
 	presses    []func(context.Context, feature.Press) (string, bool)
 	now        func() time.Time // the clock history and the budget go by
@@ -171,7 +177,11 @@ func (b *Bot) Run() {
 			b.timers.Run(b.timerCtx)
 		}
 	})
-	b.net.Watch(Watch{Events: len(b.events) > 0, Commands: b.commands.Names()})
+	var cmds []Command
+	for _, n := range b.commands.Names() {
+		cmds = append(cmds, Command{Name: n, About: b.about[n]})
+	}
+	b.net.Watch(Watch{Events: len(b.events) > 0, Commands: cmds})
 	b.net.Run(b.ctx, b.handle)
 	b.stopTimers()
 	b.running.Wait()

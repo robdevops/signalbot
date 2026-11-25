@@ -111,7 +111,12 @@ func (n *fakeNet) Edit(chat feature.Chat, ts int64, text string, images []featur
 	return []int64{ts}
 }
 
-func (n *fakeNet) Buttons() bool { return n.buttons }
+func (n *fakeNet) Caps() feature.Caps {
+	if n.buttons {
+		return feature.Caps{Buttons: true, Keyboard: true, Silent: true, EditMedia: true}
+	}
+	return feature.Caps{}
+}
 
 // React is sent as "react <emoji> to <sender>@<timestamp>", the sender
 // "bot" for the bot's own message.

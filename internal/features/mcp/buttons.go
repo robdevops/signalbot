@@ -70,8 +70,11 @@ func (a *addon) markup(o ext.Op) (feature.Markup, string) {
 		}
 		mk.Keyboard = append(mk.Keyboard, r)
 	}
-	if !a.buttons {
-		mk.Buttons, mk.Keyboard, mk.NoKeyboard = nil, nil, false
+	if !a.caps.Buttons {
+		mk.Buttons = nil
+	}
+	if !a.caps.Keyboard {
+		mk.Keyboard, mk.NoKeyboard = nil, false
 	}
 	return mk, ""
 }

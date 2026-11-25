@@ -390,7 +390,7 @@ func modelName(server, tool string) string {
 // run addons as plain servers; each addon started joins it.
 func start(ctx context.Context, h feature.Host, path string, servers map[string]server, k *keeper) error {
 	info := h.Info()
-	base := botInfo{version: cmp.Or(info.Version, "dev"), network: info.Network, buttons: info.Buttons}
+	base := botInfo{version: cmp.Or(info.Version, "dev"), network: info.Network, buttons: info.Caps.Buttons}
 	type owner struct{ server, tool string }
 	taken := map[string]owner{} // the model's names for tools, and whose they are
 	var cmds []string           // for the startup line
@@ -462,7 +462,7 @@ func start(ctx context.Context, h feature.Host, path string, servers map[string]
 			for _, t := range listed {
 				a.only[t.Name] = t.forBot() && !t.forModel()
 			}
-			a.buttons = info.Buttons
+			a.caps = info.Caps
 			a.host, a.changed, a.dirty = h, k.changed, c.(*stdioConn).updated
 			a.restore(k.doc.Addons[name])
 			gt.open(a)

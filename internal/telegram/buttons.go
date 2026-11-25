@@ -23,7 +23,9 @@ type callbackQuery struct {
 }
 
 // Buttons reports that Telegram shows a post's Markup.
-func (c *Client) Buttons() bool { return true }
+func (c *Client) Caps() feature.Caps {
+	return feature.Caps{Buttons: true, Keyboard: true, Silent: true, EditMedia: true}
+}
 
 // pressed is a press as the core gets it: in a DM, only from someone the bot
 // answers, and in a group, only while it answers there. A press it drops is
