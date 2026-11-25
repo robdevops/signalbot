@@ -8,6 +8,7 @@ import (
 	"slices"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/robdevops/signalbot/internal/kit/logx"
 	"github.com/robdevops/signalbot/internal/kit/state"
@@ -160,9 +161,17 @@ func (c *Client) logRoster() {
 
 // listed is a group as the log shows it: "Title (id)", its title made safe
 // and cut to 40 characters, a backslash shown as "/" (in an env file
-// systemd reads, one that ends a line would join the next to it). These
-// lines are the only ones that hold a group's title.
+// systemd reads, one that ends a line would join the next to it), and
+// control and format characters (a terminal escape, a bidi override) left
+// out, as whoever adds the bot to a group chooses its title. These lines
+// are the only ones that hold a group's title.
 func listed(gid, title string) string {
+	title = strings.Map(func(r rune) rune {
+		if unicode.IsControl(r) && !unicode.IsSpace(r) || unicode.Is(unicode.Cf, r) {
+			return -1
+		}
+		return r
+	}, title)
 	t := txt.Clamp(strings.ReplaceAll(txt.SafeName(title), `\`, "/"), 40)
 	return fmt.Sprintf("%s (%s)", cmp.Or(t, "(no title)"), gid)
 }

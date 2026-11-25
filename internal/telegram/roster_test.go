@@ -91,7 +91,8 @@ func TestRosterLearnsFromUpdates(t *testing.T) {
 }
 
 // At startup, after getMe, the log lists the saved groups by title, each
-// made safe and cut to 40 characters, a backslash shown as "/", or says
+// made safe and cut to 40 characters, a backslash shown as "/", without
+// control or format characters, or says
 // there are none.
 func TestRosterAtStartup(t *testing.T) {
 	logs := captureLogs(t)
@@ -104,14 +105,14 @@ func TestRosterAtStartup(t *testing.T) {
 		t.Fatalf("no groups:\n%s", logs)
 	}
 	dir := t.TempDir()
-	saved := `{"-100222": {"title": "beta\\", "since": "2026-01-02"}, "-100111": {"title": "Alpha\nline", "since": "2026-01-01"},
+	saved := `{"-100222": {"title": "beta\\", "since": "2026-01-02"}, "-100111": {"title": "Al\u001b[31mpha\u202e\nline", "since": "2026-01-01"},
 		"-100333": {"title": "` + strings.Repeat("x", 50) + `", "since": "2026-01-03"}, "not-an-id": {"title": "Bob"}}`
 	os.WriteFile(filepath.Join(dir, "telegram-groups.json"), []byte(saved), 0o600)
 	c := newClient(f.srv.URL, token, dir, allow.Parse("all"), nil)
 	if err := c.hello(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	want := "Telegram groups the bot knows of (3): Alpha line (-100111), beta/ (-100222), " + strings.Repeat("x", 40) + "… (-100333)"
+	want := "Telegram groups the bot knows of (3): Al[31mpha line (-100111), beta/ (-100222), " + strings.Repeat("x", 40) + "… (-100333)"
 	if !strings.Contains(logs.String(), want) || strings.Contains(logs.String(), "Bob") {
 		t.Fatalf("want %q in\n%s", want, logs)
 	}
