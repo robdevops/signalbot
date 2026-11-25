@@ -469,7 +469,8 @@ func TestDirectNoModel(t *testing.T) {
 	if got := h.Message(context.Background(), in(inDM, "/play")); got.Answer != "you said \n@Alice plays" {
 		t.Fatalf("play: %+v", got)
 	}
-	if l := log.String(); !strings.HasPrefix(l, "<4>MCP_CONFIG is set but no model is configured, so only addon servers and those with direct commands were started\n") || strings.Contains(l, "other") {
+	// (An earlier test's addon may count its stderr into this log first.)
+	if l := log.String(); !strings.Contains(l, "<4>MCP_CONFIG is set but no model is configured, so only addon servers and those with direct commands were started\n") || strings.Contains(l, "other") {
 		t.Fatalf("log %q", l)
 	}
 }
