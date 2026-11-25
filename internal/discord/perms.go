@@ -215,7 +215,7 @@ func (c *Client) canView(g *guildInfo, ch channel, user string, roles []string) 
 // threads, by the server's roles and the channels' permissions, and a
 // private thread, or a channel the bot knows only from a message, where
 // it has seen them post. Where their roles can't be read, it lists only
-// the channels it has seen them post in.
+// the channels it has seen them post in; if ctx ends first, it fails.
 func (c *Client) Groups(ctx context.Context, user string) ([]feature.Group, error) {
 	uid, ok := strings.CutPrefix(user, prefix)
 	if !ok || snowflake(uid) <= 0 {
@@ -235,6 +235,9 @@ func (c *Client) Groups(ctx context.Context, user string) ([]feature.Group, erro
 	in := map[string]standing{}
 	for _, g := range guilds {
 		roles, member, err := c.member(ctx, g, uid)
+		if ctx.Err() != nil { // given up on: not a failure for each server
+			return nil, ctx.Err()
+		}
 		if err != nil {
 			logx.Warnf("discord: reading a server member's roles failed, so only the channels they were seen in are listed: %v", err)
 		}

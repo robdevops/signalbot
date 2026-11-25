@@ -45,10 +45,11 @@ func (c *Client) loadNames() {
 		logx.Warnf("discord: %s can't be read, so the names saved in it are forgotten", c.names.Path())
 		return
 	}
-	old := cutoff()
+	old, now := cutoff(), today()
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	dropped := false
+	latest := map[string]person{} // each person's name where last seen
 	for ch, people := range f.Channels {
 		for uid, p := range people {
 			_, err := time.Parse(time.DateOnly, p.Seen)
@@ -57,16 +58,28 @@ func (c *Client) loadNames() {
 				dropped = true
 				continue
 			}
+			if p.Seen > now { // a day to come would never expire
+				p.Seen, dropped = now, true
+			}
 			c.note(ch, uid, person{name: name, day: p.Seen})
+			if l, ok := latest[uid]; !ok || p.Seen > l.day || p.Seen == l.day && name < l.name {
+				latest[uid] = person{name: name, day: p.Seen}
+			}
 		}
 	}
-	c.dirty, c.pruned = dropped, today()
+	for uid, p := range latest {
+		if _, ok := c.people[uid]; ok {
+			c.people[uid] = p.name
+		}
+	}
+	c.dirty, c.pruned = dropped, now
 }
 
 // prune forgets, under c.mu, each person in a channel they haven't been
-// seen in for keepDays, and anyone seen nowhere since.
+// seen in for keepDays, and anyone seen in no channel since.
 func (c *Client) prune() {
 	old := cutoff()
+	gone := map[string]bool{}
 	for ch, people := range c.chats {
 		for uid, p := range people {
 			if p.day >= old {
@@ -74,15 +87,23 @@ func (c *Client) prune() {
 			}
 			delete(people, uid)
 			delete(c.seenIn[uid], ch)
-			if len(c.seenIn[uid]) == 0 {
-				delete(c.seenIn, uid)
-				delete(c.people, uid)
-			}
-			c.dirty = true
+			gone[uid], c.dirty = true, true
 		}
 		if len(people) == 0 {
 			delete(c.chats, ch)
 		}
+	}
+	for _, people := range c.chats { // still seen somewhere
+		if len(gone) == 0 {
+			break
+		}
+		for uid := range people {
+			delete(gone, uid)
+		}
+	}
+	for uid := range gone {
+		delete(c.seenIn, uid)
+		delete(c.people, uid)
 	}
 }
 

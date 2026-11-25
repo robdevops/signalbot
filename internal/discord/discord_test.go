@@ -1223,3 +1223,66 @@ func TestNamesUnreadable(t *testing.T) {
 		t.Fatalf("not replaced: %s", data)
 	}
 }
+
+// A Groups whose context ends fails, rather than warning for each server
+// and listing only the channels seen.
+func TestGroupsCanceled(t *testing.T) {
+	logs := captureLogs(t)
+	f := newFake(t)
+	c := groupsClient(f)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if gs, err := c.Groups(ctx, prefix+alice); err == nil || gs != nil {
+		t.Fatalf("Groups %v, %v", gs, err)
+	}
+	if strings.Contains(logs.String(), "only the channels") {
+		t.Fatalf("log %q", logs.String())
+	}
+}
+
+// A saved day still to come is read as today, so it expires, and
+// someone's name is the one where they were last seen.
+func TestNamesRead(t *testing.T) {
+	f := newFake(t)
+	dir := t.TempDir()
+	data := `{"channels":{"` + chanID + `":{"` + bob + `":{"name":"Bobby","seen":"2100-01-01"}},"` +
+		secret + `":{"` + bob + `":{"name":"Bob","seen":"` + time.Now().UTC().AddDate(0, 0, -1).Format(time.DateOnly) + `"}}}}`
+	if err := os.WriteFile(filepath.Join(dir, "discord-people.json"), []byte(data), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	c := connected(f.clientIn(dir))
+	c.mu.Lock()
+	name, day := c.people[bob], c.chats[chanID][bob].day
+	c.mu.Unlock()
+	if name != "Bobby" || day != time.Now().UTC().Format(time.DateOnly) {
+		t.Fatalf("name %q, day %q", name, day)
+	}
+	c.saveNames()
+	if data, _ := os.ReadFile(filepath.Join(dir, "discord-people.json")); strings.Contains(string(data), "2100") {
+		t.Fatalf("a day to come still saved: %s", data)
+	}
+}
+
+// Someone no longer seen in one channel but seen in another keeps their
+// name; no longer seen in any, they lose it, even if seen in a channel
+// since deleted.
+func TestNamesPruned(t *testing.T) {
+	f := newFake(t)
+	c := connected(f.clientIn(t.TempDir()))
+	c.events("MESSAGE_CREATE", json.RawMessage(`{"id":"1200000000000000001",`+inGuild+`,`+fromBob+`,"content":"chatter"}`))
+	c.events("MESSAGE_CREATE", json.RawMessage(`{"id":"1200000000000000002","guild_id":"`+guild+`","channel_id":"`+secret+`",`+fromBob+`,"content":"chatter"}`))
+	c.events("MESSAGE_CREATE", json.RawMessage(`{"id":"1200000000000000003","guild_id":"`+guild+`","channel_id":"`+voice+`",`+fromBob+`,"content":"chatter"}`))
+	c.events("CHANNEL_DELETE", json.RawMessage(`{"id":"`+voice+`"}`))
+	c.mu.Lock()
+	c.chats[chanID][bob] = person{name: "Bob", day: "2000-01-01"}
+	c.prune()
+	kept := c.people[bob]
+	c.chats[secret][bob] = person{name: "Bob", day: "2000-01-01"}
+	c.prune()
+	_, still := c.people[bob]
+	_, in := c.seenIn[bob]
+	c.mu.Unlock()
+	if kept != "Bob" || still || in {
+		t.Fatalf("kept %q, then still %v, %v", kept, still, in)
+	}
+}
