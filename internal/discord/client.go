@@ -32,6 +32,7 @@ type Client struct {
 	fatal    time.Duration // the wait after Discord refuses the token or the intents
 	typing   time.Duration // how often Typing is renewed; Discord's lasts 10s
 	pending  time.Duration // how long a slash command's "thinking…" waits for a reply
+	settle   time.Duration // how long the startup line of servers waits for READY's guilds
 	dm       allow.Policy  // who may DM the bot: DISCORD_DM_USERS
 
 	self       atomic.Value // string: the bot's user ID
@@ -70,6 +71,9 @@ type Client struct {
 	hooks     map[int64]*interaction            // a slash command's reply, by its message ID, for an edit
 	verdicts  map[string]verdict                // whether a user is an admin or a mod, by user ID, for DMs
 	forgets   uint64                            // how many times the verdicts were forgotten
+	joined    map[string]bool                   // the guilds the bot is in, from the first READY on; nil before
+	startup   []string                          // the first READY's guilds, in its order, until the startup line; nil after
+	arrived   map[string]string                 // the line's label of each of startup's guilds whose GUILD_CREATE came
 
 	test *config.Test // nil in production
 }
@@ -119,7 +123,7 @@ func New(test *config.Test) *Client {
 
 func newClient(base, token string, test *config.Test) *Client {
 	return &Client{base: strings.TrimRight(base, "/"), stickers: "https://media.discordapp.net/stickers", token: token, http: httpx.Client(8),
-		backoff: time.Second, fatal: 10 * time.Minute, typing: 8 * time.Second, pending: time.Minute, known: make(chan struct{}),
+		backoff: time.Second, fatal: 10 * time.Minute, typing: 8 * time.Second, pending: time.Minute, settle: 10 * time.Second, known: make(chan struct{}),
 		people: map[string]string{}, chats: map[string]map[string]string{}, seenIn: map[string]map[string]bool{},
 		channels: map[string]channel{}, guilds: map[string]*guildInfo{}, members: map[string]memberInfo{}, lists: map[string]*memberList{}, left: map[string]bool{}, dms: map[string]string{}, dmUsers: map[string]string{},
 		authors: map[int64]string{}, asked: map[string]map[int64]*interaction{},

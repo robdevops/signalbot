@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -720,6 +721,96 @@ func TestGuilds(t *testing.T) {
 	one(t, c.events("GUILD_DELETE", json.RawMessage(`{"id":"`+guild+`"}`)))
 	if c.Reachable(context.Background(), feature.Chat{GroupID: group}) {
 		t.Fatal("still reachable after leaving")
+	}
+}
+
+// At the first READY, once its guilds have all come, the bot logs once the
+// servers it is in, by name and ID; a guild READY didn't list is the bot
+// added, and warned of, but not one back from an outage. A later READY
+// starts no new line, and a guild the bot was added to meanwhile is new.
+func TestServersLogged(t *testing.T) {
+	logs := &logx.Buffer{}
+	t.Cleanup(logx.SetOutput(logs, logs, true)) // with priorities: the line a notice, the warning a warning
+	c := connected(newFake(t).client())
+	c.listed.Store(true) // no slash commands to send
+	c.settle = time.Hour
+	const g2, g3, g4 = "1400000000000000001", "1400000000000000002", "1400000000000000003"
+	guildJSON := func(id, name string) json.RawMessage {
+		return json.RawMessage(`{"id":"` + id + `","name":` + strconv.Quote(name) + `,"channels":[],"threads":[]}`)
+	}
+	readyJSON := func(ids ...string) json.RawMessage {
+		var gs []string
+		for _, id := range ids {
+			gs = append(gs, `{"id":"`+id+`","unavailable":true}`)
+		}
+		return json.RawMessage(`{"session_id":"s","user":{"id":"` + botID + `","username":"botty"},"guilds":[` + strings.Join(gs, ",") + `]}`)
+	}
+	count := func(s string) int { return strings.Count(logs.String(), s) }
+	c.events("GUILD_CREATE", guildJSON(g3, "Before ready")) // not yet in it: no line
+	if !c.ready(readyJSON(guild, g2)) {
+		t.Fatal("READY not read")
+	}
+	c.events("GUILD_CREATE", guildJSON(guild, "Test server"))
+	if count("Discord servers") != 0 {
+		t.Fatalf("logged before every guild came: %s", logs)
+	}
+	c.events("GUILD_CREATE", guildJSON(g2, "Back\\slash\n"+strings.Repeat("x", 50)))
+	want := "Discord servers (2): Test server (" + guild + "), Back/slash " + strings.Repeat("x", 29) + "… (" + g2 + ")"
+	if !strings.Contains(logs.String(), "<5>"+want) || count("Discord servers") != 1 || count("added") != 0 {
+		t.Fatalf("want %q in %s", want, logs)
+	}
+	c.events("GUILD_CREATE", guildJSON(g3, "New server"))
+	if count("<4>Discord: the bot was added to a server: New server ("+g3+")") != 1 {
+		t.Fatalf("no warning of the added server: %s", logs)
+	}
+	c.events("GUILD_DELETE", json.RawMessage(`{"id":"`+g3+`","unavailable":true}`))
+	c.events("GUILD_CREATE", guildJSON(g3, "New server"))
+	c.events("GUILD_CREATE", guildJSON(guild, "Test server"))
+	if count("added to a server") != 1 {
+		t.Fatalf("an outage or a guild already known warned of: %s", logs)
+	}
+	c.events("GUILD_DELETE", json.RawMessage(`{"id":"`+g3+`"}`))
+	c.events("GUILD_CREATE", guildJSON(g3, "New server"))
+	if count("added to a server: New server") != 2 {
+		t.Fatalf("added again not warned of: %s", logs)
+	}
+	// A new session: g3 left meanwhile, g4 added.
+	c.ready(readyJSON(guild, g2, g4))
+	for _, id := range []string{guild, g2, g4} {
+		c.events("GUILD_CREATE", guildJSON(id, "Server "+id))
+	}
+	if count("Discord servers") != 1 || count("added to a server: Server "+g4) != 1 || count("added to a server") != 3 {
+		t.Fatalf("after a new session: %s", logs)
+	}
+	c.events("GUILD_CREATE", guildJSON(g3, "New server"))
+	if count("added to a server: New server") != 3 {
+		t.Fatalf("a guild left meanwhile and added again: %s", logs)
+	}
+}
+
+// A guild of READY's that doesn't come in time is listed by its ID, and
+// is no news when it comes; a bot in no server says so at once.
+func TestServersLoggedLate(t *testing.T) {
+	logs := captureLogs(t)
+	c := connected(newFake(t).client())
+	c.listed.Store(true)
+	c.settle = 20 * time.Millisecond
+	const g2 = "1400000000000000001"
+	c.ready(json.RawMessage(`{"session_id":"s","user":{"id":"` + botID + `","username":"botty"},"guilds":[{"id":"` + guild + `"},{"id":"` + g2 + `"}]}`))
+	c.events("GUILD_CREATE", json.RawMessage(`{"id":"`+guild+`","name":"","channels":[]}`))
+	want := "Discord servers (2): (no name) (" + guild + "), (unavailable) (" + g2 + ")"
+	waitFor(t, "the servers line", func() bool { return strings.Contains(logs.String(), want) })
+	c.events("GUILD_CREATE", json.RawMessage(`{"id":"`+g2+`","name":"Late","channels":[]}`))
+	if strings.Count(logs.String(), "Discord servers") != 1 || strings.Contains(logs.String(), "added") {
+		t.Fatalf("a late guild: %s", logs)
+	}
+
+	logs = captureLogs(t)
+	c = connected(newFake(t).client())
+	c.listed.Store(true)
+	c.ready(json.RawMessage(`{"session_id":"s","user":{"id":"` + botID + `","username":"botty"},"guilds":[]}`))
+	if !strings.Contains(logs.String(), "Discord servers (0): none") {
+		t.Fatalf("no servers: %s", logs)
 	}
 }
 

@@ -9,6 +9,8 @@ import (
 	"math/rand/v2"
 	"net/http"
 	"regexp"
+	"slices"
+	"strings"
 	"sync/atomic"
 	"time"
 
@@ -289,10 +291,20 @@ func (c *Client) ready(d json.RawMessage) bool {
 		App       struct {
 			ID string `json:"id"`
 		} `json:"application"`
+		Guilds []struct {
+			ID string `json:"id"`
+		} `json:"guilds"`
 	}
 	if json.Unmarshal(d, &r) != nil || r.User.ID == "" {
 		return false
 	}
+	ids := make([]string, 0, len(r.Guilds))
+	for _, g := range r.Guilds {
+		if g.ID != "" && !slices.Contains(ids, g.ID) {
+			ids = append(ids, g.ID)
+		}
+	}
+	c.joinedFrom(ids)
 	c.session, c.resumeURL = r.SessionID, r.ResumeURL
 	c.username.Store(r.User.Username)
 	c.name.Store(cmp.Or(txt.SafeName(r.User.GlobalName), r.User.Username))
@@ -369,4 +381,84 @@ func (c *Client) publishCommands() {
 	if err := c.call(ctx, http.MethodPut, "/applications/"+app+"/commands", list, nil); err != nil {
 		logx.Warnf("discord: listing the slash commands failed: %v", err)
 	}
+}
+
+// joinedFrom notes READY's guilds. The first READY of the process starts
+// the startup line of the bot's servers, logged once all of them have
+// come in GUILD_CREATE, or after c.settle with the others by ID alone. A
+// later one, a new session after a dropped one, keeps only the guilds the
+// bot was in and still is, so one it was added to meanwhile is warned of
+// when its GUILD_CREATE comes.
+func (c *Client) joinedFrom(ids []string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.joined != nil {
+		still := make(map[string]bool, len(ids))
+		for _, id := range ids {
+			if c.joined[id] {
+				still[id] = true
+			}
+		}
+		c.joined = still
+		return
+	}
+	c.joined = make(map[string]bool, len(ids))
+	for _, id := range ids {
+		c.joined[id] = true
+	}
+	c.startup, c.arrived = ids, map[string]string{}
+	if len(ids) == 0 {
+		c.logServers()
+		return
+	}
+	time.AfterFunc(c.settle, func() {
+		c.mu.Lock()
+		defer c.mu.Unlock()
+		c.logServers()
+	})
+}
+
+// arrivedGuild notes a guild's GUILD_CREATE for the startup line, logged
+// once the last of READY's has come, or warns that the bot was added to
+// it if READY didn't list it. Called with c.mu held.
+func (c *Client) arrivedGuild(id, name string) {
+	if c.joined == nil { // before READY
+		return
+	}
+	if !c.joined[id] {
+		c.joined[id] = true
+		logx.Warnf("Discord: the bot was added to a server: %s", serverLabel(id, name))
+		return
+	}
+	if c.startup == nil || !slices.Contains(c.startup, id) {
+		return
+	}
+	c.arrived[id] = serverLabel(id, name)
+	if len(c.arrived) == len(c.startup) {
+		c.logServers()
+	}
+}
+
+// logServers logs, once, the servers the bot is in, by name and ID, so its
+// admin sees one it was added to by someone else: READY's, in its order,
+// one that hasn't come yet by its ID alone. Called with c.mu held.
+func (c *Client) logServers() {
+	if c.startup == nil {
+		return
+	}
+	parts := make([]string, 0, len(c.startup))
+	for _, id := range c.startup {
+		parts = append(parts, cmp.Or(c.arrived[id], "(unavailable) ("+id+")"))
+	}
+	logx.Noticef("Discord servers (%d): %s", len(parts), cmp.Or(strings.Join(parts, ", "), "none"))
+	c.startup, c.arrived = nil, nil
+}
+
+// serverLabel is a server as the log names it, "Name (id)": its name made
+// safe, a backslash shown as "/" (one ending the line would join the next
+// in a systemd env file it was pasted into), cut to 40 characters. Server
+// names are logged only in these lines.
+func serverLabel(id, name string) string {
+	name = strings.ReplaceAll(txt.SafeName(name), `\`, "/")
+	return cmp.Or(txt.Clamp(name, 40), "(no name)") + " (" + id + ")"
 }
