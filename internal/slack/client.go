@@ -70,6 +70,10 @@ type Client struct {
 	blocks  map[string][]any           // "channel/ts" to the blocks the bot last put in it, but buttons
 	blockQ  []string                   // blocks' keys, oldest first
 
+	roster      roster    // the workspace's names and channels' members, cached for Delivered
+	scopeWarn   sync.Once // Groups' missing scopes are logged once
+	membersWarn sync.Once // Delivered's missing scopes are logged once
+
 	test *config.Test // nil in production
 }
 

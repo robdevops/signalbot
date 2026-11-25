@@ -51,6 +51,8 @@ type fakeSlack struct {
 	mu      sync.Mutex
 	results map[string]string // method to a response's fields, without "ok"
 	errs    map[string]string // method to an error, given once
+	convs   map[string]string // users.conversations' answers, by "user cursor" (the bot's: no user)
+	pages   map[string]string // conversations.members' and users.list's answers, by "method channel cursor"
 	calls   []call
 	acks    []string
 	opens   int
@@ -140,6 +142,10 @@ func (f *fakeSlack) serve(w http.ResponseWriter, r *http.Request) {
 		res = fmt.Sprintf(`"upload_url":"http://%s/upload","file_id":"F%08d"`, r.Host, f.nextTS)
 	case "files.info":
 		res = cmp.Or(res, `"file":{"url_private":"http://`+r.Host+`/files/x.png","size":7}`)
+	case "users.conversations":
+		res = f.convs[r.PostForm.Get("user")+" "+r.PostForm.Get("cursor")]
+	case "conversations.members", "users.list":
+		res = f.pages[method+" "+r.PostForm.Get("channel")+" "+r.PostForm.Get("cursor")]
 	case "users.info":
 		res = map[string]string{alice: `"user":{"name":"alice","profile":{"display_name":"Alice"}}`, bob: `"user":{"name":"bob","real_name":"Bob B"}`,
 			botID: `"user":{"name":"botty","profile":{"display_name":"Botty"}}`}[r.PostForm.Get("user")]
@@ -798,8 +804,201 @@ func TestDelivered(t *testing.T) {
 	if !ok || !r.Mentioned || r.Message.Text != "hi" || r.Message.Name != "Alice" || !reflect.DeepEqual(r.Members, []bot.Member{{Name: "Alice", ID: "slack:" + alice}}) {
 		t.Fatalf("ready %+v", r)
 	}
-	if gs, _ := c.Groups(context.Background(), "slack:"+alice); len(gs) != 1 || gs[0].ID != "slack:"+channel {
-		t.Fatalf("groups %v", gs)
+}
+
+// rosterPages are a channel's members and the workspace's people, two
+// pages of each: Bob, never seen posting, is in the channel, and a
+// deleted user, a bot and Slackbot are skipped.
+func rosterPages() map[string]string {
+	return map[string]string{
+		"conversations.members C0CHANNEL1 ":   `"members":["UALICE001","UDELETED1"],"response_metadata":{"next_cursor":"m2"}`,
+		"conversations.members C0CHANNEL1 m2": `"members":["UBOB00001","UBOTUSER1","USLACKBOT","x>y"],"response_metadata":{"next_cursor":""}`,
+		"users.list  ": `"members":[{"id":"UALICE001","name":"alice","profile":{"display_name":"Alice"}},` +
+			`{"id":"UDELETED1","name":"gone","deleted":true,"profile":{"display_name":"Gone"}},` +
+			`{"id":"UBOTUSER1","name":"helper","is_bot":true,"profile":{"display_name":"Helper"}}],"response_metadata":{"next_cursor":"u2"}`,
+		"users.list  u2": `"members":[{"id":"UBOB00001","name":"bob","profile":{"display_name":"","real_name":"Bob"}},` +
+			`{"id":"USLACKBOT","name":"slackbot","profile":{"display_name":"Slackbot"}}]`,
+	}
+}
+
+// A delivered message's members are those Slack lists in its channel,
+// every page read, named by the workspace's list, so @Bob links him though
+// he was never seen; a thread's are its channel's.
+func TestDeliveredMembers(t *testing.T) {
+	f := newFake(t)
+	f.pages = rosterPages()
+	c := connected(f.client(t))
+	chat := feature.Chat{GroupID: "slack:" + channel + "/1700000000.000100"}
+	r, ok := c.Delivered(context.Background(), feature.Message{Chat: chat, Sender: "slack:" + alice, Name: "Alice", Text: "ask @Bob"})
+	want := []bot.Member{{Name: "Alice", ID: "slack:" + alice}, {Name: "Bob", ID: "slack:" + bob}}
+	if !ok || !reflect.DeepEqual(r.Members, want) {
+		t.Fatalf("ready %+v", r)
+	}
+	if got := mrkdwn(c.trim(parse(r.Message.Text)), map[string]string{"bob": r.Members[1].ID}); got != "ask <@UBOB00001>" {
+		t.Fatalf("got %q", got)
+	}
+	members, users := f.callsTo("conversations.members"), f.callsTo("users.list")
+	if len(members) != 2 || members[0].Params["channel"] != channel || members[0].Params["limit"] != "200" || members[1].Params["cursor"] != "m2" {
+		t.Fatalf("members calls %v", members)
+	}
+	if len(users) != 2 || users[0].Params["limit"] != "200" || users[1].Params["cursor"] != "u2" {
+		t.Fatalf("users.list calls %v", users)
+	}
+	if len(f.callsTo("users.info")) != 0 {
+		t.Fatal("asked users.info")
+	}
+}
+
+// The lists are asked for once in 10 minutes, one fetch at a time, and
+// again once that has passed; someone joining a channel asks for its
+// members again.
+func TestDeliveredMembersCached(t *testing.T) {
+	f := newFake(t)
+	f.pages = rosterPages()
+	c := connected(f.client(t))
+	msg := feature.Message{Chat: feature.Chat{GroupID: "slack:" + channel}, Sender: "slack:" + alice, Text: "hi"}
+	var wg sync.WaitGroup
+	for range 5 {
+		wg.Go(func() {
+			if r, ok := c.Delivered(context.Background(), msg); !ok || len(r.Members) != 2 {
+				t.Errorf("ready %+v", r)
+			}
+		})
+	}
+	wg.Wait()
+	count := func() (int, int) { return len(f.callsTo("conversations.members")), len(f.callsTo("users.list")) }
+	if m, u := count(); m != 2 || u != 2 {
+		t.Fatalf("calls %d %d", m, u)
+	}
+
+	c.roster.mu.Lock()
+	for _, e := range c.roster.entries {
+		e.at = e.at.Add(-11 * time.Minute)
+	}
+	c.roster.mu.Unlock()
+	c.Delivered(context.Background(), msg)
+	if m, u := count(); m != 4 || u != 4 {
+		t.Fatalf("calls after 10 minutes %d %d", m, u)
+	}
+
+	c.events(ev(`{"type":"member_joined_channel","user":"UBOB00001","channel":"C0CHANNEL1"}`))
+	c.Delivered(context.Background(), msg)
+	if m, u := count(); m != 6 || u != 4 {
+		t.Fatalf("calls after a join %d %d", m, u)
+	}
+}
+
+// A chat whose channel isn't one Slack could list is never looked up, so
+// the workspace's names, cached under "", are never taken for its members.
+func TestDeliveredMembersNotAChannel(t *testing.T) {
+	f := newFake(t)
+	f.pages = rosterPages()
+	c := connected(f.client(t))
+	if r, ok := c.Delivered(context.Background(), feature.Message{Chat: feature.Chat{GroupID: "slack:" + channel}, Text: "hi"}); !ok || len(r.Members) != 2 {
+		t.Fatalf("ready %+v", r)
+	}
+	for _, g := range []string{"slack:", "slack:/1700000000.000100", "slack:not-a-channel"} {
+		if r, ok := c.Delivered(context.Background(), feature.Message{Chat: feature.Chat{GroupID: g}, Text: "hi"}); !ok || len(r.Members) != 0 {
+			t.Fatalf("%s: ready %+v", g, r)
+		}
+	}
+	if n := len(f.callsTo("conversations.members")); n != 2 {
+		t.Fatalf("members calls %d", n)
+	}
+}
+
+// A full roster prunes expired lists, but not one being fetched, so a
+// second fetch of its key can't start alongside.
+func TestRosterPruneKeepsBusy(t *testing.T) {
+	var r roster
+	r.entries = map[string]*rosterEntry{}
+	for i := range maxRoster {
+		r.entries[fmt.Sprint(i)] = &rosterEntry{busy: make(chan struct{}, 1), at: time.Now().Add(-time.Hour)}
+	}
+	busy := &rosterEntry{busy: make(chan struct{}, 1)}
+	busy.busy <- struct{}{}
+	r.entries["0"] = busy
+	if _, err := r.get(context.Background(), "new", func(context.Context) (map[string]string, error) { return map[string]string{}, nil }); err != nil {
+		t.Fatal(err)
+	}
+	if r.entries["0"] != busy || len(r.entries) != 2 {
+		t.Fatalf("entries %d, busy kept %v", len(r.entries), r.entries["0"] == busy)
+	}
+}
+
+// Without the scopes to list members, a delivered message's members are
+// the people seen, and the scopes to add are logged once, naming no one;
+// the manifest has them all.
+func TestDeliveredMembersMissingScope(t *testing.T) {
+	buf := captureLogs(t)
+	f := newFake(t)
+	f.pages = rosterPages()
+	c := connected(f.client(t))
+	c.learnName(alice, "Alice")
+	c.seen(channel, alice)
+	for _, method := range []string{"conversations.members", "users.list"} {
+		f.fail(method, "missing_scope")
+		r, ok := c.Delivered(context.Background(), feature.Message{Chat: feature.Chat{GroupID: "slack:" + channel}, Sender: "slack:" + alice, Text: "hi"})
+		if !ok || !reflect.DeepEqual(r.Members, []bot.Member{{Name: "Alice", ID: "slack:" + alice}}) {
+			t.Fatalf("ready %+v", r)
+		}
+	}
+	log := buf.String()
+	if strings.Count(log, "users:read") != 1 || !strings.Contains(log, "channels:read") || !strings.Contains(log, "groups:read") || strings.Contains(log, alice) || strings.Contains(log, "Alice") || strings.Contains(log, channel) {
+		t.Fatalf("log %q", log)
+	}
+	m := string(Manifest("botty", nil))
+	for _, scope := range []string{"channels:read", "groups:read", "users:read"} {
+		if !strings.Contains(m, `"`+scope+`"`) {
+			t.Fatalf("manifest lacks %s", scope)
+		}
+	}
+}
+
+// Groups are the channels both the user and the bot are in, by their
+// names, sorted, every page read; the bot's own listing has no user.
+func TestGroups(t *testing.T) {
+	f := newFake(t)
+	f.convs = map[string]string{
+		" ":         `"channels":[{"id":"C0CHANNEL1","name":"team"},{"id":"C0CHANNEL2","name":"alpha\nnews"}],"response_metadata":{"next_cursor":"p2"}`,
+		" p2":       `"channels":[{"id":"C0CHANNEL3","name":"zeta"}],"response_metadata":{"next_cursor":""}`,
+		alice + " ": `"channels":[{"id":"C0CHANNEL3","name":"zeta"},{"id":"C0CHANNEL2","name":"alpha\nnews"},{"id":"C0CHANNEL4","name":"elsewhere"}]`,
+	}
+	c := connected(f.client(t))
+	gs, err := c.Groups(context.Background(), "slack:"+alice)
+	want := []feature.Group{{ID: "slack:C0CHANNEL2", Name: "#alpha news"}, {ID: "slack:C0CHANNEL3", Name: "#zeta"}}
+	if err != nil || !reflect.DeepEqual(gs, want) {
+		t.Fatalf("groups %+v %v", gs, err)
+	}
+	calls := f.callsTo("users.conversations")
+	if len(calls) != 3 || calls[1].Params["cursor"] != "p2" || calls[0].Params["user"] != nil || calls[2].Params["user"] != alice {
+		t.Fatalf("calls %v", calls)
+	}
+	for _, c := range calls {
+		if c.Params["types"] != "public_channel,private_channel" || c.Params["exclude_archived"] != "true" || c.Params["limit"] != "200" {
+			t.Fatalf("params %v", c.Params)
+		}
+	}
+}
+
+// Without the scopes to list channels, Groups lists those the user was
+// seen in, by ID, and says once which scopes are missing, naming no one.
+func TestGroupsMissingScope(t *testing.T) {
+	buf := captureLogs(t)
+	f := newFake(t)
+	c := connected(f.client(t))
+	c.learnName(alice, "Alice")
+	c.seen(channel, alice)
+	for range 2 {
+		f.fail("users.conversations", "missing_scope")
+		gs, err := c.Groups(context.Background(), "slack:"+alice)
+		if err != nil || !reflect.DeepEqual(gs, []feature.Group{{ID: "slack:" + channel, Name: channel}}) {
+			t.Fatalf("groups %+v %v", gs, err)
+		}
+	}
+	log := buf.String()
+	if strings.Count(log, "channels:read") != 1 || !strings.Contains(log, "groups:read") || strings.Contains(log, alice) || strings.Contains(log, "Alice") {
+		t.Fatalf("log %q", log)
 	}
 }
 
