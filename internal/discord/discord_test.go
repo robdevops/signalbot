@@ -45,7 +45,23 @@ func captureLogs(t *testing.T) *logx.Buffer {
 	t.Helper()
 	var buf logx.Buffer
 	t.Cleanup(logx.SetOutput(&buf, &buf, false))
+	t.Cleanup(func() { checkPrefixed(t, buf.String()) }) // runs first
 	return &buf
+}
+
+// checkPrefixed fails t unless every line logged starts "Discord: ", after
+// its priority, and names the network only there.
+func checkPrefixed(t *testing.T, logs string) {
+	t.Helper()
+	for _, line := range strings.Split(strings.TrimSuffix(logs, "\n"), "\n") {
+		if line == "" {
+			continue
+		}
+		rest, ok := strings.CutPrefix(strings.TrimLeft(line, "<01234567>"), "Discord: ")
+		if !ok || strings.HasPrefix(strings.ToLower(rest), "discord") {
+			t.Errorf("log line not prefixed once with %q: %q", "Discord: ", line)
+		}
+	}
 }
 
 // fake is Discord: its REST API, answering each route with a result set
@@ -442,9 +458,10 @@ func TestRefused(t *testing.T) {
 }
 
 // A missed heartbeat ack, Discord's reconnect, and an invalid session each
-// reconnect: the first two resume, the last identifies afresh.
+// reconnect: the first two resume, the last identifies afresh, each
+// logged with Discord's name once, at the start.
 func TestReconnects(t *testing.T) {
-	captureLogs(t)
+	logs := captureLogs(t)
 	f := newFake(t)
 	c := f.client()
 	ctx, cancel := context.WithCancel(context.Background())
@@ -474,6 +491,14 @@ func TestReconnects(t *testing.T) {
 	g = f.conn()
 	if m := g.next(t); m["op"] != float64(opIdentify) || g.path != "/gw" {
 		t.Fatalf("after op 9: %v on %s", m, g.path)
+	}
+	for _, want := range []string{"Discord: gateway: asked to reconnect; reconnecting in ", "Discord: no heartbeat ack, so reconnecting", "Discord: gateway: the session ended; reconnecting in "} {
+		if !strings.Contains(logs.String(), want) {
+			t.Errorf("no %q in %q", want, logs.String())
+		}
+	}
+	if strings.Count(logs.String(), "Discord") != strings.Count(logs.String(), "\n") {
+		t.Errorf("Discord named other than once a line: %q", logs.String())
 	}
 }
 

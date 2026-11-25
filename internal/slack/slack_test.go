@@ -39,7 +39,23 @@ func captureLogs(t *testing.T) *logx.Buffer {
 	t.Helper()
 	var buf logx.Buffer
 	t.Cleanup(logx.SetOutput(&buf, &buf, false))
+	t.Cleanup(func() { checkPrefixed(t, buf.String()) }) // runs first
 	return &buf
+}
+
+// checkPrefixed fails t unless every line logged starts "Slack: ", after
+// its priority, and names the network only there.
+func checkPrefixed(t *testing.T, logs string) {
+	t.Helper()
+	for _, line := range strings.Split(strings.TrimSuffix(logs, "\n"), "\n") {
+		if line == "" {
+			continue
+		}
+		rest, ok := strings.CutPrefix(strings.TrimLeft(line, "<01234567>"), "Slack: ")
+		if !ok || strings.HasPrefix(strings.ToLower(rest), "slack") {
+			t.Errorf("log line not prefixed once with %q: %q", "Slack: ", line)
+		}
+	}
 }
 
 // fakeSlack is the Web API and a Socket Mode server: each method answers

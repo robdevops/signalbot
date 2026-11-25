@@ -49,8 +49,8 @@ type payload struct {
 }
 
 var (
-	errReconnect = errors.New("Discord asked the bot to reconnect")
-	errInvalid   = errors.New("Discord ended the session")
+	errReconnect = errors.New("asked to reconnect")
+	errInvalid   = errors.New("the session ended")
 	errMembers   = errors.New("Discord refused the Server Members intent")
 )
 
