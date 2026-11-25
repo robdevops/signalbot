@@ -36,7 +36,7 @@ func newWorld(t *testing.T) *world {
 	w := &world{t: t, h: featuretest.New(), dir: t.TempDir(), now: date("2030-01-15T12:00"), logs: &logx.Buffer{}}
 	w.h.Bot = feature.Info{Name: "Botty"}
 	w.h.Settings["STATE_DIRECTORY"] = w.dir
-	w.h.Shared = []feature.Group{{ID: "g-family", Name: "🏡 Family 🎉"}, {ID: "g-work", Name: "Work"}}
+	w.h.Shared = []feature.Group{{ID: "g-family", Name: "🏡 Family 🎉", Admin: true}, {ID: "g-work", Name: "Work", Admin: true}}
 	t.Cleanup(logx.SetOutput(w.logs, w.logs, true))
 	return w
 }
@@ -220,7 +220,7 @@ func TestAddListDel(t *testing.T) {
 // spaces; no match, or more than one, is refused.
 func TestGroupMatching(t *testing.T) {
 	w := newWorld(t).start()
-	w.h.Shared = []feature.Group{{ID: "g1", Name: "Family"}, {ID: "g2", Name: "🏡 Family"}, {ID: "g3", Name: "Family 🎉"}, {ID: "g4", Name: "Mum's  Book Club!"}}
+	w.h.Shared = []feature.Group{{ID: "g1", Name: "Family", Admin: true}, {ID: "g2", Name: "🏡 Family", Admin: true}, {ID: "g3", Name: "Family 🎉", Admin: true}, {ID: "g4", Name: "Mum's  Book Club!", Admin: true}}
 	add := func(group string) string { return w.dm(`/schedule "hi" 2030-02-01T09:00 ` + group) }
 	if got := add("FAMILY"); !strings.HasSuffix(got, ", in Family.") {
 		t.Fatalf("got %q", got)
@@ -306,6 +306,52 @@ func TestPastStartOfARepeat(t *testing.T) {
 	w.now = date("2030-01-31T08:00")
 	w.fire()
 	equal(t, "timers", w.dues(), []string{"2030-02-28T08:00"})
+}
+
+// SCHEDULE_USER_IDS says who may schedule posts in a group: by default a
+// group's admins; "all" anyone; listed IDs, with "admins" too if named. A
+// run is dropped once its user may no longer post there; a DM's never.
+func TestWhoMayPost(t *testing.T) {
+	w := newWorld(t)
+	w.h.Shared[1].Admin = false // Alice is an admin of Family, not Work
+	w.start()
+	if got := w.dm(`/schedule "hi" 2030-01-15T13:00 work`); got != "Only Work's admins can schedule posts there." {
+		t.Fatalf("got %q", got)
+	}
+	if got := w.dm(`/schedule "hi" 2030-01-15T13:00 family`); !strings.HasPrefix(got, "Scheduled") {
+		t.Fatalf("got %q", got)
+	}
+	if got := w.dm(`/schedule "me" 2030-01-15T13:00`); !strings.HasPrefix(got, "Scheduled") {
+		t.Fatalf("a DM's: got %q", got)
+	}
+	w.h.Shared[0].Admin = false // no longer an admin of Family
+	if got := w.dm("/schedule list"); !strings.Contains(got, "in 🏡 Family 🎉 (not posting: you may no longer schedule posts there)") {
+		t.Fatalf("list %q", got)
+	}
+	w.now = date("2030-01-15T13:00").Add(time.Second)
+	w.fire()
+	w.fire()
+	if got := w.h.Delivered(); len(got) != 1 || got[0].Chat.User != alice {
+		t.Fatalf("delivered %+v", got)
+	}
+	if !strings.Contains(w.logs.String(), "may no longer schedule posts") {
+		t.Fatalf("log %q", w.logs.String())
+	}
+
+	for value, want := range map[string]string{
+		"all":           "Scheduled",
+		alice:           "Scheduled",
+		"admins, other": "Only Work's admins",
+		"none":          "Scheduling posts in groups isn't open to you.",
+	} {
+		w := newWorld(t)
+		w.h.Shared[1].Admin = false
+		w.h.Settings["SCHEDULE_USER_IDS"] = value
+		w.start()
+		if got := w.dm(`/schedule "hi" 2030-01-15T13:00 work`); !strings.HasPrefix(got, want) {
+			t.Errorf("%q: got %q", value, got)
+		}
+	}
 }
 
 // A one-off posts its text as Alice, in its chat, and is deleted.

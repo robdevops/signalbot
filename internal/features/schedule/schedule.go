@@ -17,6 +17,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/robdevops/signalbot/internal/feature"
+	"github.com/robdevops/signalbot/internal/kit/allow"
 	"github.com/robdevops/signalbot/internal/kit/logx"
 	"github.com/robdevops/signalbot/internal/kit/txt"
 )
@@ -61,10 +62,11 @@ type savedFile struct {
 
 // scheduler is every user's schedules, in the order they were made.
 type scheduler struct {
-	h   feature.Host
-	db  feature.Store
-	loc *time.Location
-	now func() time.Time
+	h     feature.Host
+	posts allow.Policy // who may schedule posts in a group: SCHEDULE_USER_IDS
+	db    feature.Store
+	loc   *time.Location
+	now   func() time.Time
 
 	mu   sync.Mutex
 	all  []*entry
@@ -81,7 +83,7 @@ func register(h feature.Host, loc *time.Location, now func() time.Time) error {
 	if err != nil {
 		return fmt.Errorf("/schedule: %w", err)
 	}
-	s := &scheduler{h: h, db: db, loc: loc, now: now, last: map[string]int{}}
+	s := &scheduler{h: h, db: db, loc: loc, now: now, last: map[string]int{}, posts: allow.Parse(h.Env("SCHEDULE_USER_IDS", ""))}
 	if err := s.load(); err != nil {
 		return err
 	}
@@ -184,16 +186,36 @@ func (s *scheduler) save() error { return s.db.Save(savedFile{Schedules: s.all, 
 
 // arm sets e's timer for t. s.mu is held.
 func (s *scheduler) arm(e *entry, t time.Time) error {
-	cancel, err := s.h.At(timerName, t, func(_ context.Context, due time.Time) { s.run(e, due) })
+	cancel, err := s.h.At(timerName, t, func(ctx context.Context, due time.Time) { s.run(ctx, e, due) })
 	e.cancel = cancel
 	return err
 }
 
-// run is e's timer, due at dueAt: it delivers e's text if settle says to.
-func (s *scheduler) run(e *entry, dueAt time.Time) {
-	if s.settle(e, dueAt) {
-		s.h.Deliver(feature.Message{Chat: e.chat(), Sender: e.User, Text: e.Text})
+// run is e's timer, due at dueAt: it delivers e's text if settle says to,
+// and, in a group, if its user may still schedule posts there.
+func (s *scheduler) run(ctx context.Context, e *entry, dueAt time.Time) {
+	if !s.settle(e, dueAt) {
+		return
 	}
+	if e.Group != "" && !s.mayPost(ctx, e.User, e.Group) {
+		logx.Infof("a scheduled post dropped: its user may no longer schedule posts in the group (SCHEDULE_USER_IDS)")
+		return
+	}
+	s.h.Deliver(feature.Message{Chat: e.chat(), Sender: e.User, Text: e.Text})
+}
+
+// mayPost reports whether user may schedule posts in group: by
+// SCHEDULE_USER_IDS, as listed or, if admins may, as one of its admins.
+func (s *scheduler) mayPost(ctx context.Context, user, group string) bool {
+	return s.posts.Allows(func() bool {
+		gs, err := s.h.Groups(ctx, user)
+		if err != nil {
+			logx.Warnf("listing groups failed: %v", err)
+			return false
+		}
+		i := slices.IndexFunc(gs, func(g feature.Group) bool { return g.ID == group })
+		return i >= 0 && gs[i].Admin
+	}, user)
 }
 
 // settle settles e's run that was due at dueAt, and reports whether to
@@ -243,8 +265,8 @@ func (e *entry) chat() feature.Chat {
 	return feature.Chat{User: e.User}
 }
 
-// command answers /schedule, in a DM only: the core only passes on a DM
-// from a sender in SIGNAL_DM_USER_IDS.
+// command answers /schedule, in a DM only: the network only passes on a DM
+// from someone its <NETWORK>_DM_USER_IDS allows.
 func (s *scheduler) command(ctx context.Context, m feature.Message, args string) feature.Action {
 	if m.Chat.GroupID != "" {
 		return answer("Schedules are made in a DM with me. /schedule help there says how.")
@@ -321,6 +343,12 @@ func (s *scheduler) add(ctx context.Context, m feature.Message, args string) str
 		g, problem := s.findGroup(ctx, m.Sender, r.group)
 		if problem != "" {
 			return problem
+		}
+		if !s.posts.Allows(func() bool { return g.Admin }, m.Sender) {
+			if s.posts.Admins {
+				return "Only " + g.Name + "'s admins can schedule posts there."
+			}
+			return "Scheduling posts in groups isn't open to you."
 		}
 		e.Group, e.GroupName, where = g.ID, g.Name, "in "+g.Name
 	}
@@ -443,15 +471,15 @@ func (s *scheduler) list(ctx context.Context, user string) string {
 	if len(mine) == 0 {
 		return "You have no schedules. /schedule help says how to make one."
 	}
-	var current map[string]string // the user's groups, by ID
+	var current map[string]feature.Group // the user's groups, by ID
 	if slices.ContainsFunc(mine, func(e *entry) bool { return e.Group != "" }) {
 		gs, err := s.h.Groups(ctx, user)
 		if err != nil {
 			logx.Warnf("listing groups failed: %v", err)
 		} else {
-			current = map[string]string{}
+			current = map[string]feature.Group{}
 			for _, g := range gs {
-				current[g.ID] = g.Name
+				current[g.ID] = g
 			}
 		}
 	}
@@ -464,11 +492,13 @@ func (s *scheduler) list(ctx context.Context, user string) string {
 		if e.Every != "" {
 			b.WriteString(", every " + e.Every)
 		}
-		switch name, ok := current[e.Group]; {
+		switch g, ok := current[e.Group]; {
 		case e.Group == "":
 			b.WriteString(", here")
+		case ok && !s.posts.Allows(func() bool { return g.Admin }, user):
+			b.WriteString(", in " + cmp.Or(g.Name, e.GroupName) + " (not posting: you may no longer schedule posts there)")
 		case ok || current == nil:
-			b.WriteString(", in " + cmp.Or(name, e.GroupName))
+			b.WriteString(", in " + cmp.Or(g.Name, e.GroupName))
 		default:
 			b.WriteString(", in " + e.GroupName + " (you've left it, so it won't post)")
 		}

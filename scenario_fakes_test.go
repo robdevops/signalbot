@@ -219,7 +219,9 @@ func newHarness(t *testing.T, w world) *harness {
 // env is the bot's settings: the scenario's, over the harness defaults,
 // with the state directory always w.StateDir.
 func (h *harness) env() map[string]string {
-	e := map[string]string{"MODEL": scenarioModel, "SIGNAL_DM_USER_IDS": idAlice}
+	// SCHEDULE_USER_IDS is all, so group schedules don't wait on a
+	// network's admins; scenarios of who may schedule set it themselves.
+	e := map[string]string{"MODEL": scenarioModel, "SIGNAL_DM_USER_IDS": idAlice, "SCHEDULE_USER_IDS": "all"}
 	maps.Copy(e, h.w.Env)
 	e["STATE_DIRECTORY"] = h.w.StateDir
 	return e
