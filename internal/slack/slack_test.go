@@ -1053,6 +1053,83 @@ func TestGroupsMissingScope(t *testing.T) {
 	}
 }
 
+// At startup the bot lists, in one warning, the channels it is in that
+// are shared with another organisation, or invited to be, every page
+// read, sorted by name: each made safe, cut to 40 characters, a backslash
+// shown as "/". One shared only within its Enterprise Grid org isn't one.
+func TestAuditChannels(t *testing.T) {
+	logs := captureLogs(t)
+	f := newFake(t)
+	long := strings.Repeat("x", 45)
+	f.convs = map[string]string{
+		" ": `"channels":[{"id":"C0CHANNEL1","name":"team"},{"id":"C0CHANNEL2","name":"partners\\","is_ext_shared":true},` +
+			`{"id":"C0CHANNEL3","name":"grid","is_org_shared":true,"is_shared":true}],"response_metadata":{"next_cursor":"p2"}`,
+		" p2": `"channels":[{"id":"C0CHANNEL4","name":"` + long + `","is_pending_ext_shared":true},{"id":"C0CHANNEL5","name":"a\nb","is_ext_shared":true}]`,
+	}
+	c := connected(f.client(t))
+	c.auditChannels(context.Background())
+	want := "Slack: the bot is in 3 channel(s) shared with other organisations, whose people can talk to it: " +
+		"#a b (C0CHANNEL5), #partners/ (C0CHANNEL2), #" + strings.Repeat("x", 40) + "… (C0CHANNEL4)\n"
+	if l := logs.String(); l != want {
+		t.Fatalf("log %q", l)
+	}
+	if calls := f.callsTo("users.conversations"); len(calls) != 2 || calls[0].Params["user"] != nil || calls[1].Params["cursor"] != "p2" {
+		t.Fatalf("calls %v", calls)
+	}
+
+	// None shared: a notice with the count alone.
+	logs = captureLogs(t)
+	f.convs = map[string]string{" ": `"channels":[{"id":"C0CHANNEL1","name":"team"},{"id":"C0CHANNEL3","name":"grid","is_org_shared":true}]`}
+	c.auditChannels(context.Background())
+	if l := logs.String(); l != "Slack: the bot is in 2 channel(s), none shared with other organisations\n" {
+		t.Fatalf("log %q", l)
+	}
+}
+
+// Without the scopes to list channels, the startup check says so once, as
+// Groups would, naming no channel; another failure is a warning of its
+// own.
+func TestAuditChannelsFails(t *testing.T) {
+	logs := captureLogs(t)
+	f := newFake(t)
+	c := connected(f.client(t))
+	for range 2 {
+		f.fail("users.conversations", "missing_scope")
+		c.auditChannels(context.Background())
+	}
+	f.fail("users.conversations", "missing_scope")
+	c.Groups(context.Background(), "slack:"+alice)
+	l := logs.String()
+	if strings.Count(l, "Slack refused to list channels (missing_scope)") != 1 || !strings.Contains(l, "aren't listed at startup") || strings.Count(l, "\n") != 1 {
+		t.Fatalf("log %q", l)
+	}
+	logs = captureLogs(t)
+	f.fail("users.conversations", "internal_error")
+	c.auditChannels(context.Background())
+	if l := logs.String(); !strings.HasPrefix(l, "slack users.conversations failed, so the channels shared with other organisations aren't listed: ") {
+		t.Fatalf("log %q", l)
+	}
+}
+
+// Run makes the startup check once it knows who the bot is, alongside the
+// connection.
+func TestAuditAtStartup(t *testing.T) {
+	logs := captureLogs(t)
+	f := newFake(t)
+	f.convs = map[string]string{" ": `"channels":[{"id":"C0CHANNEL2","name":"partners","is_ext_shared":true}]`}
+	c := f.client(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() { defer close(done); c.Run(ctx, func(bot.Received) {}) }()
+	(<-f.conns).Write(`{"type":"hello"}`)
+	waitFor(t, "the startup check", func() bool { return strings.Contains(logs.String(), "#partners (C0CHANNEL2)") })
+	cancel()
+	<-done
+	if n := len(f.callsTo("users.conversations")); n != 1 {
+		t.Fatalf("users.conversations asked %d times", n)
+	}
+}
+
 // The file host check never sends the token elsewhere.
 func TestMediaHost(t *testing.T) {
 	f := newFake(t)

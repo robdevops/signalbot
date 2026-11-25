@@ -296,10 +296,12 @@ func (c *Client) Watch(w bot.Watch) {
 	c.commands.Store(&w.Commands)
 }
 
-// Run learns who the bot is, then holds a Socket Mode connection open and
-// hands each event the core may act on to handle, on this goroutine, until
-// ctx ends. A dropped connection is opened again with backoff, from 1s to
-// 32s; one Slack asks to close is opened again at once. A token Slack
+// Run learns who the bot is, lists the channels it is in that are shared
+// with other organisations (auditChannels, alongside), then holds a Socket
+// Mode connection open and hands each event the core may act on to handle,
+// on this goroutine, until ctx ends. A dropped connection is opened again
+// with backoff, from 1s to 32s; one Slack asks to close is opened again at
+// once. A token Slack
 // refuses is logged naming its setting, and tried again only every 10
 // minutes.
 func (c *Client) Run(ctx context.Context, handle func(bot.Received)) {
@@ -322,6 +324,10 @@ func (c *Client) Run(ctx context.Context, handle func(bot.Received)) {
 		}
 	}
 	c.writeManifest()
+	var audit sync.WaitGroup
+	defer audit.Wait()
+	end := c.test.Begin()
+	audit.Go(func() { defer end(); c.auditChannels(ctx) })
 	backoff = c.backoff
 	for ctx.Err() == nil {
 		hello, planned, err := c.connect(ctx, handle)

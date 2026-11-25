@@ -48,6 +48,7 @@ type slHarness struct {
 	admins  map[string]bool // users users.info says are workspace admins
 	reqs    [][]string      // each chat completions request's messages, role and text
 	logs    bytes.Buffer
+	bot     *bot.Bot // the host features post through
 }
 
 // slCall is one Web API call the bot made: its method and parameters.
@@ -93,6 +94,7 @@ func startSlackWith(t *testing.T, env map[string]string, extra ...func(feature.H
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	b := bot.New(ctx, cfg, net)
+	h.bot = b
 	for _, register := range append(enabled(), extra...) {
 		if err := register(b); err != nil {
 			t.Fatal(err)
@@ -388,6 +390,38 @@ func TestSlackDMScheduleDropped(t *testing.T) {
 		t.Fatalf("%d sends", n)
 	}
 	if l := h.logText(); strings.Contains(l, "lunch") || strings.Contains(l, slAlice) {
+		t.Fatalf("logged:\n%s", l)
+	}
+}
+
+// An alert, a feature's post, goes to a DM only while its user may DM the
+// bot: a workspace admin gets one, a stranger doesn't, and once the admin
+// is found to be one no longer (here by their schedule's run), the next is
+// dropped, logged naming no one.
+func TestSlackDMAlertDropped(t *testing.T) {
+	h := startSlack(t)
+	h.setAdmin(slAlice, true)
+	h.message(slAlice, "D0ALICEDM1", "hello")
+	h.waitCalls("chat.postMessage", 1)
+	h.bot.Post(feature.Post{Chat: feature.Chat{User: "slack:" + slAlice}, Text: "rain alert"})
+	if s := h.waitCalls("chat.postMessage", 2)[1]; s.Params["channel"] != "D0ALICEDM1" || s.Params["text"] != "rain alert" {
+		t.Fatalf("sent %v", s.Params)
+	}
+	h.bot.Post(feature.Post{Chat: feature.Chat{User: "slack:" + slBob}, Text: "wind alert"})
+	h.waitLog("dropped a post: its chat isn't reachable")
+	// Scheduled only now, with nothing between it and the demotion, so
+	// the run can't come before it.
+	at := time.Now().Truncate(time.Second).Add(2 * time.Second)
+	h.message(slAlice, "D0ALICEDM1", `/schedule "lunch is ready" `+at.Format("2006-01-02T15:04:05"))
+	h.waitCalls("chat.postMessage", 3)
+	h.setAdmin(slAlice, false)
+	h.waitLog("delivered message dropped: its sender may no longer DM the bot (SLACK_DM_USERS)")
+	h.bot.Post(feature.Post{Chat: feature.Chat{User: "slack:" + slAlice}, Text: "hail alert"})
+	h.waitFor("the second alert dropped", func() bool { return strings.Count(h.logText(), "dropped a post: its chat isn't reachable") == 2 })
+	if n := len(h.callsTo("chat.postMessage")); n != 3 {
+		t.Fatalf("%d sends", n)
+	}
+	if l := h.logText(); strings.Contains(l, "alert") || strings.Contains(l, slAlice) || strings.Contains(l, slBob) || strings.Contains(l, "Alice") || strings.Contains(l, "Bob") {
 		t.Fatalf("logged:\n%s", l)
 	}
 }

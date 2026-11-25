@@ -70,6 +70,8 @@ On Telegram, anyone can add the bot to a group while BotFather's Allow Groups is
 
 To see where the bot is, read the startup log: on Telegram, after it connects, it lists the groups it knows it is in, each by title and ID (`Telegram groups the bot knows of (2): …`), and warns as it learns of a new one (`Telegram: the bot is in a new group: …`), so a group someone else added it to shows up. As the Bot API can't list a bot's groups, the list is the bot's own, kept in `telegram-groups.json` in `STATE_DIRECTORY` from when it is added to a group or sees anything there.
 
+On Slack, people from another organisation can talk to the bot in a channel shared with it (Slack Connect). At every startup the bot warns with the name and ID of each such channel it is in (with none, it notes how many channels it is in); remove it from any you don't expect.
+
 ---
 
 [Back to README.md](../README.md)
