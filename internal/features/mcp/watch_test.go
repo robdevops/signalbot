@@ -597,7 +597,7 @@ func TestOutboxDelivery(t *testing.T) {
 	a, now := unitAddon(cfg)
 	h := featuretest.New()
 	a.host = h
-	a.lease(inA, false)
+	a.lease(inA)
 	id := a.chatID(inA)
 	pic := []ext.Image{{Data: tinyPNG(), MimeType: "image/png"}}
 	postOp := func(n string, images []ext.Image) ext.Op {
@@ -652,7 +652,7 @@ func TestOutboxMergeKeepsTexts(t *testing.T) {
 	a, _ := unitAddon(everything)
 	h := featuretest.New()
 	a.host = h
-	a.lease(inA, false)
+	a.lease(inA)
 	id := a.chatID(inA)
 	long := strings.Repeat("é", 3000)
 	for i, text := range []string{"first", long, long} {
@@ -685,8 +685,8 @@ func TestOutboxReplies(t *testing.T) {
 	a, now := unitAddon(cfg)
 	h := featuretest.New()
 	a.host = h
-	a.lease(inA, false)
-	a.lease(inB, false)
+	a.lease(inA)
+	a.lease(inB)
 	idA, idB := a.chatID(inA), a.chatID(inB)
 	n := 0
 	post := func(chat, text, replyTo string) ext.Op {
@@ -760,7 +760,7 @@ func TestOutboxReplies(t *testing.T) {
 
 	// 24 hours on, forgotten.
 	*now = now.Add(postedLife)
-	a.lease(inA, false)
+	a.lease(inA)
 	apply(post(idA, "Too late", question.ID))
 	if len(a.state().Posted) != 0 {
 		t.Fatalf("kept %+v", a.state().Posted)
@@ -799,8 +799,8 @@ func TestOutboxReactToPost(t *testing.T) {
 	a, now := unitAddon(cfg)
 	h := featuretest.New()
 	a.host = h
-	a.lease(inA, false)
-	a.lease(inB, false)
+	a.lease(inA)
+	a.lease(inB)
 	idA, idB := a.chatID(inA), a.chatID(inB)
 	if why := a.apply(ext.Op{ID: "q", Op: "post", Chat: idA, Text: "Question"}); why != "" {
 		t.Fatal(why)
@@ -842,7 +842,7 @@ func TestOutboxReactToPost(t *testing.T) {
 	}
 	// Once the post is too old to be remembered.
 	*now = now.Add(postedLife)
-	a.lease(inA, false)
+	a.lease(inA)
 	if why := react("9", idA, "q", ""); why != "reactions to an unknown post" {
 		t.Fatalf("an old post: %q", why)
 	}
@@ -850,8 +850,8 @@ func TestOutboxReactToPost(t *testing.T) {
 	cfg.React = false
 	a, _ = unitAddon(cfg)
 	a.host = h
-	a.lease(inA, false)
-	a.rememberPosted(inA, []string{"q"}, []int64{100}, "")
+	a.lease(inA)
+	a.rememberPosted(idA, []string{"q"}, []int64{100})
 	if why := react("10", idA, "q", ""); why != "reactions not allowed" {
 		t.Fatalf("without react: %q", why)
 	}
@@ -863,7 +863,7 @@ func TestOutboxReplyWaitsForDropped(t *testing.T) {
 	a, now := unitAddon(everything)
 	h := featuretest.New()
 	a.host = h
-	a.lease(inA, false)
+	a.lease(inA)
 	id := a.chatID(inA)
 	waiting := ext.Op{ID: "w", Op: "post", Chat: id, Text: "Waiting"}
 	question := ext.Op{ID: "q", Op: "post", Chat: id, Text: "Question"}
@@ -1257,7 +1257,7 @@ func TestOutboxAudio(t *testing.T) {
 	a, _ := unitAddon(cfg)
 	h := featuretest.New()
 	a.host = h
-	a.lease(inA, false)
+	a.lease(inA)
 	id := a.chatID(inA)
 	clip := base64.StdEncoding.EncodeToString([]byte("ID3 clip"))
 	for _, o := range []ext.Op{

@@ -11,8 +11,24 @@ import (
 	"github.com/robdevops/signalbot/internal/feature"
 )
 
-// keysPerRow is how many of the configured keys share a row.
-const keysPerRow = 3
+// The limits of the buttons and keys the bot makes, Telegram's: rows, and
+// buttons or keys in a row; a label's size in characters, a button's
+// data's in bytes, and a key's command's in characters. keysPerRow is
+// how many of the configured keys share a row.
+const (
+	maxRows    = 5
+	maxPerRow  = 5
+	maxLabel   = 32
+	maxData    = 64
+	maxCommand = 256
+	keysPerRow = 3
+)
+
+// label reports whether s is a button's or key's label: 1 to maxLabel
+// characters, with no space around them, as Telegram may trim a key's.
+func label(s string) bool {
+	return s != "" && strings.TrimSpace(s) == s && utf8.RuneCountInString(s) <= maxLabel
+}
 
 // checkKeyboard is why keys, a server's "keyboard", can't be one: pairs of
 // a label and the command it sends.

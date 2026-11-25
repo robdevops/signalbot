@@ -46,7 +46,6 @@ type Capability struct {
 	Network        string `json:"network,omitempty"`        // the bot's chat network, as it names itself: "signal", "telegram"
 	WatchReplies   bool   `json:"watchReplies,omitempty"`   // the bot's: it takes a watch with Replies
 	WatchReactions bool   `json:"watchReactions,omitempty"` // the bot's: it takes a watch with Reactions
-	Buttons        bool   `json:"buttons,omitempty"`        // the bot's: its network shows a post's Buttons and Keyboard (Telegram)
 }
 
 // Context is the message a call the bot makes came from, in the call's
@@ -129,10 +128,10 @@ func Text(s string) Result { return Result{Content: []Content{{Type: "text", Tex
 // Op is one thing an addon's outbox asks the bot to do.
 type Op struct {
 	ID      string  `json:"id"`
-	Op      string  `json:"op"`                // "post", "edit", "react" or "unwatch"
-	Chat    string  `json:"chat,omitempty"`    // a post's, edit's, unwatch's or reaction-to-a-post's chat pseudonym
-	Text    string  `json:"text,omitempty"`    // a post's or edit's, with {u_…} placeholders the bot fills in with names
-	Images  []Image `json:"images,omitempty"`  // a post's: at most 2, 2 MB in all; an edit's, or a post's with Buttons or a Keyboard, at most 1
+	Op      string  `json:"op"`                // "post", "react" or "unwatch"
+	Chat    string  `json:"chat,omitempty"`    // a post's, unwatch's or reaction-to-a-post's chat pseudonym
+	Text    string  `json:"text,omitempty"`    // a post's, with {u_…} placeholders the bot fills in with names
+	Images  []Image `json:"images,omitempty"`  // a post's: at most 2, 2 MB in all
 	Ref     string  `json:"ref,omitempty"`     // a reaction's message: a context's ref; or else Post
 	Emoji   string  `json:"emoji,omitempty"`   // a reaction's
 	Watch   string  `json:"watch,omitempty"`   // the ID of the watch an unwatch ends
@@ -140,48 +139,8 @@ type Op struct {
 	Audio   *Audio  `json:"audio,omitempty"`   // a post's: one clip to play, MP3, at most 2 MB
 	// Post is a reaction's, in place of Ref: the ID of an earlier post of
 	// the addon's in Chat, as ReplyTo names it, so the bot reacts to its
-	// own message, such as ⏰ on a question whose time runs out. It is
-	// also an edit's: the post whose text, image and buttons it replaces;
-	// not one merged with others or sent as more than one message.
+	// own message, such as ⏰ on a question whose time runs out.
 	Post string `json:"post,omitempty"`
-	// Silent is a post's: sent without a notification where the network
-	// can (Telegram); Signal ignores it.
-	Silent bool `json:"silent,omitempty"`
-	// Buttons are a post's or edit's rows of buttons under it, at most 5
-	// of at most 5, where the bot's Capability has Buttons; elsewhere they
-	// are left off. A press calls OnPress, one of the addon's tools for
-	// the bot alone, with Press as its arguments and the presser's context.
-	Buttons [][]Button `json:"buttons,omitempty"`
-	OnPress string     `json:"onPress,omitempty"` // with Buttons, and only with them
-	// Keyboard is a post's, in a DM where the Capability has Buttons: the
-	// chat's reply keyboard from now on, rows of keys, at most 5 of at most
-	// 5. A message of exactly a key's label runs its command, one of the
-	// addon's direct commands.
-	// RemoveKeyboard takes it away.
-	Keyboard       [][]Key `json:"keyboard,omitempty"`
-	RemoveKeyboard bool    `json:"removeKeyboard,omitempty"`
-}
-
-// Button is a button under a post.
-type Button struct {
-	Label string `json:"label"` // at most 32 characters, no space around them
-	Data  string `json:"data"`  // what a press passes back, 1 to 64 bytes
-}
-
-// Key is a key of a DM's reply keyboard.
-type Key struct {
-	Label   string `json:"label"`   // at most 32 characters, no space around them, unique in the keyboard
-	Command string `json:"command"` // the addon's direct command a message of exactly Label runs, such as "/rain"
-}
-
-// Press is the arguments of a post's OnPress tool when one of its buttons
-// is pressed: the button's Data, and the ID of the post op it is under
-// (an edit's Post), with the presser's context in _meta, as a direct
-// command's. The result's text, if any, is shown to the presser for a
-// moment.
-type Press struct {
-	Press string `json:"press"`
-	Post  string `json:"post"`
 }
 
 // Audio is a clip in a post, sent to play, with no title of its own: on

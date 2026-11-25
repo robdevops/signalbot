@@ -138,7 +138,6 @@ func (a *addon) ask(ctx context.Context, params json.RawMessage) (*answer, int, 
 	a.mu.Lock()
 	l, ok := a.leases[req.Meta.Chat]
 	a.mu.Unlock()
-	// A lease's day, not announce's for good: announce opens no sampling.
 	if req.Meta.Chat == "" || !ok || !now.Before(l.Expires) || !a.allows(l.Chat) {
 		return nil, size, "refused: no chat", &rpcError{Code: -32602, Message: "_meta needs the chat that pays, one the addon may post in now"}
 	}

@@ -34,8 +34,7 @@ type addonConfig struct {
 	Names     bool         `json:"names"`     // the context carries the sender's display name
 	GlobalIDs bool         `json:"global_ids"`
 	Rate      rateConfig   `json:"rate"`
-	Model     *modelConfig `json:"model"`    // nil: it may not ask the bot's model
-	Announce  bool         `json:"announce"` // a chat that used one of its direct commands stays open to its posts, with no expiry
+	Model     *modelConfig `json:"model"` // nil: it may not ask the bot's model
 
 	watchMax time.Duration // WatchMax, read
 }
@@ -63,7 +62,7 @@ type rateConfig struct {
 // addonSettings are the keys an addon block may have, rateSettings its
 // rate's and modelSettings its model's.
 var (
-	addonSettings = []string{"chats", "dms", "post", "react", "watch", "watch_max", "names", "global_ids", "rate", "model", "announce"}
+	addonSettings = []string{"chats", "dms", "post", "react", "watch", "watch_max", "names", "global_ids", "rate", "model"}
 	rateSettings  = []string{"per_minute", "burst"}
 	modelSettings = []string{"per_hour", "max_tokens"}
 )
@@ -272,9 +271,6 @@ type addon struct {
 	key     []byte          // HMAC(secret, server): its pseudonyms' key
 	conn    conn            // where to call it
 	bot     map[string]bool // the tools the bot may call itself
-	only    map[string]bool // those of them for the bot alone, which a press may call
-	cmds    map[string]bool // its direct commands' names, which a key may run; set before it runs
-	caps    feature.Caps    // what the network shows and does: buttons, a keyboard, its edit limits
 	busy    chan struct{}   // a place for each direct call in flight
 	now     func() time.Time
 	host    feature.Host  // where it posts and reacts; set before it runs
@@ -325,7 +321,7 @@ func newAddon(server, title string, cfg addonConfig, secret []byte, c conn, bot 
 		busy: make(chan struct{}, maxDirect), now: time.Now, changed: func() {}, dirty: make(chan struct{}, 1),
 		up: make(chan struct{}, 1), settled: make(chan struct{}, 1),
 		matches: make(chan match, maxMatches), posts: newLimiter(cfg.Rate), calls: newLimiter(watchRate), asks: hourly(cfg.Model),
-		only: map[string]bool{}, cmds: map[string]bool{}, refs: map[string]ref{}, names: map[string]seen{}, watches: map[string][]*watch{}, claims: map[claimKey]claim{},
+		refs: map[string]ref{}, names: map[string]seen{}, watches: map[string][]*watch{}, claims: map[claimKey]claim{},
 		leases: map[string]lease{}, tombs: map[string]time.Time{}, done: map[string]bool{},
 		sending: map[string]bool{}, failed: map[string]failure{}, waiting: map[string][]*outgoing{}, posted: map[string]posted{}}
 }
@@ -377,7 +373,7 @@ func (a *addon) context(m feature.Message, at time.Time) ext.Context {
 			delete(a.names, k)
 		}
 	}
-	a.refs[id] = ref{feature.Message{Chat: m.Chat, Sender: m.Sender, Timestamp: m.Timestamp, Edited: m.Edited, Bot: m.Bot}, now.Add(refLife)}
+	a.refs[id] = ref{feature.Message{Chat: m.Chat, Sender: m.Sender, Timestamp: m.Timestamp, Edited: m.Edited}, now.Add(refLife)}
 	if m.Name != "" {
 		a.names[m.Chat.Key()+"\x00"+user] = seen{m.Name, now.Add(nameLife)}
 	}
