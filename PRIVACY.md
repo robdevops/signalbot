@@ -11,7 +11,7 @@ When the bot answers a message, it sends this to the model's API: [OpenRouter](h
 - the new message, with the display name of whoever sent it (in groups) and of anyone it @mentions;
 - the quoted text, when someone replies to one of the bot's messages, or mentions the bot in reply to someone else.
 - files in the message, or in the message it replies to: a PDF or audio as itself (on OpenRouter, a PDF for a model that can't read files is read by OpenRouter's OCR service, `mistral-ocr`), and text, Word, Excel and PowerPoint files as their text, for that one request. The bot never keeps a file, and history notes only that it was attached;
-- photos or a sticker in the message (a sticker also by its emoji and pack title; on Telegram, a video's or GIF's thumbnail too), and the thumbnail of a quoted photo, when the model accepts images (on OpenRouter the bot checks its model list at startup; with another provider it sends them until the API rejects one).
+- photos or a sticker in the message (a sticker also by its emoji and pack title), a GIF (its still), on Telegram a video's thumbnail, and on Discord the picture a link in the message shows, by Discord's own preview, and the thumbnail of a quoted photo, when the model accepts images (on OpenRouter the bot checks its model list at startup; with another provider it sends them until the API rejects one).
 
 With web search on (`MODEL_SEARCH`), the model decides whether to search and writes the query itself. The query can contain anything the model was sent (see above), such as a name or a phrase from a message, and goes to the search service OpenRouter uses. Web search runs only on OpenRouter.
 

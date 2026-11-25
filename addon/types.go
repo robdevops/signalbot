@@ -81,7 +81,8 @@ type Watch struct {
 	Replies bool   `json:"replies,omitempty"` // only replies to the command's answer and the addon's posts in the chat while it lives; in a DM, every message
 	// Reactions: also reactions put on, or taken off, the command's answer
 	// and the addon's posts in the chat while it lives, each a call of Tool
-	// with {"reaction": emoji, "removed": bool} and the reactor's context.
+	// with {"reaction": emoji, "removed": bool} and the reactor's context;
+	// a Discord server's or Slack workspace's own emoji is ":name:".
 	// Offer it only to a bot whose Capability has WatchReactions.
 	Reactions bool `json:"reactions,omitempty"`
 	// Over is the answer, for an hour after the watch ends, to a message

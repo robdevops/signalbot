@@ -562,6 +562,65 @@ func TestStickers(t *testing.T) {
 	}
 }
 
+// A GIF from the GIF picker, or a picture's link, is an image the model
+// sees by its still on Discord's media proxy, without its bare link; one
+// with words keeps them. A preview elsewhere, or of another kind, is none.
+func TestEmbeds(t *testing.T) {
+	c := connected(newFake(t).client())
+	const (
+		link  = "https://tenor.com/view/cat-dance-gif-123"
+		still = "https://images-ext-1.discordapp.net/external/abc/https/media.tenor.com/x/cat.png"
+	)
+	gif := `{"type":"gifv","url":"` + link + `","thumbnail":{"url":"https://media.tenor.com/x/cat.png","proxy_url":"` + still + `","width":498,"height":280},"video":{"url":"https://media.tenor.com/x/cat.mp4"}}`
+	m := load(t, one(t, c.events("MESSAGE_CREATE", json.RawMessage(`{"id":"1200000000000000001",`+inDM+`,`+fromA+`,"content":"`+link+`","embeds":[`+gif+`]}`))))
+	if m.Text != "" || len(m.Media) != 1 || m.Media[0] != (feature.Media{ID: still}) {
+		t.Fatalf("a GIF %+v", m)
+	}
+	m = load(t, one(t, c.events("MESSAGE_CREATE", json.RawMessage(`{"id":"1200000000000000002",`+inGuild+`,`+fromA+`,"type":0,"content":"<@`+botID+`> `+link+`","mentions":[{"id":"`+botID+`"}],"embeds":[`+gif+`]}`))))
+	if m.Text != "" || len(m.Media) != 1 {
+		t.Fatalf("a GIF with the bot's mention %+v", m)
+	}
+	m = load(t, one(t, c.events("MESSAGE_CREATE", json.RawMessage(`{"id":"1200000000000000003",`+inDM+`,`+fromA+`,"content":"look `+link+`","embeds":[`+gif+`]}`))))
+	if m.Text != "look "+link || len(m.Media) != 1 {
+		t.Fatalf("a GIF with words %+v", m)
+	}
+	pic := `{"type":"image","url":"https://example.com/a.png","thumbnail":{"url":"https://example.com/a.png","proxy_url":"https://media.discordapp.net/external/def/a.png"}}`
+	m = load(t, one(t, c.events("MESSAGE_CREATE", json.RawMessage(`{"id":"1200000000000000004",`+inDM+`,`+fromA+`,"content":"https://example.com/a.png","embeds":[`+pic+`]}`))))
+	if m.Text != "" || len(m.Media) != 1 || m.Media[0].ID != "https://media.discordapp.net/external/def/a.png" {
+		t.Fatalf("a picture %+v", m)
+	}
+	for _, e := range []string{
+		`{"type":"gifv","url":"` + link + `","thumbnail":{"proxy_url":"https://media.tenor.com/x/cat.png"}}`,
+		`{"type":"gifv","url":"` + link + `","thumbnail":{"proxy_url":"http://images-ext-1.discordapp.net/x.png"}}`,
+		`{"type":"gifv","url":"` + link + `"}`,
+		`{"type":"article","url":"` + link + `","thumbnail":{"proxy_url":"` + still + `"}}`,
+	} {
+		m = load(t, one(t, c.events("MESSAGE_CREATE", json.RawMessage(`{"id":"1200000000000000005",`+inDM+`,`+fromA+`,"content":"`+link+`","embeds":[`+e+`]}`))))
+		if m.Text != link || len(m.Media) != 0 {
+			t.Fatalf("%s: %+v", e, m)
+		}
+	}
+	// Within the picture cap, which four attachments fill: the link stays.
+	var atts []string
+	for i := range feature.MaxPictures {
+		atts = append(atts, fmt.Sprintf(`{"id":"%d","filename":"a.png","content_type":"image/png","size":100,"url":"https://cdn.discordapp.com/a%d.png"}`, i, i))
+	}
+	m = load(t, one(t, c.events("MESSAGE_CREATE", json.RawMessage(`{"id":"1200000000000000006",`+inDM+`,`+fromA+`,"content":"`+link+`","attachments":[`+strings.Join(atts, ",")+`],"embeds":[`+gif+`]}`))))
+	if m.Text != link || len(m.Media) != feature.MaxPictures {
+		t.Fatalf("over the cap %+v", m)
+	}
+	// A preview added later, with no edited_timestamp, is no edit.
+	if rs := c.events("MESSAGE_UPDATE", json.RawMessage(`{"id":"1200000000000000005",`+inDM+`,`+fromA+`,"type":0,"content":"`+link+`","embeds":[`+gif+`]}`)); len(rs) != 0 {
+		t.Fatalf("a late preview %+v", rs)
+	}
+	// A quoted GIF is shown as quoted, its link left out of the quote.
+	m = load(t, one(t, c.events("MESSAGE_CREATE", json.RawMessage(`{"id":"1200000000000000007",`+inDM+`,`+fromA+`,"content":"ha",`+
+		`"message_reference":{"message_id":"1200000000000000001"},"referenced_message":{"id":"1200000000000000001",`+inDM+`,`+fromA+`,"content":"`+link+`","embeds":[`+gif+`]}}`))))
+	if m.Text != "ha" || m.Quote == nil || m.Quote.Text != "" || len(m.Media) != 1 || m.Media[0] != (feature.Media{ID: still, Quoted: true}) {
+		t.Fatalf("a quoted GIF %+v", m)
+	}
+}
+
 // An edit is the message again, Edited on the scale of message IDs and
 // after it; a delete names its sender, or the bot for its own.
 func TestEditsAndDeletes(t *testing.T) {
@@ -608,6 +667,27 @@ func TestReactions(t *testing.T) {
 	h = one(t, c.events("MESSAGE_REACTION_REMOVE", json.RawMessage(r))).(bot.Happened)
 	if !h.Event.Reaction.Removed {
 		t.Fatalf("removal %+v", h.Event.Reaction)
+	}
+	// A server's own emoji is :name:, its name made safe and cut short;
+	// one with no name (deleted since) is none.
+	for name, want := range map[string]string{
+		"party_parrot":             ":party_parrot:",
+		"two\\n words":             ":two words:",
+		strings.Repeat("long", 10): ":" + strings.Repeat("long", 8) + "…:",
+		"":                         "",
+		" ":                        "",
+	} {
+		custom := strings.Replace(r, `{"id":null,"name":"👍"}`, `{"id":"1300000000000000001","name":"`+name+`","animated":true}`, 1)
+		rs := c.events("MESSAGE_REACTION_ADD", json.RawMessage(custom))
+		if want == "" {
+			if len(rs) != 0 {
+				t.Fatalf("%q: %+v", name, rs)
+			}
+			continue
+		}
+		if h := one(t, rs).(bot.Happened); h.Event.Reaction.Emoji != want {
+			t.Fatalf("%q: %q", name, h.Event.Reaction.Emoji)
+		}
 	}
 }
 
