@@ -65,8 +65,10 @@ type Client struct {
 	forgot uint64                       // counts forgetting admins or verdicts, so a lookup begun before isn't kept
 	roster map[string]knownGroup        // group ID to what is saved of it, for every group the bot knows it is in
 
-	rosterDoc *state.Doc // telegram-groups.json, the roster
-	rosterMu  sync.Mutex // held while the roster is saved
+	rosterDoc    *state.Doc     // telegram-groups.json, the roster
+	rosterMu     sync.Mutex     // held while the roster is saved
+	rosterQueued atomic.Bool    // a save of the roster is waiting to start
+	rosterWG     sync.WaitGroup // the roster's saves under way
 
 	test *config.Test // nil in production
 }
@@ -231,6 +233,7 @@ func (c *Client) Watch(w bot.Watch) {
 // update the core may act on to handle, on this goroutine, until ctx ends.
 // A failed poll is retried with backoff, a 429 after the wait it names.
 func (c *Client) Run(ctx context.Context, handle func(bot.Received)) {
+	defer c.rosterWG.Wait() // the roster's last change is on disk
 	backoff := c.backoff
 	for ctx.Err() == nil && c.selfID() == "" {
 		if err := c.hello(ctx); err != nil {

@@ -21,7 +21,9 @@ import (
 // it; it is dropped when the bot leaves or is removed, and moved when it
 // becomes a supergroup. It is saved at each change, which is rare (a new
 // group, a new title, a removal, a move): an update from a group already
-// known with the same title writes nothing.
+// known with the same title writes nothing. The write is on a goroutine of
+// its own, so a slow disk never holds up the reader; changes made while one
+// waits to start are written together, and Run waits for it at shutdown.
 
 // knownGroup is a group in the roster.
 type knownGroup struct {
@@ -52,22 +54,31 @@ func (c *Client) loadRoster() {
 	}
 }
 
-// saveRoster writes the roster. The lock is held from the copy to the
-// write, so the last write holds every change made before it.
+// saveRoster writes the roster, on a goroutine of its own, unless one is
+// already waiting to: it copies the roster only once it holds rosterMu, so
+// it writes this change too, and the last write holds every change made
+// before it.
 func (c *Client) saveRoster() {
-	c.rosterMu.Lock()
-	defer c.rosterMu.Unlock()
-	c.mu.Lock()
-	snap := maps.Clone(c.roster)
-	c.mu.Unlock()
-	if err := c.rosterDoc.Save(snap); err != nil {
-		logx.Warnf("telegram: saving the groups the bot is in failed: %v", err)
+	if c.rosterQueued.Swap(true) {
+		return
 	}
+	c.rosterWG.Go(func() {
+		c.rosterMu.Lock()
+		defer c.rosterMu.Unlock()
+		c.rosterQueued.Store(false)
+		c.mu.Lock()
+		snap := maps.Clone(c.roster)
+		c.mu.Unlock()
+		if err := c.rosterDoc.Save(snap); err != nil {
+			logx.Warnf("telegram: saving the groups the bot is in failed: %v", err)
+		}
+	})
 }
 
 // learnGroup notes that the bot is in ch, if it is a group: a group not
 // known before is added, with a warning, and a known one's title kept up
-// to date.
+// to date. A group the bot was removed from isn't, until it is added back:
+// the service message saying it left comes from that group too.
 func (c *Client) learnGroup(ch chat) {
 	if ch.Type != "group" && ch.Type != "supergroup" {
 		return
@@ -76,6 +87,9 @@ func (c *Client) learnGroup(ch chat) {
 	c.mu.Lock()
 	g, ok := c.roster[gid]
 	switch {
+	case !ok && c.left[gid]:
+		c.mu.Unlock()
+		return
 	case !ok && len(c.roster) >= maxGroups:
 		c.mu.Unlock()
 		return

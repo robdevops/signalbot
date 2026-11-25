@@ -15,12 +15,16 @@ import (
 
 // rosterClient is a connected client keeping its roster in dir.
 func rosterClient(f *fakeAPI, dir string) *Client {
-	return connected(newClient(f.srv.URL, token, dir, allow.Parse("all"), nil))
+	c := newClient(f.srv.URL, token, dir, allow.Parse("all"), nil)
+	f.t.Cleanup(c.rosterWG.Wait)
+	return connected(c)
 }
 
-// savedRoster is what dir's telegram-groups.json holds.
-func savedRoster(t *testing.T, dir string) map[string]knownGroup {
+// savedRoster is what dir's telegram-groups.json holds once c's saves are
+// done.
+func savedRoster(t *testing.T, c *Client, dir string) map[string]knownGroup {
 	t.Helper()
+	c.rosterWG.Wait()
 	data, err := os.ReadFile(filepath.Join(dir, "telegram-groups.json"))
 	if err != nil {
 		t.Fatal(err)
@@ -42,13 +46,13 @@ func TestRosterLearnsFromMembership(t *testing.T) {
 	dir := t.TempDir()
 	c := rosterClient(newFake(t), dir)
 	c.event(parse(t, addedToGroup))
-	r := savedRoster(t, dir)
+	r := savedRoster(t, c, dir)
 	if g := r[groupS]; len(r) != 1 || g.Title != "Test group" || g.Since != time.Now().Format(time.DateOnly) {
 		t.Fatalf("saved %+v", r)
 	}
 	c.event(parse(t, `{"update_id":2,"message":{"message_id":10,`+fromA+`,`+inGroup+`,"text":"hi"}}`))
 	c.event(parse(t, `{"update_id":3,"message":{"message_id":11,`+fromA+`,"chat":{"id":-1001234567890,"type":"supergroup","title":"Renamed \\ group"},"text":"hi"}}`))
-	if g := savedRoster(t, dir)[groupS]; g.Title != `Renamed \ group` {
+	if g := savedRoster(t, c, dir)[groupS]; g.Title != `Renamed \ group` {
 		t.Fatalf("title %q", g.Title)
 	}
 	if n := strings.Count(logs.String(), "the bot is in a new group"); n != 1 || !strings.Contains(logs.String(), "Telegram: the bot is in a new group: Test group (-1001234567890)") {
@@ -66,6 +70,7 @@ func TestRosterLearnsFromUpdates(t *testing.T) {
 	dir := t.TempDir()
 	c := rosterClient(newFake(t), dir)
 	c.event(parse(t, `{"update_id":1,"message":{"message_id":10,`+fromA+`,`+inDM+`,"text":"hi"}}`))
+	c.rosterWG.Wait()
 	if _, err := os.Stat(filepath.Join(dir, "telegram-groups.json")); err == nil {
 		t.Fatal("a DM was saved")
 	}
@@ -76,7 +81,7 @@ func TestRosterLearnsFromUpdates(t *testing.T) {
 		`{"update_id":5,"callback_query":{"id":"q","from":{"id":1111111,"first_name":"Alice"},"message":{"message_id":3,"chat":{"id":-100444,"type":"supergroup","title":"Delta"}},"data":"x"}}`,
 	} {
 		c.event(parse(t, u))
-		if r := savedRoster(t, dir); len(r) != i+1 {
+		if r := savedRoster(t, c, dir); len(r) != i+1 {
 			t.Fatalf("after %d: %+v", i, r)
 		}
 	}
@@ -125,13 +130,37 @@ func TestRosterRemoval(t *testing.T) {
 	c.event(parse(t, addedToGroup))
 	c.event(parse(t, `{"update_id":2,"message":{"message_id":10,`+fromA+`,"chat":{"id":-100111,"type":"supergroup","title":"Alpha"},"text":"hi"}}`))
 	c.event(parse(t, `{"update_id":3,"my_chat_member":{`+inGroup+`,`+fromA+`,"old_chat_member":{"status":"member"},"new_chat_member":{"status":"kicked","user":{"id":777000}}}}`))
-	if r := savedRoster(t, dir); len(r) != 1 || r["-100111"].Title != "Alpha" {
+	if r := savedRoster(t, c, dir); len(r) != 1 || r["-100111"].Title != "Alpha" {
 		t.Fatalf("after the kick: %+v", r)
+	}
+	// The service message saying the bot left, after its my_chat_member,
+	// doesn't add the group back.
+	c.event(parse(t, `{"update_id":4,"message":{"message_id":12,`+fromA+`,`+inGroup+`,"left_chat_member":{"id":777000,"is_bot":true,"first_name":"Bot"}}}`))
+	c.event(parse(t, `{"update_id":5,"edited_message":{"message_id":9,`+fromA+`,`+inGroup+`,"text":"hi","edit_date":5}}`))
+	if r := savedRoster(t, c, dir); len(r) != 1 {
+		t.Fatalf("after the bot's leaving message: %+v", r)
 	}
 	f.errs["sendMessage"] = `{"ok":false,"error_code":403,"description":"Forbidden: bot was kicked from the supergroup chat"}`
 	c.Send(feature.Chat{GroupID: "-100111"}, "hi", nil, nil, 0, nil, feature.Markup{})
-	if r := savedRoster(t, dir); len(r) != 0 {
+	if r := savedRoster(t, c, dir); len(r) != 0 {
 		t.Fatalf("after the refused send: %+v", r)
+	}
+}
+
+// The service message saying the bot left, coming before its
+// my_chat_member, drops the group; someone else leaving doesn't.
+func TestRosterLeftMessage(t *testing.T) {
+	captureLogs(t)
+	dir := t.TempDir()
+	c := rosterClient(newFake(t), dir)
+	c.event(parse(t, addedToGroup))
+	c.event(parse(t, `{"update_id":2,"message":{"message_id":12,`+fromA+`,`+inGroup+`,"left_chat_member":{"id":1111111,"first_name":"Alice"}}}`))
+	if r := savedRoster(t, c, dir); len(r) != 1 {
+		t.Fatalf("after Alice left: %+v", r)
+	}
+	c.event(parse(t, `{"update_id":3,"message":{"message_id":13,`+fromA+`,`+inGroup+`,"left_chat_member":{"id":777000,"is_bot":true,"first_name":"Bot"}}}`))
+	if r := savedRoster(t, c, dir); len(r) != 0 {
+		t.Fatalf("after the bot left: %+v", r)
 	}
 }
 
@@ -145,7 +174,7 @@ func TestRosterMigration(t *testing.T) {
 	c := rosterClient(newFake(t), dir)
 	c.event(parse(t, `{"update_id":2,"message":{"message_id":11,`+fromA+`,"chat":{"id":-111,"type":"group","title":"Alpha"},"migrate_to_chat_id":-100999}}`))
 	c.event(parse(t, `{"update_id":3,"message":{"message_id":1,`+fromA+`,"chat":{"id":-100999,"type":"supergroup","title":"Alpha"},"migrate_from_chat_id":-111}}`))
-	if r := savedRoster(t, dir); len(r) != 1 || r["-100999"].Since != "2026-01-01" {
+	if r := savedRoster(t, c, dir); len(r) != 1 || r["-100999"].Since != "2026-01-01" {
 		t.Fatalf("after migrate_to: %+v", r)
 	}
 	// The new supergroup's first message first: it moves the old one too.
@@ -153,7 +182,7 @@ func TestRosterMigration(t *testing.T) {
 	c = rosterClient(newFake(t), dir)
 	c.event(parse(t, `{"update_id":4,"message":{"message_id":1,`+fromA+`,"chat":{"id":-100888,"type":"supergroup","title":"Beta"},"migrate_from_chat_id":-222}}`))
 	c.event(parse(t, `{"update_id":5,"message":{"message_id":12,`+fromA+`,"chat":{"id":-222,"type":"group","title":"Beta"},"migrate_to_chat_id":-100888}}`))
-	if r := savedRoster(t, dir); len(r) != 1 || r["-100888"].Since != "2026-01-02" {
+	if r := savedRoster(t, c, dir); len(r) != 1 || r["-100888"].Since != "2026-01-02" {
 		t.Fatalf("after migrate_from: %+v", r)
 	}
 	if strings.Contains(logs.String(), "the bot is in a new group") {
@@ -177,7 +206,7 @@ func TestRosterCorrupt(t *testing.T) {
 		t.Fatalf("log:\n%s", logs)
 	}
 	c.event(parse(t, addedToGroup))
-	if r := savedRoster(t, dir); len(r) != 1 {
+	if r := savedRoster(t, c, dir); len(r) != 1 {
 		t.Fatalf("saved %+v", r)
 	}
 }

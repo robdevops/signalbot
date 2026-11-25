@@ -150,6 +150,7 @@ func (f *fakeAPI) callsTo(method string) []call {
 func (f *fakeAPI) client() *Client {
 	c := newClient(f.srv.URL, token, f.t.TempDir(), allow.Parse("all"), nil)
 	c.backoff, c.typing = 10*time.Millisecond, 20*time.Millisecond
+	f.t.Cleanup(c.rosterWG.Wait) // before its directory is removed
 	return c
 }
 

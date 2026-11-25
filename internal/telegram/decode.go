@@ -239,7 +239,8 @@ func (c *Client) event(u update) (bot.Received, bool) {
 
 // learn notes, in the roster, the group an update comes from, but for the
 // bot's own membership, which botMembership reads. A message that moves a
-// group to a supergroup moves it, from either side.
+// group to a supergroup moves it, from either side; one saying the bot
+// left drops it, whether it comes before the bot's my_chat_member or after.
 func (c *Client) learn(u update) {
 	var ch *chat
 	switch {
@@ -251,6 +252,9 @@ func (c *Client) learn(u update) {
 			return
 		case m.MigrateFrom != 0: // the new supergroup's first
 			c.migrated(id(m.MigrateFrom), id(m.Chat.ID))
+		case m.LeftMember != nil && id(m.LeftMember.ID) == c.selfID():
+			c.dropGroup(id(m.Chat.ID))
+			return
 		}
 		ch = &m.Chat
 	case u.EditedMessage != nil:
