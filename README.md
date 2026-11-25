@@ -150,11 +150,11 @@ A block is Signal's own, as on a phone: signal-cli drops everything from that pe
 The same bot can answer on Telegram instead, or as well, talking to Telegram's Bot API directly (long polling, so it needs no public address).
 
 1. In Telegram, message [@BotFather](https://t.me/BotFather), send `/newbot`, and copy the token it gives you.
-2. In `/etc/signalbot.env`, set `TELEGRAM_BOT_TOKEN` to the token. Leave `SIGNALCLI_SOCKET` unset for Telegram alone. The token is a password: anyone with it controls the bot.
+2. In `/etc/signalbot.env`, set `TELEGRAM_BOT_TOKEN` to the token. Leave `SIGNALCLI_SOCKET` unset for Telegram alone. The token is a password: anyone with it controls the bot. `TELEGRAM_DM_USER_IDS` says who may DM it: unset, only the owner or an administrator of a group the bot is in with them; or `all`, `none`, or user IDs (with or without `telegram:`), with `admins` to keep them too (see [Who may use the bot](docs/CONFIGURATION.md#who-may-use-the-bot)).
 3. Install as above, skipping signal-cli and its socket.
 4. Add the bot to a group and @mention it, or reply to one of its messages.
 
-The bot answers anyone who DMs it, and any group it is in: BotFather's settings decide who can reach it. To stop it being added to groups, send BotFather `/setjoingroups` and choose Disable once it is in yours. Each chat has its own `DAILY_BUDGET`, so keep one set: the more people find the bot, the more it can spend in all. In a group with topics, each topic is its own conversation, with its own history, and the bot answers in the topic it was asked in.
+The bot answers in any group it is in, and a DM from whoever `TELEGRAM_DM_USER_IDS` allows, by default the groups' owners and administrators (of the groups it has seen since it started, by a message there or being added: the Bot API can't list a bot's groups). To stop it being added to groups, send BotFather `/setjoingroups` and choose Disable once it is in yours. Each chat has its own `DAILY_BUDGET`, so keep one set: the more people find the bot, the more it can spend in all. In a group with topics, each topic is its own conversation, with its own history, and the bot answers in the topic it was asked in.
 
 **Privacy mode.** By default Telegram sends a bot in a group only the messages addressed to it, so the bot has no group context. To give it the conversation, send BotFather `/setprivacy` and choose Disable, then remove the bot from the group and add it again; or make it a group admin. As admin it also sees reactions and members joining and leaving.
 

@@ -46,7 +46,8 @@ func TestPressed(t *testing.T) {
 	if r, ok := press(fromA, inGroup); !ok || r.(bot.Pressed).Press.Chat.GroupID != groupS {
 		t.Fatalf("in a group %+v", r)
 	}
-	// Anyone's press is the core's, Bob's in his own DM too.
+	// With TELEGRAM_DM_USER_IDS "all", anyone's press is the core's, Bob's in
+	// his own DM too.
 	if r, ok := press(`"from":{"id":2222222,"first_name":"Bob"}`, `"chat":{"id":2222222,"type":"private"}`); !ok || r.(bot.Pressed).Press.Chat.User != "2222222" {
 		t.Fatalf("a stranger's press %+v", r)
 	}

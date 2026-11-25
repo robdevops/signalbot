@@ -18,7 +18,7 @@ func TestScenarioBothNetworks(t *testing.T) {
 	tg := &tgHarness{t: t, updates: make(chan string, 64), nextID: 100}
 	api := httptest.NewServer(http.HandlerFunc(tg.serveAPI))
 	t.Cleanup(api.Close)
-	h := startBot(t, world{Env: map[string]string{"TELEGRAM_BOT_TOKEN": tgToken, "TELEGRAM_API_URL": api.URL}})
+	h := startBot(t, world{Env: map[string]string{"TELEGRAM_BOT_TOKEN": tgToken, "TELEGRAM_DM_USER_IDS": tgAlice, "TELEGRAM_API_URL": api.URL}})
 	h.waitLog("on signal and telegram at once")
 	h.waitLog("connected to Telegram as @botty_bot")
 

@@ -16,6 +16,7 @@ import (
 
 	"github.com/robdevops/signalbot/internal/bot"
 	"github.com/robdevops/signalbot/internal/feature"
+	"github.com/robdevops/signalbot/internal/kit/allow"
 	"github.com/robdevops/signalbot/internal/kit/logx"
 )
 
@@ -58,7 +59,7 @@ type call struct {
 func newFake(t *testing.T) *fakeAPI {
 	f := &fakeAPI{t: t, results: map[string]string{
 		"getMe":         `{"id":777000,"is_bot":true,"first_name":"Botty","username":"botty_bot"}`,
-		"deleteWebhook": `true`, "sendMessage": `{"message_id":500}`, "sendChatAction": `true`, "getChatMember": `{"status":"member"}`,
+		"deleteWebhook": `true`, "sendMessage": `{"message_id":500}`, "sendChatAction": `true`, "getChatMember": `{"status":"member"}`, "getChatAdministrators": `[]`,
 		"getChat": `{"id":-1001234567890,"type":"supergroup","message_auto_delete_time":86400}`,
 	}, errs: map[string]string{}, files: map[string][]byte{}}
 	f.srv = httptest.NewServer(http.HandlerFunc(f.serve))
@@ -147,7 +148,7 @@ func (f *fakeAPI) callsTo(method string) []call {
 }
 
 func (f *fakeAPI) client() *Client {
-	c := newClient(f.srv.URL, token, nil)
+	c := newClient(f.srv.URL, token, allow.Parse("all"), nil)
 	c.backoff, c.typing = 10*time.Millisecond, 20*time.Millisecond
 	return c
 }
@@ -177,7 +178,9 @@ const (
 )
 
 // Who the bot answers: in a group, a mention of its @username or a text
-// mention of it, a reply to it, or a command for it; in a DM, anyone. Its own mention and a command's @username are taken out.
+// mention of it, a reply to it, or a command for it; in a DM, anyone, as
+// the test client's TELEGRAM_DM_USER_IDS is "all". Its own mention and a
+// command's @username are taken out.
 func TestAddressing(t *testing.T) {
 	logs := captureLogs(t)
 	c := connected(newFake(t).client())
@@ -485,7 +488,7 @@ func TestRedact(t *testing.T) {
 
 // A delivered message in a group needs its sender still there; its members
 // are the admins and the people seen posting; the bot's @name is taken
-// out. In a DM, anyone's.
+// out. In a DM, anyone's TELEGRAM_DM_USER_IDS allows (here "all").
 func TestDelivered(t *testing.T) {
 	captureLogs(t)
 	f := newFake(t)
@@ -844,13 +847,13 @@ func TestCommandMenu(t *testing.T) {
 	}
 }
 
-// Anyone can add the bot to a group and talk to it there: it answers, keeps
-// the chatter, and never looks up members or leaves. A set
-// TELEGRAM_DM_USER_IDS is only logged as no longer read.
+// Anyone can add the bot to a group and talk to it there, whoever
+// TELEGRAM_DM_USER_IDS allows: it answers, keeps the chatter, and never
+// looks up members or admins, or leaves.
 func TestAnyoneAnswered(t *testing.T) {
-	logs := captureLogs(t)
 	f := newFake(t)
 	c := connected(f.client())
+	c.dm = allow.Parse("")
 	r, ok := c.event(parse(t, `{"update_id":1,"my_chat_member":{`+inGroup+`,"from":{"id":2222222,"first_name":"Bob"},"old_chat_member":{"status":"left"},"new_chat_member":{"status":"member","user":{"id":777000}}}}`))
 	if _, isGC := r.(bot.GroupChanged); !ok || !isGC {
 		t.Fatalf("added by a stranger: %T %v", r, ok)
@@ -862,13 +865,7 @@ func TestAnyoneAnswered(t *testing.T) {
 	if _, ok := c.event(parse(t, `{"update_id":3,"message":{"message_id":4,"from":{"id":2222222,"first_name":"Bob"},`+inGroup+`,"text":"chatter"}}`)); !ok {
 		t.Fatal("chatter dropped")
 	}
-	if n, m := len(f.callsTo("getChatMember")), len(f.callsTo("leaveChat")); n+m != 0 {
-		t.Fatalf("%d member lookups, %d leaves", n, m)
-	}
-	t.Setenv("TELEGRAM_DM_USER_IDS", "1111111")
-	t.Setenv("TELEGRAM_BOT_TOKEN", token)
-	New(nil)
-	if !strings.Contains(logs.String(), "TELEGRAM_DM_USER_IDS is no longer read") {
-		t.Errorf("logs %q", logs)
+	if n, a, m := len(f.callsTo("getChatMember")), len(f.callsTo("getChatAdministrators")), len(f.callsTo("leaveChat")); n+a+m != 0 {
+		t.Fatalf("%d member lookups, %d admin lookups, %d leaves", n, a, m)
 	}
 }

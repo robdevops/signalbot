@@ -221,7 +221,11 @@ func (c *Client) event(u update) (bot.Received, bool) {
 		return c.received(u.EditedMessage, cmp.Or(u.EditedMessage.EditDate, u.EditedMessage.Date))
 	case u.MyChatMember != nil:
 		return c.botMembership(u.MyChatMember)
-	case u.ChatMember != nil && c.watch.Load():
+	case u.ChatMember != nil:
+		c.adminChanged(u.ChatMember)
+		if !c.watch.Load() {
+			return nil, false
+		}
 		return c.membership(u.ChatMember)
 	case u.MessageReaction != nil && c.watch.Load():
 		return c.reacted(u.MessageReaction)
@@ -232,7 +236,10 @@ func (c *Client) event(u update) (bot.Received, bool) {
 }
 
 // received is a message, or with edited an edit of one, as the core gets
-// it.
+// it. A DM from someone TELEGRAM_DM_USER_IDS doesn't allow is refused here
+// when that is known without asking Telegram, else in its slot (load); an
+// edit refused here forgets the original and keeps nothing (the Bot API
+// never reports deletes, but edits it does).
 func (c *Client) received(m *message, edited int64) (bot.Received, bool) {
 	if m.From == nil || m.Chat.Type == "channel" {
 		return nil, false
@@ -250,6 +257,15 @@ func (c *Client) received(m *message, edited int64) (bot.Received, bool) {
 	}
 	if self == "" || id(m.From.ID) == self {
 		return nil, false
+	}
+	if ch.GroupID == "" {
+		if ok, known := c.dmKnown(id(m.From.ID)); known && !ok {
+			if edited != 0 {
+				return bot.Deleted{Chat: ch, Sender: id(m.From.ID), Sent: m.MessageID, At: edited}, true
+			}
+			refusedDM(id(m.From.ID))
+			return nil, false
+		}
 	}
 	if t := m.TimerChanged; t != nil {
 		c.mu.Lock()
@@ -272,9 +288,15 @@ func (c *Client) received(m *message, edited int64) (bot.Received, bool) {
 	return nil, false
 }
 
-// load completes an addressed message in its slot: the chat's auto-delete
-// timer, and the names it shows the model, for @Name in the reply.
+// load completes an addressed message in its slot: in a DM, only from
+// someone TELEGRAM_DM_USER_IDS allows, asking Telegram whether they are an
+// admin if need be; the chat's auto-delete timer; and the names it shows
+// the model, for @Name in the reply.
 func (c *Client) load(ctx context.Context, m *message, msg feature.Message, learn func(name, id string)) (feature.Message, bool) {
+	if msg.Chat.GroupID == "" && !c.dmAllowed(ctx, msg.Sender) {
+		refusedDM(msg.Sender)
+		return msg, false
+	}
 	msg.Expires = c.timer(ctx, m.Chat.ID)
 	if msg.Chat.GroupID != "" {
 		if n := nameOf(m.From); n != "" {
@@ -489,8 +511,11 @@ const maxGroups = 1000
 func (c *Client) seen(group, chatGroup string, m *message) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if _, ok := c.groups[group]; !ok && len(c.groups) >= maxGroups {
-		return
+	if _, ok := c.groups[group]; !ok {
+		if len(c.groups) >= maxGroups {
+			return
+		}
+		c.forgetNoes() // someone refused may be an admin here
 	}
 	c.groups[group] = txt.SafeName(m.Chat.Title)
 	if chatGroup != group {
@@ -520,6 +545,7 @@ func (c *Client) migrated(from, to string) {
 	defer c.mu.Unlock()
 	c.moved[from] = to
 	delete(c.topics, from) // a basic group has none
+	delete(c.admins, from)
 	if t, ok := c.groups[from]; ok {
 		c.groups[to] = t
 		delete(c.groups, from)
@@ -531,7 +557,8 @@ func (c *Client) migrated(from, to string) {
 }
 
 // botMembership is the bot added to a group or removed from one: it posts
-// in a group while it is in it.
+// in a group while it is in it. Who may DM the bot is asked again, as
+// someone may be an admin only of that group.
 func (c *Client) botMembership(u *memberUpd) (bot.Received, bool) {
 	if u.Chat.Type == "private" || u.Chat.Type == "channel" {
 		return nil, false
@@ -540,6 +567,9 @@ func (c *Client) botMembership(u *memberUpd) (bot.Received, bool) {
 	now := in(u.New.Status, u.New.IsMember)
 	added := now && !in(u.Old.Status, u.Old.IsMember)
 	c.mu.Lock()
+	delete(c.admins, g)
+	clear(c.dmOK)
+	c.forgot++
 	if now {
 		delete(c.left, g)
 	} else if len(c.left) < 2*maxGroups {
@@ -583,15 +613,19 @@ func (c *Client) membership(u *memberUpd) (bot.Received, bool) {
 	return bot.Happened{Event: feature.Event{Chat: feature.Chat{GroupID: id(u.Chat.ID)}, By: by, Members: ms}}, true
 }
 
-// reacted is a reaction as the core gets it, but the bot's own. Telegram
-// sends reactions in a group only when the bot is an admin there.
+// reacted is a reaction as the core gets it, but the bot's own, and in a DM
+// only from someone listed in TELEGRAM_DM_USER_IDS or an admin by a
+// verdict from the last 10 minutes, as the reader can't ask Telegram.
+// Telegram sends reactions in a group only when the bot is an admin there.
 func (c *Client) reacted(u *reactionUpd) (bot.Received, bool) {
 	if u.User == nil || id(u.User.ID) == c.selfID() {
 		return nil, false
 	}
 	ch := feature.Chat{GroupID: id(u.Chat.ID)} // a topic's reaction doesn't say which topic
 	if u.Chat.Type == "private" {
-		ch = feature.Chat{User: id(u.Chat.ID)}
+		if ch = (feature.Chat{User: id(u.Chat.ID)}); !c.dmFresh(id(u.User.ID)) {
+			return nil, false
+		}
 	}
 	emoji, removed := "", false
 	for _, r := range u.New {
@@ -626,14 +660,20 @@ func (c *Client) person(u *user) feature.Person {
 }
 
 // Delivered readies a message a feature delivers as its sender, in its
-// slot: never in the DM of someone the bot doesn't answer, nor in a group
-// its sender has left. Its members are the group's admins and the people
-// seen posting there, as the Bot API can't list a group's members.
+// slot: in a DM, only while TELEGRAM_DM_USER_IDS allows its sender
+// (asking Telegram whether they are an admin if need be); in a group,
+// only while its sender is there. Its members are the group's admins and
+// the people seen posting there, as the Bot API can't list a group's
+// members.
 func (c *Client) Delivered(ctx context.Context, msg feature.Message) (bot.Ready, bool) {
 	wait, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
 	if c.WaitID(wait) == "" {
 		logx.Warnf("delivered message dropped: not connected to Telegram after 10s")
+		return bot.Ready{}, false
+	}
+	if msg.Chat.GroupID == "" && !c.dmAllowed(wait, msg.Sender) {
+		logx.Infof("delivered message dropped: its sender may no longer DM the bot")
 		return bot.Ready{}, false
 	}
 	c.mu.Lock()
@@ -647,14 +687,14 @@ func (c *Client) Delivered(ctx context.Context, msg feature.Message) (bot.Ready,
 			return bot.Ready{}, false
 		}
 		g = c.dest(msg.Chat).chat // at its new ID, if it moved
-		var admins []struct{ User user }
-		if err := c.call(wait, "getChatAdministrators", map[string]string{"chat_id": g}, &admins); err != nil {
+		admins, err := c.groupAdmins(wait, g)
+		if err != nil {
 			logx.Warnf("telegram getChatAdministrators failed: %v", err)
 		}
 		seen := map[string]bool{}
 		for _, a := range admins {
-			if n := nameOf(&a.User); n != "" && !a.User.IsBot {
-				r.Members, seen[id(a.User.ID)] = append(r.Members, bot.Member{Name: n, ID: id(a.User.ID)}), true
+			if n := nameOf(&a); n != "" && !a.IsBot {
+				r.Members, seen[id(a.ID)] = append(r.Members, bot.Member{Name: n, ID: id(a.ID)}), true
 			}
 		}
 		c.mu.Lock()
@@ -731,7 +771,9 @@ func (c *Client) isMember(ctx context.Context, group, user string) (bool, error)
 }
 
 // Groups lists the groups the bot shares with user, among those it has
-// seen since it started: the Bot API can't list a bot's groups.
+// seen since it started: the Bot API can't list a bot's groups. Admin is
+// whether they are the group's owner or an administrator
+// (getChatAdministrators, kept 10 minutes); Telegram has no mods.
 func (c *Client) Groups(ctx context.Context, user string) ([]feature.Group, error) {
 	c.mu.Lock()
 	type g struct{ id, name string }
@@ -743,9 +785,14 @@ func (c *Client) Groups(ctx context.Context, user string) ([]feature.Group, erro
 	slices.SortFunc(gs, func(a, b g) int { return strings.Compare(a.name, b.name) })
 	var out []feature.Group
 	for _, x := range gs {
-		if c.member(ctx, x.id, user) {
-			out = append(out, feature.Group{ID: x.id, Name: x.name})
+		if !c.member(ctx, x.id, user) {
+			continue
 		}
+		admins, err := c.groupAdmins(ctx, x.id)
+		if err != nil {
+			logx.Warnf("telegram getChatAdministrators failed: %v", err)
+		}
+		out = append(out, feature.Group{ID: x.id, Name: x.name, Admin: slices.ContainsFunc(admins, isUser(user))})
 	}
 	return out, nil
 }

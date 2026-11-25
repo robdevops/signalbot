@@ -25,7 +25,7 @@ func TestScenarioAllNetworks(t *testing.T) {
 	slAPI := httptest.NewServer(http.HandlerFunc(sl.serveAPI))
 	t.Cleanup(slAPI.Close)
 	h := startBot(t, world{Env: map[string]string{
-		"TELEGRAM_BOT_TOKEN": tgToken, "TELEGRAM_API_URL": tgAPI.URL,
+		"TELEGRAM_BOT_TOKEN": tgToken, "TELEGRAM_DM_USER_IDS": tgAlice, "TELEGRAM_API_URL": tgAPI.URL,
 		"DISCORD_BOT_TOKEN": dcToken, "DISCORD_API_URL": dcAPI.URL,
 		"SLACK_BOT_TOKEN": slToken, "SLACK_APP_TOKEN": slAppToken, "SLACK_API_URL": slAPI.URL,
 	}})
