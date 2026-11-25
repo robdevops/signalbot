@@ -314,7 +314,11 @@ type Group struct {
 	Admin, Mod bool
 }
 
-// Host is the core as features see it. Hooks run in feature order.
+// Host is the core as features see it. Hooks run in feature order. The
+// ctx a hook or a tool's Run gets for a chat carries the log of that
+// chat's network (logx.Ctx), whose lines start with its name, "Signal: ":
+// a feature logs what it does for the chat there. At's and Go's ctx carry
+// none, so a line there about a chat uses logx.For(Net(chat).Name).
 type Host interface {
 	// OnMessage sees every message. For an unaddressed one it runs on the
 	// reader goroutine, so it must not block or call the network. The first

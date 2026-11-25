@@ -122,7 +122,7 @@ func (b *Bot) Usage(ctx context.Context, chat feature.Chat, key bool) feature.Us
 	if key && b.ai != nil {
 		k, err := b.ai.KeyUsage(ctx)
 		if err != nil {
-			logx.Warnf("couldn't read the API key's usage: %v", err)
+			b.log(chat).Warnf("couldn't read the API key's usage: %v", err)
 		}
 		u.Key = k
 	}
@@ -136,6 +136,9 @@ func (b *Bot) CallAPI(ctx context.Context, path string, body map[string]any) (js
 	chat, charged := feature.ChargedChat(ctx)
 	if model.Metered(ctx) || !charged { // a tool's cost counts toward its reply; with neither, Call refuses
 		return b.ai.Call(ctx, path, body)
+	}
+	if (logx.Ctx(ctx) == logx.L{}) { // the call is logged as the chat's, whatever ctx it came with
+		ctx = logx.With(ctx, b.log(chat))
 	}
 	key := chat.Key()
 	if b.budget != nil {
@@ -209,10 +212,11 @@ func once(onSent func(sent []int64, dropped bool)) func(sent []int64, dropped bo
 // with @Name linked to the chat's known names. With a label, history keeps
 // it as the bot's own entry, "[Label] text", clamped, unless the send
 // fails; without one, nothing.
-func (b *Bot) say(p feature.Post) {
+func (b *Bot) say(ctx context.Context, p feature.Post) {
 	defer p.OnSent(nil, true) // if it is never sent
-	if !b.net.Reachable(b.ctx, p.Chat) {
-		logx.Infof("dropped a post: its chat isn't reachable")
+	l := logx.Ctx(ctx)
+	if !b.net.Reachable(ctx, p.Chat) {
+		l.Infof("dropped a post: its chat isn't reachable")
 		return
 	}
 	key := p.Chat.Key()
@@ -226,7 +230,7 @@ func (b *Bot) say(p feature.Post) {
 	}
 	if p.Label == "" || b.ai == nil { // with no model, nothing would read it
 		sent := b.net.Send(p.Chat, text, p.Pictures, b.chats.Names(key), p.ReplyTo, p.Audio, p.Markup)
-		b.keyboard(p, sent)
+		b.keyboard(l, p, sent)
 		p.OnSent(sent, len(sent) == 0)
 		return
 	}
@@ -238,31 +242,31 @@ func (b *Bot) say(p feature.Post) {
 	} else {
 		b.chats.Retag(key, ref.ID, botRefs(sent))
 	}
-	b.keyboard(p, sent)
+	b.keyboard(l, p, sent)
 	p.OnSent(sent, len(sent) == 0)
 }
 
 // keyboard remembers the reply keyboard a post sent in a DM set or took
 // away, where the network shows one, so a message of one of its labels is
 // handled as its command.
-func (b *Bot) keyboard(p feature.Post, sent []int64) {
+func (b *Bot) keyboard(l logx.L, p feature.Post, sent []int64) {
 	mk := p.Markup
 	switch {
 	case len(sent) == 0 || p.Chat.GroupID != "" || !b.on(p.Chat).Caps().Keyboard:
 	case mk.NoKeyboard:
-		b.keys.set(p.Chat.Key(), nil)
+		b.keys.set(l, p.Chat.Key(), nil)
 	case len(mk.Keyboard) > 0:
-		b.keys.set(p.Chat.Key(), mk.Keyboard)
+		b.keys.set(l, p.Chat.Key(), mk.Keyboard)
 	}
 }
 
 // pressed runs the OnPress hooks for a press in its chat's slot, and
 // answers it with the answer of the first that takes it, or nothing.
-func (b *Bot) pressed(r Pressed) {
+func (b *Bot) pressed(ctx context.Context, r Pressed) {
 	answer := ""
 	defer func() { r.Answer(answer) }() // also if a hook panics
 	for _, fn := range b.presses {
-		if a, ok := fn(b.ctx, r.Press); ok {
+		if a, ok := fn(ctx, r.Press); ok {
 			answer = a
 			return
 		}
@@ -294,15 +298,17 @@ func (b *Bot) React(chat feature.Chat, msg feature.Message, emoji string) {
 	}
 	msg.Chat = chat
 	add := Reacted{Chat: chat, Reactions: []Reaction{{Message: msg, Emoji: emoji}}}
-	if err := b.chats.PostLow(chat.Key(), add, mergeReactions); err != nil {
+	l := b.log(chat)
+	merge := func(waiting, m Received) Received { return mergeReactions(l, waiting, m) }
+	if err := b.chats.PostLow(chat.Key(), add, merge); err != nil {
 		b.dropped(add, err)
 	}
 }
 
 // mergeReactions adds m's reactions to those waiting: one on a message
 // that already has one waiting replaces it, and past maxReactions the
-// oldest is dropped.
-func mergeReactions(waiting, m Received) Received {
+// oldest is dropped, which is logged to l, the chat's network's log.
+func mergeReactions(l logx.L, waiting, m Received) Received {
 	w := waiting.(Reacted)
 	w.Reactions = slices.Clone(w.Reactions)
 	for _, r := range m.(Reacted).Reactions {
@@ -310,7 +316,7 @@ func mergeReactions(waiting, m Received) Received {
 			return x.Message.Sender == r.Message.Sender && x.Message.Bot == r.Message.Bot && x.Message.Timestamp == r.Message.Timestamp
 		})
 		if len(w.Reactions) >= maxReactions {
-			logx.Warnf("dropped a reaction: %d already wait in its chat", maxReactions)
+			l.Warnf("dropped a reaction: %d already wait in its chat", maxReactions)
 			w.Reactions = w.Reactions[1:]
 		}
 		w.Reactions = append(w.Reactions, r)
@@ -334,9 +340,9 @@ func (b *Bot) react(r Reacted) {
 // event runs the OnEvent hooks in its chat's slot, and sends the first
 // non-empty reply, with @Name linked to the chat's known names and the
 // event's people, so a welcome can mention a newcomer.
-func (b *Bot) event(e feature.Event) {
+func (b *Bot) event(ctx context.Context, e feature.Event) {
 	for _, fn := range b.events {
-		reply := fn(b.ctx, e)
+		reply := fn(ctx, e)
 		if reply == "" {
 			continue
 		}
@@ -360,8 +366,8 @@ func (b *Bot) event(e feature.Event) {
 // mentions the bot, or that a hook acts on, is answered like any addressed
 // message; anything else the bot posts as written, with @Name linked to
 // the group's members.
-func (b *Bot) delivered(msg feature.Message) {
-	r, ok := b.net.Delivered(b.ctx, msg)
+func (b *Bot) delivered(ctx context.Context, msg feature.Message) {
+	r, ok := b.net.Delivered(ctx, msg)
 	if !ok {
 		return
 	}
@@ -371,8 +377,8 @@ func (b *Bot) delivered(msg feature.Message) {
 		b.chats.Learn(key, msg.Name, msg.Sender)
 	}
 	msg.Addressed = true
-	if act := b.hooked(msg); !act.IsZero() || r.Mentioned {
-		b.respond(msg, act, prompt(msg), nil)
+	if act := b.hooked(ctx, msg); !act.IsZero() || r.Mentioned {
+		b.respond(ctx, msg, act, prompt(msg), nil)
 		return
 	}
 	known := map[string]string{}

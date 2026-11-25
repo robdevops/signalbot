@@ -69,8 +69,8 @@ func (k *keyboards) command(key, text string) (string, bool) {
 }
 
 // set makes keys the keyboard of the chat whose key is key, or with none
-// takes it away, and saves them all.
-func (k *keyboards) set(key string, keys [][]feature.Key) {
+// takes it away, and saves them all; l is the chat's network's log.
+func (k *keyboards) set(l logx.L, key string, keys [][]feature.Key) {
 	k.mu.Lock()
 	defer k.mu.Unlock()
 	k.load()
@@ -82,7 +82,7 @@ func (k *keyboards) set(key string, keys [][]feature.Key) {
 		delete(k.chats, h)
 	} else {
 		if _, ok := k.chats[h]; !ok && len(k.chats) >= maxKeyboards {
-			logx.Warnf("a DM's keyboard isn't kept: %d already are", maxKeyboards)
+			l.Warnf("a DM's keyboard isn't kept: %d already are", maxKeyboards)
 			return
 		}
 		m := map[string]string{}

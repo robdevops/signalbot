@@ -19,8 +19,8 @@ func TestScenarioBothNetworks(t *testing.T) {
 	api := httptest.NewServer(http.HandlerFunc(tg.serveAPI))
 	t.Cleanup(api.Close)
 	h := startBot(t, world{Env: map[string]string{"TELEGRAM_BOT_TOKEN": tgToken, "TELEGRAM_DM_USERS": tgAlice, "TELEGRAM_API_URL": api.URL}})
-	h.waitLog("on signal and telegram at once")
-	h.waitLog("connected to Telegram as @botty_bot")
+	h.waitLog("networks: signal, telegram")
+	h.waitLog("Telegram: connected as @botty_bot")
 
 	if s := h.ask(fromAlice("hello on Signal")); s.Recipient != idAlice || s.Message != "ok" {
 		t.Fatalf("Signal: sent %+v", s)

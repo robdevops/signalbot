@@ -46,7 +46,7 @@ Every request to OpenRouter tells it to use only model providers that do not col
 
 Every level, debug included, is always written; there is no setting to turn any of it down.
 
-- **A message addressed to the bot:** "received group chat" or "received dm" ("(edit)" after it for an edit), with no name, ID or text; after the answer, a line with the time taken, tokens used and cost (when the API reports it), again with no name or ID, or "reacting instead of replying" when the answer is a reaction.
+- **A message addressed to the bot:** "received group chat" or "received dm" ("(edit)" after it for an edit), after its network's name ("Signal: received dm"), with no name, ID or text; after the answer, a line with the time taken, tokens used and cost (when the API reports it), again with no name or ID, or "reacting instead of replying" when the answer is a reaction.
 - **Never the text of any message,** nor errors that quote one.
 - **A message not addressed to the bot:** nothing, not even a note that it arrived.
 - **Reactions and changes in a group's members:** nothing. They are passed to features that ask for them (who reacted, with what, to whose message; who joined or left), never logged, kept or shown to the model. With no such feature, they are dropped as they arrive.

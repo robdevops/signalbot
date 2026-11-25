@@ -1137,7 +1137,7 @@ func (h *harness) checkNoSecretsLogged() {
 				h.t.Errorf("message text %q reached the log: %q", s, l.Text)
 			}
 		}
-		if strings.Contains(l.Text, "not in SIGNAL_DM_USERS") {
+		if strings.Contains(l.Text, "SIGNAL_DM_USERS doesn't allow it") {
 			continue
 		}
 		for p := range h.people {

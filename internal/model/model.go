@@ -187,13 +187,13 @@ func encoded(prefix string, data []byte) string {
 // annotations (such as a parsed PDF) and they were sent back, which keeps
 // a PDF from being parsed and paid for again, and whether a server tool
 // ran, which the provider runs on its side and so gets no tool line. No
-// content.
-func logRequest(round int, a answer, sentBack bool) {
+// content. l is the log of the chat it is for.
+func logRequest(l logx.L, round int, a answer, sentBack bool) {
 	cost := "no cost reported"
 	if a.costed {
 		cost = fmt.Sprintf("$%.4f", a.cost)
 	}
-	logx.Debugf("request %d: tokens in/out %d/%d, %s, annotations returned: %s, sent back: %s, server tools used: %s",
+	l.Debugf("request %d: tokens in/out %d/%d, %s, annotations returned: %s, sent back: %s, server tools used: %s",
 		round, a.input, a.output, cost, yesNo(a.annotations != nil), yesNo(sentBack), yesNo(a.serverTools))
 }
 
@@ -250,13 +250,15 @@ type answer struct {
 // tools it runs them and asks again, up to maxRounds requests in budget,
 // keeping up to MaxPictures pictures from them; if a later request fails,
 // the pictures are the reply. The tokens of every request
-// are summed and logged, with the cost when the API reports it.
+// are summed and logged, with the cost when the API reports it, on ctx's
+// log (logx.Ctx), the chat's; the tools run with ctx too.
 func (c *Client) Ask(ctx context.Context, r Request) (Reply, error) {
 	ctx, cancel := context.WithTimeout(ctx, budget)
 	defer cancel()
 	tools := &spend{}
 	ctx = context.WithValue(ctx, spendKey{}, tools) // what tools spend through the API, such as on images
 	start := time.Now()
+	l := logx.Ctx(ctx) // the log of the chat it is for
 	msgs := []message{{Role: "system", Content: r.System}}
 	for _, e := range r.History {
 		msgs = append(msgs, message{Role: e.Role, Content: e.Content})
@@ -294,12 +296,12 @@ func (c *Client) Ask(ctx context.Context, r Request) (Reply, error) {
 		total.costed = total.costed || a.costed || costed
 		reply.Cost, reply.Costed = total.cost, total.costed // what was spent, even on the way to an error
 		if err == nil {
-			logRequest(round, a, slices.ContainsFunc(msgs, func(m message) bool { return m.Annotations != nil }))
+			logRequest(l, round, a, slices.ContainsFunc(msgs, func(m message) bool { return m.Annotations != nil }))
 		}
 		if err != nil && len(reply.Pictures) > 0 && round > 1 {
 			// Pictures a tool made, perhaps at a cost, go out without the
 			// model's words rather than not at all.
-			logx.Warnf("model request %d failed after a tool made pictures; sending them alone: %v", round, err)
+			l.Warnf("model request %d failed after a tool made pictures; sending them alone: %v", round, err)
 			reply.Text = ""
 			return reply, nil
 		}
@@ -308,7 +310,7 @@ func (c *Client) Ask(ctx context.Context, r Request) (Reply, error) {
 		}
 		if len(a.calls) == 0 || round == maxRounds {
 			if len(a.calls) > 0 {
-				logx.Warnf("model still calling tools after %d requests; stopping", round)
+				l.Warnf("model still calling tools after %d requests; stopping", round)
 			}
 			if reply.Text = a.text; reply.Text == "" && len(reply.Pictures) == 0 {
 				if len(a.calls) > 0 {
@@ -321,7 +323,7 @@ func (c *Client) Ask(ctx context.Context, r Request) (Reply, error) {
 			if total.costed {
 				cost = fmt.Sprintf(", $%.3f", total.cost)
 			}
-			logx.Infof("reply %.1fs, tokens in/out: %d/%d (%d%% cached)%s",
+			l.Infof("reply %.1fs, tokens in/out: %d/%d (%d%% cached)%s",
 				time.Since(start).Seconds(), total.input, total.output, cached, cost)
 			return reply, nil
 		}
@@ -452,7 +454,8 @@ func (c *Client) Provider() string {
 // is added to the reply of the Ask whose tool called it, or to ctx's
 // meter. Without either there is nothing to count it toward, so it
 // refuses. For "/chat/completions" the model is the client's own, whatever
-// body names, and on OpenRouter the cost is asked for.
+// body names, and on OpenRouter the cost is asked for. It is logged on
+// ctx's log (logx.Ctx).
 func (c *Client) Call(ctx context.Context, path string, body map[string]any) (json.RawMessage, error) {
 	if !Metered(ctx) {
 		return nil, errors.New("the model's API is called only from a tool, or metered")
@@ -501,7 +504,7 @@ func (c *Client) Call(ctx context.Context, path string, body map[string]any) (js
 		cost = *usage.Usage.Cost
 	}
 	addSpend(ctx, cost, usage.Usage.Cost != nil)
-	logx.Infof("api %s %.1fs, %d KB, $%.3f", path, time.Since(start).Seconds(), len(data)>>10, cost)
+	logx.Ctx(ctx).Infof("api %s %.1fs, %d KB, $%.3f", path, time.Since(start).Seconds(), len(data)>>10, cost)
 	return data, nil
 }
 
@@ -528,8 +531,9 @@ func (c *Client) rejected(err error, images, files, tools bool) error {
 // run runs one function tool and logs how it went, never its arguments or
 // result.
 func run(ctx context.Context, t feature.Tool, args string) (out string, pics []feature.Picture, err error) {
+	l := logx.Ctx(ctx)
 	if t.Run == nil {
-		logx.Warnf("model called a tool it wasn't offered")
+		l.Warnf("model called a tool it wasn't offered")
 		return "error: there is no such tool", nil, errors.New("unknown tool")
 	}
 	start := time.Now()
@@ -538,10 +542,10 @@ func run(ctx context.Context, t feature.Tool, args string) (out string, pics []f
 			out, pics, err = "", nil, errors.New("the tool failed")
 		}
 		if err != nil {
-			logx.Warnf("tool %s failed after %.1fs: %v", t.Name, time.Since(start).Seconds(), err)
-			logx.Debugf("tool %s arguments were %d bytes", t.Name, len(args))
+			l.Warnf("tool %s failed after %.1fs: %v", t.Name, time.Since(start).Seconds(), err)
+			l.Debugf("tool %s arguments were %d bytes", t.Name, len(args))
 		} else {
-			logx.Infof("tool %s %.1fs", t.Name, time.Since(start).Seconds())
+			l.Infof("tool %s %.1fs", t.Name, time.Since(start).Seconds())
 		}
 	}()
 	return t.Run(ctx, args)

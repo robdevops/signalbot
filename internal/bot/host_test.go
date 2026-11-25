@@ -318,7 +318,7 @@ func TestDeliver(t *testing.T) {
 	h.b.Deliver(feature.Message{Chat: group, Sender: aliceID, Text: "@Botty what's new?"}) // her name is looked up
 	r := h.nextSend()
 	equal(t, "model got", contents(h.requests()[0]), []string{"user: [Messages not addressed to you, for context only:]\nAlice: see you @bob and @Alice", "user: Alice: what's new?"})
-	if r.text != "ok" || !strings.Contains(h.logs.String(), "<6>reply 0.") {
+	if r.text != "ok" || !strings.Contains(h.logs.String(), "<6>Fake: reply 0.") {
 		t.Fatalf("sent %+v; logs:\n%s", r, h.logs)
 	}
 	h.b.Deliver(feature.Message{Chat: feature.Chat{GroupID: "other"}, Sender: aliceID, Text: "hello"})
@@ -787,7 +787,7 @@ func TestPost(t *testing.T) {
 	if len(outcomes) != 0 {
 		t.Fatalf("OnSent called again: %+v", <-outcomes)
 	}
-	if n := strings.Count(h.logs.String(), "<6>dropped a post: its chat isn't reachable\n"); n != 2 {
+	if n := strings.Count(h.logs.String(), "<6>Fake: dropped a post: its chat isn't reachable\n"); n != 2 {
 		t.Fatalf("%d drops logged:\n%s", n, h.logs)
 	}
 	if strings.Contains(h.logs.String(), "never sent") {
@@ -810,7 +810,7 @@ func TestPostDropped(t *testing.T) {
 	if !<-dropped {
 		t.Fatal("OnSent said it was sent")
 	}
-	if !strings.Contains(h.logs.String(), "<4>dropped a post: 4 messages are already waiting in this chat\n") {
+	if !strings.Contains(h.logs.String(), "<4>Fake: dropped a post: 4 messages are already waiting in this chat\n") {
 		t.Fatalf("logs:\n%s", h.logs)
 	}
 	h.release()
@@ -900,7 +900,7 @@ func TestReact(t *testing.T) {
 	for _, s := range []string{"a", "b", "c", "d"} {
 		h.receive(atBot(s))
 	}
-	if !strings.Contains(h.logs.String(), "<4>dropped 2 reactions: made room in its chat for a message\n") {
+	if !strings.Contains(h.logs.String(), "<4>Fake: dropped 2 reactions: made room in its chat for a message\n") {
 		t.Fatalf("logs:\n%s", h.logs)
 	}
 	h.release()

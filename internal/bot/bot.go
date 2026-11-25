@@ -225,7 +225,7 @@ func (b *Bot) handle(r Received) {
 		}
 		b.chats.Forget(r.Chat.Key(), ref(sender, r.Sent), r.At)
 	case Chatter:
-		b.overhear(r.Message)
+		b.overhear(b.chatCtx(r.Message.Chat), r.Message)
 	case Happened:
 		if len(b.events) > 0 { // with no hook, nothing would read it
 			b.post(r)
@@ -244,9 +244,9 @@ func (b *Bot) handle(r Received) {
 
 // overhear runs the OnMessage hooks for an unaddressed group message, and keeps
 // the Context one returns in history, unless it is Done, which keeps nothing.
-func (b *Bot) overhear(msg feature.Message) {
+func (b *Bot) overhear(ctx context.Context, msg feature.Message) {
 	b.replaced(msg)
-	if a := b.onMessage(b.ctx, msg); a.Context != "" && !a.Done && b.ai != nil { // with no model, nothing would read it
+	if a := b.onMessage(ctx, msg); a.Context != "" && !a.Done && b.ai != nil { // with no model, nothing would read it
 		b.chats.Add(msg.Chat.Key(), b.now(), msg.Expires, chats.Entry{Role: "user", Content: a.Context, Context: true, Refs: refs(msg)})
 	}
 }
@@ -353,6 +353,16 @@ func (b *Bot) post(r Received) {
 // chat's mailbox.
 var errMadeRoom = errors.New("made room in its chat for a message")
 
+// chatCtx is the bot's context carrying the log of chat's network
+// (logx.With), for the work done for chat: the core's own lines about it,
+// and the hooks, tools and model calls that work runs.
+func (b *Bot) chatCtx(chat feature.Chat) context.Context {
+	return logx.With(b.ctx, b.log(chat))
+}
+
+// log is the log of chat's network, whose lines start with its name.
+func (b *Bot) log(chat feature.Chat) logx.L { return logx.For(b.on(chat).Name()) }
+
 // dropped logs that r was dropped for err, saying what it was, and tells a
 // post's feature.
 func (b *Bot) dropped(r Received, err error) {
@@ -370,10 +380,11 @@ func (b *Bot) dropped(r Received, err error) {
 		what = "a press"
 		r.Answer("")
 	}
+	l := b.log(r.chat())
 	if errors.Is(err, chats.ErrNoSlot) {
-		logx.Warnf("dropped %s: all %d worker slots are busy (raise MAX_CONCURRENCY)", what, b.cfg.MaxConcurrency)
+		l.Warnf("dropped %s: all %d worker slots are busy (raise MAX_CONCURRENCY)", what, b.cfg.MaxConcurrency)
 	} else {
-		logx.Warnf("dropped %s: %v", what, err)
+		l.Warnf("dropped %s: %v", what, err)
 	}
 }
 
@@ -400,6 +411,11 @@ func abandon(rs []Received) {
 // shutdown begins; a post left waiting then, or a hook's answer not yet
 // sent, is told it was dropped.
 func (b *Bot) work(rs []Received) {
+	if len(rs) == 0 {
+		return
+	}
+	ctx := b.chatCtx(rs[0].chat()) // every one is for the same chat
+	l := logx.Ctx(ctx)
 	var batch []feature.Message
 	flush := func() {
 		// One deleted, or replaced by an edit, since it arrived is left
@@ -407,7 +423,7 @@ func (b *Bot) work(rs []Received) {
 		run := slices.DeleteFunc(batch, b.gone)
 		batch = nil
 		if len(run) > 0 && !b.closing.Load() {
-			safely(func() { m, text := merge(run); b.respond(m, feature.Action{}, text, refs(run...)) })
+			safely(l, func() { m, text := merge(run); b.respond(ctx, m, feature.Action{}, text, refs(run...)) })
 		}
 	}
 	alone := func(fn func()) {
@@ -421,24 +437,24 @@ func (b *Bot) work(rs []Received) {
 			abandon(rs[i:])
 			return
 		}
-		safely(func() {
+		safely(l, func() {
 			var p Incoming
 			switch r := r.(type) {
 			case Happened:
-				alone(func() { b.event(r.Event) })
+				alone(func() { b.event(ctx, r.Event) })
 				return
 			case Posted:
-				alone(func() { b.delivered(r.Message) })
+				alone(func() { b.delivered(ctx, r.Message) })
 				return
 			case Outgoing:
-				alone(func() { b.say(r.Post) })
+				alone(func() { b.say(ctx, r.Post) })
 				r.Post.OnSent(nil, true) // if shutdown began first
 				return
 			case Reacted:
 				alone(func() { b.react(r) })
 				return
 			case Pressed:
-				alone(func() { b.pressed(r) })
+				alone(func() { b.pressed(ctx, r) })
 				r.Answer("") // if shutdown began first
 				return
 			case Incoming:
@@ -446,14 +462,14 @@ func (b *Bot) work(rs []Received) {
 			default:
 				return
 			}
-			msg, ok := b.load(p)
+			msg, ok := b.load(ctx, p)
 			switch {
 			case !ok:
 			case !msg.Addressed:
-				alone(func() { b.overhear(msg) })
+				alone(func() { b.overhear(ctx, msg) })
 			default:
-				if act := b.hooked(msg); !act.IsZero() {
-					alone(func() { b.respond(msg, act, prompt(msg), refs(msg)) })
+				if act := b.hooked(ctx, msg); !act.IsZero() {
+					alone(func() { b.respond(ctx, msg, act, prompt(msg), refs(msg)) })
 					if act.OnSent != nil {
 						act.OnSent(nil, true) // if shutdown began first
 					}
@@ -469,10 +485,15 @@ func (b *Bot) work(rs []Received) {
 	flush()
 }
 
-// safely runs fn, logging a panic without its value rather than letting it
-// end the rest of the work.
-func safely(fn func()) {
-	defer logx.Recover("handling a message")
+// safely runs fn, logging a panic to l without its value rather than
+// letting it end the rest of the work. Like logx.Recover, but on the chat's
+// network's log.
+func safely(l logx.L, fn func()) {
+	defer func() {
+		if recover() != nil {
+			l.Errorf("internal error while handling a message; dropped")
+		}
+	}()
 	fn()
 }
 
@@ -548,11 +569,13 @@ func merge(msgs []feature.Message) (feature.Message, string) {
 	return m, strings.Join(lines, "\n")
 }
 
-// load completes a message in its chat's slot. An addressed one is logged
-// as it arrives, and reported false if it is a repeat.
-func (b *Bot) load(r Incoming) (feature.Message, bool) {
+// load completes a message in its chat's slot, ctx carrying its log. An
+// addressed one is logged as it arrives, and reported false if it is a
+// repeat.
+func (b *Bot) load(ctx context.Context, r Incoming) (feature.Message, bool) {
 	key := r.Chat.Key()
-	msg, ok := r.Load(b.ctx, func(name, id string) { b.chats.Learn(key, name, id) })
+	l := logx.Ctx(ctx)
+	msg, ok := r.Load(ctx, func(name, id string) { b.chats.Learn(key, name, id) })
 	if !ok || !msg.Addressed {
 		return msg, ok // only one that arrived before the bot's ID was known can be unaddressed
 	}
@@ -566,9 +589,9 @@ func (b *Bot) load(r Incoming) (feature.Message, bool) {
 		edit = " (edit)"
 	}
 	if msg.Chat.GroupID != "" {
-		logx.Infof("received group chat%s", edit)
+		l.Infof("received group chat%s", edit)
 	} else {
-		logx.Infof("received dm%s", edit)
+		l.Infof("received dm%s", edit)
 	}
 	// Neither a renamed sender nor two different photos are a repeat.
 	id := msg.Sender + "\x00" + msg.Name + "\x00" + msg.Text
@@ -576,11 +599,11 @@ func (b *Bot) load(r Incoming) (feature.Message, bool) {
 		id += fmt.Sprintf("\x00%s:%t", m.ID, m.Sticker)
 	}
 	if b.gone(msg) {
-		logx.Debugf("ignored a message deleted or edited before it was answered")
+		l.Debugf("ignored a message deleted or edited before it was answered")
 		return msg, false
 	}
 	if b.chats.Repeat(key, id) {
-		logx.Debugf("ignored duplicate")
+		l.Debugf("ignored duplicate")
 		return msg, false
 	}
 	b.replaced(msg)
@@ -608,7 +631,7 @@ const slowHooks = time.Second
 // If the hooks haven't returned after slowHooks, the chat sees the bot
 // typing until they do, as it would while the model answers; quick ones
 // show nothing.
-func (b *Bot) hooked(msg feature.Message) feature.Action {
+func (b *Bot) hooked(ctx context.Context, msg feature.Message) feature.Action {
 	var mu sync.Mutex
 	var stop func()
 	done := false
@@ -628,7 +651,7 @@ func (b *Bot) hooked(msg feature.Message) feature.Action {
 			stop()
 		}
 	}()
-	act := b.onMessage(b.ctx, msg)
+	act := b.onMessage(ctx, msg)
 	if act.OnSent != nil {
 		act.OnSent = once(act.OnSent)
 	}

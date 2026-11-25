@@ -107,7 +107,7 @@ func TestFilesOverTheCapAreLogged(t *testing.T) {
 	if c := contents(r); !strings.HasSuffix(c[len(c)-1], "\n[1 of the files attached left out: together they are over 16 MB]") {
 		t.Fatalf("model got %q", c[len(c)-1])
 	}
-	if logs := h.logs.String(); strings.Count(logs, "<4>1 of the files left out: together they are over 16 MB\n") != 1 || strings.Contains(logs, "big") {
+	if logs := h.logs.String(); strings.Count(logs, "<4>Fake: 1 of the files left out: together they are over 16 MB\n") != 1 || strings.Contains(logs, "big") {
 		t.Fatalf("log %q", logs)
 	}
 }

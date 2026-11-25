@@ -90,7 +90,7 @@ func startBot(t *testing.T, w world) *harness {
 	})
 	t.Cleanup(h.settle) // runs first
 
-	h.waitLog("bot account")
-	h.waitLog("loaded", "contacts")
+	h.waitLog("Signal: connected as")
+	h.waitLog("Signal: loaded", "contacts")
 	return h
 }

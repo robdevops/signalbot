@@ -55,7 +55,7 @@ func TestGroupMentionIsAnswered(t *testing.T) {
 		t.Fatalf("typing %d times", n)
 	}
 	logs := h.logs.String()
-	if !strings.Contains(logs, "<6>received group chat\n") || !strings.Contains(logs, "<6>reply 0.") || strings.Contains(logs, "Alice") || strings.Contains(logs, "hello") || strings.Contains(logs, "again") {
+	if !strings.Contains(logs, "<6>Fake: received group chat\n") || !strings.Contains(logs, "<6>Fake: reply 0.") || strings.Contains(logs, "Alice") || strings.Contains(logs, "hello") || strings.Contains(logs, "again") {
 		t.Fatalf("logs:\n%s", logs)
 	}
 }
@@ -67,7 +67,7 @@ func TestDMIsAnswered(t *testing.T) {
 	if s.chat != (feature.Chat{User: aliceID}) || len(s.known) != 0 {
 		t.Fatalf("sent %+v", s)
 	}
-	if logs := h.logs.String(); !strings.Contains(logs, "<6>received dm\n") || strings.Contains(logs, "what is up") || strings.Contains(logs, "Alice") {
+	if logs := h.logs.String(); !strings.Contains(logs, "<6>Fake: received dm\n") || strings.Contains(logs, "what is up") || strings.Contains(logs, "Alice") {
 		t.Fatalf("logs:\n%s", logs)
 	}
 }
@@ -134,7 +134,7 @@ func TestModelError(t *testing.T) {
 	if s.text != sorry {
 		t.Fatalf("sent %+v", s)
 	}
-	if logs := h.logs.String(); !strings.Contains(logs, "<3>model error after ") || strings.Contains(logs, "Alice") || !strings.Contains(logs, "Input flagged") || strings.Contains(logs, "secret") {
+	if logs := h.logs.String(); !strings.Contains(logs, "<3>Fake: model error after ") || strings.Contains(logs, "Alice") || !strings.Contains(logs, "Input flagged") || strings.Contains(logs, "secret") {
 		t.Fatalf("logs:\n%s", logs)
 	}
 	r, _ := h.ask(dm("try again"))
@@ -153,7 +153,7 @@ func TestMailbox(t *testing.T) {
 		h.receive(dm(s))
 	}
 	h.eventually("the full mailbox", func() bool {
-		return strings.Contains(h.logs.String(), "<4>dropped a message: 4 messages are already waiting in this chat")
+		return strings.Contains(h.logs.String(), "<4>Fake: dropped a message: 4 messages are already waiting in this chat")
 	})
 	h.receive(atBot("meanwhile"))
 	h.eventually("the other chat's request", func() bool { return len(h.requests()) == 2 })
@@ -213,7 +213,7 @@ func TestAtCapacity(t *testing.T) {
 	h.eventually("the first request", func() bool { return len(h.requests()) == 1 })
 	h.receive(atBot("elsewhere"))
 	h.eventually("the warning", func() bool {
-		return strings.Contains(h.logs.String(), "<4>dropped a message: all 1 worker slots are busy (raise MAX_CONCURRENCY)\n")
+		return strings.Contains(h.logs.String(), "<4>Fake: dropped a message: all 1 worker slots are busy (raise MAX_CONCURRENCY)\n")
 	})
 	h.release()
 	h.nextSend()
@@ -227,7 +227,7 @@ func TestRepeatIsDropped(t *testing.T) {
 	h.receive(dm("different"))
 	h.nextSend()
 	h.noSend()
-	if n := len(h.requests()); n != 2 || !strings.Contains(h.logs.String(), "<7>ignored duplicate\n") {
+	if n := len(h.requests()); n != 2 || !strings.Contains(h.logs.String(), "<7>Fake: ignored duplicate\n") {
 		t.Fatalf("%d requests; logs:\n%s", n, h.logs)
 	}
 }
@@ -621,7 +621,7 @@ func TestOneEmojiIsAReaction(t *testing.T) {
 	if _, s := h.ask(m); s.text != "react 🙏 to "+aliceID+"@1700" || s.chat.User != aliceID {
 		t.Fatalf("sent %+v", s)
 	}
-	reacted := func() int { return strings.Count(h.logs.String(), "<6>reacting instead of replying\n") }
+	reacted := func() int { return strings.Count(h.logs.String(), "<6>Fake: reacting instead of replying\n") }
 	h.eventually("the reaction's log line", func() bool { return reacted() == 1 })
 	m.Text, m.Timestamp = "great", 1701
 	if _, s := h.ask(m); s.text != "👍 sure" {

@@ -31,7 +31,7 @@ var networkSettings = []struct{ name, setting, tag string }{
 
 // newNetwork is the chat networks the bot answers on, joined: those whose
 // settings are set, else Signal, whose socket has a default. A network
-// this build leaves out is an error.
+// this build leaves out is an error. It logs which, "networks: signal".
 func newNetwork(t *config.Test) (bot.Network, error) {
 	names, err := chooseNetwork(func(k string) string { return config.Env(k, "") })
 	if err != nil {
@@ -48,9 +48,7 @@ func newNetwork(t *config.Test) (bot.Network, error) {
 	for _, name := range names {
 		nets = append(nets, networks[name](t))
 	}
-	if len(nets) > 1 {
-		logx.Noticef("on %s at once", strings.Join(names, " and "))
-	}
+	logx.Noticef("networks: %s", strings.Join(names, ", "))
 	return bot.Join(nets...), nil
 }
 

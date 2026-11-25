@@ -13,7 +13,7 @@ import (
 
 // With every network set, one bot answers on each, and each chat only on
 // its own network: a DM on Signal, Telegram, Discord and Slack, each
-// answered there and nowhere else.
+// answered there and nowhere else, and each logged as its network's.
 func TestScenarioAllNetworks(t *testing.T) {
 	tg := &tgHarness{t: t, updates: make(chan string, 64), nextID: 100}
 	tgAPI := httptest.NewServer(http.HandlerFunc(tg.serveAPI))
@@ -29,10 +29,10 @@ func TestScenarioAllNetworks(t *testing.T) {
 		"DISCORD_BOT_TOKEN": dcToken, "DISCORD_API_URL": dcAPI.URL, "DISCORD_DM_USERS": dcBob,
 		"SLACK_BOT_TOKEN": slToken, "SLACK_APP_TOKEN": slAppToken, "SLACK_API_URL": slAPI.URL, "SLACK_DM_USERS": slAlice,
 	}})
-	h.waitLog("on signal and telegram and discord and slack at once")
-	h.waitLog("connected to Telegram as @botty_bot")
-	h.waitLog("connected to Discord as botty")
-	h.waitLog("connected to Slack as @botty")
+	h.waitLog("networks: signal, telegram, discord, slack")
+	h.waitLog("Telegram: connected as @botty_bot")
+	h.waitLog("Discord: connected as botty")
+	h.waitLog("Slack: connected as @botty")
 
 	if s := h.ask(fromAlice("hello on Signal")); s.Recipient != idAlice || s.Message != "ok" {
 		t.Fatalf("Signal: sent %+v", s)
@@ -65,6 +65,11 @@ func TestScenarioAllNetworks(t *testing.T) {
 	}
 	if posts != 1 {
 		t.Errorf("%d Discord sends", posts)
+	}
+	// The core's lines about each chat say its network.
+	for _, net := range []string{"Signal", "Telegram", "Discord", "Slack"} {
+		h.waitLog(net + ": received dm")
+		h.waitLog(net + ": reply ")
 	}
 	for _, l := range h.logLines() {
 		for _, secret := range []string{"SECRET-test-token", slToken, slAppToken} {

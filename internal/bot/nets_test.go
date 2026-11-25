@@ -11,6 +11,7 @@ import (
 
 	"github.com/robdevops/signalbot/internal/config"
 	"github.com/robdevops/signalbot/internal/feature"
+	"github.com/robdevops/signalbot/internal/kit/logx"
 )
 
 // stubNet is a network that owns the chats whose IDs start with its
@@ -180,5 +181,47 @@ func TestAnswering(t *testing.T) {
 	defer an.mu.Unlock()
 	if len(an.calls) != 2 || an.calls[0] != fmt.Sprintf("answering %d", m.Timestamp) || an.calls[1] != "answered" {
 		t.Fatalf("calls %q", an.calls)
+	}
+}
+
+// The work for a chat logs as its network's: the core's lines and what the
+// hooks and tools it runs log through their ctx, each chat on its own
+// network's log.
+func TestChatLog(t *testing.T) {
+	ran := func(what string) func(context.Context) {
+		return func(ctx context.Context) { logx.Ctx(ctx).Infof("%s ran", what) }
+	}
+	h := start(t, options{tools: true, features: func(b *Bot) {
+		b.OnMessage(func(ctx context.Context, m feature.Message) feature.Action {
+			ran("message hook")(ctx)
+			return feature.Action{}
+		})
+		b.OnTurn(func(ctx context.Context, m feature.Message) feature.Additions {
+			ran("turn hook")(ctx)
+			return feature.Additions{}
+		})
+		b.OfferTools(feature.ToolGroup{Names: []string{"t"}, Tools: []feature.Tool{{Name: "draw", Run: func(ctx context.Context, _ string) (string, []feature.Picture, error) {
+			ran("tool")(ctx)
+			return "drawn", nil, nil
+		}}}})
+	}})
+	h.answer(toolCall("draw"), text("Done"))
+	h.receive(dm("draw"))
+	h.nextSend()
+	for _, want := range []string{"<6>Fake: received dm\n", "<6>Fake: message hook ran\n", "<6>Fake: turn hook ran\n", "<6>Fake: tool ran\n", "<6>Fake: tool draw ", "<6>Fake: reply "} {
+		if !strings.Contains(h.logs.String(), want) {
+			t.Errorf("no %q in the log:\n%s", want, h.logs)
+		}
+	}
+
+	a := &stubNet{name: "alpha", prefix: "a"}
+	z := &stubNet{name: "zulu", prefix: "z"}
+	b := &Bot{net: Join(a, z), ctx: context.Background()}
+	logs := &logx.Buffer{}
+	defer logx.SetOutput(logs, logs, true)()
+	logx.Ctx(b.chatCtx(feature.Chat{User: "z1"})).Infof("one")
+	logx.Ctx(b.chatCtx(feature.Chat{GroupID: "a1"})).Infof("two")
+	if got := logs.String(); got != "<6>Zulu: one\n<6>Alpha: two\n" {
+		t.Fatalf("log %q", got)
 	}
 }
