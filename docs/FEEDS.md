@@ -26,9 +26,9 @@ Alerts are on by default in a DM: every kind, silently, from the chat's first me
 - `/alerts` shows which kinds are on and off in this chat, and which make a sound, and how to change them.
 - `/alerts on` and `/alerts off` subscribe the chat to every kind, or stop it.
 - `/alerts` and a kind (its `kind`, `label` or one of its `words`) turns that kind off, or on again; with alerts off, it turns them on for that kind alone.
-- `/alerts sound on` and `/alerts sound off` give every kind a sound, or none; `/alerts sound` and a kind toggles that kind's. Alerts without a sound arrive silently (no notification, where the network can do that).
+- `/alerts sound on` and `/alerts sound off` give every kind a sound, or none; `/alerts sound` and a kind toggles that kind's (after `sound on`, a kind turned off is the exception: kinds the feed adds later have sound). Alerts without a sound arrive silently (no notification, where the network can do that).
 
-On Telegram, `/alerts` answers with two menu buttons, **🔔 Alerts ▸** and, in a DM with some kind on, **🔊 Sound ▸**. Opening one (▾) hides the other and shows a toggle per kind under it: every kind under Alerts, the kinds that are on under Sound. A toggle that is on is highlighted (blue), one that is off struck through; a press redraws the menu in place, and pressing the open menu's button closes it. In a forum, each topic has its own alerts. Anyone who can address the bot in a chat can change that chat's alerts.
+On Telegram, `/alerts` answers with two menu buttons, **🔔 Alerts ▸** and, with some kind on, **🔊 Sound ▸**. Opening one (▾) hides the other and shows a toggle per kind under it: every kind under Alerts, the kinds that are on under Sound (before the feed has said its kinds, one toggle for all alerts, and one for their sound). A toggle that is on is highlighted (blue), one that is off struck through; a press redraws the menu in place, and pressing the open menu's button closes it. In a forum, each topic has its own alerts. Anyone who can address the bot in a chat can change that chat's alerts.
 
 ## The format
 

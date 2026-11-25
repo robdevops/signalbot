@@ -1076,7 +1076,7 @@ func TestFeedTopicAndLimits(t *testing.T) {
 		}
 		time.Sleep(5 * time.Millisecond)
 	}
-	if b := got.Markup.Buttons; len(b) != 1 || len(b[0]) != 1 || b[0][0].Data != "feed=alerts/open:alerts/7" { // a group: no sound
+	if b := got.Markup.Buttons; len(b) != 1 || len(b[0]) != 2 || b[0][0].Data != "feed=alerts/open:alerts/7" || b[0][1].Data != "feed=alerts/open:sound/7" {
 		t.Fatalf("buttons %+v", b)
 	}
 	bare := feature.Chat{GroupID: "-100"} // a press under an older message names the group alone
@@ -1487,3 +1487,56 @@ func TestFeedSoundPerKind(t *testing.T) {
 		t.Errorf("wind alert: %v", got)
 	}
 }
+
+// Sound for every kind, with one kind then turned off, keeps sound for the
+// kinds the feed doesn't list; a menu shows every kind, however many; and
+// with no kinds known, the menus toggle all alerts, and all sound.
+func TestFeedMenuEdges(t *testing.T) {
+	s := &feedSub{Sound: true}
+	f := &feed{kinds: []feedKind{{Kind: "rain"}, {Kind: "wind"}}}
+	fs := &feeds{doc: map[string]*feedState{}, store: nopStore{}}
+	fs.state("x").Chats["u:a"] = s
+	f.server = "x"
+	fs.set(f, feature.Chat{User: "a"}, "s:wind")
+	if s.loud("wind") || !s.loud("rain") || !s.loud("storm") || !s.loud("") {
+		t.Errorf("after wind's sound off: %+v", s)
+	}
+	fs.set(f, feature.Chat{User: "a"}, "s:wind")
+	if !s.loud("wind") {
+		t.Errorf("wind's sound back on: %+v", s)
+	}
+
+	h := featuretest.New()
+	h.Bot.Caps.Buttons = true
+	fs.h = h
+	var many []feedKind
+	for i := range 20 {
+		many = append(many, feedKind{Kind: fmt.Sprintf("k%d", i)})
+	}
+	big := &feed{server: "x", command: "alerts", kinds: many, title: "W"}
+	_, rows := fs.menu(big, feature.Chat{User: "a"}, menuAlerts)
+	n := 0
+	for _, r := range rows[1:] {
+		n += len(r)
+	}
+	if n != 20 {
+		t.Errorf("%d toggles for 20 kinds", n)
+	}
+
+	none := &feed{server: "y", command: "alerts", title: "W"}
+	_, rows = fs.menu(none, feature.Chat{GroupID: "g"}, menuAlerts)
+	if len(rows) != 2 || rows[1][0].Data != "feed=alerts/on" || rows[1][0].Highlight {
+		t.Fatalf("no kinds, off: %+v", rows)
+	}
+	fs.set(none, feature.Chat{GroupID: "g"}, "on")
+	_, rows = fs.menu(none, feature.Chat{GroupID: "g"}, menuSound)
+	if len(rows) != 2 || rows[0][0].Label != "🔊 Sound ▾" || rows[1][0].Data != "feed=alerts/soundon" {
+		t.Fatalf("no kinds, on, sound: %+v", rows)
+	}
+}
+
+// nopStore keeps nothing.
+type nopStore struct{}
+
+func (nopStore) Load(any) (bool, error) { return false, nil }
+func (nopStore) Save(any) error         { return nil }
