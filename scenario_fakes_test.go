@@ -118,6 +118,8 @@ type world struct {
 	// its admins.
 	OtherGroup  bool
 	OtherAdmins []string
+	// GroupsFail makes every listGroups fail.
+	GroupsFail bool
 }
 
 // harness is a running bot and its fakes.
@@ -305,6 +307,10 @@ func (h *harness) serveSignal(c net.Conn) {
 			result = `[{"packId":"0000aaaa","title":"Dogs","stickers":[]},` +
 				`{"packId":"00aabbccddeeff00","title":"My Daily Life","stickers":[{"id":1,"emoji":"❤️"},{"id":2,"emoji":"🕵️"}]}]`
 		case "listGroups":
+			if h.w.GroupsFail {
+				h.write(c, fmt.Sprintf(`{"jsonrpc":"2.0","error":{"code":-1,"message":"Failed to list groups"},"id":%s}`, req.ID))
+				continue
+			}
 			var ms []string
 			for _, id := range h.groupMembers() {
 				ms = append(ms, `{"uuid":"`+id+`"}`)
