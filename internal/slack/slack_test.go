@@ -6,11 +6,13 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -129,7 +131,7 @@ func (f *fakeSlack) serve(w http.ResponseWriter, r *http.Request) {
 	switch method {
 	case "apps.connections.open":
 		f.opens++
-		res = `"url":"ws://` + r.Host + `/socket?ticket=SECRETticket"`
+		res = cmp.Or(res, `"url":"ws://`+r.Host+`/socket?ticket=SECRETticket"`)
 	case "chat.postMessage":
 		f.nextTS++
 		res = fmt.Sprintf(`"ts":"1700000100.%06d"`, f.nextTS)
@@ -191,6 +193,7 @@ func connected(c *Client) *Client {
 	c.self.Store(botID)
 	c.handle.Store("botty")
 	c.name.Store("Botty")
+	c.named.Store(true)
 	c.once.Do(func() { close(c.known) })
 	return c
 }
@@ -311,6 +314,16 @@ func TestEditsAndDeletes(t *testing.T) {
 	if d, ok := rs[0].(bot.Deleted); !ok || d != (bot.Deleted{Chat: feature.Chat{GroupID: "slack:" + channel}, Sender: "slack:" + botID, Bot: true, Sent: 1700000000000300, At: 1700000060000001}) {
 		t.Fatalf("delete %+v", rs)
 	}
+	// A thread's parent deleted is left as a placeholder by USLACKBOT: it
+	// is a delete of every version, not an edit.
+	for _, mark := range []string{`"subtype":"tombstone"`, `"hidden":true`} {
+		rs = c.events(ev(`{"type":"message","subtype":"message_changed","hidden":true,"channel":"C0CHANNEL1","channel_type":"channel","ts":"1700000070.000001",
+			"message":{"type":"message",` + mark + `,"user":"USLACKBOT","text":"This message was deleted.","ts":"1700000000.000400","thread_ts":"1700000000.000400"},
+			"previous_message":{"user":"UALICE001","text":"a question","ts":"1700000000.000400","thread_ts":"1700000000.000400"}}`))
+		if len(rs) != 1 || rs[0] != (bot.Deleted{Chat: feature.Chat{GroupID: "slack:" + channel}, Sender: "slack:" + alice, Sent: 1700000000000400, At: math.MaxInt64}) {
+			t.Fatalf("%s: %+v", mark, rs)
+		}
+	}
 }
 
 // Reactions, with an event hook, by Slack's names; one the table doesn't
@@ -331,6 +344,20 @@ func TestReactions(t *testing.T) {
 	if rs := c.events(ev(strings.Replace(e, "thumbsup::skin-tone-2", "custom_party", 1))); len(rs) != 0 {
 		t.Fatalf("an unknown emoji: %v", rs)
 	}
+	// A reaction names only the channel and ts: one on a message in a
+	// thread, the bot's or one it read there, is in the thread's chat.
+	thread := feature.Chat{GroupID: "slack:" + channel + "/1700000000.000100"}
+	sent := c.Send(thread, "in the thread", nil, nil, 0, nil, feature.Markup{})
+	c.events(ev(`{"type":"message","channel":"C0CHANNEL1","channel_type":"channel","user":"UBOB00001","text":"me too","ts":"1700000000.000900","thread_ts":"1700000000.000100"}`))
+	for _, ts := range []string{tsString(sent[0]), "1700000000.000900"} {
+		rs := c.events(ev(strings.Replace(e, "1700000000.000200", ts, 1)))
+		if len(rs) != 1 || rs[0].(bot.Happened).Event.Chat != thread {
+			t.Fatalf("a reaction to %s in a thread: %+v", ts, rs)
+		}
+	}
+	f.mu.Lock()
+	f.calls = nil
+	f.mu.Unlock()
 	ch := feature.Chat{GroupID: "slack:" + channel}
 	c.React(ch, feature.Message{Timestamp: 1700000000000200}, "❤")
 	if r := f.callsTo("reactions.add"); len(r) != 1 || r[0].Params["name"] != "heart" || r[0].Params["timestamp"] != "1700000000.000200" || r[0].Params["channel"] != channel {
@@ -568,6 +595,107 @@ func TestManifestOnlyWhenChanged(t *testing.T) {
 	if json.Unmarshal(data, &m) != nil || len(m.Features.SlashCommands) != 1 || m.Features.SlashCommands[0] != (slashCommand{Command: "/hello", Description: "hello"}) ||
 		!m.Settings.SocketModeEnabled || !m.Settings.Interactivity.IsEnabled {
 		t.Fatalf("manifest %s", data)
+	}
+	// member_joined_channel and member_left_channel need these.
+	for _, scope := range []string{"channels:read", "groups:read"} {
+		if !slices.Contains(m.OAuthConfig.Scopes.Bot, scope) {
+			t.Errorf("no %s in %v", scope, m.OAuthConfig.Scopes.Bot)
+		}
+	}
+}
+
+// A users.info that fails at the start doesn't rename the app: the name in
+// the manifest already there stays, or none is written; the next hello
+// asks again and writes it with the name.
+func TestManifestNameUnknown(t *testing.T) {
+	logs := captureLogs(t)
+	f := newFake(t)
+	c := f.client(t)
+	c.Watch(bot.Watch{Commands: []bot.Command{{Name: "hello"}}})
+	path := filepath.Join(c.stateDir, ManifestFile)
+	f.fail("users.info", "internal_error")
+	if err := c.hello(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	c.writeManifest()
+	if _, err := os.Stat(path); err == nil {
+		t.Fatal("a manifest was written without the bot's name")
+	}
+	c.rename(context.Background())
+	if data, _ := os.ReadFile(path); !strings.Contains(string(data), `"display_name": "Botty"`) {
+		t.Fatalf("after a second try: %s", data)
+	}
+	if n := strings.Count(logs.String(), "the commands changed"); n != 1 {
+		t.Fatalf("%d notices", n)
+	}
+
+	c = f.client(t)
+	c.stateDir = filepath.Dir(path)
+	c.Watch(bot.Watch{Commands: []bot.Command{{Name: "hello"}}})
+	f.fail("users.info", "internal_error")
+	if err := c.hello(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	c.writeManifest()
+	if data, _ := os.ReadFile(path); !strings.Contains(string(data), `"display_name": "Botty"`) || strings.Contains(string(data), "botty") {
+		t.Fatalf("renamed: %s", data)
+	}
+	if n := strings.Count(logs.String(), "the commands changed"); n != 1 {
+		t.Fatalf("a false notice: %d", n)
+	}
+}
+
+// -slack-manifest reads STATE_DIRECTORY's manifest when it is set, and
+// otherwise the systemd unit's, Docker's or the working directory's, in
+// turn, saying which files it tried when there is none.
+func TestSavedManifest(t *testing.T) {
+	unit, docker, state := t.TempDir(), t.TempDir(), t.TempDir()
+	defer func(old []string) { manifestDirs = old }(manifestDirs)
+	manifestDirs = []string{unit, docker}
+	t.Setenv("STATE_DIRECTORY", "")
+	data, path, tried := SavedManifest()
+	if path != "" || !strings.Contains(string(data), `"name": "signalbot"`) ||
+		!reflect.DeepEqual(tried, []string{filepath.Join(unit, ManifestFile), filepath.Join(docker, ManifestFile)}) {
+		t.Fatalf("none: %q %v", path, tried)
+	}
+	os.WriteFile(filepath.Join(docker, ManifestFile), []byte("docker"), 0o600)
+	if data, path, _ := SavedManifest(); string(data) != "docker" || path != filepath.Join(docker, ManifestFile) {
+		t.Fatalf("docker: %q %q", data, path)
+	}
+	os.WriteFile(filepath.Join(unit, ManifestFile), []byte("unit"), 0o600)
+	if data, path, _ := SavedManifest(); string(data) != "unit" || path != filepath.Join(unit, ManifestFile) {
+		t.Fatalf("unit: %q %q", data, path)
+	}
+	t.Setenv("STATE_DIRECTORY", state)
+	if _, path, tried := SavedManifest(); path != "" || !reflect.DeepEqual(tried, []string{filepath.Join(state, ManifestFile)}) {
+		t.Fatalf("STATE_DIRECTORY: %q %v", path, tried)
+	}
+	os.WriteFile(filepath.Join(state, ManifestFile), []byte("state"), 0o600)
+	if data, _, _ := SavedManifest(); string(data) != "state" {
+		t.Fatalf("STATE_DIRECTORY: %q", data)
+	}
+}
+
+// A Socket Mode connection that can't be opened is logged without its
+// URL, which holds a ticket.
+func TestDialErrorHidesTicket(t *testing.T) {
+	logs := captureLogs(t)
+	f := newFake(t)
+	closed := httptest.NewServer(http.NotFoundHandler())
+	addr := closed.Listener.Addr().String()
+	closed.Close()
+	f.mu.Lock()
+	f.results["apps.connections.open"] = `"url":"ws://` + addr + `/socket?ticket=SECRETticket"`
+	f.mu.Unlock()
+	c := connected(f.client(t))
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() { defer close(done); c.Run(ctx, func(bot.Received) {}) }()
+	waitFor(t, "a failed dial", func() bool { return strings.Contains(logs.String(), "slack connection lost") })
+	cancel()
+	<-done
+	if l := logs.String(); strings.Contains(l, "SECRET") || strings.Contains(l, "socket?") || !strings.Contains(l, "slack: socket: Get:") {
+		t.Fatalf("log:\n%s", l)
 	}
 }
 

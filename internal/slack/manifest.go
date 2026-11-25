@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"cmp"
 	"encoding/json"
+	"errors"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -74,7 +76,7 @@ func Manifest(name string, cmds []bot.Command) []byte {
 			m.Features.SlashCommands = append(m.Features.SlashCommands, slashCommand{Command: "/" + c.Name, Description: txt.Clamp(cmp.Or(c.About, c.Name), 2000)})
 		}
 	}
-	m.OAuthConfig.Scopes.Bot = []string{"app_mentions:read", "channels:history", "groups:history", "im:history", "im:write", "chat:write",
+	m.OAuthConfig.Scopes.Bot = []string{"app_mentions:read", "channels:history", "channels:read", "groups:history", "groups:read", "im:history", "im:write", "chat:write",
 		"commands", "files:read", "files:write", "reactions:read", "reactions:write", "users:read"}
 	m.Settings.EventSubscriptions.BotEvents = []string{"app_mention", "message.channels", "message.groups", "message.im",
 		"reaction_added", "reaction_removed", "member_joined_channel", "member_left_channel"}
@@ -86,15 +88,27 @@ func Manifest(name string, cmds []bot.Command) []byte {
 
 // writeManifest writes the app manifest, with the commands features
 // registered, into the state directory if it differs from the one there,
-// and says to paste it into the app's settings.
+// and says to paste it into the app's settings. Until users.info has told
+// the bot its display name, it keeps the name in the manifest already
+// there, or writes none, so a failed lookup doesn't rename the app.
 func (c *Client) writeManifest() {
 	cmds := c.commands.Load()
 	if cmds == nil {
 		return
 	}
 	path := filepath.Join(c.stateDir, ManifestFile)
-	data := Manifest(c.BotName(), *cmds)
-	if old, err := os.ReadFile(path); err == nil && bytes.Equal(old, data) {
+	old, err := os.ReadFile(path)
+	name := c.BotName()
+	if !c.named.Load() {
+		var m manifest
+		if err != nil || json.Unmarshal(old, &m) != nil || m.Features.BotUser.DisplayName == "" {
+			logx.Debugf("slack: the app manifest waits for the bot's display name")
+			return
+		}
+		name = m.Features.BotUser.DisplayName
+	}
+	data := Manifest(name, *cmds)
+	if err == nil && bytes.Equal(old, data) {
 		return
 	}
 	if err := fsx.WriteAtomic(path, data); err != nil {
@@ -104,12 +118,34 @@ func (c *Client) writeManifest() {
 	logx.Noticef("Slack: the commands changed: paste %s at api.slack.com/apps → your app → App Manifest", path)
 }
 
-// SavedManifest is the app manifest the bot last wrote into the state
-// directory, and true; or, if it has written none, one with no slash
-// commands, and false.
-func SavedManifest() ([]byte, bool) {
-	if data, err := os.ReadFile(filepath.Join(config.StateDir(), ManifestFile)); err == nil {
-		return data, true
+// manifestDirs are where SavedManifest looks when STATE_DIRECTORY isn't
+// set, in turn: the systemd unit's state directory, the Docker image's,
+// and the working directory. Tests change it.
+var manifestDirs = []string{"/var/lib/private/signalbot", "/data", ""}
+
+// SavedManifest is the app manifest the bot last wrote, and the file it
+// came from. It looks in STATE_DIRECTORY's directory alone when that is
+// set, and otherwise in manifestDirs. If it finds none it is one with no
+// slash commands, "", and the files it tried, each with why it couldn't
+// read one that is there.
+func SavedManifest() (data []byte, path string, tried []string) {
+	dirs := manifestDirs
+	if dir := config.StateDir(); dir != "" {
+		dirs = []string{dir}
 	}
-	return Manifest("", nil), false
+	for _, dir := range dirs {
+		p := filepath.Join(dir, ManifestFile)
+		data, err := os.ReadFile(p)
+		switch {
+		case err == nil:
+			return data, p, nil
+		case errors.Is(err, fs.ErrNotExist):
+			tried = append(tried, p)
+		case errors.Is(err, fs.ErrPermission):
+			tried = append(tried, p+" (permission denied: try sudo)")
+		default:
+			tried = append(tried, p+" (unreadable)")
+		}
+	}
+	return Manifest("", nil), "", tried
 }
