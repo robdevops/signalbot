@@ -21,11 +21,11 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
-	"unicode"
 
 	"github.com/robdevops/signalbot/internal/bot"
 	"github.com/robdevops/signalbot/internal/config"
 	"github.com/robdevops/signalbot/internal/feature"
+	"github.com/robdevops/signalbot/internal/kit/allow"
 	"github.com/robdevops/signalbot/internal/kit/img"
 	"github.com/robdevops/signalbot/internal/kit/logx"
 	"github.com/robdevops/signalbot/internal/kit/txt"
@@ -60,7 +60,8 @@ type rpcMsg struct {
 // Client is a JSON-RPC client for a signal-cli daemon socket.
 type Client struct {
 	addr         string
-	allowed      map[string]bool // who may DM the bot, by ACI or number
+	dm           allow.Policy // who may DM the bot (SIGNAL_DM_USER_IDS)
+	verdicts     verdicts     // whether a DM's sender is a group admin, lately asked
 	typingEvery  time.Duration
 	writeTimeout time.Duration // writeTimeout; a test's shorter
 	backoff      time.Duration // the first wait before reconnecting; a test's shorter
@@ -82,32 +83,21 @@ type Client struct {
 
 // New makes the client its settings say: SIGNALCLI_SOCKET, host:port
 // (signal-cli's daemon --tcp on this host by default) or a unix socket path,
-// and SIGNAL_DM_USER_IDS, who may DM the bot.
+// and SIGNAL_DM_USER_IDS, who may DM the bot: by default a group's admins.
 func New(test *config.Test) *Client {
 	addr := config.Env("SIGNALCLI_SOCKET", "127.0.0.1:7583")
-	allowed := map[string]bool{}
-	// Commas, semicolons or any white space, so a CRLF env file or a tab
-	// can't leave an unmatchable ID.
-	for _, id := range strings.FieldsFunc(config.Env("SIGNAL_DM_USER_IDS", ""), func(r rune) bool {
-		return r == ',' || r == ';' || unicode.IsSpace(r)
-	}) {
-		allowed[id] = true
-	}
-	if len(allowed) == 0 {
-		logx.Warnf("DMs are off: SIGNAL_DM_USER_IDS is empty; the bot answers only in groups")
+	dm := allow.Parse(config.Env("SIGNAL_DM_USER_IDS", ""))
+	if dm.None() {
+		logx.Warnf("Signal DMs are off: SIGNAL_DM_USER_IDS is none; the bot answers only in groups")
 	} else {
-		ids := fmt.Sprintf("%d IDs", len(allowed))
-		if len(allowed) == 1 {
-			ids = "1 ID"
-		}
-		logx.Noticef("DMs: allowed from %s (SIGNAL_DM_USER_IDS)", ids)
+		logx.Noticef("Signal DMs: allowed from %s (SIGNAL_DM_USER_IDS)", dm)
 	}
-	return newClient(addr, allowed, test)
+	return newClient(addr, dm, test)
 }
 
 // newClient is New with its settings given.
-func newClient(addr string, allowed map[string]bool, test *config.Test) *Client {
-	c := &Client{addr: addr, allowed: allowed, typingEvery: 10 * time.Second, writeTimeout: writeTimeout, backoff: time.Second, pending: map[string]chan *rpcMsg{},
+func newClient(addr string, dm allow.Policy, test *config.Test) *Client {
+	c := &Client{addr: addr, dm: dm, typingEvery: 10 * time.Second, writeTimeout: writeTimeout, backoff: time.Second, pending: map[string]chan *rpcMsg{},
 		known: make(chan struct{}), test: test}
 	c.members.c = c
 	c.names.byID, c.names.numbers, c.names.minRefresh = map[string]rankedName{}, map[string]string{}, 15*time.Second
@@ -464,6 +454,7 @@ type group struct {
 	Name     string   `json:"name"`
 	IsMember bool     `json:"isMember"`
 	Members  []member `json:"members"`
+	Admins   []member `json:"admins"`
 }
 
 type member struct {
@@ -482,12 +473,14 @@ func (c *Client) groups(ctx context.Context, user string) ([]group, error) {
 	}), nil
 }
 
-// Groups lists the groups the bot shares with user (an ACI or a number).
+// Groups lists the groups the bot shares with user (an ACI or a number),
+// with Admin if user is one of its admins; Signal groups have no mods.
 func (c *Client) Groups(ctx context.Context, user string) ([]feature.Group, error) {
 	gs, err := c.groups(ctx, user)
 	var out []feature.Group
 	for _, g := range gs {
-		out = append(out, feature.Group{ID: g.ID, Name: txt.SafeName(g.Name)})
+		admin := slices.ContainsFunc(g.Admins, func(m member) bool { return is(user, m.UUID, m.Number) })
+		out = append(out, feature.Group{ID: g.ID, Name: txt.SafeName(g.Name), Admin: admin})
 	}
 	return out, err
 }

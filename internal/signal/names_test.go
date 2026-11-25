@@ -41,7 +41,7 @@ func TestContactBest(t *testing.T) {
 }
 
 func TestResolveRanks(t *testing.T) {
-	c := newClient("x", nil, nil)
+	c := newClient("x", only(), nil)
 	m := mention{Name: aliceID, UUID: aliceID}
 	if got := c.resolve(m); got != "" {
 		t.Fatalf("an unknown ID must resolve to nothing, not the ID: %q", got)
@@ -74,7 +74,7 @@ func TestResolveRanks(t *testing.T) {
 // sent, so an allowlist of numbers can be checked against an ACI. Each load
 // replaces them, and they are capped.
 func TestNumber(t *testing.T) {
-	c := newClient("x", nil, nil)
+	c := newClient("x", only(), nil)
 	c.names.replace([]contact{{UUID: aliceID, Number: "+1555"}, {UUID: bobID}})
 	if c.number(aliceID) != "+1555" || c.number(bobID) != "" || c.number("") != "" {
 		t.Fatalf("numbers %v", c.names.numbers)
@@ -98,7 +98,7 @@ func TestNumber(t *testing.T) {
 
 // gapClient is a client that loads the contact list at most every gap.
 func gapClient(sock string, gap time.Duration) *Client {
-	return newClient(sock, nil, &config.Test{ReloadGap: gap})
+	return newClient(sock, only(), &config.Test{ReloadGap: gap})
 }
 
 // The test hooks: a contact load counts as work until it ends, and each
@@ -109,7 +109,7 @@ func TestTestHooks(t *testing.T) {
 	delete(f.res, "listContacts") // never answered
 	var frames atomic.Int32
 	test := &config.Test{Handled: func() { frames.Add(1) }}
-	c := newClient(f.sock, nil, test)
+	c := newClient(f.sock, only(), test)
 	_, conn := run(t, c, f)
 	eventually(t, "the load on connect", func() bool { return len(f.calls("listContacts")) == 1 })
 	if test.Idle() {
@@ -122,7 +122,7 @@ func TestTestHooks(t *testing.T) {
 }
 
 func TestNamesCapped(t *testing.T) {
-	n := &newClient("x", nil, nil).names
+	n := &newClient("x", only(), nil).names
 	for i := range maxNames + 10 {
 		n.learn(rankedName{"Bob", rankSeen}, fmt.Sprint(i), "")
 	}
@@ -235,7 +235,7 @@ func TestBotName(t *testing.T) {
 // Redact scrubs every name the bot knows but its own, as whole words and
 // ignoring capitals, longest first, and every UUID and phone number.
 func TestRedact(t *testing.T) {
-	c := newClient("x", nil, nil)
+	c := newClient("x", only(), nil)
 	c.id.Store(botID)
 	c.names.learn(rankedName{"Alice", rankContact}, aliceID, "")
 	c.names.learn(rankedName{"Alice Smith", rankContact}, "u-as", "")
@@ -260,7 +260,7 @@ func TestRedact(t *testing.T) {
 // A nickname the owner set is the name a sender is shown by too, and the
 // names it hides stay known to Redact.
 func TestNicknameEverywhere(t *testing.T) {
-	c := newClient("x", nil, nil)
+	c := newClient("x", only(), nil)
 	k := contact{UUID: aliceID, NickName: "Ally", GivenName: "Alice"}
 	k.Profile.GivenName = "Alicia"
 	c.names.replace([]contact{k})

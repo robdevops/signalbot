@@ -11,6 +11,7 @@ import (
 
 	"github.com/robdevops/signalbot/internal/bot"
 	"github.com/robdevops/signalbot/internal/feature"
+	"github.com/robdevops/signalbot/internal/kit/allow"
 )
 
 func parse(t *testing.T, s string) *envelope {
@@ -29,7 +30,7 @@ const (
 )
 
 func TestAddressed(t *testing.T) {
-	allowed := map[string]bool{"+1555": true}
+	allowed := only("+1555")
 	commands := map[string]bool{"geo": true}
 	for _, tc := range []struct {
 		name, env string
@@ -64,24 +65,24 @@ func TestAddressed(t *testing.T) {
 		{"a sticker with no text", `{` + fromBob + `,"dataMessage":{"sticker":{"packId":"p","stickerId":1},` + inGroup + `}}`, false},
 	} {
 		self := botID
-		if got := isAddressed(parse(t, tc.env), self, allowed, commands); got != tc.want {
+		if got := isAddressed(parse(t, tc.env), self, allowed.Listed(parse(t, tc.env).ids()...), commands); got != tc.want {
 			t.Errorf("%s: %v", tc.name, got)
 		}
-		if isAddressed(parse(t, tc.env), "", allowed, commands) {
+		if isAddressed(parse(t, tc.env), "", allowed.Listed(parse(t, tc.env).ids()...), commands) {
 			t.Errorf("%s: addressed before the bot's ID is known", tc.name)
 		}
 	}
 	// With no commands registered, a slash word in a group is chatter.
-	if isAddressed(parse(t, `{`+fromBob+`,"dataMessage":{"message":"/geo",`+inGroup+`}}`), botID, allowed, nil) {
+	if isAddressed(parse(t, `{`+fromBob+`,"dataMessage":{"message":"/geo",`+inGroup+`}}`), botID, true, nil) {
 		t.Error("a slash word is addressed with no commands registered")
 	}
 }
 
 func TestWatchCommands(t *testing.T) {
 	captureLogs(t)
-	c := newClient("x", nil, nil)
+	c := newClient("x", allow.Policy{}, nil)
 	env := parse(t, `{`+fromBob+`,"dataMessage":{"message":"/geo 90s",`+inGroup+`}}`)
-	if c.message(env, botID).Addressed {
+	if c.message(env, botID, false).Addressed {
 		t.Fatal("addressed before Watch named the commands")
 	}
 	connected(c)
@@ -91,7 +92,7 @@ func TestWatchCommands(t *testing.T) {
 		t.Errorf("before Watch the reader made %T, want chatter", r)
 	}
 	c.Watch(bot.Watch{Commands: []bot.Command{{Name: "geo"}}})
-	if m := c.message(env, botID); !m.Addressed || m.Text != "/geo 90s" {
+	if m := c.message(env, botID, false); !m.Addressed || m.Text != "/geo 90s" {
 		t.Errorf("after Watch: addressed %v, text %q", m.Addressed, m.Text)
 	}
 	if r, ok := c.event(env); !ok {
@@ -110,7 +111,7 @@ func TestWatchCommands(t *testing.T) {
 
 func TestMessageInGroup(t *testing.T) {
 	captureLogs(t)
-	c := newClient("x", nil, nil)
+	c := newClient("x", allow.Policy{}, nil)
 	k := contact{UUID: aliceID}
 	k.Profile.GivenName = "Alice"
 	c.names.replace([]contact{k})
@@ -120,7 +121,7 @@ func TestMessageInGroup(t *testing.T) {
 		`"attachments":[{"contentType":"image/jpeg","id":"a1","size":10},{"contentType":"image/png","id":"big","size":`+"99999999"+`,"thumbnail":{"contentType":"image/png","id":"t1","size":5}},{"contentType":"text/plain","id":"x","size":1}],`+
 		`"quote":{"authorUuid":"`+botID+`","text":"earlier","attachments":[{"contentType":"image/png","id":"q1","size":5},{"contentType":"image/png","id":"q2","size":5},{"contentType":"image/png","id":"q3","size":5}]},`+
 		`"sticker":{"packId":"p","stickerId":2},`+inGroup+`}}`)
-	m := c.message(e, botID)
+	m := c.message(e, botID, true)
 	want := feature.Message{
 		Chat: feature.Chat{GroupID: groupID}, Sender: bobID, Name: "Bob",
 		Text:    "ask @Alice and [unnamed user] 🎉",
@@ -138,9 +139,9 @@ func TestMessageInGroup(t *testing.T) {
 }
 
 func TestMessageInDM(t *testing.T) {
-	c := newClient("x", map[string]bool{aliceID: true}, nil)
+	c := newClient("x", only(aliceID), nil)
 	e := parse(t, `{"sourceUuid":"`+aliceID+`","sourceName":"Alice\nSmith","dataMessage":{"message":"hi","quote":{"authorUuid":"`+bobID+`","text":"x"}}}`)
-	m := c.message(e, botID)
+	m := c.message(e, botID, true)
 	if m.Chat != (feature.Chat{User: aliceID}) || m.Name != "Alice Smith" || !m.Addressed || m.Quote.Author != "" || m.Quote.Bot {
 		t.Fatalf("got %+v %+v", m, m.Quote)
 	}
@@ -148,8 +149,7 @@ func TestMessageInDM(t *testing.T) {
 		t.Fatalf("a DM showed people: %v", p)
 	}
 	c.names.replace([]contact{{UUID: bobID, GivenName: "Bob"}})
-	delete(c.allowed, aliceID)
-	if m := c.message(e, botID); m.Quote.Author != "Bob" || m.Addressed {
+	if m := c.message(e, botID, false); m.Quote.Author != "Bob" || m.Addressed {
 		t.Fatalf("got %+v %+v", m, m.Quote)
 	}
 }
@@ -158,7 +158,7 @@ func TestMessageInDM(t *testing.T) {
 // text.
 func TestMentionsOddOffsets(t *testing.T) {
 	captureLogs(t)
-	c := newClient("x", nil, nil)
+	c := newClient("x", allow.Policy{}, nil)
 	for _, tc := range []struct {
 		ms   []mention
 		want string
@@ -178,13 +178,13 @@ func TestMentionsOddOffsets(t *testing.T) {
 // addressed or not.
 func TestUnresolvedMentionNotLogged(t *testing.T) {
 	logs := captureLogs(t)
-	c := newClient("x", nil, nil)
+	c := newClient("x", allow.Policy{}, nil)
 	unknown := `"mentions":[{"uuid":"` + aliceID + `","start":0,"length":1}]`
-	if m := c.message(parse(t, `{`+fromBob+`,"dataMessage":{"message":"￼ hi",`+unknown+`,`+inGroup+`}}`), botID); m.Text != "[unnamed user] hi" {
+	if m := c.message(parse(t, `{`+fromBob+`,"dataMessage":{"message":"￼ hi",`+unknown+`,`+inGroup+`}}`), botID, false); m.Text != "[unnamed user] hi" {
 		t.Fatalf("text %q", m.Text)
 	}
 	both := `"mentions":[{"uuid":"` + botID + `","start":0,"length":1},{"uuid":"` + aliceID + `","start":2,"length":1}]`
-	if m := c.message(parse(t, `{`+fromBob+`,"dataMessage":{"message":"￼ ￼",`+both+`,`+inGroup+`}}`), botID); m.Text != "[unnamed user]" {
+	if m := c.message(parse(t, `{`+fromBob+`,"dataMessage":{"message":"￼ ￼",`+both+`,`+inGroup+`}}`), botID, false); m.Text != "[unnamed user]" {
 		t.Fatalf("text %q", m.Text)
 	}
 	if logs.String() != "" {
@@ -211,7 +211,7 @@ func connected(c *Client) {
 // stranger is logged by ID only.
 func TestEvents(t *testing.T) {
 	logs := captureLogs(t)
-	c := newClient("x", map[string]bool{aliceID: true}, nil)
+	c := newClient("x", only(aliceID), nil)
 	c.closed.Store(true) // so a group change schedules no contact load
 	connected(c)
 	event := func(env string) (bot.Received, bool) { return c.event(parse(t, env)) }
@@ -251,7 +251,7 @@ func TestEvents(t *testing.T) {
 // decides it once the ID is known.
 func TestEventsBeforeTheIDIsKnown(t *testing.T) {
 	logs := captureLogs(t)
-	c := newClient("x", map[string]bool{aliceID: true}, nil)
+	c := newClient("x", only(aliceID), nil)
 	c.names.refreshedAt = time.Now() // so loading names doesn't try the socket
 	var rs []bot.Incoming
 	for _, env := range []string{
@@ -292,7 +292,7 @@ func TestLoad(t *testing.T) {
 	f := newFake(t)
 	f.set("listContacts", `[{"uuid":"`+botID+`","givenName":"Botty"},{"uuid":"`+aliceID+`","givenName":"Alice"}]`)
 	f.set("listStickerPacks", `[{"packId":"p","title":"Pack","stickers":[{"id":2,"emoji":"🙂"}]}]`)
-	c := newClient(f.sock, nil, nil)
+	c := newClient(f.sock, allow.Policy{}, nil)
 	got, conn := run(t, c, f)
 	receive(conn, `{`+fromBob+`,"dataMessage":{"message":"￼ ask ￼","sticker":{"packId":"p","stickerId":2},`+
 		`"mentions":[{"uuid":"`+botID+`","start":0,"length":1},{"uuid":"`+aliceID+`","start":6,"length":1}],`+inGroup+`}}`)
@@ -317,7 +317,7 @@ func TestReachable(t *testing.T) {
 	f := newFake(t)
 	f.set("listContacts", `[{"uuid":"`+aliceID+`","number":"+1555","givenName":"Alice"},{"uuid":"`+bobID+`","givenName":"Bob"}]`)
 	f.set("listGroups", `[{"id":"`+groupID+`","isMember":true},{"id":"bGVmdA==","isMember":false}]`)
-	c := newClient(f.sock, map[string]bool{"+1555": true}, nil)
+	c := newClient(f.sock, only("+1555"), nil)
 	run(t, c, f)
 	ctx := context.Background()
 	for chat, want := range map[feature.Chat]bool{
@@ -344,7 +344,7 @@ func TestDelivered(t *testing.T) {
 	f := newFake(t)
 	f.set("listContacts", `[{"uuid":"`+botID+`","givenName":"Botty"},{"uuid":"`+aliceID+`","number":"+1555","givenName":"Alice"},{"uuid":"`+bobID+`","givenName":"Bob"}]`)
 	f.set("listGroups", `[{"id":"`+groupID+`","name":"Family","isMember":true,"members":[{"uuid":"`+aliceID+`"},{"uuid":"`+bobID+`"}]}]`)
-	allowed := map[string]bool{"+1555": true}
+	allowed := only("+1555")
 	c := newClient(f.sock, allowed, nil)
 	ctx := context.Background()
 	type result struct {
@@ -386,12 +386,12 @@ func TestDelivered(t *testing.T) {
 	}
 	gone, cancel := context.WithCancel(ctx)
 	cancel()
-	if _, ok := newClient("x", nil, nil).Delivered(gone, feature.Message{Text: "secret words"}); ok {
+	if _, ok := newClient("x", allow.Policy{}, nil).Delivered(gone, feature.Message{Text: "secret words"}); ok {
 		t.Error("delivered while not connected")
 	}
 	out := logs.String()
 	for _, want := range []string{"delivered message dropped: its sender is not in the group\n",
-		"delivered message from " + bobID + " dropped because not in SIGNAL_DM_USER_IDS (add this ID to allow DMs)\n",
+		"delivered message dropped: its sender may no longer DM the bot (SIGNAL_DM_USER_IDS)\n",
 		"delivered message dropped: not connected to signal-cli after 10s\n"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("no %q in logs %q", want, out)
@@ -407,7 +407,7 @@ func TestDelivered(t *testing.T) {
 // and one before the bot's ID is known don't reach it, and none is logged.
 func TestReactions(t *testing.T) {
 	logs := captureLogs(t)
-	c := newClient("x", map[string]bool{aliceID: true}, nil)
+	c := newClient("x", only(aliceID), nil)
 	react := func(from, where, target string, remove bool) string {
 		return `{` + from + `,"dataMessage":{` + where + `"reaction":{"emoji":"👍","targetAuthorUuid":"` + target + `","targetSentTimestamp":1700,"isRemove":` + map[bool]string{true: "true", false: "false"}[remove] + `}}}`
 	}
@@ -441,9 +441,9 @@ func TestReactions(t *testing.T) {
 // Mentions in a quoted message are names, as in a message, never U+FFFC;
 // the bot's own is dropped.
 func TestQuoteMentions(t *testing.T) {
-	c := newClient("x", nil, nil)
+	c := newClient("x", allow.Policy{}, nil)
 	e := parse(t, `{`+fromBob+`,"dataMessage":{"message":"and?",`+atBot+`,`+inGroup+`,"quote":{"authorUuid":"`+aliceID+`","text":"￼ ask ￼","mentions":[{"uuid":"`+botID+`","start":0,"length":1},{"uuid":"`+bobID+`","name":"Bob","start":6,"length":1}]}}}`)
-	if q := c.message(e, botID).Quote; q == nil || q.Text != "ask @Bob" {
+	if q := c.message(e, botID, false).Quote; q == nil || q.Text != "ask @Bob" {
 		t.Fatalf("quote %+v", q)
 	}
 }
@@ -453,7 +453,7 @@ func TestQuoteMentions(t *testing.T) {
 // original's attachments and tells the core.
 func TestEditAndDelete(t *testing.T) {
 	captureLogs(t)
-	c := newClient("x", nil, nil)
+	c := newClient("x", allow.Policy{}, nil)
 	c.id.Store(botID)
 	clock := time.Unix(1000, 0)
 	c.recent.now = func() time.Time { return clock }
@@ -489,10 +489,10 @@ func TestEditAndDelete(t *testing.T) {
 // Someone mentioned only in the quote is learned, so the model's @Name for
 // them becomes a mention.
 func TestQuoteMentionsLearned(t *testing.T) {
-	c := newClient("x", nil, nil)
+	c := newClient("x", allow.Policy{}, nil)
 	c.names.replace([]contact{{UUID: aliceID, GivenName: "Carol"}})
 	e := parse(t, `{`+fromBob+`,"dataMessage":{"message":"and?",`+atBot+`,`+inGroup+`,"quote":{"authorUuid":"`+bobID+`","text":"￼ check","mentions":[{"uuid":"`+aliceID+`","number":"`+aliceID+`","name":"`+aliceID+`","start":0,"length":1}]}}}`)
-	if q := c.message(e, botID).Quote; q.Text != "@Carol check" {
+	if q := c.message(e, botID, false).Quote; q.Text != "@Carol check" {
 		t.Fatalf("quote %q", q.Text)
 	}
 	var learned []string
@@ -507,7 +507,7 @@ func TestQuoteMentionsLearned(t *testing.T) {
 // and keeps nothing new. A group admin's delete forgets the target's.
 func TestDeletesAndEditsFromAnyone(t *testing.T) {
 	captureLogs(t)
-	c := newClient("x", map[string]bool{aliceID: true}, nil)
+	c := newClient("x", only(aliceID), nil)
 	c.id.Store(botID)
 	dm := feature.Chat{User: bobID}
 	del := parse(t, `{`+fromBob+`,"timestamp":300,"dataMessage":{"timestamp":300,"remoteDelete":{"targetTimestamp":100}}}`)
@@ -537,7 +537,7 @@ func TestDeletesAndEditsFromAnyone(t *testing.T) {
 // bot's messages: in a DM by its destination, in a group by its group.
 // Other syncs, and a sync from anyone else, are nothing to the bot.
 func TestSyncedDeletesAndEdits(t *testing.T) {
-	c := newClient("x", nil, nil)
+	c := newClient("x", allow.Policy{}, nil)
 	c.id.Store(botID)
 	self := `"sourceUuid":"` + botID + `","timestamp":900`
 	for _, tc := range []struct {
