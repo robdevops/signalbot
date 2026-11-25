@@ -9,6 +9,7 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -147,6 +148,10 @@ func TestCommands(t *testing.T) {
 	}
 	h.receive(chatter("/hi")) // not addressed: not a command
 	h.noSend()
+	h.net.mu.Lock()
+	w := h.net.watch
+	h.net.mu.Unlock()
+	equal(t, "commands the network watches for", w.Commands, []string{"hi", "pick"})
 }
 
 // A group with Keywords is offered when a message matches, and for the
@@ -613,4 +618,370 @@ func TestReceivedKinds(t *testing.T) {
 	}
 	h.settle()
 	h.noSend()
+}
+
+// A Done Action handles the message: an addressed one gets no answer and
+// no model; an unaddressed one is kept nowhere, even with a Context, and
+// later hooks never see it.
+func TestDone(t *testing.T) {
+	var later []string
+	h := start(t, options{features: func(b *Bot) {
+		b.OnMessage(func(_ context.Context, m feature.Message) feature.Action {
+			if strings.HasPrefix(m.Text, "claimed") {
+				return feature.Action{Done: true, Context: "never kept", Answer: "never sent"}
+			}
+			return feature.Action{}
+		})
+		b.OnMessage(func(_ context.Context, m feature.Message) feature.Action {
+			later = append(later, m.Text)
+			if !m.Addressed {
+				return feature.Action{Context: m.Name + ": " + m.Text}
+			}
+			return feature.Action{}
+		})
+	}})
+	h.receive(dm("claimed in a DM"))
+	h.receive(atBot("claimed in the group"))
+	h.receive(chatter("claimed chatter"))
+	h.receive(chatter("kept chatter"))
+	h.settle()
+	h.noSend()
+	if len(h.requests()) != 0 || h.typing() != 0 {
+		t.Fatalf("the model was asked, or typing shown")
+	}
+	h.eventually("the chatter", func() bool { return len(later) == 1 })
+	r, _ := h.ask(atBot("what's new?"))
+	equal(t, "model got", contents(r), []string{"user: [Messages not addressed to you, for context only:]\nBob: kept chatter", "user: Alice: what's new?"})
+	equal(t, "later hooks saw", later, []string{"kept chatter", "what's new?"})
+}
+
+// A command's pictures are sent with its Answer, without the model, by the
+// caption rule; OnSent gets the timestamps Send returned.
+func TestActionPictures(t *testing.T) {
+	var mu sync.Mutex // OnSent runs on the chat's worker
+	var sentAt [][]int64
+	onSent := func(ts []int64, _ bool) { mu.Lock(); sentAt = append(sentAt, ts); mu.Unlock() }
+	h := start(t, options{features: func(b *Bot) {
+		b.Command("plain", func(context.Context, feature.Message, string) feature.Action {
+			return feature.Action{Answer: "here", Pictures: []feature.Picture{{Data: png}}, OnSent: onSent}
+		})
+		b.Command("captioned", func(context.Context, feature.Message, string) feature.Action {
+			return feature.Action{Answer: "never sent", Pictures: []feature.Picture{{Data: png, Caption: "a caption"}, {Data: png}}, OnSent: onSent}
+		})
+		b.Command("alone", func(context.Context, feature.Message, string) feature.Action {
+			return feature.Action{Pictures: []feature.Picture{{Data: png}}}
+		})
+	}})
+	h.receive(dm("/plain"))
+	if s := h.nextSend(); s.text != "here" || len(s.images) != 1 || string(s.images[0].Data) != string(png) {
+		t.Fatalf("sent %+v", s)
+	}
+	h.receive(atBot("/captioned"))
+	if s := h.nextSend(); s.text != "a caption" || len(s.images) != 2 || s.chat.GroupID != groupID {
+		t.Fatalf("sent %+v", s)
+	}
+	h.receive(dm("/alone"))
+	if s := h.nextSend(); s.text != "" || len(s.images) != 1 {
+		t.Fatalf("sent %+v", s)
+	}
+	h.settle()
+	if len(h.requests()) != 0 {
+		t.Fatal("the model was asked")
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if fmt.Sprint(sentAt) != "[[5001] [5002]]" {
+		t.Fatalf("OnSent got %v", sentAt)
+	}
+}
+
+// strangerID can't be reached: the fake network allows only Alice's and
+// Bob's DMs.
+const strangerID = "33333333-3333-4333-8333-333333333333"
+
+// A post goes to a group or a DM, with @Name linked to the chat's known
+// names, unless the network says the bot can no longer post there. History
+// keeps a labelled one as the bot's own, clamped, and nothing of one with
+// no label. OnSent is called once: when it is sent, or dropped.
+func TestPost(t *testing.T) {
+	h := start(t, options{})
+	type outcome struct {
+		sent    []int64
+		dropped bool
+	}
+	outcomes := make(chan outcome, 16)
+	post := func(p feature.Post) {
+		p.OnSent = func(sent []int64, dropped bool) { outcomes <- outcome{sent, dropped} }
+		h.b.Post(p)
+	}
+	next := func() outcome {
+		t.Helper()
+		select {
+		case d := <-outcomes:
+			return d
+		case <-time.After(5 * time.Second):
+			t.Fatal("OnSent never called")
+			return outcome{}
+		}
+	}
+	group := feature.Chat{GroupID: groupID}
+	h.ask(atBot("hello")) // learns Alice's name
+
+	post(feature.Post{Chat: group, Label: "Label", Text: "well done @Alice"})
+	if s := h.nextSend(); s.text != "well done @Alice" || s.chat != group || s.known["alice"] != aliceID {
+		t.Fatalf("sent %+v", s)
+	}
+	if d := next(); d.dropped || fmt.Sprint(d.sent) != "[5002]" {
+		t.Fatalf("OnSent got %+v", d)
+	}
+	post(feature.Post{Chat: group, Label: "Label", Text: "never sent", Pictures: []feature.Picture{{Data: png, Caption: "a caption", HistoryNote: "[a picture]"}}})
+	if s := h.nextSend(); s.text != "a caption" || len(s.images) != 1 {
+		t.Fatalf("sent %+v", s)
+	}
+	next()
+	post(feature.Post{Chat: group, Label: "Label", Text: strings.Repeat("x", 600)})
+	h.nextSend()
+	next()
+	r, _ := h.ask(atBot("and?"))
+	equal(t, "history", contents(r)[2:5], []string{"assistant: [Label] well done @Alice", "assistant: [Label] [a picture]\n", "assistant: [Label] " + strings.Repeat("x", 500-len("[Label] ")) + "…"})
+
+	// In a DM, with no label, as a timer tells a user something: nothing
+	// is kept.
+	post(feature.Post{Chat: feature.Chat{User: aliceID}, Text: "your reminder didn't post"})
+	if s := h.nextSend(); s.text != "your reminder didn't post" || s.chat.User != aliceID {
+		t.Fatalf("sent %+v", s)
+	}
+	next()
+	r, _ = h.ask(dm("anything else?"))
+	equal(t, "DM history", contents(r), []string{"user: anything else?"})
+
+	// A reply to an earlier post reaches the network, labelled or not; a
+	// plain post has none.
+	for _, p := range []feature.Post{{Chat: group, Label: "Label", Text: "the answer", ReplyTo: 5002}, {Chat: group, Text: "a reply", ReplyTo: 7}} {
+		post(p)
+		if s := h.nextSend(); s.reply != p.ReplyTo || s.text != p.Text {
+			t.Fatalf("sent %+v", s)
+		}
+		next()
+	}
+	post(feature.Post{Chat: group, Text: "plain"})
+	if s := h.nextSend(); s.reply != 0 {
+		t.Fatalf("sent %+v", s)
+	}
+	next()
+
+	for _, chat := range []feature.Chat{{User: strangerID}, {GroupID: "other"}} {
+		post(feature.Post{Chat: chat, Label: "Label", Text: "never sent"})
+		if d := next(); !d.dropped || d.sent != nil {
+			t.Fatalf("OnSent got %+v", d)
+		}
+	}
+	post(feature.Post{Chat: group}) // nothing to send
+	if d := next(); !d.dropped {
+		t.Fatalf("OnSent got %+v", d)
+	}
+	h.settle()
+	h.noSend()
+	if len(outcomes) != 0 {
+		t.Fatalf("OnSent called again: %+v", <-outcomes)
+	}
+	if n := strings.Count(h.logs.String(), "<6>dropped a post: its chat isn't reachable\n"); n != 2 {
+		t.Fatalf("%d drops logged:\n%s", n, h.logs)
+	}
+	if strings.Contains(h.logs.String(), "never sent") {
+		t.Fatalf("text logged:\n%s", h.logs)
+	}
+}
+
+// A post that doesn't fit in its chat's mailbox is dropped, with a warning
+// of its own, and OnSent says so.
+func TestPostDropped(t *testing.T) {
+	h := start(t, options{})
+	h.holdModel()
+	h.receive(dm("first"))
+	h.eventually("the first request", func() bool { return len(h.requests()) == 1 })
+	for _, s := range []string{"b", "c", "d", "e"} {
+		h.receive(dm(s))
+	}
+	dropped := make(chan bool, 1)
+	h.b.Post(feature.Post{Chat: feature.Chat{User: aliceID}, Text: "never sent", OnSent: func(_ []int64, d bool) { dropped <- d }})
+	if !<-dropped {
+		t.Fatal("OnSent said it was sent")
+	}
+	if !strings.Contains(h.logs.String(), "<4>dropped a post: 4 messages are already waiting in this chat\n") {
+		t.Fatalf("logs:\n%s", h.logs)
+	}
+	h.release()
+	for range 2 {
+		if s := h.nextSend(); s.text != "ok" {
+			t.Fatalf("sent %+v", s)
+		}
+	}
+	h.settle()
+	h.noSend()
+}
+
+// A send that fails counts as dropped, for a post with or without a label
+// and for a hook's answer, so the feature can try again; a labelled post
+// leaves history as it was, so trying again doesn't keep it twice.
+func TestFailedSendDropped(t *testing.T) {
+	type outcome struct {
+		sent    []int64
+		dropped bool
+	}
+	outcomes := make(chan outcome, 4)
+	onSent := func(sent []int64, dropped bool) { outcomes <- outcome{sent, dropped} }
+	h := start(t, options{features: func(b *Bot) {
+		b.Command("ping", func(context.Context, feature.Message, string) feature.Action {
+			return feature.Action{Answer: "pong", OnSent: onSent}
+		})
+	}})
+	h.net.fail.Store(true)
+	h.b.Post(feature.Post{Chat: feature.Chat{User: aliceID}, Text: "never sent", OnSent: onSent})
+	h.b.Post(feature.Post{Chat: feature.Chat{GroupID: groupID}, Label: "Label", Text: "never sent", OnSent: onSent})
+	h.receive(dm("/ping"))
+	for range 3 {
+		select {
+		case o := <-outcomes:
+			if !o.dropped || o.sent != nil {
+				t.Fatalf("OnSent got %+v", o)
+			}
+		case <-time.After(5 * time.Second):
+			t.Fatal("OnSent never called")
+		}
+	}
+	h.settle()
+	if len(outcomes) != 0 {
+		t.Fatalf("OnSent called again: %+v", <-outcomes)
+	}
+	if hist := h.b.chats.History(feature.Chat{GroupID: groupID}.Key()); len(hist) != 0 {
+		t.Fatalf("history %v", hist)
+	}
+}
+
+// The bot's reactions wait at low priority: merged into one item, a later
+// one on the same message replacing the earlier, sent after what waited
+// with them, dropped first to make room, and skipped for a message deleted
+// since.
+func TestReact(t *testing.T) {
+	h := start(t, options{})
+	group := feature.Chat{GroupID: groupID}
+	msg := func(ts int64) feature.Message {
+		return feature.Message{Chat: group, Sender: aliceID, Timestamp: ts}
+	}
+	h.b.React(group, msg(1), "👍")
+	if s := h.nextSend(); s.text != "react 👍 to "+aliceID+"@1" {
+		t.Fatalf("sent %+v", s)
+	}
+
+	h.holdModel()
+	h.receive(atBot("zero")) // holds the chat's worker, so the rest wait
+	h.eventually("the first request", func() bool { return len(h.requests()) == 1 })
+	h.b.React(group, msg(2), "👍")
+	h.b.React(group, msg(3), "📍")
+	h.b.React(group, msg(2), "🎉")
+	h.receive(atBot("one"))
+	h.release()
+	for _, want := range []string{"ok", "ok", "react 📍 to " + aliceID + "@3", "react 🎉 to " + aliceID + "@2"} {
+		if s := h.nextSend(); s.text != want {
+			t.Fatalf("sent %q, want %q", s.text, want)
+		}
+	}
+	h.settle()
+
+	// Four messages fill the mailbox, so the reactions waiting there go.
+	h.holdModel()
+	h.receive(atBot("zero again"))
+	h.eventually("the request", func() bool { return len(h.requests()) == 3 })
+	h.b.React(group, msg(4), "👍")
+	h.b.React(group, msg(5), "👍")
+	for _, s := range []string{"a", "b", "c", "d"} {
+		h.receive(atBot(s))
+	}
+	if !strings.Contains(h.logs.String(), "<4>dropped 2 reactions: made room in its chat for a message\n") {
+		t.Fatalf("logs:\n%s", h.logs)
+	}
+	h.release()
+	for range 2 {
+		if s := h.nextSend(); s.text != "ok" {
+			t.Fatalf("sent %+v", s)
+		}
+	}
+	h.settle()
+	h.noSend()
+
+	// A reaction to a message deleted while it waited is skipped.
+	h.holdModel()
+	h.receive(atBot("zero once more"))
+	h.eventually("the request", func() bool { return len(h.requests()) == 5 })
+	h.b.React(group, msg(6), "👍")
+	h.net.handle(Deleted{Chat: group, Sender: aliceID, Sent: 6, At: 7})
+	h.release()
+	if s := h.nextSend(); s.text != "ok" {
+		t.Fatalf("sent %+v", s)
+	}
+	h.settle()
+	h.noSend()
+	if strings.Contains(h.logs.String(), "dropped a message") {
+		t.Fatalf("logs:\n%s", h.logs)
+	}
+}
+
+// Outside a tool, CallAPI is made only for a ctx charged to a chat: it is
+// refused when that chat is over its daily budget, and what it cost is
+// added to that chat's budget. The model is the bot's own.
+func TestCallAPICharged(t *testing.T) {
+	dir := t.TempDir()
+	h := start(t, options{cfg: func(c *config.Config) { c.DailyBudget, c.StateDir = 0.0015, dir }})
+	alice := feature.Chat{User: "+15550000001"}
+	group := feature.Chat{GroupID: "Z3JvdXA="}
+	body := map[string]any{"model": "x/dearer", "messages": []any{map[string]any{"role": "user", "content": "hi"}}}
+	if _, err := h.b.CallAPI(context.Background(), "/chat/completions", body); err == nil {
+		t.Fatal("a call neither from a tool nor charged was made")
+	}
+	if n := len(h.requests()); n != 0 {
+		t.Fatalf("%d requests", n)
+	}
+	charged := feature.ChargeTo(context.Background(), alice)
+	if data, err := h.b.CallAPI(charged, "/chat/completions", body); err != nil || !strings.Contains(string(data), `"ok"`) {
+		t.Fatalf("got %s, %v", data, err)
+	}
+	if r := h.requests(); len(r) != 1 || r[0]["model"] != "test/test-model" {
+		t.Fatalf("requests %v", r)
+	}
+	if over, _ := h.b.budget.over(alice.Key()); over {
+		t.Fatal("over after $0.001")
+	}
+	if _, err := h.b.CallAPI(charged, "/chat/completions", body); err != nil {
+		t.Fatal(err)
+	}
+	if over, _ := h.b.budget.over(alice.Key()); !over {
+		t.Fatal("the cost wasn't added to the chat's budget")
+	}
+	if _, err := h.b.CallAPI(charged, "/chat/completions", body); err != errOverBudget {
+		t.Fatalf("over budget: %v", err)
+	}
+	if n := len(h.requests()); n != 2 {
+		t.Fatalf("%d requests", n)
+	}
+	if _, err := h.b.CallAPI(feature.ChargeTo(context.Background(), group), "/chat/completions", body); err != nil {
+		t.Fatalf("another chat: %v", err)
+	}
+	if over, _ := h.b.budget.over(group.Key()); over {
+		t.Fatal("another chat is over")
+	}
+}
+
+// With no daily budget, a charged call is made all the same.
+func TestCallAPIChargedNoBudget(t *testing.T) {
+	h := start(t, options{})
+	charged := feature.ChargeTo(context.Background(), feature.Chat{User: "+15550000002"})
+	for range 3 {
+		if _, err := h.b.CallAPI(charged, "/chat/completions", map[string]any{}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if h.b.budget != nil || len(h.requests()) != 3 {
+		t.Fatalf("budget %v, %d requests", h.b.budget, len(h.requests()))
+	}
 }

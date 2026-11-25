@@ -122,7 +122,11 @@ func (c *Client) upload(ctx context.Context, method string, fields map[string]st
 		w.WriteField(k, v)
 	}
 	for name, data := range files {
-		fw, err := w.CreateFormFile(name, name+".png")
+		ext := ".png" // pictures are sent as PNG; a voice message is MP3
+		if name == "voice" {
+			ext = ".mp3"
+		}
+		fw, err := w.CreateFormFile(name, name+ext)
 		if err != nil {
 			return err
 		}
@@ -183,6 +187,9 @@ func (c *Client) WaitID(ctx context.Context) string {
 	return c.selfID()
 }
 
+// Name is the network's name.
+func (c *Client) Name() string { return "telegram" }
+
 // BotName is the bot's first name, or "telegrambot" until known.
 func (c *Client) BotName() string {
 	if n, _ := c.name.Load().(string); n != "" {
@@ -197,8 +204,9 @@ func (c *Client) Prompt() string {
 }
 
 // Watch says whether the core has an event hook, so updates only events
-// would use are skipped without one.
-func (c *Client) Watch(events bool) { c.watch.Store(events) }
+// would use are skipped without one. Its commands go unused: Telegram marks
+// a command at the start of a message itself (bot_command).
+func (c *Client) Watch(w bot.Watch) { c.watch.Store(w.Events) }
 
 // Run learns who the bot is, then long-polls getUpdates and hands each
 // update the core may act on to handle, on this goroutine, until ctx ends.

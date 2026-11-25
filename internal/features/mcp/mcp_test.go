@@ -22,6 +22,7 @@ import (
 	"testing"
 	"time"
 
+	ext "github.com/robdevops/signalbot/addon"
 	"github.com/robdevops/signalbot/internal/feature"
 	"github.com/robdevops/signalbot/internal/feature/featuretest"
 	"github.com/robdevops/signalbot/internal/kit/logx"
@@ -89,6 +90,7 @@ type fakeMCP struct {
 	mu       sync.Mutex
 	session  string // the live session id
 	version  string // the bot's, as initialize sent it
+	network  string // the chat network, as initialize offered it
 	inits    int
 	badCalls int // requests that carried the wrong session id
 }
@@ -103,9 +105,15 @@ func (f *fakeMCP) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if req.Method == "initialize" {
-		var p struct{ ClientInfo struct{ Version string } }
+		var p struct {
+			ClientInfo   struct{ Version string }
+			Capabilities struct {
+				Experimental map[string]struct{ Network string }
+			}
+		}
 		json.Unmarshal(req.Params, &p)
 		f.inits, f.version = f.inits+1, p.ClientInfo.Version
+		f.network = p.Capabilities.Experimental[ext.KeyAddon].Network
 		f.session = fmt.Sprintf("s%d", f.inits)
 		w.Header().Set("Mcp-Session-Id", f.session)
 	} else if r.Header.Get("Mcp-Session-Id") != f.session {
@@ -177,7 +185,7 @@ func TestNoConfig(t *testing.T) {
 	}
 }
 
-// With no model, no server is started, and the log says so.
+// With no model, no server but an addon is started, and the log says so.
 func TestNoModel(t *testing.T) {
 	var started atomic.Bool
 	srv := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { started.Store(true) }))
@@ -186,7 +194,7 @@ func TestNoModel(t *testing.T) {
 	if err != nil || len(h.ToolGroups()) != 0 || started.Load() {
 		t.Fatalf("groups %+v, %v, started %v", h.ToolGroups(), err, started.Load())
 	}
-	if l := log.String(); l != "<4>MCP_CONFIG is set but no model is configured, so MCP servers were not started\n" {
+	if l := log.String(); l != "<4>MCP_CONFIG is set but no model is configured, so only addon servers were started\n" {
 		t.Fatalf("log %q", l)
 	}
 }
@@ -248,9 +256,12 @@ func TestLoad(t *testing.T) {
 	// settings it could be, and both lists at once too; keys other clients
 	// write are ignored, so a pasted entry starts.
 	for bad, want := range map[string]string{
-		`{"mcpServers":{"w":{"url":"u","allowedTools":["t"]}}}`:                                 `: MCP server "w": unknown setting "allowedTools" (settings are url, headers, command, args, env, allowed_tools, blocked_tools, instructions, keywords, chat_commands, disabled)`,
-		`{"mcpServers":{"w":{"url":"u","chat_commands":{"x":{"tool":"t","requireArg":true}}}}}`: `: MCP server "w": chat command "x": unknown setting "requireArg" (settings are tool, require_arg, example)`,
-		`{"mcpServers":{"w":{"url":"u","allowed_tools":[],"blocked_tools":["t"]}}}`:             `: MCP server "w": has both allowed_tools and blocked_tools; use one`,
+		`{"mcpServers":{"w":{"url":"u","allowedTools":["t"]}}}`:                                                              `: MCP server "w": unknown setting "allowedTools" (settings are url, headers, command, args, env, allowed_tools, blocked_tools, instructions, keywords, chat_commands, disabled, addon)`,
+		`{"mcpServers":{"w":{"url":"u","chat_commands":{"x":{"tool":"t","requireArg":true}}}}}`:                              `: MCP server "w": chat command "x": unknown setting "requireArg" (settings are tool, require_arg, example, direct, timeout)`,
+		`{"mcpServers":{"w":{"url":"u","chat_commands":{"x":{"tool":"t","timeout":"30s"}}}}}`:                                `: MCP server "w": chat command "x" has a timeout, which only a direct command takes`,
+		`{"mcpServers":{"w":{"command":"c","addon":{},"chat_commands":{"x":{"tool":"t","direct":true,"timeout":"3m"}}}}}`:    `: MCP server "w": chat command "x": timeout "3m" isn't a time from 1s to 2m, such as 15s or 1m`,
+		`{"mcpServers":{"w":{"command":"c","addon":{},"chat_commands":{"x":{"tool":"t","direct":true,"timeout":"500ms"}}}}}`: `: MCP server "w": chat command "x": timeout "500ms" isn't a time from 1s to 2m, such as 15s or 1m`,
+		`{"mcpServers":{"w":{"url":"u","allowed_tools":[],"blocked_tools":["t"]}}}`:                                          `: MCP server "w": has both allowed_tools and blocked_tools; use one`,
 	} {
 		p := writeConfig(t, bad)
 		if _, err := load(p); err == nil || err.Error() != p+want {
@@ -398,12 +409,12 @@ func TestToolGroups(t *testing.T) {
 		"scout":{"url":"`+serve(t, scoutMCP)+`","allowed_tools":["fail"],
 			"chat_commands":{"scout":{"tool":"fail"}}},
 		"plain_Mcp":{"url":"`+serve(t, &fakeMCP{})+`","allowed_tools":["echo"],"keywords":[]}}}`,
-		func(h *featuretest.Host) { h.Bot.Version = "v1.2.3" })
+		func(h *featuretest.Host) { h.Bot.Version, h.Bot.Network = "v1.2.3", "signal" })
 	if err != nil {
 		t.Fatal(err)
 	}
-	if scoutMCP.version != "v1.2.3" {
-		t.Errorf("clientInfo version %q", scoutMCP.version)
+	if scoutMCP.version != "v1.2.3" || scoutMCP.network != "signal" {
+		t.Errorf("clientInfo version %q, network %q", scoutMCP.version, scoutMCP.network)
 	}
 	gs := h.ToolGroups()
 	if len(gs) != 3 {
@@ -479,12 +490,12 @@ func TestChatCommands(t *testing.T) {
 		"echo what's up":   {},
 		"/echoes whatever": {},
 	} {
-		if got := h.Message(ctx, dm(text)); got != want {
+		if got := h.Message(ctx, dm(text)); got.Answer != want.Answer || got.ToolChoice != want.ToolChoice || got.IsZero() != want.IsZero() {
 			t.Errorf("%q: %+v, want %+v", text, got, want)
 		}
 	}
 	group := feature.Message{Chat: feature.Chat{GroupID: "g"}, Sender: "bob", Name: "Bob", Text: "/echo hi"}
-	if got := h.Message(ctx, group); got != (feature.Action{}) {
+	if got := h.Message(ctx, group); !got.IsZero() {
 		t.Errorf("unaddressed: %+v", got)
 	}
 }
@@ -501,7 +512,7 @@ func TestChatCommandsToolsOff(t *testing.T) {
 		t.Fatalf("names %q, log %q", got, log.String())
 	}
 	m := feature.Message{Chat: feature.Chat{User: "alice"}, Sender: "alice", Name: "Alice", Text: "/echo hi", Addressed: true}
-	if got := h.Message(context.Background(), m); got != (feature.Action{}) {
+	if got := h.Message(context.Background(), m); !got.IsZero() {
 		t.Errorf("tools off: %+v", got)
 	}
 }
@@ -563,7 +574,7 @@ func TestStdio(t *testing.T) {
 	if err := Register(h); err != nil {
 		t.Fatal(err)
 	}
-	defer h.Stop()                                                            // its stdin stays open, so this returns only once SIGTERM stops it
+	defer h.Stop()                                                            // its stdin is closed, and it exits
 	if gs := h.ToolGroups(); len(gs) != 1 || gs[0].System != "Local files." { // the server's own instructions
 		t.Fatalf("groups %+v", gs)
 	}
@@ -652,7 +663,7 @@ func TestCallFailures(t *testing.T) {
 }
 
 // examples/signalbot-mcp.json is the docs' example, as written there, and
-// it loads: the disabled server is dropped, the other kept.
+// it loads: the disabled server is dropped, the others kept, one an addon.
 func TestExampleFile(t *testing.T) {
 	example, err := os.ReadFile("../../../examples/signalbot-mcp.json")
 	if err != nil {
@@ -667,7 +678,9 @@ func TestExampleFile(t *testing.T) {
 	}
 	t.Setenv("WEATHER_TOKEN", "x")
 	s, err := load("../../../examples/signalbot-mcp.json")
-	if err != nil || len(s) != 1 || s["weather"].Headers["Authorization"] != "Bearer x" || s["weather"].ChatCommands["forecast"].Example == "" {
+	if err != nil || len(s) != 3 || s["weather"].Headers["Authorization"] != "Bearer x" || s["weather"].ChatCommands["forecast"].Example == "" ||
+		s["geo"].Addon == nil || !s["geo"].Addon.Watch || !s["geo"].ChatCommands["geo"].Direct || s["geo"].Addon.Model != nil ||
+		s["quiz"].Addon == nil || s["quiz"].Addon.Model == nil || *s["quiz"].Addon.Model != (modelConfig{30, 4000}) {
 		t.Fatalf("loaded %+v, %v", s, err)
 	}
 }

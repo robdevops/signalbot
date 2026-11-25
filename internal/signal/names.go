@@ -216,6 +216,9 @@ func (c *Client) number(aci string) string {
 	return c.names.numbers[aci]
 }
 
+// Name is the network's name.
+func (c *Client) Name() string { return "signal" }
+
 // BotName is the bot's own profile name, or "signalbot", which loadNames loads.
 func (c *Client) BotName() string { return cmp.Or(c.name(c.self()), defaultName) }
 

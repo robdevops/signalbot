@@ -44,12 +44,26 @@ type Happened struct{ Event feature.Event }
 // in its chat's mailbox for the network to ready it.
 type Posted struct{ Message feature.Message }
 
-// Told is a text the bot sends a user in their DM (Tell), waiting in that
-// chat's mailbox.
-type Told struct{ User, Text string }
+// Outgoing is a post the bot makes on its own (Post), waiting in its chat's
+// mailbox.
+type Outgoing struct{ Post feature.Post }
+
+// Reacted is the bot's reactions (React) waiting in a chat's mailbox at low
+// priority, merged into one item, oldest first.
+type Reacted struct {
+	Chat      feature.Chat
+	Reactions []Reaction
+}
+
+// Reaction is an emoji the bot puts on a message.
+type Reaction struct {
+	Message feature.Message
+	Emoji   string
+}
 
 func (r Incoming) chat() feature.Chat     { return r.Chat }
-func (r Told) chat() feature.Chat         { return feature.Chat{User: r.User} }
+func (r Outgoing) chat() feature.Chat     { return r.Post.Chat }
+func (r Reacted) chat() feature.Chat      { return r.Chat }
 func (r Chatter) chat() feature.Chat      { return r.Message.Chat }
 func (r GroupChanged) chat() feature.Chat { return r.Chat }
 func (r Deleted) chat() feature.Chat      { return r.Chat }

@@ -22,13 +22,13 @@ import (
 var features = []func(feature.Host) error{
 	intro.Register,
 	websearch.Register,
-	groupctx.Register,
 	vision.Register,
 	files.Register,
 	links.Register,
 	chartsFeature,     // after websearch, for the tools line; build tag nocharts
 	imagegen.Register, // after charts, for the tools line
 	mcp.Register,      // after websearch and charts, for the tools line
+	groupctx.Register, // after mcp, whose hook must see group chatter first: groupctx keeps all of it
 	schedule.Register,
 	usage.Register,
 }

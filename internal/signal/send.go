@@ -34,9 +34,10 @@ func (c *Client) Prompt() string {
 // Send posts text to chat as one message, as prepare makes it, with each
 // @Name in known (lowercased name to ID), and in a group the bot's own
 // @name, made a real mention, and with the images, each named after its
-// Name or else image_<local time>. A failure is logged, as is a message
-// signal-cli says it could not deliver.
-func (c *Client) Send(chat feature.Chat, text string, pics []feature.Picture, known map[string]string) (sent []int64) {
+// Name or else image_<local time>, quoting the bot's own message sent at
+// replyTo if it isn't 0. A failure is logged, as is a message signal-cli
+// says it could not deliver.
+func (c *Client) Send(chat feature.Chat, text string, pics []feature.Picture, known map[string]string, replyTo int64, audio []byte) (sent []int64) {
 	if n := utf8.RuneCountInString(text); n > maxReply {
 		logx.Warnf("reply truncated from %d chars", n)
 	}
@@ -56,6 +57,9 @@ func (c *Client) Send(chat feature.Chat, text string, pics []feature.Picture, kn
 			mime, name, strings.TrimPrefix(mime, "image/"), base64.StdEncoding.EncodeToString(p.Data)))
 		kept = append(kept, attachment{ContentType: mime, Filename: name + "." + strings.TrimPrefix(mime, "image/"), Size: len(p.Data), data: p.Data})
 	}
+	if len(audio) > 0 { // named plainly, so the file gives nothing away
+		attachments = append(attachments, "data:audio/mpeg;filename=clip.mp3;base64,"+base64.StdEncoding.EncodeToString(audio))
+	}
 	msg, ok := prepare(text, c.BotName())
 	if id := c.self(); id != "" && chat.GroupID != "" { // in a group, "@" and its own name mentions the bot
 		k := maps.Clone(known)
@@ -70,7 +74,7 @@ func (c *Client) Send(chat feature.Chat, text string, pics []feature.Picture, kn
 		return nil
 	}
 	body := string(msg.Runes)
-	ts, err := c.send(chat, body, mentions(body, known), textStyles(msg), attachments)
+	ts, err := c.send(chat, body, mentions(body, known), textStyles(msg), attachments, replyTo)
 	if err != nil {
 		logx.Errorf("send failed: %v", err)
 		return nil
@@ -103,10 +107,17 @@ func fileName(name string) string {
 
 // send posts one message and returns its timestamp, which names it on
 // Signal (for a delete from a linked device), waiting up to a minute for
-// signal-cli; a recipient it wasn't delivered to is logged.
-func (c *Client) send(chat feature.Chat, text string, mentions, styles, attachments []string) (int64, error) {
+// signal-cli; a recipient it wasn't delivered to is logged. With quote, it
+// replies to the bot's own message sent then: a quote names its message by
+// author and timestamp alone, and signal-cli sends it whether or not it
+// still has the message, so a recipient whose app doesn't shows the quote
+// as not found, and the reply still goes.
+func (c *Client) send(chat feature.Chat, text string, mentions, styles, attachments []string, quote int64) (int64, error) {
 	p := target(chat)
 	p["message"] = text
+	if self := c.self(); quote != 0 && self != "" {
+		p["quoteTimestamp"], p["quoteAuthor"] = quote, self
+	}
 	if len(mentions) > 0 {
 		p["mention"] = mentions
 	}

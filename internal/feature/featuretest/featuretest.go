@@ -38,8 +38,10 @@ type Host struct {
 	more      []string
 	timers    []*Timer
 	delivered []feature.Message
-	told      []Told
+	posts     []feature.Post
+	reactions []Reaction
 	stores    []string
+	charged   []feature.Chat
 	commands  feature.Commands
 	life      context.Context // what Go passes; ended by Stop
 	end       context.CancelFunc
@@ -164,12 +166,25 @@ func (h *Host) Info() feature.Info { return h.Bot }
 // Usage returns Use.
 func (h *Host) Usage(context.Context, feature.Chat, bool) feature.Usage { return h.Use }
 
-// CallAPI returns what API does; nil fails.
+// CallAPI returns what API does; nil fails. It records the chat ctx is
+// charged to, if any, for Charged.
 func (h *Host) CallAPI(ctx context.Context, path string, body map[string]any) (json.RawMessage, error) {
+	if chat, ok := feature.ChargedChat(ctx); ok {
+		h.mu.Lock()
+		h.charged = append(h.charged, chat)
+		h.mu.Unlock()
+	}
 	if h.API == nil {
 		return nil, errors.New("no API")
 	}
 	return h.API(ctx, path, body)
+}
+
+// Charged lists the chats CallAPI's calls were charged to, in order.
+func (h *Host) Charged() []feature.Chat {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return slices.Clone(h.charged)
 }
 
 // Store opens a saved state as the core does, in the directory
@@ -204,20 +219,39 @@ func (h *Host) Deliver(m feature.Message) {
 	h.delivered = append(h.delivered, m)
 }
 
-func (h *Host) Tell(user, text string) {
+// Post records p; Posts returns what was posted. OnSent is never called:
+// a test calls it to say the post was sent or dropped.
+func (h *Host) Post(p feature.Post) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	h.told = append(h.told, Told{user, text})
+	h.posts = append(h.posts, p)
 }
 
-// Told is a text passed to Tell.
-type Told struct{ User, Text string }
-
-// TellsSent is the texts passed to Tell, in order.
-func (h *Host) TellsSent() []Told {
+// Posts is the posts passed to Post, in order.
+func (h *Host) Posts() []feature.Post {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	return slices.Clone(h.told)
+	return slices.Clone(h.posts)
+}
+
+// Reaction is a reaction passed to React.
+type Reaction struct {
+	Chat    feature.Chat
+	Message feature.Message
+	Emoji   string
+}
+
+func (h *Host) React(chat feature.Chat, msg feature.Message, emoji string) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.reactions = append(h.reactions, Reaction{chat, msg, emoji})
+}
+
+// Reactions is the reactions passed to React, in order.
+func (h *Host) Reactions() []Reaction {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return slices.Clone(h.reactions)
 }
 
 func (h *Host) Groups(context.Context, string) ([]feature.Group, error) { return h.Shared, nil }
@@ -260,7 +294,7 @@ func (h *Host) Message(ctx context.Context, m feature.Message) feature.Action {
 	hooks := slices.Clone(h.messages)
 	h.mu.Unlock()
 	for _, fn := range hooks {
-		if a := fn(ctx, m).For(m); a != (feature.Action{}) {
+		if a := fn(ctx, m).For(m); !a.IsZero() {
 			return a
 		}
 	}

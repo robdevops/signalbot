@@ -80,6 +80,19 @@ type sticker struct {
 	Thumbnail  *photoSize `json:"thumbnail"`
 }
 
+// location is a point on a map; LivePeriod is set on a live location, one
+// that follows its sender as they move.
+type location struct {
+	Latitude   float64 `json:"latitude"`
+	Longitude  float64 `json:"longitude"`
+	LivePeriod int     `json:"live_period"`
+}
+
+// venue is a named place: only its location is read.
+type venue struct {
+	Location location `json:"location"`
+}
+
 type message struct {
 	MessageID       int64                  `json:"message_id"`
 	ThreadID        int64                  `json:"message_thread_id"`
@@ -102,6 +115,8 @@ type message struct {
 	Audio           *file                  `json:"audio"`
 	Voice           *file                  `json:"voice"`
 	Sticker         *sticker               `json:"sticker"`
+	Location        *location              `json:"location"`
+	Venue           *venue                 `json:"venue"`
 	NewMembers      []user                 `json:"new_chat_members"`
 	LeftMember      *user                  `json:"left_chat_member"`
 	TimerChanged    *struct {
@@ -319,6 +334,9 @@ func (c *Client) message(m *message, edited int64) feature.Message {
 	}
 	ch := chatOf(m)
 	body, mentioned := c.text(text, ents)
+	if link := mapLink(m); link != "" {
+		body = strings.TrimSpace(link + "\n" + body)
+	}
 	msg := feature.Message{Chat: ch, Sender: id(m.From.ID), Name: nameOf(m.From), Text: body, Timestamp: m.MessageID, Edited: edited}
 	self := c.selfID()
 	replyToBot := m.ReplyTo != nil && m.ReplyTo.From != nil && id(m.ReplyTo.From.ID) == self
@@ -390,6 +408,20 @@ func (c *Client) message(m *message, edited int64) feature.Message {
 		}
 	}
 	return msg
+}
+
+// mapLink is m's location or venue as a Google Maps link, which is how
+// Signal sends one, or "" if it has none. A live location is left out: it
+// is where its sender is right now.
+func mapLink(m *message) string {
+	l := m.Location
+	if l == nil && m.Venue != nil {
+		l = &m.Venue.Location
+	}
+	if l == nil || l.LivePeriod != 0 {
+		return ""
+	}
+	return "https://maps.google.com/maps?q=" + strconv.FormatFloat(l.Latitude, 'f', -1, 64) + "," + strconv.FormatFloat(l.Longitude, 'f', -1, 64)
 }
 
 // best is the largest size of a photo within the bot's cap, or nil.
@@ -676,6 +708,22 @@ func (c *Client) Delivered(ctx context.Context, msg feature.Message) (bot.Ready,
 	}
 	r.Message = msg
 	return r, true
+}
+
+// Reachable reports whether the bot may still post in chat on its own:
+// in a group, while it answers there (groupAllowed); in a DM, while the
+// user is in TELEGRAM_DM_USER_IDS.
+func (c *Client) Reachable(ctx context.Context, chat feature.Chat) bool {
+	wait, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	if c.WaitID(wait) == "" {
+		logx.Warnf("not connected to Telegram after 10s")
+		return false
+	}
+	if chat.GroupID == "" {
+		return c.allowed[chat.User]
+	}
+	return c.groupAllowed(wait, c.dest(chat).chat)
 }
 
 // member reports whether user is in group, by getChatMember, logging a

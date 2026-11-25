@@ -61,6 +61,7 @@ type Store[M any] struct {
 	handle   func([]M)                // a chat's worker hands it what waits
 	spawn    func(worker func()) bool // starts a chat's worker on a free slot
 	now      func() time.Time         // the clock entries expire by
+	evicted  func(M)                  // told of a low-priority item dropped to make room; nil if none is
 }
 
 type chat[M any] struct {
@@ -71,6 +72,7 @@ type chat[M any] struct {
 	followUps map[int]int          // tool group -> replies left
 	gone      map[string]int64     // message ID -> versions before this are deleted or replaced
 	queue     []M                  // waiting for the worker
+	low       []M                  // waiting at low priority, after queue: none or one, which merges the rest
 	busy      bool                 // a worker is running
 }
 
@@ -100,6 +102,11 @@ func New[M any](messages int, handle func([]M), spawn func(worker func()) bool) 
 // SetClock makes entries and message keys lapse by now's time instead of
 // the real one, for tests that can't wait. Call it before the store is used.
 func (s *Store[M]) SetClock(now func() time.Time) { s.now = now }
+
+// SetEvicted has fn told of each low-priority item dropped to make room
+// (see PostLow), without the store's lock held. Call it before the store is
+// used.
+func (s *Store[M]) SetEvicted(fn func(M)) { s.evicted = fn }
 
 // get returns the chat, creating it if create is set. When the map is full,
 // an idle chat is dropped to make room; with none idle it returns nil.
@@ -181,8 +188,17 @@ func (s *Store[M]) tidy(key string, c *chat[M]) {
 }
 
 // Post adds m to the chat's mailbox, starting the chat's worker if it has
-// none. It returns ErrNoSlot when no slot is free for the worker.
+// none. A low-priority item waiting there is dropped to make room (see
+// PostLow). It returns ErrNoSlot when no slot is free for the worker.
 func (s *Store[M]) Post(key string, m M) error {
+	var evicted []M
+	defer func() {
+		for _, e := range evicted {
+			if s.evicted != nil {
+				s.evicted(e)
+			}
+		}
+	}()
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	c := s.get(key, true)
@@ -192,9 +208,40 @@ func (s *Store[M]) Post(key string, m M) error {
 	case c.busy && len(c.queue) >= maxQueue:
 		return errQueueFull
 	case c.busy:
+		if len(c.queue)+len(c.low) >= maxQueue {
+			evicted, c.low = c.low, nil
+		}
 		c.queue = append(c.queue, m)
 		return nil
 	}
+	return s.start(key, c, m)
+}
+
+// PostLow adds m to the chat's mailbox at low priority: it waits after
+// everything else, and is the first dropped, by Post, to make room, so it
+// never takes the place of a message. A low-priority item already waiting
+// is replaced by merge(waiting, m), so at most one waits.
+func (s *Store[M]) PostLow(key string, m M, merge func(waiting, m M) M) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	c := s.get(key, true)
+	switch {
+	case c == nil:
+		return errFull
+	case c.busy && len(c.low) > 0:
+		c.low[0] = merge(c.low[0], m)
+		return nil
+	case c.busy && len(c.queue) >= maxQueue:
+		return errQueueFull
+	case c.busy:
+		c.low = []M{m}
+		return nil
+	}
+	return s.start(key, c, m)
+}
+
+// start starts the idle chat's worker with m. Caller holds s.mu.
+func (s *Store[M]) start(key string, c *chat[M], m M) error {
 	c.busy = true
 	if !s.spawn(func() { s.work(key, c, []M{m}) }) {
 		c.busy = false
@@ -208,7 +255,7 @@ func (s *Store[M]) work(key string, c *chat[M], ms []M) {
 	for len(ms) > 0 {
 		s.handle(ms)
 		s.mu.Lock()
-		ms, c.queue = c.queue, nil
+		ms, c.queue, c.low = append(c.queue, c.low...), nil, nil
 		if len(ms) == 0 {
 			c.busy = false
 			s.tidy(key, c)
@@ -329,6 +376,21 @@ func (s *Store[M]) Retag(key, id string, refs []Ref) {
 			c.history[i].Refs = slices.Concat(e.Refs[:j:j], refs, e.Refs[j+1:])
 		}
 	}
+}
+
+// Withdraw drops the entries holding the ref named id: for a post kept
+// before it was sent, whose send failed, so the chat never saw it.
+func (s *Store[M]) Withdraw(key, id string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	c := s.get(key, false)
+	if c == nil {
+		return
+	}
+	c.history = slices.DeleteFunc(c.history, func(e Entry) bool {
+		return slices.ContainsFunc(e.Refs, func(r Ref) bool { return r.ID == id })
+	})
+	s.tidy(key, c)
 }
 
 // Gone reports whether the version of message id at at was deleted or

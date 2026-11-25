@@ -31,6 +31,20 @@ func (c Chat) Key() string {
 	return "u:" + c.User
 }
 
+type chargeKey struct{}
+
+// ChargeTo is ctx naming chat as the one that pays for the model's API
+// calls made with it outside a tool, through Host.CallAPI.
+func ChargeTo(ctx context.Context, chat Chat) context.Context {
+	return context.WithValue(ctx, chargeKey{}, chat)
+}
+
+// ChargedChat is the chat ChargeTo named in ctx, if any.
+func ChargedChat(ctx context.Context) (Chat, bool) {
+	c, ok := ctx.Value(chargeKey{}).(Chat)
+	return c, ok
+}
+
 // Message is a message posted in a chat.
 type Message struct {
 	Chat      Chat
@@ -42,7 +56,7 @@ type Message struct {
 	Expires   time.Duration // the chat's disappearing-messages timer; 0 if off
 	Timestamp int64         // when it was sent, by the sender's clock, as the network names it; 0 for one the bot made, such as a scheduled post. An edit keeps the original's
 	Edited    int64         // for an edit of the message sent at Timestamp, which it replaces, when it was edited; 0 for an original
-	Addressed bool          // it mentions the bot, replies to it, or is a DM from an allowed sender
+	Addressed bool          // it mentions the bot, replies to it, starts (in a group) with one of the bot's commands, or is a DM from an allowed sender
 }
 
 // Quote is the message another one replies to, as the replier's app sent it.
@@ -104,18 +118,28 @@ type File struct {
 
 // Action is what an OnMessage hook decides. The zero value carries on.
 type Action struct {
-	Answer     string // reply with this text, without the model (addressed messages only)
-	ToolChoice string // make the model call this tool before answering (addressed messages only)
-	Context    string // keep this text in the chat's history (unaddressed messages only)
+	Answer     string                           // reply with this text, without the model (addressed messages only)
+	Pictures   []Picture                        // send these with Answer, or alone, without the model; captions as for a tool's pictures (addressed messages only)
+	OnSent     func(sent []int64, dropped bool) // if set with Answer or Pictures, called once: with the timestamps they went out in, or dropped (addressed messages only); alone it doesn't count
+	ToolChoice string                           // make the model call this tool before answering (addressed messages only)
+	Context    string                           // keep this text in the chat's history (unaddressed messages only)
+	Done       bool                             // the hook handled the message: no answer, no model, and for an unaddressed one nothing kept and no later hook
+}
+
+// IsZero reports whether a carries on: nothing set but, at most, OnSent,
+// which only follows an Answer or Pictures.
+func (a Action) IsZero() bool {
+	return a.Answer == "" && len(a.Pictures) == 0 && a.ToolChoice == "" && a.Context == "" && !a.Done
 }
 
 // For returns a copy of the action keeping only the fields that apply to
-// m: Answer and ToolChoice if m is addressed, Context if not.
+// m: Answer, Pictures, OnSent and ToolChoice if m is addressed, Context if
+// not, and Done either way.
 func (a Action) For(m Message) Action {
 	if m.Addressed {
 		a.Context = ""
 	} else {
-		a.Answer, a.ToolChoice = "", ""
+		a.Answer, a.Pictures, a.OnSent, a.ToolChoice = "", nil, nil, ""
 	}
 	return a
 }
@@ -189,6 +213,7 @@ type Info struct {
 	PDFs       bool     // the model's API takes PDFs
 	CallsTools bool     // the model can call tools
 	Provider   string   // the model API's provider, as server tools name it: "openrouter", or "" for another
+	Network    string   // the chat network, as it names itself, such as "signal" or "telegram"
 	Tools      []string // the Names of every tool group with tools, in feature order; none when it can't call tools
 	Intro      string   // INTRO with {name}, {model}, {tools} and {more} filled in, as in a group
 	IntroDM    string   // the same in a DM, with IntroLine's DM-only lines too
@@ -206,6 +231,17 @@ type Store interface {
 	Save(v any) error
 }
 
+// Post is what the bot posts on its own, from a timer or a worker.
+type Post struct {
+	Chat     Chat
+	Label    string                           // history keeps the post as the bot's, as "[Label] text"; "" keeps nothing
+	Text     string                           // Markdown, as written; @Name is linked to the chat's known names
+	Pictures []Picture                        // sent with Text; captions as for a tool's pictures
+	Audio    []byte                           // one MP3 clip sent with Text, as audio to play, with no title
+	OnSent   func(sent []int64, dropped bool) // if set, called once: with the timestamps sent, or dropped
+	ReplyTo  int64                            // if set, sent as a reply to the bot's own earlier message in Chat that an OnSent gave this timestamp; sent plainly if the network can't find it
+}
+
 // Group is a group chat.
 type Group struct {
 	ID, Name string
@@ -215,7 +251,8 @@ type Group struct {
 type Host interface {
 	// OnMessage sees every message. For an unaddressed one it runs on the
 	// reader goroutine, so it must not block or call the network. The first
-	// non-zero Action wins.
+	// Action that isn't zero, counting only what applies to the message,
+	// wins.
 	OnMessage(func(context.Context, Message) Action)
 	// OnTurn adds to the model's request for the addressed message being
 	// answered.
@@ -261,16 +298,29 @@ type Host interface {
 	Media(ctx context.Context, msg Message, i int) ([]byte, error)
 	// Deliver acts on msg as if its sender had just posted it in its chat.
 	Deliver(msg Message)
-	// Tell sends text from the bot to user in their DM, as written, never
-	// through the model, if they may still DM the bot.
-	Tell(user, text string)
+	// Post sends a post from the bot to its chat, as written, never through
+	// the model, through the chat's mailbox, if the bot may still post
+	// there.
+	Post(p Post)
+	// React puts emoji on msg in chat, as a reaction from the bot, through
+	// the chat's mailbox at low priority: unless msg was deleted or edited
+	// since, and unless the reaction is dropped to make room. chat mirrors
+	// the network's React; msg's own Chat is ignored. A message the bot
+	// made (Timestamp 0) can't be reacted to; nothing happens.
+	React(chat Chat, msg Message, emoji string)
 	// Groups lists the groups the bot shares with user.
 	Groups(ctx context.Context, user string) ([]Group, error)
-	// CallAPI posts body as JSON to path (such as "/images") at the model's
-	// API and returns the response body, from a tool's Run only, so what it
-	// cost counts toward the reply and the chat's daily budget. The core
-	// adds the key, and on OpenRouter asks for providers that don't collect
-	// the data; a feature never sees the key.
+	// CallAPI posts body as JSON to path (such as "/images" or
+	// "/chat/completions") at the model's API and returns the response
+	// body. Inside a tool's Run, what it cost counts toward the reply and
+	// the chat's daily budget. Outside one, ctx must come from ChargeTo:
+	// the core refuses the call when that chat is over its daily budget,
+	// makes it, and adds what it cost to that chat's budget. Without
+	// either, it refuses. For "/chat/completions" the core sets the model
+	// to the bot's own, whatever the body says, and on OpenRouter asks for
+	// the cost to be reported. The core adds the key, and on OpenRouter
+	// asks for providers that don't collect the data; a feature never sees
+	// the key.
 	CallAPI(ctx context.Context, path string, body map[string]any) (json.RawMessage, error)
 	// Usage is what the model has cost in chat today, and with key the API
 	// key's own totals too, when the API reports them (OpenRouter's).

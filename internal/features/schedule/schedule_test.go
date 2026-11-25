@@ -292,7 +292,7 @@ func TestRefusals(t *testing.T) {
 		t.Fatalf("logs:\n%s", w.logs)
 	}
 	// Not commands of its own: carried on.
-	if a := w.h.Message(context.Background(), feature.Message{Chat: feature.Chat{User: alice}, Sender: alice, Text: "/schedules", Addressed: true}); a != (feature.Action{}) {
+	if a := w.h.Message(context.Background(), feature.Message{Chat: feature.Chat{User: alice}, Sender: alice, Text: "/schedules", Addressed: true}); !a.IsZero() {
 		t.Fatalf("got %+v", a)
 	}
 }
@@ -416,8 +416,9 @@ func TestLoad(t *testing.T) {
 		t.Fatalf("saved %+v", s)
 	}
 	logs := w.logs.String()
-	if told := w.h.TellsSent(); len(told) != 1 || told[0] != (featuretest.Told{User: alice, Text: `I was offline at Tue 15 Jan 2030 10:59 UTC, so your reminder "stale one" didn't post.`}) {
-		t.Fatalf("told %+v", told)
+	if p := w.h.Posts(); len(p) != 1 || p[0].Chat != (feature.Chat{User: alice}) || p[0].Label != "" || len(p[0].Pictures) != 0 ||
+		p[0].Text != `I was offline at Tue 15 Jan 2030 10:59 UTC, so your reminder "stale one" didn't post.` {
+		t.Fatalf("posted %+v", p)
 	}
 	for _, want := range []string{"<3>schedules.json: entry 4 skipped: no text; it will be removed at the next save\n", "<4>a one-off schedule was dropped: it was due 1h1m0s ago\n", "<5>loaded 3 schedules\n"} {
 		if !strings.Contains(logs, want) {
@@ -508,7 +509,7 @@ func TestAliases(t *testing.T) {
 	if got := w.dm("/timer help"); !strings.Contains(got, "/timer and /reminder work the same as /schedule.") {
 		t.Fatalf("help: %q", got)
 	}
-	if a := w.h.Message(context.Background(), feature.Message{Chat: feature.Chat{User: alice}, Sender: alice, Text: "/job list", Addressed: true}); a != (feature.Action{}) {
+	if a := w.h.Message(context.Background(), feature.Message{Chat: feature.Chat{User: alice}, Sender: alice, Text: "/job list", Addressed: true}); !a.IsZero() {
 		t.Fatalf("/job is still a command: %+v", a)
 	}
 }

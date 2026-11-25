@@ -30,6 +30,7 @@ const (
 
 func TestAddressed(t *testing.T) {
 	allowed := map[string]bool{"+1555": true}
+	commands := map[string]bool{"geo": true}
 	for _, tc := range []struct {
 		name, env string
 		want      bool
@@ -49,14 +50,61 @@ func TestAddressed(t *testing.T) {
 		{"empty DM", `{` + fromBob + `,"dataMessage":{"message":"  "}}`, false},
 		{"no data message", `{` + fromBob + `}`, false},
 		{"the bot's own", `{"sourceUuid":"` + botID + `","dataMessage":{"message":"hi"}}`, false},
+		{"a command in a group", `{` + fromBob + `,"dataMessage":{"message":"/geo",` + inGroup + `}}`, true},
+		{"a command with args", `{` + fromBob + `,"dataMessage":{"message":" /geo 90s",` + inGroup + `}}`, true},
+		{"a command in capitals", `{` + fromBob + `,"dataMessage":{"message":"/GEO",` + inGroup + `}}`, true},
+		{"another slash word", `{` + fromBob + `,"dataMessage":{"message":"/shrug",` + inGroup + `}}`, false},
+		{"a command without its slash", `{` + fromBob + `,"dataMessage":{"message":"geo 90s",` + inGroup + `}}`, false},
+		{"a command mid-message", `{` + fromBob + `,"dataMessage":{"message":"try /geo",` + inGroup + `}}`, false},
+		{"a command glued to more", `{` + fromBob + `,"dataMessage":{"message":"/geography",` + inGroup + `}}`, false},
+		{"the bot's own command", `{"sourceUuid":"` + botID + `","dataMessage":{"message":"/geo",` + inGroup + `}}`, false},
+		{"a command in a DM from anyone else", `{"sourceUuid":"` + aliceID + `","dataMessage":{"message":"/geo"}}`, false},
+		{"a command replying to someone else", `{` + fromBob + `,"dataMessage":{"message":"/geo","quote":{"authorUuid":"` + aliceID + `"},` + inGroup + `}}`, true},
+		{"a command as a photo's caption", `{` + fromBob + `,"dataMessage":{"message":"/geo","attachments":[{"contentType":"image/png","id":"a","size":10}],` + inGroup + `}}`, true},
+		{"a sticker with no text", `{` + fromBob + `,"dataMessage":{"sticker":{"packId":"p","stickerId":1},` + inGroup + `}}`, false},
 	} {
 		self := botID
-		if got := isAddressed(parse(t, tc.env), self, allowed); got != tc.want {
+		if got := isAddressed(parse(t, tc.env), self, allowed, commands); got != tc.want {
 			t.Errorf("%s: %v", tc.name, got)
 		}
-		if isAddressed(parse(t, tc.env), "", allowed) {
+		if isAddressed(parse(t, tc.env), "", allowed, commands) {
 			t.Errorf("%s: addressed before the bot's ID is known", tc.name)
 		}
+	}
+	// With no commands registered, a slash word in a group is chatter.
+	if isAddressed(parse(t, `{`+fromBob+`,"dataMessage":{"message":"/geo",`+inGroup+`}}`), botID, allowed, nil) {
+		t.Error("a slash word is addressed with no commands registered")
+	}
+}
+
+func TestWatchCommands(t *testing.T) {
+	captureLogs(t)
+	c := newClient("x", nil, nil)
+	env := parse(t, `{`+fromBob+`,"dataMessage":{"message":"/geo 90s",`+inGroup+`}}`)
+	if c.message(env, botID).Addressed {
+		t.Fatal("addressed before Watch named the commands")
+	}
+	connected(c)
+	if r, ok := c.event(env); !ok {
+		t.Fatal("dropped before Watch")
+	} else if _, isChatter := r.(bot.Chatter); !isChatter {
+		t.Errorf("before Watch the reader made %T, want chatter", r)
+	}
+	c.Watch(bot.Watch{Commands: []string{"geo"}})
+	if m := c.message(env, botID); !m.Addressed || m.Text != "/geo 90s" {
+		t.Errorf("after Watch: addressed %v, text %q", m.Addressed, m.Text)
+	}
+	if r, ok := c.event(env); !ok {
+		t.Fatal("dropped after Watch")
+	} else if _, isIncoming := r.(bot.Incoming); !isIncoming {
+		t.Errorf("after Watch the reader made %T, want an addressed message", r)
+	}
+	if c.members.on.Load() {
+		t.Error("commands alone turned member loading on")
+	}
+	c.Watch(bot.Watch{Events: true})
+	if !c.members.on.Load() {
+		t.Error("Events didn't turn member loading on")
 	}
 }
 
@@ -259,6 +307,29 @@ func TestLoad(t *testing.T) {
 	}
 	if !reflect.DeepEqual(learned, []string{"Bob " + bobID, "Alice " + aliceID}) {
 		t.Fatalf("learned %q", learned)
+	}
+}
+
+// The bot may post on its own in a group it is still a member of, and in
+// the DM of someone still allowed, by ACI or number.
+func TestReachable(t *testing.T) {
+	captureLogs(t)
+	f := newFake(t)
+	f.set("listContacts", `[{"uuid":"`+aliceID+`","number":"+1555","givenName":"Alice"},{"uuid":"`+bobID+`","givenName":"Bob"}]`)
+	f.set("listGroups", `[{"id":"`+groupID+`","isMember":true},{"id":"bGVmdA==","isMember":false}]`)
+	c := newClient(f.sock, map[string]bool{"+1555": true}, nil)
+	run(t, c, f)
+	ctx := context.Background()
+	for chat, want := range map[feature.Chat]bool{
+		{User: aliceID}:       true,
+		{User: bobID}:         false,
+		{GroupID: groupID}:    true,
+		{GroupID: "bGVmdA=="}: false,
+		{GroupID: "b3RoZXI="}: false,
+	} {
+		if got := c.Reachable(ctx, chat); got != want {
+			t.Errorf("%+v: %v", chat, got)
+		}
 	}
 }
 

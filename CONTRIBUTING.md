@@ -15,6 +15,7 @@ internal/bot/           the decision, the prompt, the hooks; wires the core, and
 internal/feature/       the ports and shared types, command parsing, featuretest
 internal/features/*     one package per feature
 internal/kit/*          code with two or more users and no bot knowledge
+addon/                  signalbot's MCP addon extension, for the bot and any addon written in Go: its wire format, a ready stdio server, and schema.json for addons in other languages; public, standard library only
 cmd/signalctl/          a small client for signal-cli's daemon socket, for one-off chores such as blocking; not part of the bot
 ```
 
@@ -24,11 +25,12 @@ Features reach the core only through the ports in `internal/feature`, one per st
 
 | Stage | Port |
 |---|---|
-| A message arrives | `OnMessage`: carry on, answer without the model, choose a tool, or keep text as context |
-| The model is asked | `OnTurn` (a note on the message, images) and `Tools` (a `ToolGroup`) |
+| A message arrives | `OnMessage`: carry on, answer without the model (text or pictures), choose a tool, keep text as context, or mark it done |
+| The model is asked | `OnTurn` (a note on the message, images) and `OfferTools` (a `ToolGroup`) |
 | Time arrives | `At`: a one-shot timer |
+| Something besides a message happens | `OnEvent`: a reaction or a member change, answered without the model |
 
-and the host's services: `Env`, `Info`, `Media`, `Usage`, `CallAPI`, `Deliver`, `Groups`, `Redact` and `Go`. Hooks run in `features.go` order. An `OnMessage` hook for an unaddressed message runs on the reader goroutine, so it must not block or call the network.
+and the host's services, among them `Env`, `Store`, `Info`, `Media`, `Usage`, `CallAPI`, `Deliver`, `Post`, `React`, `Groups`, `Redact` and `Go` ([TECHNICAL.md](TECHNICAL.md#lifecycle-and-ports) lists them all). Hooks run in `features.go` order. An `OnMessage` hook for an unaddressed message runs on the reader goroutine, so it must not block or call the network.
 
 If a feature can't be built on these, that's a design finding. Either a port becomes more generic, and stays tied to its stage, or the feature takes on more of the work. A feature-shaped field in the core is never the answer: delete any feature and the core doesn't change.
 
@@ -53,7 +55,7 @@ Give a feature a tag only for a real saving, such as a dependency; a runtime set
 
 Tests in `internal/arch` enforce these:
 
-- **Imports:** only the main package, at the module root, imports features and `internal/signal`; a feature imports only `internal/feature`, `internal/kit` and its own packages; `internal/signal` imports only `internal/feature`, kit, `internal/config` and `internal/bot` (network to core, never the reverse); `internal/config` and kit import no other internal package.
+- **Imports:** only the main package, at the module root, imports features and `internal/signal`; a feature imports only `internal/feature`, `internal/kit` and its own packages; `internal/signal` imports only `internal/feature`, kit, `internal/config` and `internal/bot` (network to core, never the reverse); `internal/config` and kit import no other internal package; a feature may also import `addon`, and `addon` imports only the standard library, since every addon builds it.
 - **No feature names in the core:** the core's source mentions no feature name or feature-only word (chart, MCP, group context, `/intro`, `/schedule`, …).
 - **Docs:** every setting read, the core's or a feature's (`h.Env("NAME", …)`), is in the table in [docs/CONFIGURATION.md](docs/CONFIGURATION.md).
 
