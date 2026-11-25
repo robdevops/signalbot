@@ -194,6 +194,7 @@ func (o outcome) kept(u string) string {
 // file; history keeps a note only. Links past maxLinks are only counted, in
 // a note to the model.
 func additions(ctx context.Context, c *http.Client, l *limiter, info feature.Info, m feature.Message) feature.Additions {
+	log := logx.Ctx(ctx)
 	var notes, kept []string
 	var files []feature.File
 	content := false // the model gets what a page says
@@ -202,14 +203,14 @@ func additions(ctx context.Context, c *http.Client, l *limiter, info feature.Inf
 		var o outcome
 		switch parsed, _ := url.Parse(u); {
 		case !webPort(parsed):
-			logx.Infof("link not fetched: not a standard web port")
+			log.Infof("link not fetched: not a standard web port")
 			o = outcome{subject: "link " + u, status: " not fetched: it isn't on a standard web port"}
 		case private(parsed):
-			logx.Infof("link not fetched: looks private or one-time")
+			log.Infof("link not fetched: looks private or one-time")
 			o = outcome{subject: "link " + u, status: " not fetched: it looks like a private or one-time link"}
 		default:
 			if ok, wait := l.allow(m.Chat.Key()); !ok {
-				logx.Warnf("link not fetched: this chat reached its %d links an hour", maxPerHour)
+				log.Warnf("link not fetched: this chat reached its %d links an hour", maxPerHour)
 				o = outcome{subject: "link " + u, status: fmt.Sprintf(" not fetched: this chat has had its %d links for the hour; "+
 					"links can be read again in about %s", maxPerHour, minutes(wait))}
 			} else {
@@ -223,7 +224,7 @@ func additions(ctx context.Context, c *http.Client, l *limiter, info feature.Inf
 		}
 	}
 	if dropped > 0 {
-		logx.Infof("%d more links not opened: more than %d in a message", dropped, maxLinks)
+		log.Infof("%d more links not opened: more than %d in a message", dropped, maxLinks)
 		more := fmt.Sprintf("[%d more links not opened: the bot reads at most %d a message; send them on their own to have them read]", dropped, maxLinks)
 		if dropped == 1 {
 			more = fmt.Sprintf("[1 more link not opened: the bot reads at most %d a message; send it on its own to have it read]", maxLinks)
@@ -247,15 +248,16 @@ func minutes(d time.Duration) string {
 // fetch gets u, and what it came to. It logs one line, never the URL or
 // the page's title.
 func fetch(ctx context.Context, c *http.Client, info feature.Info, u string) outcome {
+	log := logx.Ctx(ctx)
 	failed := func(secs float64, why string) outcome {
-		logx.Warnf("link failed after %.1fs: %s", secs, why)
+		log.Warnf("link failed after %.1fs: %s", secs, why)
 		return outcome{subject: "link " + u, status: " couldn't be fetched: " + why}
 	}
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
 	if err != nil {
-		logx.Warnf("link failed: not a web address")
+		log.Warnf("link failed: not a web address")
 		return outcome{subject: "link " + u, status: " couldn't be fetched: not a web address"}
 	}
 	req.Header.Set("User-Agent", userAgent)
@@ -302,9 +304,9 @@ func fetch(ctx context.Context, c *http.Client, info feature.Info, u string) out
 		typ = top
 	}
 	done := func(warn bool, kind, outcome string) {
-		f := logx.Infof
+		f := log.Infof
 		if warn {
-			f = logx.Warnf
+			f = log.Warnf
 		}
 		f("link %.1fs, %d bytes %s, %s", took, size, kind, outcome)
 	}

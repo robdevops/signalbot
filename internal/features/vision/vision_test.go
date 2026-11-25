@@ -194,17 +194,18 @@ func TestFetchFailures(t *testing.T) {
 		}
 		return []byte("not a picture"), nil
 	}
-	a := additionsOf(t, h, turn("look", photo, photo, sticker))
+	// Each line names the chat's network, from the log the core's ctx carries.
+	a := h.Turn(logx.With(context.Background(), logx.For("telegram")), turn("look", photo, photo, sticker))[0]
 	if a.Note != "[1 image attached]\n[1 image attached, which couldn't be fetched; you can see images, just not this one]\n[sticker attached"+sticker.Label+", which couldn't be fetched]" ||
 		a.HistoryNote != "[1 image attached"+feature.NotKept(1)+"]\n[1 image attached, which couldn't be fetched; you can see images, just not this one]\n[sticker attached"+sticker.Label+", which couldn't be fetched]" || len(a.Images) != 1 {
 		t.Fatalf("got %q with %d images", a.Note, len(a.Images))
 	}
 	logs := errw.String()
-	if !strings.Contains(logs, "<4>could not fetch an image: timed out") ||
-		!strings.Contains(logs, "<4>could not fetch a sticker: not an image") || strings.Contains(logs, "look") || strings.Contains(logs, "Alice") {
+	if !strings.Contains(logs, "<4>Telegram: could not fetch an image: timed out") ||
+		!strings.Contains(logs, "<4>Telegram: could not fetch a sticker: not an image") || strings.Contains(logs, "look") || strings.Contains(logs, "Alice") {
 		t.Fatalf("log %q", logs)
 	}
-	if n := strings.Count(out.String(), "<6>image "); n != 1 || strings.Contains(out.String(), "sticker") {
+	if n := strings.Count(out.String(), "<6>Telegram: image "); n != 1 || strings.Contains(out.String(), "sticker") {
 		t.Fatalf("%d images logged: %q", n, out.String())
 	}
 

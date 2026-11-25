@@ -167,7 +167,7 @@ func run(h feature.Host, model, quality string) func(context.Context, string) (s
 			a.AspectRatio = ""
 		}
 		a.Prompt = txt.Clamp(a.Prompt, maxPrompt)
-		logx.Infof("image asked: %s, %d requirements, %s", cmp.Or(a.Kind, "no kind"), len(a.Requirements), cmp.Or(a.AspectRatio, "model's ratio")) // never the prompt
+		logx.Ctx(ctx).Infof("image asked: %s, %d requirements, %s", cmp.Or(a.Kind, "no kind"), len(a.Requirements), cmp.Or(a.AspectRatio, "model's ratio")) // never the prompt
 		data, err := generate(ctx, h, model, quality, a.AspectRatio, imagePrompt(a))
 		if err != nil {
 			return "error: the image could not be made (" + reason(err) + "). Tell the user, briefly.", nil, err

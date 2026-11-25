@@ -99,11 +99,11 @@ func TestClientRefusesPrivate(t *testing.T) {
 	if o.note() != "[link "+srv.URL+" couldn't be fetched: it isn't a public address]" || o.shown() {
 		t.Fatalf("note %q", o.note())
 	}
-	o = fetch(context.Background(), c, feature.Info{}, "http://bad host/")
+	o = fetch(logx.With(context.Background(), logx.For("slack")), c, feature.Info{}, "http://bad host/")
 	if o.note() != "[link http://bad host/ couldn't be fetched: not a web address]" || o.shown() {
 		t.Fatalf("note %q", o.note())
 	}
-	if l := logs.String(); strings.Contains(l, srv.URL) || strings.Contains(l, "bad host") || !strings.Contains(l, "<4>link failed: not a web address\n") {
+	if l := logs.String(); strings.Contains(l, srv.URL) || strings.Contains(l, "bad host") || !strings.Contains(l, "<4>Slack: link failed: not a web address\n") {
 		t.Fatalf("log %q", l)
 	}
 }
@@ -272,16 +272,17 @@ func TestFetch(t *testing.T) {
 
 // Links past the fifth in a message, distinct ones only, are counted in a
 // note to the model, saying how to have them read, and in one log line,
-// with no URL; history keeps only the message, which has them.
+// with no URL, naming the chat's network; history keeps only the message,
+// which has them.
 func TestExtraLinks(t *testing.T) {
 	logs := capture(t)
 	var links []string
 	for _, h := range "abcdef" {
 		links = append(links, "https://"+string(h)+".example/reset?token=1")
 	}
-	skipped := "<6>link not fetched: looks private or one-time\n"
-	a := additions(context.Background(), newClient(), newLimiter(), feature.Info{}, msg(strings.Join(links, " "), ""))
-	if logs.String() != strings.Repeat(skipped, 5)+"<6>1 more links not opened: more than 5 in a message\n" ||
+	skipped := "<6>Discord: link not fetched: looks private or one-time\n"
+	a := additions(logx.With(context.Background(), logx.For("discord")), newClient(), newLimiter(), feature.Info{}, msg(strings.Join(links, " "), ""))
+	if logs.String() != strings.Repeat(skipped, 5)+"<6>Discord: 1 more links not opened: more than 5 in a message\n" ||
 		!strings.HasSuffix(a.Note, "\n[1 more link not opened: the bot reads at most 5 a message; send it on its own to have it read]") ||
 		strings.Contains(a.HistoryNote, "more link") {
 		t.Fatalf("log %q, note %q", logs.String(), a.Note)

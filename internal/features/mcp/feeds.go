@@ -364,7 +364,7 @@ func (fs *feeds) send(ctx context.Context, f *feed, it feedItem, subs []feedSub)
 // if it can't.
 func (fs *feeds) chart(ctx context.Context, f *feed, tool string, args map[string]any) []feature.Picture {
 	if !f.has[tool] {
-		logx.Warnf("MCP server %s: a feed item's chart names tool %q, which the server doesn't have", f.server, txt.Clamp(tool, 64))
+		logx.Ctx(ctx).Warnf("MCP server %s: a feed item's chart names tool %q, which the server doesn't have", f.server, txt.Clamp(tool, 64))
 		return nil
 	}
 	if args == nil {
@@ -375,10 +375,10 @@ func (fs *feeds) chart(ctx context.Context, f *feed, tool string, args map[strin
 	res, err := f.conn.call(ctx, "tools/call", map[string]any{"name": tool, "arguments": args})
 	var r directResult
 	if err != nil || json.Unmarshal(res, &r) != nil || r.IsError {
-		logx.Warnf("MCP server %s: a feed item's chart couldn't be drawn", f.server)
+		logx.Ctx(ctx).Warnf("MCP server %s: a feed item's chart couldn't be drawn", f.server)
 		return nil
 	}
-	return r.action(f.server).Pictures
+	return r.action(logx.Ctx(ctx), f.server).Pictures
 }
 
 // chat answers /alerts with args in m's chat: on, off, sound on or off,
@@ -433,7 +433,7 @@ func (fs *feeds) refusal(ctx context.Context, chat feature.Chat, user string) st
 	if fs.admins.Allows(func() (bool, bool) {
 		gs, err := fs.h.Groups(ctx, user)
 		if err != nil {
-			logx.Warnf("MCP: listing groups failed: %v", err)
+			logx.Ctx(ctx).Warnf("MCP: listing groups failed: %v", err)
 			return false, false
 		}
 		// A forum topic's chat is its group's ID, "/" and the topic.

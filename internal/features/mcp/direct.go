@@ -53,7 +53,7 @@ func (a *addon) direct(ctx context.Context, m feature.Message, name string, c ch
 	case a.busy <- struct{}{}:
 		defer func() { <-a.busy }()
 	default:
-		logx.Warnf("MCP server %s: /%s refused: %d calls already in flight", a.server, name, maxDirect)
+		logx.Ctx(ctx).Warnf("MCP server %s: /%s refused: %d calls already in flight", a.server, name, maxDirect)
 		return feature.Action{Answer: a.title + " is busy, try again in a moment."}
 	}
 	a.lease(m.Chat)
@@ -78,14 +78,14 @@ func (a *addon) direct(ctx context.Context, m feature.Message, name string, c ch
 	case r.IsError:
 		outcome = "an error result"
 	}
-	logx.Infof("MCP server %s: /%s called %s: %s in %dms, %d bytes", a.server, name, c.Tool, outcome, time.Since(start).Milliseconds(), len(res))
+	logx.Ctx(ctx).Infof("MCP server %s: /%s called %s: %s in %dms, %d bytes", a.server, name, c.Tool, outcome, time.Since(start).Milliseconds(), len(res))
 	if outcome != "ok" {
 		return feature.Action{Answer: a.title + " couldn't do that just now."}
 	}
-	act := a.action(m.Chat, r)
+	act := a.action(logx.Ctx(ctx), m.Chat, r)
 	var w *watch
 	if r.Meta.Watch != nil {
-		w = a.watch(m, *r.Meta.Watch)
+		w = a.watch(ctx, m, *r.Meta.Watch)
 	}
 	if !act.IsZero() {
 		// When the answer went out: for the guard, if it has pictures, and
@@ -108,7 +108,7 @@ func (a *addon) direct(ctx context.Context, m feature.Message, name string, c ch
 
 // action is what a direct call's result says in chat: its text, with
 // placeholders filled in, and its images made safe.
-func (a *addon) action(chat feature.Chat, r toolResult) feature.Action {
+func (a *addon) action(log logx.L, chat feature.Chat, r toolResult) feature.Action {
 	var parts, images []string
 	for _, p := range r.Content {
 		switch p.Type {
@@ -119,12 +119,12 @@ func (a *addon) action(chat feature.Chat, r toolResult) feature.Action {
 		}
 	}
 	text := strings.TrimSpace(strings.Join(parts, "\n"))
-	return feature.Action{Answer: txt.Clamp(a.fill(chat, text), maxAnswer), Pictures: a.pictures(images)}
+	return feature.Action{Answer: txt.Clamp(a.fill(chat, text), maxAnswer), Pictures: a.pictures(log, images)}
 }
 
 // pictures are images, in base64, made safe: at most maxAddonPictures, of
 // at most maxPictureBytes in all. Those left out are counted in the log.
-func (a *addon) pictures(images []string) []feature.Picture {
+func (a *addon) pictures(log logx.L, images []string) []feature.Picture {
 	var pics []feature.Picture
 	total, left := 0, 0
 	for _, b64 := range images {
@@ -140,7 +140,7 @@ func (a *addon) pictures(images []string) []feature.Picture {
 		pics = append(pics, feature.Picture{Data: data})
 	}
 	if left > 0 {
-		logx.Warnf("MCP server %s: %d images left out: not images, or past %d images or %d MB", a.server, left, maxAddonPictures, maxPictureBytes>>20)
+		log.Warnf("MCP server %s: %d images left out: not images, or past %d images or %d MB", a.server, left, maxAddonPictures, maxPictureBytes>>20)
 	}
 	return pics
 }

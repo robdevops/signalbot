@@ -20,6 +20,7 @@ import (
 
 	ext "github.com/robdevops/signalbot/addon"
 	"github.com/robdevops/signalbot/internal/feature"
+	"github.com/robdevops/signalbot/internal/kit/logx"
 	"github.com/robdevops/signalbot/internal/kit/txt"
 )
 
@@ -326,6 +327,15 @@ func newAddon(server, title string, cfg addonConfig, secret []byte, c conn, bot 
 		refs: map[string]ref{}, names: map[string]seen{}, watches: map[string][]*watch{}, claims: map[claimKey]claim{},
 		leases: map[string]lease{}, tombs: map[string]time.Time{}, done: map[string]bool{},
 		sending: map[string]bool{}, failed: map[string]failure{}, waiting: map[string][]*outgoing{}, posted: map[string]posted{}}
+}
+
+// logFor is the log for a line about chat, outside the core's work for it
+// (which carries its own, logx.Ctx): prefixed with chat's network.
+func (a *addon) logFor(chat feature.Chat) logx.L {
+	if a.host == nil {
+		return logx.L{}
+	}
+	return logx.For(a.host.Net(chat).Name)
 }
 
 // allows reports whether the addon may be used in chat.

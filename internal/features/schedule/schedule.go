@@ -194,11 +194,13 @@ func (s *scheduler) arm(e *entry, t time.Time) error {
 // run is e's timer, due at dueAt: it delivers e's text if settle says to,
 // and, in a group, if its user may still schedule posts there.
 func (s *scheduler) run(ctx context.Context, e *entry, dueAt time.Time) {
-	if !s.settle(e, dueAt) {
+	// A timer is no chat's, so its lines name the network of e's chat.
+	ctx = logx.With(ctx, logx.For(s.h.Net(e.chat()).Name))
+	if !s.settle(ctx, e, dueAt) {
 		return
 	}
 	if e.Group != "" && !s.mayPost(ctx, e.User, e.Group) {
-		logx.Infof("a scheduled post dropped: its user may no longer schedule posts in the group (SCHEDULE_ALLOWED_USERS)")
+		logx.Ctx(ctx).Infof("a scheduled post dropped: its user may no longer schedule posts in the group (SCHEDULE_ALLOWED_USERS)")
 		return
 	}
 	s.h.Deliver(feature.Message{Chat: e.chat(), Sender: e.User, Text: e.Text})
@@ -210,7 +212,7 @@ func (s *scheduler) mayPost(ctx context.Context, user, group string) bool {
 	return s.posts.Allows(func() (bool, bool) {
 		gs, err := s.h.Groups(ctx, user)
 		if err != nil {
-			logx.Warnf("listing groups failed: %v", err)
+			logx.Ctx(ctx).Warnf("listing groups failed: %v", err)
 			return false, false
 		}
 		if i := slices.IndexFunc(gs, func(g feature.Group) bool { return g.ID == group }); i >= 0 {
@@ -227,7 +229,8 @@ func role(g feature.Group) func() (bool, bool) { return func() (bool, bool) { re
 // deliver it: a one-off is deleted, and dropped if it is an hour late, its
 // owner told by DM; a repeat is set again, worked out from the clock, and
 // skips a run it missed.
-func (s *scheduler) settle(e *entry, dueAt time.Time) (deliver bool) {
+func (s *scheduler) settle(ctx context.Context, e *entry, dueAt time.Time) (deliver bool) {
+	log := logx.Ctx(ctx)
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if !slices.Contains(s.all, e) {
@@ -242,20 +245,20 @@ func (s *scheduler) settle(e *entry, dueAt time.Time) (deliver bool) {
 			after = dueAt
 		}
 		if err := s.arm(e, next(e.start, e.Every, after)); err != nil {
-			logx.Errorf("a repeating schedule can't be set again: %v", err)
+			log.Errorf("a repeating schedule can't be set again: %v", err)
 		}
 		if late >= onTime {
-			logx.Infof("a repeating schedule skipped a run missed by %s", late.Round(time.Second))
+			log.Infof("a repeating schedule skipped a run missed by %s", late.Round(time.Second))
 			return false
 		}
 		return true
 	}
 	s.all = slices.DeleteFunc(s.all, func(x *entry) bool { return x == e })
 	if err := s.save(); err != nil {
-		logx.Errorf("schedules not saved: %v", err)
+		log.Errorf("schedules not saved: %v", err)
 	}
 	if late >= grace {
-		logx.Warnf("a one-off schedule was dropped: it was due %s ago", late.Round(time.Minute))
+		log.Warnf("a one-off schedule was dropped: it was due %s ago", late.Round(time.Minute))
 		s.h.Post(feature.Post{Chat: feature.Chat{User: e.User}, Text: "I was offline at " + dueAt.In(s.loc).Format(whenLayout) + ", so your reminder \"" +
 			txt.Clamp(strings.Join(strings.Fields(e.Text), " "), 80) + "\" didn't post."})
 		return false
@@ -283,7 +286,7 @@ func (s *scheduler) command(ctx context.Context, m feature.Message, args string)
 	case "list":
 		return answer(s.list(ctx, m.Sender))
 	case "del":
-		return answer(s.del(m.Sender, rest))
+		return answer(s.del(ctx, m.Sender, rest))
 	}
 	q, _ := utf8.DecodeRuneInString(args)
 	switch {
@@ -362,14 +365,14 @@ func (s *scheduler) add(ctx context.Context, m feature.Message, args string) str
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if err := s.arm(e, first); err != nil {
-		logx.Warnf("schedule refused: %v", err)
+		logx.Ctx(ctx).Warnf("schedule refused: %v", err)
 		return "Sorry, I can't take more schedules right now."
 	}
 	s.last[e.User]++
 	e.ID = s.last[e.User]
 	s.all = append(s.all, e)
 	if err := s.save(); err != nil {
-		logx.Errorf("schedules not saved: %v", err)
+		logx.Ctx(ctx).Errorf("schedules not saved: %v", err)
 		e.cancel()
 		s.all = s.all[:len(s.all)-1]
 		s.last[e.User]--
@@ -422,7 +425,7 @@ func cutAt(t, name string) (string, bool) {
 func (s *scheduler) findGroup(ctx context.Context, user, name string) (feature.Group, string) {
 	gs, err := s.h.Groups(ctx, user)
 	if err != nil {
-		logx.Warnf("listing groups failed: %v", err)
+		logx.Ctx(ctx).Warnf("listing groups failed: %v", err)
 		return feature.Group{}, "Sorry, I couldn't look up your groups right now."
 	}
 	match := func(same func(g feature.Group) bool) []feature.Group {
@@ -480,7 +483,7 @@ func (s *scheduler) list(ctx context.Context, user string) string {
 	if slices.ContainsFunc(mine, func(e *entry) bool { return e.Group != "" }) {
 		gs, err := s.h.Groups(ctx, user)
 		if err != nil {
-			logx.Warnf("listing groups failed: %v", err)
+			logx.Ctx(ctx).Warnf("listing groups failed: %v", err)
 		} else {
 			current = map[string]feature.Group{}
 			for _, g := range gs {
@@ -514,7 +517,7 @@ func (s *scheduler) list(ctx context.Context, user string) string {
 // del deletes the user's schedule with the number their list shows. The
 // numbers never change or come back, so one that has run since the list
 // can't name another.
-func (s *scheduler) del(user, arg string) string {
+func (s *scheduler) del(ctx context.Context, user, arg string) string {
 	n, err := strconv.Atoi(arg)
 	if err != nil {
 		return "Say which one: /schedule del <number>, from /schedule list."
@@ -533,7 +536,7 @@ func (s *scheduler) del(user, arg string) string {
 	s.all = slices.DeleteFunc(slices.Clone(old), func(x *entry) bool { return x == e })
 	if err := s.save(); err != nil {
 		s.all = old
-		logx.Errorf("schedules not saved, so none was deleted: %v", err)
+		logx.Ctx(ctx).Errorf("schedules not saved, so none was deleted: %v", err)
 		return "Sorry, I couldn't delete that schedule: I can't write to my storage. Please let my owner know."
 	}
 	if e.cancel != nil {

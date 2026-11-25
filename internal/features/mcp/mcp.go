@@ -161,17 +161,17 @@ func Register(h feature.Host) error {
 	keyboard(h, servers)
 	if k != nil && len(k.addons) > 0 {
 		// After the chat commands, so a command is never a watch's.
-		h.OnMessage(func(_ context.Context, m feature.Message) feature.Action {
+		h.OnMessage(func(ctx context.Context, m feature.Message) feature.Action {
 			for _, a := range k.addons {
-				if act := a.claim(m); !act.IsZero() {
+				if act := a.claim(ctx, m); !act.IsZero() {
 					return act
 				}
 			}
 			return feature.Action{}
 		})
-		h.OnEvent(func(_ context.Context, e feature.Event) string {
+		h.OnEvent(func(ctx context.Context, e feature.Event) string {
 			for _, a := range k.addons {
-				if a.reacted(e) {
+				if a.reacted(ctx, e) {
 					break
 				}
 			}

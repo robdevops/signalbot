@@ -731,7 +731,7 @@ func TestPlainDirect(t *testing.T) {
 	dm := func(text string) feature.Message {
 		return feature.Message{Chat: feature.Chat{User: "alice"}, Sender: "alice", Text: text, Addressed: true}
 	}
-	ctx := context.Background()
+	ctx := logx.With(context.Background(), logx.For("slack")) // as the core's: the lines name the network
 	for text, want := range map[string]string{
 		"/rain":             `echo {"readings":["rain"]}`,
 		"/rain 7D":          `echo {"period":"7d","readings":["rain"]}`,
@@ -750,7 +750,7 @@ func TestPlainDirect(t *testing.T) {
 	if got := h.Message(ctx, dm("/photo")); got.Answer != "caption" || len(got.Pictures) != 1 {
 		t.Errorf("photo: %q, %d pictures", got.Answer, len(got.Pictures))
 	}
-	if !strings.Contains(log.String(), "MCP server fake: /status read a resource: ok in ") || strings.Contains(log.String(), "status://now") {
+	if !strings.Contains(log.String(), "<6>Slack: MCP server fake: /status read a resource: ok in ") || strings.Contains(log.String(), "status://now") {
 		t.Errorf("log %q", log.String())
 	}
 }
