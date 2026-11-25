@@ -279,18 +279,19 @@ func TestGroupsAdmin(t *testing.T) {
 // after verdictAge.
 func TestVerdictsBounded(t *testing.T) {
 	var v verdicts
+	now := time.Now()
 	for i := range verdictMax {
-		v.put(fmt.Sprint(i), true)
+		v.put(fmt.Sprint(i), true, now)
 	}
 	v.m["0"] = verdict{true, time.Now().Add(-verdictAge - time.Second)}
 	if _, ok := v.get("0"); ok {
 		t.Fatal("a stale verdict believed")
 	}
-	v.put("new", false)
+	v.put("new", false, now)
 	if len(v.m) != verdictMax {
 		t.Fatalf("%d kept", len(v.m))
 	}
-	v.put("newer", true)
+	v.put("newer", true, now)
 	if admin, ok := v.get("newer"); !ok || !admin || len(v.m) != 1 {
 		t.Fatalf("%d kept", len(v.m))
 	}
@@ -309,5 +310,70 @@ func TestDMStartupLog(t *testing.T) {
 		"Slack DMs: allowed from admins and 1 ID (SLACK_DM_USER_IDS)\n"
 	if l := logs.String(); l != want {
 		t.Fatalf("log %q", l)
+	}
+}
+
+// A lookup asked before another, answering after it, doesn't replace the
+// later one's verdict: a demoted admin's slow old answer can't let them
+// back in for another verdictAge.
+func TestVerdictOlderAnswerLoses(t *testing.T) {
+	var v verdicts
+	now := time.Now()
+	v.put(alice, false, now)
+	v.put(alice, true, now.Add(-time.Second))
+	if admin, ok := v.get(alice); !ok || admin {
+		t.Fatalf("admin %v, ok %v", admin, ok)
+	}
+	v.put(alice, true, now.Add(time.Second))
+	if admin, _ := v.get(alice); !admin {
+		t.Fatal("a newer answer not kept")
+	}
+}
+
+// Before auth.test has said which workspace is the bot's, no one is its
+// admin, and nothing is kept; Groups waits for it, and without it marks
+// no channel Admin.
+func TestAdminBeforeConnected(t *testing.T) {
+	captureLogs(t)
+	f := newFake(t)
+	f.infos = map[string]string{alice: adminAlice}
+	c := f.client(t)
+	if u, err := c.userInfo(context.Background(), alice); err != nil || u.admin {
+		t.Fatalf("%+v %v", u, err)
+	}
+	if _, ok := c.verdicts.get(alice); ok {
+		t.Fatal("a verdict kept before auth.test")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancel()
+	if admin, err := c.isAdmin(ctx, alice); err == nil || admin {
+		t.Fatalf("admin %v, err %v", admin, err)
+	}
+	connected(c)
+	if admin, err := c.isAdmin(context.Background(), alice); err != nil || !admin {
+		t.Fatalf("connected: admin %v, err %v", admin, err)
+	}
+}
+
+// An edit of a DM is gated as the DM is: a stranger's is dropped, an
+// admin's goes on.
+func TestDMEditGated(t *testing.T) {
+	captureLogs(t)
+	f := newFake(t)
+	f.infos = map[string]string{alice: adminAlice}
+	c := connected(f.client(t))
+	c.dm = allow.Parse("")
+	edit := func(user string) envelope {
+		return ev(fmt.Sprintf(`{"type":"message","subtype":"message_changed","channel":"D0%sDM","channel_type":"im","ts":"1700000001.000001",
+			"message":{"user":%q,"text":"hi again","ts":"1700000000.000001"},"previous_message":{"user":%q,"text":"hi","ts":"1700000000.000001"}}`, user[1:5], user, user))
+	}
+	if got := load(t, c.events(edit(bob))); got != "refused" {
+		t.Fatalf("Bob: %s", got)
+	}
+	if got := load(t, c.events(edit(bob))); got != "none" {
+		t.Fatalf("Bob again: %s", got)
+	}
+	if got := load(t, c.events(edit(alice))); got != "hi again" {
+		t.Fatalf("Alice: %s", got)
 	}
 }

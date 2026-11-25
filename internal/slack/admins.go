@@ -2,6 +2,7 @@ package slack
 
 import (
 	"context"
+	"errors"
 	"sync"
 	"time"
 
@@ -39,15 +40,21 @@ func (v *verdicts) get(user string) (admin, ok bool) {
 	return e.admin, true
 }
 
-// put keeps user's verdict, making room by dropping stale ones, or all if
+// put keeps user's verdict, as users.info answered when asked at asked,
+// unless one asked later is kept already, so a slow lookup never replaces
+// a newer one's answer; it makes room by dropping stale ones, or all if
 // none is stale.
-func (v *verdicts) put(user string, admin bool) {
+func (v *verdicts) put(user string, admin bool, asked time.Time) {
 	v.mu.Lock()
 	defer v.mu.Unlock()
 	if v.m == nil {
 		v.m = map[string]verdict{}
 	}
-	if _, ok := v.m[user]; !ok && len(v.m) >= verdictMax {
+	e, ok := v.m[user]
+	if ok && e.at.After(asked) {
+		return
+	}
+	if !ok && len(v.m) >= verdictMax {
 		for k, e := range v.m {
 			if time.Since(e.at) > verdictAge {
 				delete(v.m, k)
@@ -57,18 +64,21 @@ func (v *verdicts) put(user string, admin bool) {
 			clear(v.m)
 		}
 	}
-	v.m[user] = verdict{admin, time.Now()}
+	v.m[user] = verdict{admin, asked}
 }
 
 // isAdmin reports whether user is an owner or admin of the bot's
-// workspace: a fresh verdict, else users.info's, waiting at most 10s,
-// which is kept for verdictAge. err is a failed lookup.
+// workspace: a fresh verdict, else users.info's, once connected, waiting
+// at most 10s in all, which is kept for verdictAge. err is a failed lookup.
 func (c *Client) isAdmin(ctx context.Context, user string) (bool, error) {
 	if admin, ok := c.verdicts.get(user); ok {
 		return admin, nil
 	}
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
+	if c.WaitID(ctx) == "" { // auth.test says whose workspace it is
+		return false, errors.New("slack: not connected after 10s")
+	}
 	u, err := c.userInfo(ctx, user)
 	if err != nil {
 		return false, err

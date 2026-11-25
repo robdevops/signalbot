@@ -572,8 +572,9 @@ func (c *Client) namesLater(users []string) {
 
 // userInfo is a user as users.info says: their display name, and whether
 // they are an owner or admin of the bot's workspace, which is kept as
-// their verdict for verdictAge. Someone from another workspace, in a
-// channel shared with it, is no admin of the bot's.
+// their verdict for verdictAge from when it was asked. Someone from
+// another workspace, in a channel shared with it, is no admin of the
+// bot's, and before auth.test has said which workspace that is, no one is.
 func (c *Client) userInfo(ctx context.Context, user string) (info, error) {
 	var r struct {
 		User struct {
@@ -593,15 +594,18 @@ func (c *Client) userInfo(ctx context.Context, user string) (info, error) {
 			} `json:"profile"`
 		} `json:"user"`
 	}
+	asked := time.Now()
 	if err := c.form(ctx, "users.info", c.token, url.Values{"user": {user}}, &r); err != nil {
 		return info{}, err
 	}
 	u := r.User
-	team, ent := c.teamOf()
-	ours := !u.IsStranger && (u.TeamID == "" || team == "" || u.TeamID == team || ent != "" && u.Enterprise.ID == ent)
+	team, ent, known := c.teamOf()
+	ours := known && !u.IsStranger && (u.TeamID == "" || team == "" || u.TeamID == team || ent != "" && u.Enterprise.ID == ent)
 	in := info{name: txt.SafeName(cmp.Or(u.Profile.DisplayName, u.Profile.RealName, u.RealName, u.Name)),
 		admin: ours && (u.IsAdmin || u.IsOwner || u.IsPrimaryOwner)}
-	c.verdicts.put(user, in.admin)
+	if known { // until auth.test says whose workspace it is, no one is its admin, and nothing is kept
+		c.verdicts.put(user, in.admin, asked)
+	}
 	return in, nil
 }
 
