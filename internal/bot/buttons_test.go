@@ -165,3 +165,22 @@ func TestKeyboard(t *testing.T) {
 		t.Fatalf("on a network without keyboards, answered %q", s.text)
 	}
 }
+
+// A command's answer carries its markup to the network, and its OnSent
+// learns what it went out as.
+func TestAnswerMarkup(t *testing.T) {
+	mk := feature.Markup{Buttons: [][]feature.Button{{{Label: "🔄", Data: "again"}}}}
+	sentAs := make(chan []int64, 1)
+	h := start(t, options{buttons: true, features: func(b *Bot) {
+		b.Command("rain", func(context.Context, feature.Message, string) feature.Action {
+			return feature.Action{Answer: "rain", Markup: mk, OnSent: func(sent []int64, _ bool) { sentAs <- sent }}
+		})
+	}})
+	h.receive(dm("/rain"))
+	if s := h.nextSend(); s.text != "rain" || len(s.markup.Buttons) != 1 {
+		t.Fatalf("sent %+v", s)
+	}
+	if s := <-sentAs; len(s) != 1 {
+		t.Fatalf("OnSent %v", s)
+	}
+}

@@ -122,6 +122,7 @@ type Action struct {
 	Answer     string                           // reply with this text, without the model (addressed messages only)
 	Pictures   []Picture                        // send these with Answer, or alone, without the model; captions as for a tool's pictures (addressed messages only)
 	OnSent     func(sent []int64, dropped bool) // if set with Answer or Pictures, called once: with the timestamps they went out in, or dropped (addressed messages only); alone it doesn't count
+	Markup     Markup                           // what Answer and Pictures carry besides, such as buttons, where the network shows it (addressed messages only)
 	ToolChoice string                           // make the model call this tool before answering (addressed messages only)
 	Context    string                           // keep this text in the chat's history (unaddressed messages only)
 	Done       bool                             // the hook handled the message: no answer, no model, and for an unaddressed one nothing kept and no later hook
@@ -134,13 +135,13 @@ func (a Action) IsZero() bool {
 }
 
 // For returns a copy of the action keeping only the fields that apply to
-// m: Answer, Pictures, OnSent and ToolChoice if m is addressed, Context if
-// not, and Done either way.
+// m: Answer, Pictures, OnSent, Markup and ToolChoice if m is addressed,
+// Context if not, and Done either way.
 func (a Action) For(m Message) Action {
 	if m.Addressed {
 		a.Context = ""
 	} else {
-		a.Answer, a.Pictures, a.OnSent, a.ToolChoice = "", nil, nil, ""
+		a.Answer, a.Pictures, a.OnSent, a.ToolChoice, a.Markup = "", nil, nil, "", Markup{}
 	}
 	return a
 }

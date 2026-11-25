@@ -111,9 +111,7 @@ func Register(h feature.Host) error {
 	}
 	if h.Info().Model == "" {
 		logx.Warnf("MCP_CONFIG is set but no model is configured, so only addon servers and those with direct commands were started")
-		maps.DeleteFunc(servers, func(_ string, s server) bool {
-			return s.Addon == nil && !slices.ContainsFunc(slices.Collect(maps.Values(s.ChatCommands)), func(c chatCommand) bool { return c.Direct })
-		})
+		maps.DeleteFunc(servers, func(_ string, s server) bool { return s.Addon == nil && !plainDirects(s) })
 	}
 	addons := false
 	for _, s := range servers {
@@ -134,7 +132,16 @@ func Register(h feature.Host) error {
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	h.Go(func(life context.Context) { <-life.Done(); cancel() })
-	if err := start(ctx, h, path, servers, k); err != nil {
+	var again *reruns // with buttons, plain servers' direct commands' posts, to make again
+	if h.Info().Caps.Buttons && slices.ContainsFunc(slices.Collect(maps.Values(servers)), plainDirects) {
+		store, err := h.Store("mcp-posts")
+		if err != nil {
+			return err
+		}
+		again = newReruns(h, store)
+		h.OnPress(again.press)
+	}
+	if err := start(ctx, h, path, servers, k, again); err != nil {
 		return err
 	}
 	if k != nil && len(k.addons) > 0 {
@@ -166,6 +173,11 @@ func Register(h feature.Host) error {
 		h.Go(k.run)
 	}
 	return nil
+}
+
+// plainDirects reports whether s is a plain server with direct commands.
+func plainDirects(s server) bool {
+	return s.Addon == nil && slices.ContainsFunc(slices.Collect(maps.Values(s.ChatCommands)), func(c chatCommand) bool { return c.Direct })
 }
 
 func load(path string) (map[string]server, error) {
@@ -406,7 +418,7 @@ func modelName(server, tool string) string {
 // While the model can't call tools, only direct commands are registered;
 // with no model, no tools are offered. k keeps the addons' state, nil to
 // run addons as plain servers; each addon started joins it.
-func start(ctx context.Context, h feature.Host, path string, servers map[string]server, k *keeper) error {
+func start(ctx context.Context, h feature.Host, path string, servers map[string]server, k *keeper, again *reruns) error {
 	info := h.Info()
 	base := botInfo{version: cmp.Or(info.Version, "dev"), network: info.Network, buttons: info.Caps.Buttons}
 	type owner struct{ server, tool string }
@@ -525,7 +537,7 @@ func start(ctx context.Context, h feature.Host, path string, servers map[string]
 		var own []string       // its chat commands, as "/name"
 		var plain *plainDirect // a server without an addon block; one whose addon features are off has no direct commands
 		if cfg.Addon == nil {
-			plain = newPlainDirect(name, cmp.Or(cfg.Name, hs.title, name), c)
+			plain = newPlainDirect(name, cmp.Or(cfg.Name, hs.title, name), c, again)
 		}
 		has := map[string]bool{}
 		for _, t := range listed {
@@ -651,7 +663,7 @@ func command(h feature.Host, server, n string, c chatCommand, models map[string]
 		case c.RequireArg && args == "":
 			return feature.Action{Answer: bare}
 		case c.Direct && a == nil:
-			return plain.run(ctx, name, c, args)
+			return plain.run(ctx, m.Chat, name, c, args)
 		case c.Direct:
 			return a.direct(ctx, m, name, c, args)
 		}
@@ -663,6 +675,9 @@ func command(h feature.Host, server, n string, c chatCommand, models map[string]
 	}
 	if c.Direct && a != nil {
 		a.cmds[name] = true
+	}
+	if c.Direct && plain != nil && plain.again != nil {
+		plain.again.add(plain, name, c)
 	}
 	return "/" + name
 }

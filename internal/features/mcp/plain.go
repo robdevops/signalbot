@@ -26,25 +26,40 @@ type plainDirect struct {
 	server, title string
 	conn          conn
 	busy          chan struct{} // a place for each call in flight
+	again         *reruns       // its posts with buttons to make the call again; nil without buttons
 }
 
-func newPlainDirect(server, title string, c conn) *plainDirect {
-	return &plainDirect{server: server, title: title, conn: c, busy: make(chan struct{}, maxDirect)}
+func newPlainDirect(server, title string, c conn, again *reruns) *plainDirect {
+	return &plainDirect{server: server, title: title, conn: c, busy: make(chan struct{}, maxDirect), again: again}
 }
 
-// run answers /name with text, the rest of the message: c's tool called
-// with c's args, the text as its arg if it has one, or c's resource read.
-func (d *plainDirect) run(ctx context.Context, name string, c chatCommand, text string) feature.Action {
+// run answers /name in chat with text, the rest of the message, as call
+// does; where the network has buttons, under its post, to make the call
+// again.
+func (d *plainDirect) run(ctx context.Context, chat feature.Chat, name string, c chatCommand, text string) feature.Action {
+	act, done := d.call(ctx, name, c, text)
+	if done && d.again != nil {
+		args, _ := c.arguments(text)
+		value, _ := args[c.Arg].(string)
+		d.again.offer(&act, chat, d, name, value)
+	}
+	return act
+}
+
+// call answers /name with text: c's tool called with c's args, the text
+// as its arg if it has one, or c's resource read. done is false if it
+// wasn't made, or failed, and the answer says so.
+func (d *plainDirect) call(ctx context.Context, name string, c chatCommand, text string) (act feature.Action, done bool) {
 	args, usage := c.arguments(text)
 	if usage != "" {
-		return feature.Action{Answer: strings.ReplaceAll(usage, "{name}", name)}
+		return feature.Action{Answer: strings.ReplaceAll(usage, "{name}", name)}, false
 	}
 	select {
 	case d.busy <- struct{}{}:
 		defer func() { <-d.busy }()
 	default:
 		logx.Warnf("MCP server %s: /%s refused: %d calls already in flight", d.server, name, maxDirect)
-		return feature.Action{Answer: d.title + " is busy, try again in a moment."}
+		return feature.Action{Answer: d.title + " is busy, try again in a moment."}, false
 	}
 	ctx, cancel := context.WithTimeout(ctx, cmp.Or(c.timeout, directTimeout))
 	defer cancel()
@@ -66,13 +81,13 @@ func (d *plainDirect) run(ctx context.Context, name string, c chatCommand, text 
 	}
 	logx.Infof("MCP server %s: /%s read %s: %s in %dms, %d bytes", d.server, name, what, outcome, time.Since(start).Milliseconds(), len(res))
 	if outcome != "ok" {
-		return feature.Action{Answer: d.title + " couldn't do that just now."}
+		return feature.Action{Answer: d.title + " couldn't do that just now."}, false
 	}
-	act := r.action(d.server)
+	act = r.action(d.server)
 	if act.Answer == "" && len(act.Pictures) == 0 {
 		act.Answer = d.title + " had nothing to show."
 	}
-	return act
+	return act, true
 }
 
 // arguments are the tool's arguments for text: c's args, with text as

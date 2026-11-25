@@ -75,7 +75,8 @@ func (b *Bot) respond(msg feature.Message, act feature.Action, text string, refs
 		return
 	case act.Answer != "" || len(act.Pictures) > 0:
 		text, _ := captioned(act.Answer, act.Pictures)
-		sent := b.net.Send(msg.Chat, text, act.Pictures, b.chats.Names(msg.Chat.Key()), 0, nil, feature.Markup{})
+		sent := b.net.Send(msg.Chat, text, act.Pictures, b.chats.Names(msg.Chat.Key()), 0, nil, act.Markup)
+		b.keyboard(feature.Post{Chat: msg.Chat, Markup: act.Markup}, sent)
 		if act.OnSent != nil {
 			act.OnSent(sent, len(sent) == 0)
 		}

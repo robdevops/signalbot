@@ -768,3 +768,70 @@ func TestPlainDirectSettings(t *testing.T) {
 		}
 	}
 }
+
+// Where the network has buttons, a plain direct command's post has one per
+// value, the current one marked, and refresh; a press makes the call
+// again and edits the post, also after a restart. Without buttons, none.
+func TestRerun(t *testing.T) {
+	url := serve(t, &fakeMCP{})
+	config := `{"mcpServers":{"fake":{"url":"` + url + `","allowed_tools":["echo"],"chat_commands":{
+		"rain":{"tool":"echo","direct":true,"args":{"period":"1d"},"arg":"period","values":["1d","7d"]}}}}}`
+	dir := t.TempDir()
+	buttons := func(h *featuretest.Host) { h.Bot.Caps.Buttons, h.Settings["STATE_DIRECTORY"] = true, dir }
+	h, _, err := register(t, config, buttons)
+	if err != nil {
+		t.Fatal(err)
+	}
+	alice := feature.Chat{User: "alice"}
+	ctx := context.Background()
+	got := h.Message(ctx, feature.Message{Chat: alice, Sender: "alice", Text: "/rain", Addressed: true})
+	labels := func(rows [][]feature.Button) (s []string) {
+		for _, row := range rows {
+			for _, b := range row {
+				s = append(s, b.Label+"="+b.Data)
+			}
+		}
+		return s
+	}
+	if l := labels(got.Markup.Buttons); !slices.Equal(l, []string{"• 1d=rerun=1d", "7d=rerun=7d", "🔄=rerun"}) || got.OnSent == nil {
+		t.Fatalf("buttons %q", l)
+	}
+	got.OnSent([]int64{10, 11}, false)
+	if _, ok := h.Press(ctx, feature.Press{Chat: alice, Sent: 10, Data: "rerun=7d"}); ok {
+		t.Error("a press under a message without the buttons was taken")
+	}
+	if a, ok := h.Press(ctx, feature.Press{Chat: alice, Sent: 11, Data: "rerun=7d"}); !ok || a != "" {
+		t.Fatalf("press: %q %v", a, ok)
+	}
+	p := h.Posts()
+	if len(p) != 1 || p[0].Edit != 11 || p[0].Text != `echo {"period":"7d"}` || !slices.Equal(labels(p[0].Markup.Buttons), []string{"1d=rerun=1d", "• 7d=rerun=7d", "🔄=rerun"}) {
+		t.Fatalf("posts %+v", p)
+	}
+	p[0].OnSent([]int64{12}, false) // as a network that sends an edit anew
+	if a, ok := h.Press(ctx, feature.Press{Chat: alice, Sent: 12, Data: "rerun=2w"}); !ok || a != "That choice no longer works." {
+		t.Errorf("unknown value: %q %v", a, ok)
+	}
+	h.Stop()
+
+	h, _, err = register(t, config, buttons) // restarted
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := h.Press(ctx, feature.Press{Chat: alice, Sent: 11, Data: "rerun"}); ok {
+		t.Error("a press under the post's old message was taken")
+	}
+	if _, ok := h.Press(ctx, feature.Press{Chat: alice, Sent: 12, Data: "rerun"}); !ok {
+		t.Fatal("refresh after a restart not taken")
+	}
+	if p := h.Posts(); len(p) != 1 || p[0].Edit != 12 || p[0].Text != `echo {"period":"7d"}` {
+		t.Fatalf("refresh %+v", p)
+	}
+
+	h, _, err = register(t, config) // a network without buttons
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := h.Message(ctx, feature.Message{Chat: alice, Sender: "alice", Text: "/rain 7d", Addressed: true}); got.Markup.Buttons != nil || got.Answer != `echo {"period":"7d"}` {
+		t.Errorf("without buttons: %+v", got)
+	}
+}
