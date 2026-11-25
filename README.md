@@ -1,6 +1,6 @@
 # signalbot
 
-A small, [privacy-conscious](PRIVACY.md) chat bot for Signal, through a running [signal-cli](https://github.com/AsamK/signal-cli) daemon, or for [Telegram](#telegram), that answers using a model from [OpenRouter](https://openrouter.ai) or a [compatible provider](docs/MODELS.md).
+A small, [privacy-conscious](PRIVACY.md) chat bot for Signal, through a running [signal-cli](https://github.com/AsamK/signal-cli) daemon, or for [Telegram](#telegram) or [Discord](#discord), that answers using a model from [OpenRouter](https://openrouter.ai) or a [compatible provider](docs/MODELS.md).
 
 - [Features](#features)
 - [Use cases](#use-cases)
@@ -10,6 +10,7 @@ A small, [privacy-conscious](PRIVACY.md) chat bot for Signal, through a running 
   - [Install as a systemd service](#install-as-a-systemd-service)
   - [Install as a Docker container](#install-as-a-docker-container)
   - [Telegram](#telegram)
+  - [Discord](#discord)
   - [Test](#test)
 - [Docs](#docs)
 
@@ -124,9 +125,9 @@ docker logs -f signalbot
 
 Logs go to journald where the host has it, otherwise to Docker's rotating `local` driver; `docker logs` reads both. Under journald, `journalctl CONTAINER_NAME=signalbot -p err` shows warnings and errors.
 
-### Build without charts, Signal or Telegram
+### Build without charts, Signal, Telegram or Discord
 
-Charts and their fonts can be left out of the binary (about 0.7 MB of 10 MB) with a build tag: `go build -tags nocharts`, or for Docker, add `TAGS=nocharts` after `sudo` in the build command above. Likewise `nosignal` or `notelegram` leaves out a chat network, and tags combine with commas (`-tags nocharts,notelegram`); leaving out both networks fails to build. To stop files reaching the model without rebuilding, set `FILES=off` instead (see [Configuration](docs/CONFIGURATION.md)).
+Charts and their fonts can be left out of the binary (about 0.7 MB of 10 MB) with a build tag: `go build -tags nocharts`, or for Docker, add `TAGS=nocharts` after `sudo` in the build command above. Likewise `nosignal`, `notelegram` or `nodiscord` leaves out a chat network, and tags combine with commas (`-tags nocharts,notelegram`); leaving out every network fails to build. To stop files reaching the model without rebuilding, set `FILES=off` instead (see [Configuration](docs/CONFIGURATION.md)).
 
 ### Block someone, or other signal-cli chores
 
@@ -180,6 +181,24 @@ EOF
 A file only the Telegram bot has is copied across, and each file keeps the state directory's owner. Today's spending (`budget.json`) starts afresh for the Telegram chats, and an addon's state there (`mcp.json`: its rounds and pseudonyms) starts over, as the Signal bot's is kept.
 
 Telegram differs from Signal in a few ways: bot chats are not end-to-end encrypted, the Bot API never tells a bot about deleted messages, and a reply is capped at 4,096 characters a message. See [PRIVACY.md](PRIVACY.md#telegram).
+
+### Discord
+
+The same bot can answer on Discord instead, or as well, talking to Discord's gateway and API directly (an outgoing WebSocket, so it needs no public address).
+
+1. In the [developer portal](https://discord.com/developers/applications), choose New Application and name it: the name is the bot's.
+2. Under **Bot**, choose Reset Token and copy the token. The token is a password: anyone with it controls the bot.
+3. Still under **Bot**, turn on **Message Content Intent** (without it, Discord refuses the bot's connection, and the log says so), and turn off **Public Bot**, so only you can add it to a server (the bot warns at startup while it is on).
+4. Under **Installation**, set the install link to None (Public Bot can't be turned off otherwise). Under **OAuth2**, URL Generator, tick the scopes `bot` and `applications.commands`, and the bot permissions View Channels, Send Messages, Send Messages in Threads, Embed Links, Attach Files, Read Message History and Add Reactions; open the URL it makes and add the bot to your server.
+5. In `/etc/signalbot.env`, set `DISCORD_BOT_TOKEN` to the token. Leave `SIGNALCLI_SOCKET` unset for Discord alone.
+6. Install as above, skipping signal-cli and its socket.
+7. In a channel the bot can see, @mention it or reply to one of its messages; or DM it, or type `/` for its commands.
+
+The bot answers anyone who DMs it and every channel it can see: the server's roles and channel permissions decide who can reach it, and Discord lets anyone who shares a server with the bot DM it. Each channel, and each thread, is its own conversation, with its own history. Its commands are Discord's slash commands, each with an optional `text`; a slash command's answer replaces Discord's "thinking…". Each chat has its own `DAILY_BUDGET`, so keep one set.
+
+To run on Discord with Signal or Telegram, set each network's setting: one bot then answers on all of them, each chat on its own network, as above.
+
+Discord differs from Signal as Telegram does: bot chats are not end-to-end encrypted, and a reply is capped at 2,000 characters a message. See [PRIVACY.md](PRIVACY.md#discord).
 
 ### Test
 

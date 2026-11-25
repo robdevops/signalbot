@@ -78,6 +78,19 @@ On Telegram (`TELEGRAM_BOT_TOKEN` set) the above holds, with these differences:
 - **Locations.** A shared location or venue reaches the bot as a map link with its coordinates, as on Signal, so it is kept, and sent to the model, like any text. A live location, which follows its sender, is left out.
 - **The token** is in every request's URL; the bot takes it out of every error before logging it.
 
+## Discord
+
+On Discord (`DISCORD_BOT_TOKEN` set) the above holds, with these differences:
+
+- **On several networks at once,** each chat is kept apart, as for Telegram above.
+- **Not end-to-end encrypted.** Discord's servers see every message in the channels and DMs the bot is in, every reply, every button press and slash command, and the pictures and files sent there. Discord's own policy applies to them.
+- **What the bot sees.** With the Message Content intent on, which the bot needs, Discord sends it every message in every channel it can see, kept as context as above. The server's channel permissions decide which channels those are.
+- **Who it answers.** Anyone who DMs it, which Discord allows anyone who shares a server with the bot, and every channel it can see. Turn off Public Bot in the developer portal so only you can add it to a server; the bot warns at startup while it is on.
+- **Names and channels.** The bot keeps, in memory, the names of people it has seen post, the channels it has seen them in, and its servers' channels; a restart clears them. Deletes reach the bot, and drop the message from its history, for the messages it saw since it started.
+- **Pictures and files** are fetched from Discord's servers by their links, only while answering the message that has them; the bot's token isn't sent with them.
+- **A slash command's or a button's answer** goes through Discord's interaction, whose token works for 15 minutes; the bot keeps it in memory only that long. A button's answer is shown only to whoever pressed it.
+- **The token** is sent in a header, never in a URL, and never logged.
+
 ## Addons
 
 An addon is a program the bot runs on its own machine, as an [MCP server](docs/FILES_LINKS_TOOLS_MCP.md#addons), that answers its own commands, reads the messages it asks for and posts on its own, such as the [GeoGuess](https://github.com/robdevops/GeoGuess) game. With none configured, none of this applies.

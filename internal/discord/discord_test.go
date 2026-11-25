@@ -1,0 +1,792 @@
+package discord
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"io"
+	"mime"
+	"mime/multipart"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"sync"
+	"testing"
+	"time"
+	"unicode/utf16"
+
+	"github.com/robdevops/signalbot/internal/bot"
+	"github.com/robdevops/signalbot/internal/feature"
+	"github.com/robdevops/signalbot/internal/kit/logx"
+	"github.com/robdevops/signalbot/internal/kit/ws/wstest"
+)
+
+const (
+	token   = "MTIz.SECRET-token-value"
+	botID   = "900000000000000001"
+	alice   = "100000000000000001"
+	bob     = "100000000000000002"
+	guild   = "300000000000000001"
+	chanID  = "400000000000000001"
+	dmChan  = "500000000000000001"
+	inGuild = `"guild_id":"` + guild + `","channel_id":"` + chanID + `"`
+	inDM    = `"channel_id":"` + dmChan + `"`
+	fromA   = `"author":{"id":"` + alice + `","username":"alice","global_name":"Alice"}`
+	fromBob = `"author":{"id":"` + bob + `","username":"bob","global_name":"Bob"}`
+	group   = prefix + chanID
+)
+
+func captureLogs(t *testing.T) *logx.Buffer {
+	t.Helper()
+	var buf logx.Buffer
+	t.Cleanup(logx.SetOutput(&buf, &buf, false))
+	return &buf
+}
+
+// fake is Discord: its REST API, answering each route with a result set
+// for it or a made-up message ID, and its gateway, which says hello, acks
+// heartbeats and hands each connection to the test. Every request and
+// every gateway message the client sends is recorded.
+type fake struct {
+	t       *testing.T
+	srv     *httptest.Server
+	mu      sync.Mutex
+	calls   []call
+	results map[string]string // "METHOD /path" to its answer
+	errs    map[string][]int  // "METHOD /path" to statuses to answer first, once each
+	public  bool              // the application's bot_public
+	nextID  int64
+	conns   chan *gwConn
+	noAck   bool // heartbeats go unanswered
+}
+
+type call struct {
+	Route string         // "METHOD /path"
+	Body  map[string]any // JSON, or a multipart form's payload_json
+	Raw   []byte         // the JSON as sent
+	Files []string       // the files uploaded, by name
+}
+
+// gwConn is one gateway connection: its path, and what the client sent.
+type gwConn struct {
+	*wstest.Conn
+	path string
+	got  chan map[string]any
+	seq  int
+}
+
+func newFake(t *testing.T) *fake {
+	f := &fake{t: t, results: map[string]string{}, errs: map[string][]int{}, nextID: 1300000000000000000, conns: make(chan *gwConn, 8)}
+	f.srv = httptest.NewServer(http.HandlerFunc(f.serve))
+	t.Cleanup(f.srv.Close)
+	return f
+}
+
+func (f *fake) serve(w http.ResponseWriter, r *http.Request) {
+	if r.URL.Path == "/gw" || r.URL.Path == "/resume" {
+		f.gateway(w, r)
+		return
+	}
+	if strings.HasPrefix(r.URL.Path, "/cdn/") {
+		w.Write([]byte("PNGDATA"))
+		return
+	}
+	route := r.Method + " " + r.URL.Path
+	hook := strings.HasPrefix(r.URL.Path, "/webhooks/") || strings.HasPrefix(r.URL.Path, "/interactions/")
+	if !hook && r.Header.Get("Authorization") != "Bot "+token {
+		w.WriteHeader(401)
+		w.Write([]byte(`{"message":"401: Unauthorized","code":0}`))
+		return
+	}
+	c := call{Route: route, Body: map[string]any{}}
+	if mt, ps, _ := mime.ParseMediaType(r.Header.Get("Content-Type")); mt == "multipart/form-data" {
+		mr := multipart.NewReader(r.Body, ps["boundary"])
+		for p, err := mr.NextPart(); err == nil; p, err = mr.NextPart() {
+			data, _ := io.ReadAll(p)
+			if p.FileName() != "" {
+				c.Files = append(c.Files, p.FormName()+"="+p.FileName())
+			} else if p.FormName() == "payload_json" {
+				json.Unmarshal(data, &c.Body)
+			}
+		}
+	} else {
+		c.Raw, _ = io.ReadAll(r.Body)
+		json.Unmarshal(c.Raw, &c.Body)
+	}
+	f.mu.Lock()
+	f.calls = append(f.calls, c)
+	var status int
+	if s := f.errs[route]; len(s) > 0 {
+		status, f.errs[route] = s[0], s[1:]
+	}
+	res, ok := f.results[route]
+	f.nextID++
+	n := f.nextID
+	public := f.public
+	f.mu.Unlock()
+	switch {
+	case status == 429:
+		w.WriteHeader(429)
+		w.Write([]byte(`{"message":"You are being rate limited.","retry_after":0.01,"global":false}`))
+	case status != 0:
+		code := status * 10
+		if status == 400 {
+			code = 10014 // an unknown emoji's
+		}
+		w.WriteHeader(status)
+		fmt.Fprintf(w, `{"message":"refused","code":%d}`, code)
+	case ok:
+		w.Write([]byte(res))
+	case route == "GET /gateway/bot":
+		fmt.Fprintf(w, `{"url":"ws://%s/gw"}`, r.Host)
+	case route == "GET /applications/@me":
+		fmt.Fprintf(w, `{"id":"app1","bot_public":%v}`, public)
+	case route == "POST /users/@me/channels":
+		fmt.Fprintf(w, `{"id":"%s"}`, dmChan)
+	case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/messages"), strings.HasSuffix(r.URL.Path, "/@original"):
+		fmt.Fprintf(w, `{"id":"%d"}`, n)
+	default:
+		w.WriteHeader(http.StatusNoContent)
+	}
+}
+
+func (f *fake) gateway(w http.ResponseWriter, r *http.Request) {
+	conn, err := wstest.Accept(w, r)
+	if err != nil {
+		return
+	}
+	g := &gwConn{Conn: conn, path: r.URL.Path, got: make(chan map[string]any, 64)}
+	conn.Write(`{"op":10,"d":{"heartbeat_interval":40}}`)
+	go func() {
+		for {
+			s, err := conn.Read()
+			if err != nil {
+				close(g.got)
+				return
+			}
+			var m map[string]any
+			json.Unmarshal([]byte(s), &m)
+			f.mu.Lock()
+			noAck := f.noAck
+			f.mu.Unlock()
+			if m["op"] == float64(opHeartbeat) {
+				if !noAck {
+					conn.Write(`{"op":11}`)
+				}
+				continue
+			}
+			g.got <- m
+		}
+	}()
+	f.conns <- g
+}
+
+// conn waits for the client's next gateway connection.
+func (f *fake) conn() *gwConn {
+	f.t.Helper()
+	select {
+	case g := <-f.conns:
+		return g
+	case <-time.After(5 * time.Second):
+		f.t.Fatal("no gateway connection")
+		return nil
+	}
+}
+
+// next is the client's next gateway message, but heartbeats.
+func (g *gwConn) next(t *testing.T) map[string]any {
+	t.Helper()
+	select {
+	case m := <-g.got:
+		return m
+	case <-time.After(5 * time.Second):
+		t.Fatal("nothing sent on the gateway")
+		return nil
+	}
+}
+
+// dispatch sends an event.
+func (g *gwConn) dispatch(event, d string) {
+	g.seq++
+	g.Write(fmt.Sprintf(`{"op":0,"s":%d,"t":%q,"d":%s}`, g.seq, event, d))
+}
+
+func (g *gwConn) ready(host string) {
+	g.dispatch("READY", `{"v":10,"session_id":"sess1","resume_gateway_url":"ws://`+host+`/resume","user":{"id":"`+botID+`","username":"botty","global_name":"Botty","bot":true},"application":{"id":"app1"},"guilds":[]}`)
+}
+
+func (f *fake) callsTo(route string) []call {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	var out []call
+	for _, c := range f.calls {
+		if c.Route == route {
+			out = append(out, c)
+		}
+	}
+	return out
+}
+
+func (f *fake) waitCalls(route string, n int) []call {
+	f.t.Helper()
+	for end := time.Now().Add(5 * time.Second); len(f.callsTo(route)) < n; time.Sleep(5 * time.Millisecond) {
+		if time.Now().After(end) {
+			f.t.Fatalf("waited for %d %s; calls %v", n, route, f.routes())
+		}
+	}
+	return f.callsTo(route)
+}
+
+func (f *fake) routes() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	var out []string
+	for _, c := range f.calls {
+		out = append(out, c.Route)
+	}
+	return out
+}
+
+func (f *fake) client() *Client {
+	c := newClient(f.srv.URL, token, nil)
+	c.backoff, c.fatal, c.typing, c.pending = 10*time.Millisecond, time.Hour, 20*time.Millisecond, 200*time.Millisecond
+	return c
+}
+
+// connected marks c as knowing who it is, as READY does.
+func connected(c *Client) *Client {
+	c.self.Store(botID)
+	c.username.Store("botty")
+	c.name.Store("Botty")
+	c.app.Store("app1")
+	c.once.Do(func() { close(c.known) })
+	return c
+}
+
+func waitFor(t *testing.T, what string, ok func() bool) {
+	t.Helper()
+	for end := time.Now().Add(5 * time.Second); !ok(); time.Sleep(5 * time.Millisecond) {
+		if time.Now().After(end) {
+			t.Fatalf("timed out waiting for %s", what)
+		}
+	}
+}
+
+func one(t *testing.T, rs []bot.Received) bot.Received {
+	t.Helper()
+	if len(rs) != 1 {
+		t.Fatalf("got %d events: %+v", len(rs), rs)
+	}
+	return rs[0]
+}
+
+func load(t *testing.T, r bot.Received) feature.Message {
+	t.Helper()
+	in, ok := r.(bot.Incoming)
+	if !ok {
+		t.Fatalf("not Incoming: %#v", r)
+	}
+	m, ok := in.Load(context.Background(), func(string, string) {})
+	if !ok {
+		t.Fatal("Load refused")
+	}
+	return m
+}
+
+// The client identifies with the token and its intents, knows who it is
+// from READY, lists the commands as slash commands, warns of a public bot,
+// and after a drop resumes the session where READY said; the token is
+// never logged.
+func TestConnectAndResume(t *testing.T) {
+	logs := captureLogs(t)
+	f := newFake(t)
+	f.public = true
+	c := f.client()
+	c.Watch(bot.Watch{Commands: []bot.Command{{Name: "hello", About: "Hello"}, {Name: "rain"}, {Name: "Bad Name"}}})
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() { defer close(done); c.Run(ctx, func(bot.Received) {}) }()
+	defer func() { cancel(); <-done }()
+
+	g := f.conn()
+	id := g.next(t)
+	d, _ := id["d"].(map[string]any)
+	if id["op"] != float64(opIdentify) || d["token"] != token || d["intents"] != float64(1<<0|1<<9|1<<10|1<<12|1<<13|1<<15) || g.path != "/gw" {
+		t.Fatalf("identify %v on %s", id, g.path)
+	}
+	g.ready(strings.TrimPrefix(f.srv.URL, "http://"))
+	if got := c.WaitID(context.Background()); got != botID {
+		t.Fatalf("WaitID %q", got)
+	}
+	f.waitCalls("PUT /applications/app1/commands", 1)
+	g.dispatch("MESSAGE_CREATE", `{"id":"1200000000000000001",`+inDM+`,"type":0,`+fromA+`,"content":"hi"}`)
+	g.Drop()
+
+	g2 := f.conn()
+	res := g2.next(t)
+	rd, _ := res["d"].(map[string]any)
+	if res["op"] != float64(opResume) || rd["session_id"] != "sess1" || rd["seq"] != float64(2) || rd["token"] != token || g2.path != "/resume" {
+		t.Fatalf("resume %v on %s", res, g2.path)
+	}
+	waitFor(t, "the warning", func() bool { return strings.Contains(logs.String(), "turn off Public Bot") })
+	if !strings.Contains(logs.String(), "connected to Discord as botty") || strings.Contains(logs.String(), "SECRET") {
+		t.Fatalf("logs:\n%s", logs)
+	}
+}
+
+// The commands Discord takes become slash commands, each with an optional
+// text option.
+func TestSlashCommandList(t *testing.T) {
+	f := newFake(t)
+	c := connected(f.client())
+	c.Watch(bot.Watch{Commands: []bot.Command{{Name: "hello", About: "Hello"}, {Name: "rain"}, {Name: "Bad Name"}}})
+	c.publishCommands()
+	var got []struct {
+		Name, Description string
+		Type              int
+		Options           []struct {
+			Type     int
+			Name     string
+			Required bool
+		}
+	}
+	raw := f.callsTo("PUT /applications/app1/commands")
+	if len(raw) != 1 {
+		t.Fatalf("calls %v", f.routes())
+	}
+	json.Unmarshal(raw[0].Raw, &got)
+	if len(got) != 2 || got[0].Name != "hello" || got[0].Description != "Hello" || got[1].Description != "rain" || got[0].Type != 1 ||
+		len(got[0].Options) != 1 || got[0].Options[0].Name != "text" || got[0].Options[0].Type != 3 || got[0].Options[0].Required {
+		t.Fatalf("commands %+v", got)
+	}
+}
+
+// A refused token or intents is logged naming what to fix, and isn't
+// retried soon.
+func TestRefused(t *testing.T) {
+	for _, tc := range []struct {
+		code int
+		want string
+	}{{4004, "DISCORD_BOT_TOKEN"}, {4014, "Message Content Intent"}} {
+		logs := captureLogs(t)
+		f := newFake(t)
+		c := f.client()
+		ctx, cancel := context.WithCancel(context.Background())
+		done := make(chan struct{})
+		go func() { defer close(done); c.Run(ctx, func(bot.Received) {}) }()
+		g := f.conn()
+		g.next(t)
+		g.CloseWith(tc.code, "no")
+		waitFor(t, "the line", func() bool { return strings.Contains(logs.String(), tc.want) })
+		select {
+		case <-f.conns:
+			t.Fatalf("%d: reconnected at once", tc.code)
+		case <-time.After(100 * time.Millisecond):
+		}
+		cancel()
+		<-done
+		if strings.Contains(logs.String(), "SECRET") {
+			t.Fatalf("token logged:\n%s", logs)
+		}
+	}
+	// A token the REST API refuses, too.
+	logs := captureLogs(t)
+	f := newFake(t)
+	c := newClient(f.srv.URL, "wrong", nil)
+	c.backoff, c.fatal = 10*time.Millisecond, time.Hour
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() { defer close(done); c.Run(ctx, func(bot.Received) {}) }()
+	waitFor(t, "the line", func() bool { return strings.Contains(logs.String(), "Discord refused DISCORD_BOT_TOKEN") })
+	cancel()
+	<-done
+}
+
+// A missed heartbeat ack, Discord's reconnect, and an invalid session each
+// reconnect: the first two resume, the last identifies afresh.
+func TestReconnects(t *testing.T) {
+	captureLogs(t)
+	f := newFake(t)
+	c := f.client()
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() { defer close(done); c.Run(ctx, func(bot.Received) {}) }()
+	defer func() { cancel(); <-done }()
+	host := strings.TrimPrefix(f.srv.URL, "http://")
+	g := f.conn()
+	g.next(t)
+	g.ready(host)
+	g.Write(`{"op":7,"d":null}`)
+	g = f.conn()
+	if m := g.next(t); m["op"] != float64(opResume) {
+		t.Fatalf("after op 7: %v", m)
+	}
+	f.mu.Lock()
+	f.noAck = true
+	f.mu.Unlock()
+	g = f.conn() // no ack: the client gives up on it
+	f.mu.Lock()
+	f.noAck = false
+	f.mu.Unlock()
+	if m := g.next(t); m["op"] != float64(opResume) {
+		t.Fatalf("after a missed ack: %v", m)
+	}
+	g.Write(`{"op":9,"d":false}`)
+	g = f.conn()
+	if m := g.next(t); m["op"] != float64(opIdentify) || g.path != "/gw" {
+		t.Fatalf("after op 9: %v on %s", m, g.path)
+	}
+}
+
+// Who the bot answers: in a channel, a mention or a reply to it; in a DM,
+// anyone. Its own messages and other bots' are dropped; others' mentions
+// are written @Name.
+func TestAddressing(t *testing.T) {
+	c := connected(newFake(t).client())
+	mentions := `"mentions":[{"id":"` + botID + `","username":"botty","bot":true},{"id":"` + bob + `","username":"bob","member":{"nick":"Bobby"}}]`
+	for _, tc := range []struct {
+		name, msg, text, kind string
+	}{
+		{"mention", inGuild + `,` + fromA + `,"content":"<@` + botID + `> what is up",` + mentions, "what is up", "Incoming"},
+		{"old mention", inGuild + `,` + fromA + `,"content":"hey <@!` + botID + `> and <@` + bob + `>",` + mentions, "hey and @Bobby", "Incoming"},
+		{"reply to it", inGuild + `,` + fromA + `,"type":19,"content":"and?","message_reference":{"message_id":"1100000000000000009"},"referenced_message":{"id":"1100000000000000009","author":{"id":"` + botID + `","username":"botty","bot":true},"content":"earlier"}`, "and?", "Incoming"},
+		{"chatter", inGuild + `,` + fromA + `,"content":"the moon is cheese"`, "the moon is cheese", "Chatter"},
+		{"a DM", inDM + `,` + fromA + `,"content":"hi"`, "hi", "Incoming"},
+		{"a stranger's DM", inDM + `,` + fromBob + `,"content":"hi"`, "hi", "Incoming"},
+		{"its own", inGuild + `,"author":{"id":"` + botID + `","username":"botty","bot":true},"content":"hi"`, "", "none"},
+		{"another bot", inGuild + `,"author":{"id":"7","username":"other","bot":true},"content":"<@` + botID + `> hi"`, "", "none"},
+		{"a join", inGuild + `,"type":7,` + fromA + `,"content":""`, "", "none"},
+	} {
+		rs := c.events("MESSAGE_CREATE", json.RawMessage(`{"id":"1200000000000000001",`+tc.msg+`}`))
+		switch tc.kind {
+		case "none":
+			if len(rs) != 0 {
+				t.Errorf("%s: got %+v", tc.name, rs)
+			}
+			continue
+		case "Chatter":
+			ch, ok := one(t, rs).(bot.Chatter)
+			if !ok || ch.Message.Text != tc.text || ch.Message.Chat.GroupID != group || ch.Message.Addressed {
+				t.Errorf("%s: got %+v", tc.name, rs[0])
+			}
+			continue
+		}
+		m := load(t, one(t, rs))
+		if m.Text != tc.text || !m.Addressed || m.Timestamp != 1200000000000000001 || !strings.HasPrefix(m.Sender, prefix) {
+			t.Errorf("%s: got %+v", tc.name, m)
+		}
+	}
+	// A reply quotes the message it replies to, and a DM's chat is its sender.
+	m := load(t, one(t, c.events("MESSAGE_CREATE", json.RawMessage(`{"id":"1200000000000000002",`+inGuild+`,`+fromA+`,"type":19,"content":"and?","message_reference":{"message_id":"1100000000000000009"},"referenced_message":{"id":"1100000000000000009","author":{"id":"`+botID+`","username":"botty","bot":true},"content":"earlier"}}`))))
+	if m.Quote == nil || m.Quote.Text != "earlier" || !m.Quote.Bot || m.Quote.Sent != 1100000000000000009 {
+		t.Fatalf("quote %+v", m.Quote)
+	}
+	m = load(t, one(t, c.events("MESSAGE_CREATE", json.RawMessage(`{"id":"1200000000000000003",`+inDM+`,`+fromA+`,"content":"hi"}`))))
+	if m.Chat != (feature.Chat{User: prefix + alice}) || m.Name != "Alice" {
+		t.Fatalf("DM %+v", m)
+	}
+	if got, _ := c.Groups(context.Background(), prefix+alice); len(got) != 1 || got[0].ID != group {
+		t.Fatalf("Groups %+v", got)
+	}
+}
+
+// An attachment is an image the model sees, or a file; the image is fetched
+// from its link.
+func TestAttachments(t *testing.T) {
+	f := newFake(t)
+	c := connected(f.client())
+	m := load(t, one(t, c.events("MESSAGE_CREATE", json.RawMessage(`{"id":"1200000000000000001",`+inDM+`,`+fromA+`,"content":"what is this?","attachments":[`+
+		`{"id":"1","filename":"a.png","content_type":"image/png","size":100,"url":"`+f.srv.URL+`/cdn/a.png"},`+
+		`{"id":"2","filename":"doc.pdf","content_type":"application/pdf","size":200,"url":"`+f.srv.URL+`/cdn/doc.pdf"}]}`))))
+	if len(m.Media) != 2 || m.Media[0].File || !m.Media[1].File || m.Media[1].Name != "doc.pdf" || m.Media[1].MIME != "application/pdf" {
+		t.Fatalf("media %+v", m.Media)
+	}
+	data, err := c.Media(context.Background(), m, 0)
+	if err != nil || string(data) != "PNGDATA" {
+		t.Fatalf("Media %q %v", data, err)
+	}
+}
+
+// An edit is the message again, Edited on the scale of message IDs and
+// after it; a delete names its sender, or the bot for its own.
+func TestEditsAndDeletes(t *testing.T) {
+	f := newFake(t)
+	c := connected(f.client())
+	c.events("MESSAGE_CREATE", json.RawMessage(`{"id":"1200000000000000001",`+inGuild+`,`+fromA+`,"content":"chatter"}`))
+	rs := c.events("MESSAGE_UPDATE", json.RawMessage(`{"id":"1200000000000000001",`+inGuild+`,"type":0,`+fromA+`,"content":"<@`+botID+`> now for you","mentions":[{"id":"`+botID+`"}],"edited_timestamp":"2026-11-25T10:00:00.000000+00:00"}`))
+	m := load(t, one(t, rs))
+	if m.Text != "now for you" || m.Timestamp != 1200000000000000001 || m.Edited <= m.Timestamp || m.Edited != at(time.Date(2026, 11, 25, 10, 0, 0, 0, time.UTC)) {
+		t.Fatalf("edit %+v", m)
+	}
+	if rs := c.events("MESSAGE_UPDATE", json.RawMessage(`{"id":"1200000000000000001",`+inGuild+`,"embeds":[]}`)); len(rs) != 0 {
+		t.Fatalf("an embed's update %+v", rs)
+	}
+	d, ok := one(t, c.events("MESSAGE_DELETE", json.RawMessage(`{"id":"1200000000000000001",`+inGuild+`}`))).(bot.Deleted)
+	if !ok || d.Chat.GroupID != group || d.Sender != prefix+alice || d.Bot || d.Sent != 1200000000000000001 || d.At <= d.Sent {
+		t.Fatalf("delete %+v", d)
+	}
+	sent := c.Send(feature.Chat{GroupID: group}, "hello", nil, nil, 0, nil, feature.Markup{})
+	d, ok = one(t, c.events("MESSAGE_DELETE", json.RawMessage(`{"id":"`+id(sent[0])+`",`+inGuild+`}`))).(bot.Deleted)
+	if !ok || !d.Bot || d.Sent != sent[0] {
+		t.Fatalf("the bot's own %+v", d)
+	}
+	if rs := c.events("MESSAGE_DELETE", json.RawMessage(`{"id":"1",`+inGuild+`}`)); len(rs) != 0 {
+		t.Fatalf("an unknown message's %+v", rs)
+	}
+}
+
+// Reactions are events, only with an event hook; one on the bot's message
+// says so.
+func TestReactions(t *testing.T) {
+	f := newFake(t)
+	c := connected(f.client())
+	sent := c.Send(feature.Chat{GroupID: group}, "hello", nil, nil, 0, nil, feature.Markup{})
+	r := `{"user_id":"` + alice + `",` + inGuild + `,"message_id":"` + id(sent[0]) + `","emoji":{"id":null,"name":"👍"},"member":{"nick":"Al","user":{"id":"` + alice + `"}}}`
+	if rs := c.events("MESSAGE_REACTION_ADD", json.RawMessage(r)); len(rs) != 0 {
+		t.Fatalf("without a hook %+v", rs)
+	}
+	c.Watch(bot.Watch{Events: true})
+	h, ok := one(t, c.events("MESSAGE_REACTION_ADD", json.RawMessage(r))).(bot.Happened)
+	if !ok || h.Event.Reaction == nil || h.Event.Reaction.Emoji != "👍" || !h.Event.Reaction.Bot || h.Event.Reaction.Sent != sent[0] || h.Event.By.Name != "Al" || h.Event.Chat.GroupID != group {
+		t.Fatalf("reaction %+v", h)
+	}
+	h = one(t, c.events("MESSAGE_REACTION_REMOVE", json.RawMessage(r))).(bot.Happened)
+	if !h.Event.Reaction.Removed {
+		t.Fatalf("removal %+v", h.Event.Reaction)
+	}
+}
+
+// The bot's guilds' channels change as it joins and leaves: it can post in
+// one until it leaves.
+func TestGuilds(t *testing.T) {
+	c := connected(newFake(t).client())
+	rs := c.events("GUILD_CREATE", json.RawMessage(`{"id":"`+guild+`","name":"Test server","channels":[{"id":"`+chanID+`","name":"general","type":0}],"threads":[]}`))
+	if r := one(t, rs); r != (bot.GroupChanged{Chat: feature.Chat{GroupID: group}}) {
+		t.Fatalf("join %+v", r)
+	}
+	if !c.Reachable(context.Background(), feature.Chat{GroupID: group}) || !c.Reachable(context.Background(), feature.Chat{User: prefix + alice}) {
+		t.Fatal("not reachable")
+	}
+	if rs := c.events("GUILD_DELETE", json.RawMessage(`{"id":"`+guild+`","unavailable":true}`)); len(rs) != 0 {
+		t.Fatalf("an outage %+v", rs)
+	}
+	one(t, c.events("GUILD_DELETE", json.RawMessage(`{"id":"`+guild+`"}`)))
+	if c.Reachable(context.Background(), feature.Chat{GroupID: group}) {
+		t.Fatal("still reachable after leaving")
+	}
+}
+
+// Send writes Discord's Markdown, mentions a known name, splits at 2000,
+// opens a DM once, and puts pictures in the first message with the text
+// when it fits; buttons go on the last message, highlighted ones primary,
+// and silent messages and replies say so.
+func TestSend(t *testing.T) {
+	f := newFake(t)
+	c := connected(f.client())
+	dm := feature.Chat{User: prefix + alice}
+	known := map[string]string{"bob": prefix + bob}
+	sent := c.Send(dm, "**Hi** @Bob, see [the docs](https://example.com/a_b) and `x*y` 2*3", nil, known, 0, nil, feature.Markup{})
+	if len(sent) != 1 || len(f.callsTo("POST /users/@me/channels")) != 1 {
+		t.Fatalf("sent %v; calls %v", sent, f.routes())
+	}
+	b := f.callsTo("POST /channels/" + dmChan + "/messages")[0].Body
+	if b["content"] != "**Hi** <@"+bob+">, see [the docs](https://example.com/a_b) and `x*y` 2\\*3" {
+		t.Fatalf("content %q", b["content"])
+	}
+	if am, _ := json.Marshal(b["allowed_mentions"]); string(am) != `{"parse":[],"users":["`+bob+`"]}` {
+		t.Fatalf("allowed_mentions %s", am)
+	}
+
+	long := strings.Repeat("word ", 900) // 4500 characters
+	ch := feature.Chat{GroupID: group}
+	buttons := [][]feature.Button{{{Label: "7d", Data: "rain 7d", Highlight: true}, {Label: "30d", Data: "rain 30d"}}}
+	sent = c.Send(ch, long, nil, nil, 1200000000000000005, nil, feature.Markup{Silent: true, Buttons: buttons})
+	calls := f.callsTo("POST /channels/" + chanID + "/messages")
+	if len(sent) != 3 || len(calls) != 3 || len(f.callsTo("POST /users/@me/channels")) != 1 {
+		t.Fatalf("sent %v, calls %d", sent, len(calls))
+	}
+	for i, cl := range calls {
+		s, _ := cl.Body["content"].(string)
+		if n := len(utf16.Encode([]rune(s))); n > maxChars || n == 0 || cl.Body["flags"] != float64(4096) {
+			t.Fatalf("part %d: %d chars, flags %v", i, n, cl.Body["flags"])
+		}
+		_, ref := cl.Body["message_reference"]
+		_, comp := cl.Body["components"]
+		if ref != (i == 0) || comp != (i == 2) {
+			t.Fatalf("part %d: reference %v, components %v", i, ref, comp)
+		}
+	}
+	if comp, _ := json.Marshal(calls[2].Body["components"]); string(comp) != `[{"components":[{"custom_id":"rain 7d","label":"7d","style":1,"type":2},{"custom_id":"rain 30d","label":"30d","style":2,"type":2}],"type":1}]` {
+		t.Fatalf("components %s", comp)
+	}
+
+	sent = c.Send(ch, "a picture", []feature.Picture{{Data: []byte("p1"), Name: "Rain, 7 days"}}, nil, 0, []byte("mp3"), feature.Markup{})
+	calls = f.callsTo("POST /channels/" + chanID + "/messages")
+	last := calls[len(calls)-1]
+	if len(sent) != 1 || last.Body["content"] != "a picture" || strings.Join(last.Files, " ") != "files[0]=Rain__7_days.png files[1]=clip.mp3" {
+		t.Fatalf("pictures %v: %+v", sent, last)
+	}
+}
+
+// A 429 is waited out and the request made again.
+func TestRateLimit(t *testing.T) {
+	f := newFake(t)
+	c := connected(f.client())
+	f.errs["POST /channels/"+chanID+"/messages"] = []int{429}
+	if sent := c.Send(feature.Chat{GroupID: group}, "hi", nil, nil, 0, nil, feature.Markup{}); len(sent) != 1 {
+		t.Fatalf("sent %v; calls %v", sent, f.routes())
+	}
+}
+
+// Edit replaces the text, pictures and buttons in place; one without
+// buttons takes them away.
+func TestEdit(t *testing.T) {
+	f := newFake(t)
+	c := connected(f.client())
+	ch := feature.Chat{GroupID: group}
+	if got := c.Edit(ch, 1200000000000000007, "**new**", []feature.Picture{{Data: []byte("p")}}, nil, feature.Markup{Buttons: [][]feature.Button{{{Label: "a", Data: "a"}}}}); len(got) != 1 || got[0] != 1200000000000000007 {
+		t.Fatalf("Edit %v", got)
+	}
+	e := f.callsTo("PATCH /channels/" + chanID + "/messages/1200000000000000007")[0]
+	if e.Body["content"] != "**new**" || strings.Join(e.Files, " ") != "files[0]=picture1.png" {
+		t.Fatalf("edit %+v", e)
+	}
+	if a, _ := json.Marshal(e.Body["attachments"]); string(a) != `[{"filename":"picture1.png","id":0}]` {
+		t.Fatalf("attachments %s", a)
+	}
+	c.Edit(ch, 1200000000000000007, "", nil, nil, feature.Markup{})
+	e = f.callsTo("PATCH /channels/" + chanID + "/messages/1200000000000000007")[1]
+	if _, has := e.Body["content"]; has || fmt.Sprint(e.Body["components"]) != "[]" {
+		t.Fatalf("buttons only %+v", e.Body)
+	}
+	f.errs["PATCH /channels/"+chanID+"/messages/1"] = []int{404}
+	if got := c.Edit(ch, 1, "x", nil, nil, feature.Markup{}); got != nil {
+		t.Fatalf("failed edit %v", got)
+	}
+}
+
+// React puts the emoji on the message; one Discord doesn't know is sent.
+func TestReact(t *testing.T) {
+	f := newFake(t)
+	c := connected(f.client())
+	ch := feature.Chat{GroupID: group}
+	c.React(ch, feature.Message{Timestamp: 1200000000000000001}, "👍")
+	f.waitCalls("PUT /channels/"+chanID+"/messages/1200000000000000001/reactions/👍/@me", 1)
+	f.mu.Lock()
+	f.errs["PUT /channels/"+chanID+"/messages/1200000000000000002/reactions/x/@me"] = []int{400}
+	f.mu.Unlock()
+	c.React(ch, feature.Message{Timestamp: 1200000000000000002}, "x")
+	if s := f.waitCalls("POST /channels/"+chanID+"/messages", 1)[0]; s.Body["content"] != "x" {
+		t.Fatalf("sent %+v", s)
+	}
+	stop := c.Typing(ch)
+	f.waitCalls("POST /channels/"+chanID+"/typing", 2)
+	stop()
+}
+
+// A button press is the core's at once, acknowledged to Discord, and its
+// answer is a reply only the presser sees.
+func TestPress(t *testing.T) {
+	f := newFake(t)
+	c := connected(f.client())
+	r := one(t, c.events("INTERACTION_CREATE", json.RawMessage(`{"id":"1250000000000000001","application_id":"app1","type":3,"token":"itok",`+inGuild+
+		`,"member":{"nick":"Al","user":{"id":"`+alice+`","username":"alice"}},"message":{"id":"1200000000000000004"},"data":{"custom_id":"rain 7d","component_type":2}}`)))
+	p, ok := r.(bot.Pressed)
+	if !ok || p.Press.Chat.GroupID != group || p.Press.Sent != 1200000000000000004 || p.Press.Data != "rain 7d" || p.Press.By != (feature.Person{ID: prefix + alice, Name: "Al"}) {
+		t.Fatalf("press %+v", r)
+	}
+	if a := f.waitCalls("POST /interactions/1250000000000000001/itok/callback", 1)[0]; a.Body["type"] != float64(6) {
+		t.Fatalf("ack %+v", a)
+	}
+	p.Answer("7 days")
+	if a := f.waitCalls("POST /webhooks/app1/itok", 1)[0]; a.Body["content"] != "7 days" || a.Body["flags"] != float64(64) {
+		t.Fatalf("answer %+v", a)
+	}
+}
+
+// A slash command is an addressed message, "/name text", acknowledged with
+// "thinking…", which the chat's next reply replaces; with no reply in
+// time, it is taken away.
+func TestSlashCommand(t *testing.T) {
+	f := newFake(t)
+	c := connected(f.client())
+	cmd := func(iid string) bot.Received {
+		return one(t, c.events("INTERACTION_CREATE", json.RawMessage(`{"id":"`+iid+`","application_id":"app1","type":2,"token":"tok`+iid+`",`+inDM+
+			`,"user":{"id":"`+alice+`","username":"alice","global_name":"Alice"},"data":{"name":"hello","type":1,"options":[{"name":"text","type":3,"value":" please "}]}}`)))
+	}
+	m := load(t, cmd("1250000000000000002"))
+	if m.Text != "/hello please" || !m.Addressed || m.Chat != (feature.Chat{User: prefix + alice}) || m.Timestamp != 1250000000000000002 {
+		t.Fatalf("command %+v", m)
+	}
+	if a := f.waitCalls("POST /interactions/1250000000000000002/tok1250000000000000002/callback", 1)[0]; a.Body["type"] != float64(5) {
+		t.Fatalf("ack %+v", a)
+	}
+	sent := c.Send(m.Chat, "hi, I'm Botty", nil, nil, 0, nil, feature.Markup{})
+	o := f.callsTo("PATCH /webhooks/app1/tok1250000000000000002/messages/@original")
+	if len(sent) != 1 || len(o) != 1 || o[0].Body["content"] != "hi, I'm Botty" || len(f.callsTo("POST /channels/"+dmChan+"/messages")) != 0 {
+		t.Fatalf("sent %v; calls %v", sent, f.routes())
+	}
+	c.Edit(m.Chat, sent[0], "edited", nil, nil, feature.Markup{})
+	f.waitCalls("PATCH /webhooks/app1/tok1250000000000000002/messages/"+id(sent[0]), 1)
+
+	cmd("1250000000000000003")
+	f.waitCalls("DELETE /webhooks/app1/tok1250000000000000003/messages/@original", 1)
+	c.Send(m.Chat, "late", nil, nil, 0, nil, feature.Markup{})
+	f.waitCalls("POST /channels/"+dmChan+"/messages", 1)
+
+	// A reaction to a slash command is its reply.
+	m = load(t, cmd("1250000000000000004"))
+	c.React(m.Chat, m, "👍")
+	if o := f.waitCalls("PATCH /webhooks/app1/tok1250000000000000004/messages/@original", 1)[0]; o.Body["content"] != "👍" {
+		t.Fatalf("reaction %+v", o)
+	}
+}
+
+// Delivered takes out the bot's @name and lists the people seen in the
+// channel; Redact hides their names and Discord's IDs.
+func TestDeliveredAndRedact(t *testing.T) {
+	c := connected(newFake(t).client())
+	c.events("MESSAGE_CREATE", json.RawMessage(`{"id":"1200000000000000001",`+inGuild+`,`+fromBob+`,"content":"chatter"}`))
+	r, ok := c.Delivered(context.Background(), feature.Message{Chat: feature.Chat{GroupID: group}, Sender: prefix + bob, Text: "@Botty hello"})
+	if !ok || !r.Mentioned || r.Message.Text != "hello" || r.Message.Name != "Bob" || len(r.Members) != 1 || r.Members[0] != (bot.Member{Name: "Bob", ID: prefix + bob}) {
+		t.Fatalf("Delivered %+v", r)
+	}
+	if got := c.Redact("Bob said 100000000000000002 to bobby"); got != "redacted said redacted to bobby" {
+		t.Fatalf("Redact %q", got)
+	}
+}
+
+// Owns is a Discord chat by its prefix.
+func TestOwns(t *testing.T) {
+	c := newFake(t).client()
+	for chat, want := range map[feature.Chat]bool{
+		{GroupID: group}: true, {User: prefix + alice}: true, {GroupID: "-1001234567890"}: false,
+		{User: "1111111"}: false, {GroupID: "abc="}: false, {User: "slack:U1"}: false,
+	} {
+		if c.Owns(chat) != want {
+			t.Errorf("Owns(%+v) = %v", chat, !want)
+		}
+	}
+}
+
+// Markdown becomes Discord's: nested styles, code blocks, escapes outside
+// bare links.
+func TestMarkdown(t *testing.T) {
+	c := connected(newFake(t).client())
+	for in, want := range map[string]string{
+		"**bold *both* bold**":     "**bold *both* bold**",
+		"~~gone~~ ||secret||":      "~~gone~~ ||secret||",
+		"```\nfn main() {\n}\n```": "```\nfn main() {\n}\n```",
+		"see https://x.io/a_b_c":   "see https://x.io/a_b_c",
+		"snake_case and a|b":       "snake\\_case and a\\|b",
+		"# Title":                  "**Title**",
+		"@Botty hi":                "hi",
+		"use `a`b` here":           "use `a`b\\` here",
+		"[**x**](https://e.com/)":  "[**x**](https://e.com/)",
+	} {
+		ps := c.parts(in, nil, true)
+		if len(ps) != 1 || ps[0].text != want {
+			t.Errorf("%q: got %+v, want %q", in, ps, want)
+		}
+	}
+}

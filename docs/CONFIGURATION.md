@@ -8,6 +8,8 @@ Every setting, read from the environment (`/etc/signalbot.env` in the install). 
 | `SIGNAL_DM_USER_IDS` | empty | UUIDs/numbers allowed to DM the bot, separated by commas or whitespace; empty turns DMs off, and the startup log says which |
 | `TELEGRAM_BOT_TOKEN` | empty | The bot's token from Telegram's BotFather. Set, the bot answers on Telegram instead of Signal; with `SIGNALCLI_SOCKET` set too, on both at once. Never logged; see [Telegram](../README.md#telegram) |
 | `TELEGRAM_API_URL` | `https://api.telegram.org` | The Bot API's base URL, for a self-hosted [Bot API server](https://github.com/tdlib/telegram-bot-api) |
+| `DISCORD_BOT_TOKEN` | empty | The bot's token from Discord's developer portal (your application, Bot, Reset Token). Set, the bot answers on Discord instead of Signal; with another network's setting too, on each at once. Never logged; see [Discord](../README.md#discord) |
+| `DISCORD_API_URL` | `https://discord.com/api/v10` | Discord's REST API base URL; the gateway's address comes from it. Only tests change it |
 | `MODEL` | `deepseek/deepseek-v4.1-flash-1017` | The model's name at the API: on OpenRouter as `provider/model` |
 | `MODEL_API_KEY` | empty | API key for the model's API, such as your [OpenRouter](https://openrouter.ai) key; none is sent when empty. With neither this nor `MODEL_API_URL` the bot has [no model](MODELS.md#no-model) |
 | `MODEL_API_URL` | `https://openrouter.ai/api/v1` | Base URL of an OpenAI-compatible chat completions API; see [Language models](MODELS.md#other-providers) |

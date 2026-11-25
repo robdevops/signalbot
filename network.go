@@ -17,6 +17,7 @@ var networks = map[string]func(*config.Test) bot.Network{}
 var networkSettings = []struct{ name, setting, tag string }{
 	{"signal", "SIGNALCLI_SOCKET", "nosignal"},
 	{"telegram", "TELEGRAM_BOT_TOKEN", "notelegram"},
+	{"discord", "DISCORD_BOT_TOKEN", "nodiscord"},
 }
 
 // newNetwork is the chat networks the bot answers on, joined: those whose
