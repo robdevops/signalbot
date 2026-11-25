@@ -462,11 +462,13 @@ func TestReconnects(t *testing.T) {
 	}
 }
 
-// Who the bot answers: in a channel, a mention or a reply to it; in a DM,
+// Who the bot answers: in a channel, a mention, a reply to it or one of
+// its commands typed at the start; in a DM,
 // anyone. Its own messages and other bots' are dropped; others' mentions
 // are written @Name.
 func TestAddressing(t *testing.T) {
 	c := connected(newFake(t).client())
+	c.Watch(bot.Watch{Commands: []bot.Command{{Name: "rain"}}})
 	mentions := `"mentions":[{"id":"` + botID + `","username":"botty","bot":true},{"id":"` + bob + `","username":"bob","member":{"nick":"Bobby"}}]`
 	for _, tc := range []struct {
 		name, msg, text, kind string
@@ -475,6 +477,9 @@ func TestAddressing(t *testing.T) {
 		{"old mention", inGuild + `,` + fromA + `,"content":"hey <@!` + botID + `> and <@` + bob + `>",` + mentions, "hey and @Bobby", "Incoming"},
 		{"reply to it", inGuild + `,` + fromA + `,"type":19,"content":"and?","message_reference":{"message_id":"1100000000000000009"},"referenced_message":{"id":"1100000000000000009","author":{"id":"` + botID + `","username":"botty","bot":true},"content":"earlier"}`, "and?", "Incoming"},
 		{"chatter", inGuild + `,` + fromA + `,"content":"the moon is cheese"`, "the moon is cheese", "Chatter"},
+		{"a typed command", inGuild + `,` + fromA + `,"content":"/Rain 7d"`, "/Rain 7d", "Incoming"},
+		{"another slash word", inGuild + `,` + fromA + `,"content":"/shrug"`, "/shrug", "Chatter"},
+		{"a command later on", inGuild + `,` + fromA + `,"content":"hello /rain"`, "hello /rain", "Chatter"},
 		{"a DM", inDM + `,` + fromA + `,"content":"hi"`, "hi", "Incoming"},
 		{"a stranger's DM", inDM + `,` + fromBob + `,"content":"hi"`, "hi", "Incoming"},
 		{"its own", inGuild + `,"author":{"id":"` + botID + `","username":"botty","bot":true},"content":"hi"`, "", "none"},

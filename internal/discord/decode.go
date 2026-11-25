@@ -222,9 +222,21 @@ func (c *Client) message(m *message, edited int64) feature.Message {
 	} else if m.Reference != nil {
 		replyToBot = c.authorOf(snowflake(m.Reference.MessageID)) == prefix+self
 	}
-	msg.Addressed = m.GuildID == "" || mentioned || replyToBot
+	msg.Addressed = m.GuildID == "" || mentioned || replyToBot || c.isCommand(body)
 	msg.Media = slices.Concat(images, files, stickers)
 	return msg
+}
+
+// isCommand reports whether text starts with one of the bot's commands,
+// typed rather than chosen from Discord's list, which then counts as
+// addressed in a channel, as on Signal; another slash word, such as
+// /shrug, doesn't.
+func (c *Client) isCommand(text string) bool {
+	name, _, ok := feature.ParseCommand(text)
+	if p := c.commands.Load(); ok && p != nil {
+		return slices.ContainsFunc(*p, func(cmd bot.Command) bool { return strings.EqualFold(cmd.Name, name) })
+	}
+	return false
 }
 
 // mention is a user's mention in a message's text, <@id> or <@!id>.
