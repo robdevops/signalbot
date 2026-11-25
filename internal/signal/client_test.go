@@ -22,6 +22,7 @@ import (
 	"github.com/robdevops/signalbot/internal/bot"
 	"github.com/robdevops/signalbot/internal/config"
 	"github.com/robdevops/signalbot/internal/feature"
+	"github.com/robdevops/signalbot/internal/kit/allow"
 	"github.com/robdevops/signalbot/internal/kit/logx"
 )
 
@@ -32,27 +33,26 @@ const (
 	groupID = "Z3JvdXA="
 )
 
-// New reads signal-cli's address, 127.0.0.1:7583 by default, and the DM list,
-// split on commas, semicolons and any white space, and says at startup who
-// may DM.
+// New reads signal-cli's address, 127.0.0.1:7583 by default, and who may
+// DM, by default a group's admins, and says at startup who may.
 func TestNew(t *testing.T) {
 	var logs logx.Buffer
 	t.Cleanup(logx.SetOutput(&logs, &logs, false))
 	t.Setenv("SIGNALCLI_SOCKET", "")
-	t.Setenv("SIGNAL_DM_USER_IDS", "alice-id")
-	if c := New(nil); c.addr != "127.0.0.1:7583" || c.network() != "tcp" {
-		t.Errorf("default address %q on %s", c.addr, c.network())
+	t.Setenv("SIGNAL_DM_USER_IDS", "")
+	if c := New(nil); c.addr != "127.0.0.1:7583" || c.network() != "tcp" || !c.dm.Admins || len(c.dm.IDs) != 0 {
+		t.Errorf("default address %q on %s, policy %+v", c.addr, c.network(), c.dm)
 	}
 	t.Setenv("SIGNALCLI_SOCKET", "/run/signal.sock")
-	t.Setenv("SIGNAL_DM_USER_IDS", "alice-id,bob-id;\r\n+15550001\t")
+	t.Setenv("SIGNAL_DM_USER_IDS", "alice-id,signal:bob-id;\r\n+15550001\t")
 	c := New(nil)
-	if c.addr != "/run/signal.sock" || !maps.Equal(c.allowed, map[string]bool{"alice-id": true, "bob-id": true, "+15550001": true}) {
-		t.Errorf("socket %q, allowed %v", c.addr, c.allowed)
+	if c.addr != "/run/signal.sock" || c.dm.Admins || !maps.Equal(c.dm.IDs, map[string]bool{"alice-id": true, "bob-id": true, "+15550001": true}) {
+		t.Errorf("socket %q, policy %+v", c.addr, c.dm)
 	}
-	t.Setenv("SIGNAL_DM_USER_IDS", "")
+	t.Setenv("SIGNAL_DM_USER_IDS", "none")
 	New(nil)
-	if got := logs.String(); got != "DMs: allowed from 1 ID (SIGNAL_DM_USER_IDS)\n"+"DMs: allowed from 3 IDs (SIGNAL_DM_USER_IDS)\n"+
-		"DMs are off: SIGNAL_DM_USER_IDS is empty; the bot answers only in groups\n" {
+	if got := logs.String(); got != "Signal DMs: allowed from admins and mods (SIGNAL_DM_USER_IDS)\n"+"Signal DMs: allowed from 3 IDs (SIGNAL_DM_USER_IDS)\n"+
+		"Signal DMs are off: SIGNAL_DM_USER_IDS is none; the bot answers only in groups\n" {
 		t.Errorf("logs %q", got)
 	}
 }
@@ -190,7 +190,10 @@ func next(t *testing.T, got <-chan bot.Received) bot.Received {
 }
 
 // allowAll is an allowlist with Alice and Bob.
-func allowAll() map[string]bool { return map[string]bool{aliceID: true, bobID: true} }
+func allowAll() allow.Policy { return only(aliceID, bobID) }
+
+// only is a policy that lets only ids DM the bot.
+func only(ids ...string) allow.Policy { return allow.Parse("none " + strings.Join(ids, " ")) }
 
 // The client learns its account, hands on what it receives, and connects
 // again when the socket drops.
@@ -275,7 +278,7 @@ func TestStalledWriteReconnects(t *testing.T) {
 func TestSendAndTyping(t *testing.T) {
 	captureLogs(t)
 	f := newFake(t)
-	c := newClient(f.sock, nil, nil)
+	c := newClient(f.sock, allow.Policy{}, nil)
 	c.typingEvery = 20 * time.Millisecond
 	run(t, c, f)
 	group, dm := feature.Chat{GroupID: groupID}, feature.Chat{User: aliceID}
@@ -333,13 +336,13 @@ func TestSendAndTyping(t *testing.T) {
 func TestReact(t *testing.T) {
 	log := captureLogs(t)
 	group := feature.Chat{GroupID: groupID}
-	early := newClient(newFake(t).sock, nil, nil)
+	early := newClient(newFake(t).sock, allow.Policy{}, nil)
 	early.React(group, feature.Message{Timestamp: 1001, Bot: true}, "⏰")
 	if !strings.Contains(log.String(), "reaction failed: the bot's account isn't known yet") {
 		t.Fatalf("log %q", log.String())
 	}
 	f := newFake(t)
-	c := newClient(f.sock, nil, nil)
+	c := newClient(f.sock, allow.Policy{}, nil)
 	run(t, c, f)
 	c.React(group, feature.Message{Sender: aliceID, Timestamp: 7}, "👍")
 	c.React(group, feature.Message{Timestamp: 1001, Bot: true}, "⏰")
@@ -363,7 +366,7 @@ func TestUnmatchedAndBadFramesAreLogged(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			logs := captureLogs(t)
-			newClient("x", nil, nil).dispatch([]byte(tc.line), func(bot.Received) { t.Fatal("unexpected message") })
+			newClient("x", allow.Policy{}, nil).dispatch([]byte(tc.line), func(bot.Received) { t.Fatal("unexpected message") })
 			out := logs.String()
 			if tc.want == "" && out != "" || !strings.Contains(out, tc.want) || strings.Contains(out, "secret") {
 				t.Fatalf("logged %q, want %q", out, tc.want)
@@ -376,7 +379,7 @@ func TestUnmatchedAndBadFramesAreLogged(t *testing.T) {
 // reader carries on.
 func TestDispatchRecovers(t *testing.T) {
 	logs := captureLogs(t)
-	newClient("x", nil, nil).dispatch([]byte(`{"method":"receive","params":{"envelope":{"dataMessage":{"message":"hi"}}}}`), func(bot.Received) { panic("secret text") })
+	newClient("x", allow.Policy{}, nil).dispatch([]byte(`{"method":"receive","params":{"envelope":{"dataMessage":{"message":"hi"}}}}`), func(bot.Received) { panic("secret text") })
 	if out := logs.String(); !strings.Contains(out, "internal error") || strings.Contains(out, "secret") {
 		t.Fatalf("logged %q", out)
 	}
@@ -389,7 +392,7 @@ func TestFrameTooLong(t *testing.T) {
 	maxLine = 1000
 	logs := captureLogs(t)
 	f := newFake(t)
-	c := newClient(f.sock, nil, nil)
+	c := newClient(f.sock, allow.Policy{}, nil)
 	_, conn := run(t, c, f)
 	fmt.Fprintf(conn, `{"x":"%s"}`+"\n", strings.Repeat("a", maxLine)) // answers nothing
 	eventually(t, "the warning", func() bool { return strings.Contains(logs.String(), "skipped") })
@@ -431,7 +434,7 @@ func TestReadFrames(t *testing.T) {
 func TestFilesStickersAndGroups(t *testing.T) {
 	captureLogs(t)
 	f := newFake(t)
-	c := newClient(f.sock, nil, nil)
+	c := newClient(f.sock, allow.Policy{}, nil)
 	run(t, c, f)
 	ctx := context.Background()
 	f.set("getAttachment", `{"data":"`+base64.StdEncoding.EncodeToString([]byte("PNG"))+`"}`)
@@ -472,10 +475,11 @@ func TestFilesStickersAndGroups(t *testing.T) {
 		t.Errorf("unknown pack labelled %q", got)
 	}
 
-	f.set("listGroups", `[{"id":"`+groupID+`","name":"Family","isMember":true,"members":[{"number":"+1555","uuid":"`+aliceID+`"},{"number":null,"uuid":"`+bobID+`"}]},`+
+	f.set("listGroups", `[{"id":"`+groupID+`","name":"Family","isMember":true,"members":[{"number":"+1555","uuid":"`+aliceID+`"},{"number":null,"uuid":"`+bobID+`"}],"admins":[{"number":"+1555","uuid":"`+aliceID+`"}]},`+
 		`{"id":"left","name":"Old","isMember":false,"members":[]}]`)
 	for _, user := range []string{aliceID, "+1555", bobID} {
-		if shared, err := c.Groups(ctx, user); err != nil || len(shared) != 1 || shared[0] != (feature.Group{ID: groupID, Name: "Family"}) {
+		want := feature.Group{ID: groupID, Name: "Family", Admin: user != bobID} // Signal groups have no mods
+		if shared, err := c.Groups(ctx, user); err != nil || len(shared) != 1 || shared[0] != want {
 			t.Fatalf("groups shared with %s: %+v %v", user, shared, err)
 		}
 	}
@@ -498,7 +502,7 @@ func TestFilesStickersAndGroups(t *testing.T) {
 func TestSendResults(t *testing.T) {
 	logs := captureLogs(t)
 	f := newFake(t)
-	c := newClient(f.sock, nil, nil)
+	c := newClient(f.sock, allow.Policy{}, nil)
 	run(t, c, f)
 	if ts := c.Send(feature.Chat{User: aliceID}, strings.Repeat("word ", 500), nil, nil, 0, nil, feature.Markup{}); len(ts) != 1 {
 		t.Fatalf("a long reply returned %v", ts)
@@ -513,7 +517,7 @@ func TestSendResults(t *testing.T) {
 }
 
 func TestCallsFailWhenNotConnected(t *testing.T) {
-	c := newClient("x", nil, nil)
+	c := newClient("x", allow.Policy{}, nil)
 	if _, err := c.send(feature.Chat{User: aliceID}, "hi", nil, nil, nil, 0); err == nil {
 		t.Error("send while not connected")
 	}
@@ -524,7 +528,7 @@ func TestCallsFailWhenNotConnected(t *testing.T) {
 
 func TestNetwork(t *testing.T) {
 	for addr, want := range map[string]string{"/run/s": "unix", "./s": "unix", "@abs": "unix", "localhost:7583": "tcp", "[::1]:7583": "tcp"} {
-		if got := newClient(addr, nil, nil).network(); got != want {
+		if got := newClient(addr, allow.Policy{}, nil).network(); got != want {
 			t.Errorf("%s: %s", addr, got)
 		}
 	}
@@ -535,7 +539,7 @@ func TestNetwork(t *testing.T) {
 func TestReconnectsDoNotLeakGoroutines(t *testing.T) {
 	captureLogs(t)
 	ctx := t.Context()
-	c := newClient("x", nil, nil)
+	c := newClient("x", allow.Policy{}, nil)
 	before := runtime.NumGoroutine()
 	for range 50 {
 		c1, c2 := net.Pipe()
@@ -699,7 +703,7 @@ func TestMemberChangeRules(t *testing.T) {
 // Members are never loaded before the bot's ID is known, so the bot is
 // never taken for one of them.
 func TestMembersWaitForTheBotsID(t *testing.T) {
-	c := newClient("x", nil, nil)
+	c := newClient("x", allow.Policy{}, nil)
 	c.Watch(bot.Watch{Events: true})
 	if gs, ok := c.members.load(context.Background(), func(string, ...any) {}); ok || gs != nil {
 		t.Fatalf("loaded %v before the ID was known", gs)
@@ -708,7 +712,7 @@ func TestMembersWaitForTheBotsID(t *testing.T) {
 
 // The first wait before reconnecting is a second, and the write timeout ten.
 func TestReconnectWait(t *testing.T) {
-	if c := newClient("x", nil, nil); c.backoff != time.Second || c.writeTimeout != 10*time.Second {
+	if c := newClient("x", allow.Policy{}, nil); c.backoff != time.Second || c.writeTimeout != 10*time.Second {
 		t.Fatalf("backoff %v, write timeout %v", c.backoff, c.writeTimeout)
 	}
 }

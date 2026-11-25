@@ -286,6 +286,61 @@ func TestScenarioDMAllowListSeparators(t *testing.T) {
 	}
 }
 
+// An ID in SIGNAL_DM_USER_IDS may carry "signal:".
+func TestScenarioDMAllowListPrefix(t *testing.T) {
+	h := startBot(t, world{Env: map[string]string{"SIGNAL_DM_USER_IDS": "signal:" + idAlice}})
+	if s := h.ask(fromAlice("a test direct message")); s.Recipient != idAlice {
+		t.Fatalf("sent %+v", s)
+	}
+}
+
+// Unset, SIGNAL_DM_USER_IDS lets a group's admins DM the bot: an admin of
+// a group it is in is answered, and anyone else refused, logged by ID only.
+func TestScenarioDMFromAnAdminByDefault(t *testing.T) {
+	h := startBot(t, world{Env: map[string]string{"SIGNAL_DM_USER_IDS": ""}, Admins: []string{idAlice}})
+	h.waitLog("Signal DMs: allowed from admins and mods (SIGNAL_DM_USER_IDS)")
+	if s := h.ask(fromAlice("a test direct message")); s.Recipient != idAlice || s.Message != "ok" {
+		t.Fatalf("sent %+v", s)
+	}
+	h.ignored(dmFrom(idBob, "Bob", "hello from a stranger"))
+	if l, ok := h.logged(idBob, "not in SIGNAL_DM_USER_IDS"); !ok || l.Pri != 6 {
+		t.Fatalf("no info line with the stranger's id: %v", h.logLines())
+	}
+	if n := len(h.requests()); n != 1 {
+		t.Fatalf("the model was asked %d times", n)
+	}
+}
+
+// "none" lets no one DM the bot, an admin neither.
+func TestScenarioDMsOff(t *testing.T) {
+	h := startBot(t, world{Env: map[string]string{"SIGNAL_DM_USER_IDS": "none"}, Admins: []string{idAlice}})
+	h.waitLog("Signal DMs are off")
+	h.ignored(fromAlice("a test direct message"))
+	if l, ok := h.logged(idAlice, "not in SIGNAL_DM_USER_IDS"); !ok || l.Pri != 6 {
+		t.Fatalf("no info line for Alice: %v", h.logLines())
+	}
+}
+
+// A DM schedule's run is dropped once its user may no longer DM the bot:
+// Alice, an admin when she made it, is one no longer when it runs. The
+// drop names no one.
+func TestScenarioDMScheduleDroppedOnceNotAllowed(t *testing.T) {
+	h := startBot(t, world{Env: map[string]string{"SIGNAL_DM_USER_IDS": ""}, Admins: []string{idAlice}})
+	at := soon().Add(2 * time.Second)
+	if s := h.ask(fromAlice(`/schedule "water the plants" ` + at.Format("2006-01-02T15:04:05"))); !strings.HasPrefix(s.Message, "Scheduled for ") {
+		t.Fatalf("sent %q", s.Message)
+	}
+	h.setAdmins()
+	update := inGroup("")
+	update.Update = true
+	h.receive(update.frame())
+	h.waitLog("delivered message dropped: its sender may no longer DM the bot")
+	h.noMoreSends()
+	if n := len(h.requests()); n != 0 {
+		t.Fatalf("the model was asked %d times", n)
+	}
+}
+
 // A DM from someone not in SIGNAL_DM_USER_IDS does no work, and the log says
 // who sent it, by id only.
 func TestScenarioDMFromStrangerIsDroppedAndLoggedByID(t *testing.T) {

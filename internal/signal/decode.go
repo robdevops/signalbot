@@ -173,16 +173,12 @@ func fromSelf(env *envelope, self string) bool {
 	return is(self, env.SourceUUID, env.Source, env.SourceNumber)
 }
 
-func isAllowed(env *envelope, allowed map[string]bool) bool {
-	return allowed[env.SourceUUID] || allowed[env.Source] || allowed[env.SourceNumber]
-}
-
 // isAddressed reports whether env is for the bot: it mentions the bot,
 // replies to one of its messages, starts with one of the commands (in a
-// group; a DM is decided by the allowlist), or is a DM from an allowed
-// sender, and has text, an attachment the bot can fetch or a sticker. It
+// group; a DM is decided by dm), or is a DM and dm says its sender may DM
+// the bot, and has text, an attachment the bot can fetch or a sticker. It
 // never blocks, so the reader can use it.
-func isAddressed(env *envelope, self string, allowed, commands map[string]bool) bool {
+func isAddressed(env *envelope, self string, dm bool, commands map[string]bool) bool {
 	d := env.DataMessage
 	if d == nil || self == "" || fromSelf(env, self) {
 		return false
@@ -192,7 +188,7 @@ func isAddressed(env *envelope, self string, allowed, commands map[string]bool) 
 		return false
 	}
 	if env.chat().GroupID == "" {
-		return isAllowed(env, allowed)
+		return dm
 	}
 	if name, _, ok := feature.ParseCommand(d.Message); ok && commands[name] {
 		return true
@@ -225,7 +221,8 @@ func (c *Client) event(env *envelope) (bot.Received, bool) {
 	}
 	chat := env.chat()
 	if g := d.GroupInfo; g != nil && g.Type == "UPDATE" {
-		c.refreshSoon() // so new members are known and departed ones forgotten
+		c.refreshSoon()     // so new members are known and departed ones forgotten
+		c.verdicts.forget() // an admin may have come or gone
 		self := c.self()
 		c.members.changed(chat.GroupID, c.person(env.SourceUUID, env.Source, env.SourceNumber, env.SourceName), self != "" && fromSelf(env, self))
 		return bot.GroupChanged{Chat: chat}, true
@@ -253,30 +250,42 @@ func (c *Client) event(env *envelope) (bot.Received, bool) {
 		c.recent.forget(chat.Key(), author, ad.TargetSentTimestamp)
 		return bot.Deleted{Chat: chat, Sender: author, Sent: ad.TargetSentTimestamp, At: math.MaxInt64}, true
 	}
-	if env.edited != 0 && chat.GroupID == "" && !isAllowed(env, c.allowed) {
+	// In a DM, whether its sender may DM the bot, decided here only if that
+	// needs no lookup: listed, or lately found a group admin. An edit and
+	// a reaction are decided here, so they count only such a sender.
+	dm, known := true, true
+	if chat.GroupID == "" {
+		dm, known = c.dmQuick(env.ids()...)
+	}
+	if env.edited != 0 && !dm {
 		// An edit from someone the bot doesn't answer, such as one removed
 		// from SIGNAL_DM_USER_IDS since: not answered or kept, but the
 		// original goes. From someone never allowed there is nothing to go.
 		return bot.Deleted{Chat: chat, Sender: env.sender(), Sent: env.Timestamp, At: env.edited}, true
 	}
 	if r := d.Reaction; r != nil {
-		return c.reacted(env, chat, r)
+		return c.reacted(env, chat, r, dm)
 	}
-	if env.edited == 0 && (chat.GroupID != "" || isAllowed(env, c.allowed)) { // so a reply can fetch them; an edit keeps the original's
+	if env.edited == 0 && dm { // so a reply can fetch them; an edit keeps the original's
 		c.recent.add(chat.Key(), env.sender(), env.Timestamp, d.Attachments)
 	}
 	load := func(ctx context.Context, learn func(name, id string)) (feature.Message, bool) {
 		return c.load(ctx, env, learn)
 	}
 	self := c.self()
-	if self == "" {
+	if self == "" || !known && isAddressed(env, self, true, c.commandSet()) {
+		// The bot's ID, or whether the sender is a group admin, is learnt
+		// in the message's slot, where Load may wait on signal-cli.
 		return bot.Incoming{Chat: chat, Load: load}, true
 	}
-	switch addressed, other := c.judge(env, self); {
+	if !known { // a DM with nothing to answer, whoever sent it
+		return nil, false
+	}
+	switch addressed, other := c.judge(env, self, dm); {
 	case addressed:
 		return bot.Incoming{Chat: chat, Load: load}, true
 	case other:
-		return bot.Chatter{Message: c.message(env, self)}, true
+		return bot.Chatter{Message: c.message(env, self, dm)}, true
 	}
 	return nil, false
 }
@@ -313,10 +322,11 @@ func (c *Client) synced(env *envelope) (bot.Received, bool) {
 }
 
 // reacted is a reaction as the core gets it: never the bot's own, nor one
-// in a DM from someone not allowed, nor before the bot's ID is known.
-func (c *Client) reacted(env *envelope, chat feature.Chat, r *reaction) (bot.Received, bool) {
+// in a DM unless dm (its sender may DM the bot, known without a lookup),
+// nor before the bot's ID is known.
+func (c *Client) reacted(env *envelope, chat feature.Chat, r *reaction, dm bool) (bot.Received, bool) {
 	self := c.self()
-	if self == "" || fromSelf(env, self) || chat.GroupID == "" && !isAllowed(env, c.allowed) || r.Emoji == "" {
+	if self == "" || fromSelf(env, self) || !dm || r.Emoji == "" {
 		return nil, false
 	}
 	e := feature.Event{Chat: chat, By: c.person(env.SourceUUID, env.Source, env.SourceNumber, env.SourceName), Reaction: &feature.Reaction{
@@ -333,15 +343,16 @@ func (c *Client) person(uuid, source, number, sent string) feature.Person {
 }
 
 // judge decides whether env is addressed, or another group message, for
-// the hooks; it is neither when it is the bot's own, or a DM from someone
-// not allowed, which is logged by ID only.
-func (c *Client) judge(env *envelope, self string) (addressed, other bool) {
+// the hooks, dm saying whether a DM's sender may DM the bot; it is neither
+// when it is the bot's own, or a DM from someone not allowed, which is
+// logged by ID only.
+func (c *Client) judge(env *envelope, self string, dm bool) (addressed, other bool) {
 	switch {
-	case isAddressed(env, self, c.allowed, c.commandSet()):
+	case isAddressed(env, self, dm, c.commandSet()):
 		return true, false
 	case fromSelf(env, self):
 	case env.chat().GroupID == "":
-		if !isAllowed(env, c.allowed) {
+		if !dm {
 			logx.Infof("%s ignored because not in SIGNAL_DM_USER_IDS (add this ID to allow DMs)", cmp.Or(env.sender(), "unknown sender"))
 		}
 	default:
@@ -350,9 +361,11 @@ func (c *Client) judge(env *envelope, self string) (addressed, other bool) {
 	return false, false
 }
 
-// load completes env in its slot, waiting up to 10s for the bot's ID; for
-// an addressed message it loads the names and sticker labels it needs, and
-// passes learn each name it shows the model.
+// load completes env in its slot, waiting up to 10s for the bot's ID, and
+// in a DM deciding whether its sender may DM the bot, which may ask
+// signal-cli whether they are a group admin; for an addressed message it
+// loads the names and sticker labels it needs, and passes learn each name
+// it shows the model.
 func (c *Client) load(ctx context.Context, env *envelope, learn func(name, id string)) (feature.Message, bool) {
 	wait, cancel := context.WithTimeout(ctx, 10*time.Second)
 	self := c.WaitID(wait)
@@ -360,11 +373,16 @@ func (c *Client) load(ctx context.Context, env *envelope, learn func(name, id st
 	if self == "" {
 		return feature.Message{}, false
 	}
-	if addressed, other := c.judge(env, self); !addressed {
-		return c.message(env, self), other
+	group := env.chat().GroupID != ""
+	dm := group || fromSelf(env, self) || c.dmAllowed(ctx, env.ids()...)
+	if addressed, other := c.judge(env, self, dm); !addressed {
+		return c.message(env, self, dm), other
+	}
+	if !group && env.edited == 0 { // as the reader does for a sender it knows may DM
+		c.recent.add(env.chat().Key(), env.sender(), env.Timestamp, env.DataMessage.Attachments)
 	}
 	c.loadNames(ctx, env)
-	msg := c.message(env, self)
+	msg := c.message(env, self, dm)
 	c.people(env, self, learn)
 	for i := range msg.Media {
 		if m := &msg.Media[i]; m.Sticker {
@@ -374,8 +392,9 @@ func (c *Client) load(ctx context.Context, env *envelope, learn func(name, id st
 	return msg, true
 }
 
-// message is env as the core and features see it.
-func (c *Client) message(env *envelope, self string) feature.Message {
+// message is env as the core and features see it, dm saying whether a
+// DM's sender may DM the bot.
+func (c *Client) message(env *envelope, self string, dm bool) feature.Message {
 	d := cmp.Or(env.DataMessage, &dataMessage{})
 	m := feature.Message{
 		Chat:      env.chat(),
@@ -385,7 +404,7 @@ func (c *Client) message(env *envelope, self string) feature.Message {
 		Expires:   time.Duration(d.ExpiresInSeconds) * time.Second,
 		Timestamp: env.Timestamp,
 		Edited:    env.edited,
-		Addressed: isAddressed(env, self, c.allowed, c.commandSet()),
+		Addressed: isAddressed(env, self, dm, c.commandSet()),
 	}
 	var images, files []feature.Media
 	add := func(as []attachment, quoted bool) {
@@ -473,8 +492,9 @@ func (c *Client) text(msg string, ms []mention, self string) string {
 
 // Delivered readies a message a feature delivers, in its slot, as if its
 // sender had just posted it, waiting up to 10s for signal-cli and the bot's
-// own name: a DM's sender must still be allowed, by ACI or number, and a
-// group's still a member. A drop is logged without content.
+// own name: a DM's sender must still be allowed to DM the bot, by ACI or
+// number, or as a group admin, and a group's still a member. A drop is
+// logged without content or anyone's ID.
 func (c *Client) Delivered(ctx context.Context, msg feature.Message) (bot.Ready, bool) {
 	wait, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
@@ -483,8 +503,8 @@ func (c *Client) Delivered(ctx context.Context, msg feature.Message) (bot.Ready,
 		return bot.Ready{}, false
 	}
 	c.loadNames(wait, &envelope{})
-	if msg.Chat.GroupID == "" && !c.allowed[msg.Sender] && !c.allowed[c.number(msg.Sender)] {
-		logx.Infof("delivered message from %s dropped because not in SIGNAL_DM_USER_IDS (add this ID to allow DMs)", cmp.Or(msg.Sender, "unknown sender"))
+	if msg.Chat.GroupID == "" && !c.dmAllowed(wait, msg.Sender, c.number(msg.Sender)) {
+		logx.Infof("delivered message dropped: its sender may no longer DM the bot (SIGNAL_DM_USER_IDS)")
 		return bot.Ready{}, false
 	}
 	msg.Name = cmp.Or(msg.Name, c.name(msg.Sender))
@@ -515,8 +535,8 @@ func (c *Client) Delivered(ctx context.Context, msg feature.Message) (bot.Ready,
 
 // Reachable reports whether the bot may still post in chat on its own,
 // waiting up to 10s for signal-cli: in a group, while the bot is a member
-// (listGroups); in a DM, while the user is in SIGNAL_DM_USER_IDS, by ACI or
-// number. A failure is logged.
+// (listGroups); in a DM, while the user may DM the bot (SIGNAL_DM_USER_IDS),
+// by ACI or number, or as a group admin. A failure is logged.
 func (c *Client) Reachable(ctx context.Context, chat feature.Chat) bool {
 	wait, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
@@ -526,7 +546,7 @@ func (c *Client) Reachable(ctx context.Context, chat feature.Chat) bool {
 	}
 	if chat.GroupID == "" {
 		c.loadNames(wait, &envelope{})
-		return c.allowed[chat.User] || c.allowed[c.number(chat.User)]
+		return c.dmAllowed(wait, chat.User, c.number(chat.User))
 	}
 	var gs []group
 	if err := c.call(wait, "listGroups", nil, &gs); err != nil {

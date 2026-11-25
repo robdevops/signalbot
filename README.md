@@ -17,7 +17,7 @@ A small, [privacy-conscious](PRIVACY.md) chat bot for Signal, through a running 
 
 ## Features
 
-- LLM responds to @mentions, replies to its messages, and DMs (on Signal from whitelisted contacts)
+- LLM responds to @mentions, replies to its messages, and DMs (on Signal from group admins, or the contacts you list)
 - Tools: web search, line charts (by day, or by the hour within a day) and pie charts, [pictures](docs/FILES_LINKS_TOOLS_MCP.md#images) (drawings, art, diagrams) with GPT Image 2, and your own [MCP connectors](docs/FILES_LINKS_TOOLS_MCP.md#mcp-connectors)
 - [Reminders](docs/SCHEDULING.md), and [alerts](docs/FEEDS.md) from your MCP servers
 - Game plugins: [geoguesser](https://github.com/robdevops/GeoGuess) | [song guesser](https://github.com/robdevops/SongGuess) | [trivia](https://github.com/robdevops/TriviaQuiz), or [write your own](docs/FILES_LINKS_TOOLS_MCP.md#addons)
@@ -71,7 +71,7 @@ To get the bot working with Signal and a model on OpenRouter, set these:
 | `SIGNALCLI_SOCKET` | `127.0.0.1:7583` | signal-cli's `host:port`, or its [Unix socket](docs/SOCKET.md) path |
 | `MODEL_API_KEY` | empty | Your [OpenRouter](https://openrouter.ai) API key (or see [other providers](docs/MODELS.md)) |
 | `MODEL` | `deepseek/deepseek-v4.1-flash-1017` | The model, as OpenRouter's `provider/model` |
-| `SIGNAL_DM_USER_IDS` | empty | UUIDs or numbers allowed to DM the bot, separated by commas or whitespace; empty turns DMs off |
+| `SIGNAL_DM_USER_IDS` | `admins, mods` | Who may DM the bot: unset, an admin of a group the bot is in (Signal groups have no mods); `all`, anyone; `none`, no one; or UUIDs or numbers, with or without `signal:`, alone or with `admins`, separated by commas or whitespace. See [Who may use the bot](docs/CONFIGURATION.md#who-may-use-the-bot) |
 
 Every other setting (daily budget, chart colours, history length, MCP connectors, time zone, …) is in [Configuration](docs/CONFIGURATION.md). Then install the bot with systemd or with Docker.
 
@@ -158,7 +158,7 @@ The bot answers anyone who DMs it, and any group it is in: BotFather's settings 
 
 **Privacy mode.** By default Telegram sends a bot in a group only the messages addressed to it, so the bot has no group context. To give it the conversation, send BotFather `/setprivacy` and choose Disable, then remove the bot from the group and add it again; or make it a group admin. As admin it also sees reactions and members joining and leaving.
 
-**On Signal and Telegram at once.** Set both `SIGNALCLI_SOCKET` (even to its default, `127.0.0.1:7583`) and `TELEGRAM_BOT_TOKEN`, with `SIGNAL_DM_USER_IDS`: one bot then answers on both, each chat on its own network, with one model, one set of features and MCP servers, and one state directory. Each chat keeps its own history and budget, as before; buttons and the keyboard appear only on Telegram, and Signal chats get the same in words. An addon is told both networks, and each call which one its chat is on.
+**On Signal and Telegram at once.** Set both `SIGNALCLI_SOCKET` (even to its default, `127.0.0.1:7583`) and `TELEGRAM_BOT_TOKEN`: one bot then answers on both, each chat on its own network, with one model, one set of features and MCP servers, and one state directory. Each chat keeps its own history and budget, as before; buttons and the keyboard appear only on Telegram, and Signal chats get the same in words. An addon is told both networks, and each call which one its chat is on.
 
 To move from two bots, one for each network, to one, stop both, then fold the Telegram bot's state into the Signal one's (the IDs of the two networks never collide, so each file is a union), and start one bot with both settings:
 

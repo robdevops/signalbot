@@ -82,7 +82,7 @@ func TestPrepareKeepsStyles(t *testing.T) {
 // Send passes the styles, and mentions land on the converted text.
 func TestSendStyles(t *testing.T) {
 	f := newFake(t)
-	c := newClient(f.sock, nil, nil)
+	c := newClient(f.sock, only(), nil)
 	run(t, c, f)
 	c.Send(feature.Chat{User: aliceID}, "**\U0001F389 big** news, @Alice: see `x`", nil, map[string]string{"alice": "u-a"}, 0, nil, feature.Markup{})
 	eventually(t, "a send", func() bool { return len(f.calls("send")) == 1 })

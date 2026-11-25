@@ -109,6 +109,9 @@ type world struct {
 	// Members are who listGroups lists in the test group at first: Alice,
 	// Bob and the bot if unset.
 	Members []string
+	// Admins are who listGroups lists as the test group's admins at first;
+	// no one if unset.
+	Admins []string
 }
 
 // harness is a running bot and its fakes.
@@ -120,6 +123,7 @@ type harness struct {
 	mu        sync.Mutex
 	conn      net.Conn          // the bot's current signal-cli connection
 	members   []string          // who listGroups lists in the test group; nil for Alice, Bob and the bot
+	admins    []string          // who listGroups lists as its admins
 	conns     int               // connections accepted
 	calls     []rpcCall         // every request the bot made to signal-cli
 	contacts  map[string]string // the contact list, by id
@@ -199,7 +203,7 @@ func newHarness(t *testing.T, w world) *harness {
 	if w.StateDir == "" {
 		w.StateDir = t.TempDir()
 	}
-	h := &harness{t: t, w: w, contacts: map[string]string{}, handled: make(chan struct{}, 64)}
+	h := &harness{t: t, w: w, contacts: map[string]string{}, admins: w.Admins, handled: make(chan struct{}, 64)}
 	h.keepExact("My Daily Life", "❤️", "🕵️") // the sticker pack the fake signal-cli lists
 	if !w.NoBotName {
 		h.contacts[idBot] = "Botty"
@@ -297,7 +301,11 @@ func (h *harness) serveSignal(c net.Conn) {
 			for _, id := range h.groupMembers() {
 				ms = append(ms, `{"uuid":"`+id+`"}`)
 			}
-			result = `[{"id":"` + idGroup + `","name":"Test group","isMember":true,"members":[` + strings.Join(ms, ",") + `]}]`
+			var as []string
+			for _, id := range h.groupAdmins() {
+				as = append(as, `{"number":null,"uuid":"`+id+`"}`)
+			}
+			result = `[{"id":"` + idGroup + `","name":"Test group","isMember":true,"members":[` + strings.Join(ms, ",") + `],"admins":[` + strings.Join(as, ",") + `]}]`
 		case "send":
 			if fail {
 				h.write(c, fmt.Sprintf(`{"jsonrpc":"2.0","error":{"code":-1,"message":"Failed to send message"},"id":%s}`, req.ID))
@@ -444,6 +452,20 @@ func (h *harness) groupMembers() []string {
 		return h.w.Members
 	}
 	return []string{idAlice, idBob, idBot}
+}
+
+// groupAdmins is who listGroups lists as the test group's admins.
+func (h *harness) groupAdmins() []string {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.admins
+}
+
+// setAdmins sets who the fake signal-cli lists as the test group's admins.
+func (h *harness) setAdmins(ids ...string) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.admins = ids
 }
 
 // setMembers sets who the fake signal-cli lists in the test group.
@@ -1083,7 +1105,7 @@ func containsAll(s string, parts []string) bool {
 
 // checkNoSecretsLogged fails if any message or reply text reached the log,
 // or anyone's name or ID but the bot's, except the ID in a line about a DM
-// from someone not in SIGNAL_DM_USER_IDS.
+// from someone SIGNAL_DM_USER_IDS doesn't allow.
 func (h *harness) checkNoSecretsLogged() {
 	h.mu.Lock()
 	defer h.mu.Unlock()

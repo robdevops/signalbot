@@ -14,7 +14,7 @@ import (
 func TestSendOneMessageAndCaps(t *testing.T) {
 	logs := captureLogs(t)
 	f := newFake(t)
-	c := newClient(f.sock, nil, nil)
+	c := newClient(f.sock, only(), nil)
 	run(t, c, f)
 	dm := feature.Chat{User: aliceID}
 	c.Send(dm, strings.Repeat("z ", 6000), []feature.Picture{{Data: []byte("PNG")}}, nil, 0, nil, feature.Markup{})
@@ -31,7 +31,7 @@ func TestSendOneMessageAndCaps(t *testing.T) {
 	if s := f.calls("send")[1]; s["message"] != "" || s["attachments"] == nil {
 		t.Errorf("pictures sent as %v", s)
 	}
-	newClient("x", nil, nil).Send(dm, "secret words", nil, nil, 0, nil, feature.Markup{})
+	newClient("x", only(), nil).Send(dm, "secret words", nil, nil, 0, nil, feature.Markup{})
 	if out := logs.String(); !strings.Contains(out, "empty reply, nothing sent") || !strings.Contains(out, "send failed: not connected") || strings.Contains(out, "secret") {
 		t.Errorf("logs %q", out)
 	}
@@ -75,7 +75,7 @@ func TestFileName(t *testing.T) {
 // gives nothing away.
 func TestSendAudio(t *testing.T) {
 	f := newFake(t)
-	c := newClient(f.sock, nil, nil)
+	c := newClient(f.sock, only(), nil)
 	run(t, c, f)
 	c.Send(feature.Chat{User: aliceID}, "🎵 Song 1", nil, nil, 0, []byte("ID3 clip"), feature.Markup{})
 	eventually(t, "a send", func() bool { return len(f.calls("send")) == 1 })
@@ -91,7 +91,7 @@ func TestSendAudio(t *testing.T) {
 func TestEdit(t *testing.T) {
 	captureLogs(t)
 	f := newFake(t)
-	c := newClient(f.sock, nil, nil)
+	c := newClient(f.sock, only(), nil)
 	run(t, c, f)
 	group := feature.Chat{GroupID: groupID}
 	mk := feature.Markup{Buttons: [][]feature.Button{{{Label: "7d", Data: "rain 7d"}}}}

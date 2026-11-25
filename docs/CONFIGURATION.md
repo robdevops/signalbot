@@ -1,6 +1,6 @@
 # Configuration
 
-Every setting, read from the environment (`/etc/signalbot.env` in the install). Only `MODEL_API_KEY` and `SIGNAL_DM_USER_IDS` are needed to get started, and `SIGNALCLI_SOCKET` if signal-cli doesn't listen on `127.0.0.1:7583`; see the [README](../README.md#configuration).
+Every setting, read from the environment (`/etc/signalbot.env` in the install). Only `MODEL_API_KEY` is needed to get started (with `SIGNAL_DM_USER_IDS` to let more than group admins DM the bot on Signal), and `SIGNALCLI_SOCKET` if signal-cli doesn't listen on `127.0.0.1:7583`; see the [README](../README.md#configuration).
 
 | Variable | Default | Description |
 |---|---|---|

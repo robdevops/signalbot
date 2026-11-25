@@ -54,7 +54,7 @@ func TestRecent(t *testing.T) {
 // from allowed senders are remembered.
 func TestQuotedOriginals(t *testing.T) {
 	captureLogs(t)
-	c := newClient("x", map[string]bool{bobID: true}, nil)
+	c := newClient("x", only(bobID), nil)
 	c.closed.Store(true)
 	connected(c)
 	original := `{` + fromBob + `,"timestamp":1700,"dataMessage":{"message":"the report",` + inGroup + `,"attachments":[` +
@@ -64,7 +64,7 @@ func TestQuotedOriginals(t *testing.T) {
 		e := parse(t, fmt.Sprintf(`{"sourceUuid":"%s","timestamp":1800,"dataMessage":{"message":"￼ summarise",%s,%s,`+
 			`"quote":{"id":%d,"authorUuid":"%s","text":"the report","attachments":[{"contentType":"application/pdf","filename":"report.pdf"},`+
 			`{"contentType":"image/png","thumbnail":{"contentType":"image/png","id":"thumb1","size":5}}]}}}`, aliceID, atBot, inGroup, ts, bobID))
-		return c.message(e, botID)
+		return c.message(e, botID, false)
 	}
 	if got, want := reply(1700).Media, []feature.Media{{ID: "img1", Quoted: true},
 		{ID: "pdf1", Quoted: true, File: true, Name: "report.pdf", MIME: "application/pdf", Size: 900}}; !reflect.DeepEqual(got, want) {
