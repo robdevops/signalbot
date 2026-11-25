@@ -32,6 +32,10 @@ func main() {
 		fmt.Println("signalbot", buildVersion())
 		return
 	}
+	if len(os.Args) > 1 && networkFlags[os.Args[1]] != nil {
+		networkFlags[os.Args[1]]()
+		return
+	}
 	logx.Init()
 	logx.Noticef("signalbot %s starting", buildVersion())
 	cfg := config.Load()

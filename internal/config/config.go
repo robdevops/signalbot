@@ -64,6 +64,13 @@ func (t *Test) Begin() (end func()) {
 // Idle reports whether no work Begin counted is under way.
 func (t *Test) Idle() bool { return t.busy.Load() == 0 }
 
+// StateDir is STATE_DIRECTORY's first directory, for saved state; "" for
+// the working directory. systemd may list several.
+func StateDir() string {
+	dir, _, _ := strings.Cut(Env("STATE_DIRECTORY", ""), ":")
+	return dir
+}
+
 // Env is the setting key, trimmed, or def if it is unset or blank.
 func Env(key, def string) string {
 	if v := strings.TrimSpace(os.Getenv(key)); v != "" {
@@ -140,7 +147,7 @@ func Load() *Config {
 		}
 		c.ToolLinger = c.HistoryMax
 	}
-	c.StateDir, _, _ = strings.Cut(Env("STATE_DIRECTORY", ""), ":") // systemd may list several
+	c.StateDir = StateDir()
 	c.DailyBudget, c.DailyBudgetSet = dollars("DAILY_BUDGET", 1)
 	// A key alone is OpenRouter's; a URL alone is a provider that needs no
 	// key, such as a local one.

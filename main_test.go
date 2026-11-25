@@ -54,6 +54,10 @@ func TestChooseNetwork(t *testing.T) {
 		{"left out", map[string]func(*config.Test) bot.Network{"signal": nil}, map[string]string{"TELEGRAM_BOT_TOKEN": "x"}, "", "telegram is chosen, but this build leaves it out (built with -tags notelegram)"},
 		{"both, one left out", map[string]func(*config.Test) bot.Network{"signal": nil}, map[string]string{"TELEGRAM_BOT_TOKEN": "x", "SIGNALCLI_SOCKET": "/run/s"}, "", "telegram is chosen, but this build leaves it out"},
 		{"default left out", map[string]func(*config.Test) bot.Network{"telegram": nil}, nil, "", "signal is chosen, but this build leaves it out (built with -tags nosignal)"},
+		{"slack set", map[string]func(*config.Test) bot.Network{"signal": nil, "slack": nil}, map[string]string{"SLACK_BOT_TOKEN": "x"}, "slack", ""},
+		{"all set", map[string]func(*config.Test) bot.Network{"signal": nil, "telegram": nil, "slack": nil},
+			map[string]string{"SLACK_BOT_TOKEN": "x", "TELEGRAM_BOT_TOKEN": "x", "SIGNALCLI_SOCKET": "/run/s"}, "signal,telegram,slack", ""},
+		{"slack left out", both, map[string]string{"SLACK_BOT_TOKEN": "x"}, "", "slack is chosen, but this build leaves it out (built with -tags noslack)"},
 	} {
 		networks = tc.built
 		names, err := chooseNetwork(func(k string) string { return tc.env[k] })

@@ -5,8 +5,10 @@ The bot is a small core and features on top. [TECHNICAL.md](TECHNICAL.md) descri
 ```
 main.go, features.go    the main package at the module root: wiring, and one line per feature
 features_*.go           a feature a build tag can leave out (nocharts): a variable, nil when left out
-network_*.go            the chat network this build has (Signal; nosignal leaves the build with none, which fails)
-internal/signal/        the chat network: the signal-cli client, decoding, sending, names; only main imports it, and it imports bot
+network_*.go            the chat networks this build has (nosignal, notelegram and noslack each leave one out; leaving out every one fails)
+internal/signal/        a chat network: the signal-cli client, decoding, sending, names; only main imports it, and it imports bot
+internal/telegram/      another: Telegram's Bot API, by the same rules
+internal/slack/         another: Slack's Web API and Socket Mode, by the same rules
 internal/model/         the model client (OpenRouter or another chat completions API) and the tool loop
 internal/chats/         per-chat state: history, dedupe, mention names, the mailbox
 internal/timers/        one-shot timers
@@ -39,7 +41,7 @@ If a feature can't be built on these, that's a design finding. Either a port bec
 A plain `go build` has everything. A tag leaves a part out, and never adds one, so a forgotten tag can't ship a smaller bot:
 
 - **`nocharts`** leaves out charts and their fonts. A feature that can be left out is a variable from a pair of files, `features_<name>.go` (`//go:build !no<name>`, the feature's `Register`) and `features_no<name>.go` (`//go:build no<name>`, nil). Its place in `features.go` stays, so the order is still set in one list; `enabled()` drops the nils. A scenario that needs it starts with `skipWithout(t, <name>Feature)`, and CI runs the tests with the tag too.
-- **`nosignal`** and **`notelegram`** each leave out a chat network. A network registers itself from `network_<name>.go` (`//go:build !no<name>`), and `network.go` chooses one at startup from its settings. With both tags `network_none.go` stops the build with a compile error rather than making a bot that answers no one; a third network adds its tag to that file's. Each network's scenarios carry its tag, and CI runs the tests under each.
+- **`nosignal`**, **`notelegram`** and **`noslack`** each leave out a chat network. A network registers itself from `network_<name>.go` (`//go:build !no<name>`), and `network.go` chooses them at startup from their settings. With every network's tag `network_none.go` stops the build with a compile error rather than making a bot that answers no one (its build line also names `nodiscord`, for the Discord network); a new network adds its tag to that file's. Each network's scenarios carry its tag, and CI runs the tests under each.
 
 Give a feature a tag only for a real saving, such as a dependency; a runtime setting (like `FILES`) is the way to turn a feature off.
 
@@ -55,7 +57,7 @@ Give a feature a tag only for a real saving, such as a dependency; a runtime set
 
 Tests in `internal/arch` enforce these:
 
-- **Imports:** only the main package, at the module root, imports features and `internal/signal`; a feature imports only `internal/feature`, `internal/kit` and its own packages; `internal/signal` imports only `internal/feature`, kit, `internal/config` and `internal/bot` (network to core, never the reverse); `internal/config` and kit import no other internal package; a feature may also import `addon`, and `addon` imports only the standard library, since every addon builds it.
+- **Imports:** only the main package, at the module root, imports features and the networks (`internal/signal`, `internal/telegram`, `internal/slack`); a feature imports only `internal/feature`, `internal/kit` and its own packages; a network imports only `internal/feature`, kit, `internal/config` and `internal/bot` (network to core, never the reverse); `internal/config` and kit import no other internal package; a feature may also import `addon`, and `addon` imports only the standard library, since every addon builds it.
 - **No feature names in the core:** the core's source mentions no feature name or feature-only word (chart, MCP, group context, `/intro`, `/schedule`, …).
 - **Docs:** every setting read, the core's or a feature's (`h.Env("NAME", …)`), is in the table in [docs/CONFIGURATION.md](docs/CONFIGURATION.md).
 
