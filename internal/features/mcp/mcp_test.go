@@ -881,7 +881,9 @@ func TestFeed(t *testing.T) {
 	setFeed("a", item("1", "rain", "Old rain", now.Add(-2*time.Hour), false), item("2", "rain", "Rain now", now, true))
 	config := `{"mcpServers":{"eco":{"url":"` + serve(t, fake) + `","name":"Weather","feed":{"resource":"feed://items"}}}}`
 	dir := t.TempDir()
-	state := func(h *featuretest.Host) { h.Settings["STATE_DIRECTORY"] = dir }
+	state := func(h *featuretest.Host) {
+		h.Settings["STATE_DIRECTORY"], h.Shared = dir, []feature.Group{{ID: "g1", Name: "Garden", Admin: true}} // alice is its admin
+	}
 	h, _, err := register(t, config, state)
 	if err != nil {
 		t.Fatal(err)
@@ -1063,7 +1065,9 @@ func TestFeedTopicAndLimits(t *testing.T) {
 	t.Cleanup(func() { feedEvery = old })
 	fake := &fakeMCP{feed: `{"kinds":[{"kind":"rain"},{"kind":"a/b"}],"items":[]}`}
 	config := `{"mcpServers":{"a-server-name-that-is-rather-long-indeed-and-then-some-more":{"url":"` + serve(t, fake) + `","feed":{"resource":"feed://items"}}}}`
-	h, _, err := register(t, config, func(h *featuretest.Host) { h.Bot.Caps.Buttons, h.Settings["STATE_DIRECTORY"] = true, t.TempDir() })
+	h, _, err := register(t, config, func(h *featuretest.Host) {
+		h.Bot.Caps.Buttons, h.Settings["STATE_DIRECTORY"], h.Shared = true, t.TempDir(), []feature.Group{{ID: "-100", Mod: true}} // a mod of the topic's group
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1329,7 +1333,9 @@ func TestPerNetworkCaps(t *testing.T) {
 func TestFeedMenuWhileOff(t *testing.T) {
 	fake := &fakeMCP{feed: `{"kinds":[{"kind":"rain","label":"Rain"},{"kind":"wind","label":"Wind"}],"items":[]}`}
 	h, _, err := register(t, `{"mcpServers":{"eco":{"url":"`+serve(t, fake)+`","feed":{"resource":"feed://items"}}}}`,
-		func(h *featuretest.Host) { h.Bot.Caps.Buttons, h.Settings["STATE_DIRECTORY"] = true, t.TempDir() })
+		func(h *featuretest.Host) {
+			h.Bot.Caps.Buttons, h.Settings["STATE_DIRECTORY"], h.Shared = true, t.TempDir(), []feature.Group{{ID: "g1", Admin: true}}
+		})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1364,6 +1370,108 @@ func TestFeedMenuWhileOff(t *testing.T) {
 	p = h.Posts()
 	if last := p[len(p)-1]; !strings.Contains(last.Text, "On: Wind\n🔕 Off: Rain") || !last.Markup.Buttons[1][1].Highlight || last.Markup.Buttons[1][0].Highlight {
 		t.Fatalf("after choosing wind: %+v", last)
+	}
+}
+
+// In a group, only those GROUP_ADMINS allows may change its alerts: by
+// default its admins and mods, as the network lists them; anyone may see
+// the menu and open it. A refused press tells the presser why and changes
+// nothing. In a DM, its owner may, whatever GROUP_ADMINS says.
+func TestFeedGroupAdmins(t *testing.T) {
+	fake := &fakeMCP{feed: `{"kinds":[{"kind":"rain","label":"Rain"}],"items":[]}`}
+	config := `{"mcpServers":{"eco":{"url":"` + serve(t, fake) + `","feed":{"resource":"feed://items"}}}}`
+	ctx := context.Background()
+	group, topic, alice := feature.Chat{GroupID: "g1"}, feature.Chat{GroupID: "g1/7"}, feature.Chat{User: "alice"}
+	// start registers the feed with GROUP_ADMINS set to admins ("" unset)
+	// and the sender a member of g1 as admin or mod, and waits for its
+	// first read.
+	start := func(admins string, admin, mod bool) *featuretest.Host {
+		t.Helper()
+		h, _, err := register(t, config, func(h *featuretest.Host) {
+			h.Bot.Caps.Buttons, h.Settings["STATE_DIRECTORY"] = true, t.TempDir()
+			if admins != "" {
+				h.Settings["GROUP_ADMINS"] = admins
+			}
+			h.Shared = []feature.Group{{ID: "g1", Name: "Garden", Admin: admin, Mod: mod}}
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		for range 200 {
+			if strings.Contains(h.Message(ctx, feature.Message{Chat: alice, Sender: "alice", Text: "/alerts", Addressed: true}).Answer, "Rain") {
+				return h
+			}
+			time.Sleep(5 * time.Millisecond)
+		}
+		t.Fatal("the feed wasn't read")
+		return nil
+	}
+	ask := func(h *featuretest.Host, chat feature.Chat, sender, text string) string {
+		return h.Message(ctx, feature.Message{Chat: chat, Sender: sender, Text: text, Addressed: true}).Answer
+	}
+	const garden = "Only Garden's admins and mods can change its alerts."
+
+	h := start("", false, false) // bob is neither
+	for _, cmd := range []string{"/alerts on", "/alerts off", "/alerts sound on", "/alerts rain", "/alerts hail"} {
+		if a := ask(h, group, "bob", cmd); a != garden {
+			t.Errorf("%s: %q", cmd, a)
+		}
+	}
+	if a := ask(h, group, "bob", "/alerts"); !strings.Contains(a, "On: nothing") {
+		t.Errorf("the menu: %q", a)
+	}
+	if a, ok := h.Press(ctx, feature.Press{Chat: group, By: feature.Person{ID: "bob"}, Sent: 4, Data: "feed=alerts/open:alerts"}); !ok || a != "" || len(h.Posts()) != 1 {
+		t.Errorf("opening the menu: %q %v %d", a, ok, len(h.Posts()))
+	}
+	for _, data := range []string{"feed=alerts/on", "feed=alerts/k:rain", "feed=alerts/soundon"} {
+		if a, ok := h.Press(ctx, feature.Press{Chat: group, By: feature.Person{ID: "bob"}, Sent: 4, Data: data}); !ok || a != garden {
+			t.Errorf("press %s: %q %v", data, a, ok)
+		}
+	}
+	if n := len(h.Posts()); n != 1 {
+		t.Errorf("a refused press redrew the menu: %d posts", n)
+	}
+	if a := ask(h, group, "bob", "/alerts"); !strings.Contains(a, "On: nothing") {
+		t.Errorf("changed by a refused press: %q", a)
+	}
+	if a := ask(h, alice, "alice", "/alerts off"); !strings.Contains(a, "On: nothing") {
+		t.Errorf("a DM's owner: %q", a)
+	}
+
+	h = start("", true, false) // alice is an admin, here in a forum topic
+	if a := ask(h, topic, "alice", "/alerts on"); !strings.Contains(a, "On: Rain") {
+		t.Errorf("an admin, in a topic: %q", a)
+	}
+	if a, ok := h.Press(ctx, feature.Press{Chat: group, By: feature.Person{ID: "alice"}, Sent: 5, Data: "feed=alerts/k:rain/7"}); !ok || a != "" {
+		t.Errorf("an admin's press: %q %v", a, ok)
+	}
+	if a := ask(h, topic, "alice", "/alerts"); !strings.Contains(a, "Off: Rain") {
+		t.Errorf("after an admin's press: %q", a)
+	}
+
+	h = start("mods", true, false) // only mods: alice, an admin, isn't one
+	if a := ask(h, group, "alice", "/alerts on"); a != "Only Garden's mods can change its alerts." {
+		t.Errorf("mods only, an admin: %q", a)
+	}
+	h = start("mods", false, true)
+	if a := ask(h, group, "alice", "/alerts on"); !strings.Contains(a, "On: Rain") {
+		t.Errorf("mods only, a mod: %q", a)
+	}
+
+	h = start("none, signal:bob", false, false) // bob is listed; alice isn't, and no role may
+	if a := ask(h, group, "bob", "/alerts on"); !strings.Contains(a, "On: Rain") {
+		t.Errorf("listed: %q", a)
+	}
+	if a := ask(h, group, "alice", "/alerts off"); a != "Changing this group's alerts isn't open to you." {
+		t.Errorf("not listed: %q", a)
+	}
+	if a := ask(h, alice, "alice", "/alerts off"); !strings.Contains(a, "On: nothing") {
+		t.Errorf("a DM's owner, not listed: %q", a)
+	}
+
+	h = start("all", false, false)
+	if a := ask(h, group, "bob", "/alerts on"); !strings.Contains(a, "On: Rain") {
+		t.Errorf("all: %q", a)
 	}
 }
 
