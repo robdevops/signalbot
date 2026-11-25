@@ -862,7 +862,7 @@ func TestFailedSendDropped(t *testing.T) {
 // The bot's reactions wait at low priority: merged into one item, a later
 // one on the same message replacing the earlier, sent after what waited
 // with them, dropped first to make room, and skipped for a message deleted
-// since.
+// since, the bot's own too.
 func TestReact(t *testing.T) {
 	h := start(t, options{})
 	group := feature.Chat{GroupID: groupID}
@@ -925,6 +925,23 @@ func TestReact(t *testing.T) {
 	if strings.Contains(h.logs.String(), "dropped a message") {
 		t.Fatalf("logs:\n%s", h.logs)
 	}
+
+	// The bot's own message: reacted to, unless deleted while it waited.
+	h.holdModel()
+	h.receive(atBot("and again"))
+	h.eventually("the request", func() bool { return len(h.requests()) == 6 })
+	own := func(ts int64) feature.Message { return feature.Message{Chat: group, Timestamp: ts, Bot: true} }
+	h.b.React(group, own(8), "⏰")
+	h.b.React(group, own(10), "⏰")
+	h.net.handle(Deleted{Chat: group, Bot: true, Sent: 8, At: 9})
+	h.release()
+	for _, want := range []string{"ok", "react ⏰ to bot@10"} {
+		if s := h.nextSend(); s.text != want {
+			t.Fatalf("sent %q, want %q", s.text, want)
+		}
+	}
+	h.settle()
+	h.noSend()
 }
 
 // Outside a tool, CallAPI is made only for a ctx charged to a chat: it is

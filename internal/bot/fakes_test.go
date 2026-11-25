@@ -58,6 +58,7 @@ type fakeNet struct {
 	sends   atomic.Int64 // Send calls, for their timestamps
 	fail    atomic.Bool  // while set, Send fails: nothing is sent
 	watch   Watch        // what Watch was told
+	buttons bool         // it shows markup
 }
 
 type sent struct {
@@ -66,6 +67,8 @@ type sent struct {
 	images []feature.Picture
 	known  map[string]string
 	reply  int64
+	markup feature.Markup
+	edit   int64 // the message an Edit replaced
 }
 
 func (n *fakeNet) Watch(w Watch) {
@@ -91,17 +94,33 @@ func (n *fakeNet) WaitID(ctx context.Context) string {
 
 // Send returns one timestamp per call, counting up from 5000, or none
 // while fail is set.
-func (n *fakeNet) Send(chat feature.Chat, text string, images []feature.Picture, known map[string]string, replyTo int64, audio []byte) []int64 {
+func (n *fakeNet) Send(chat feature.Chat, text string, images []feature.Picture, known map[string]string, replyTo int64, audio []byte, mk feature.Markup) []int64 {
 	if n.fail.Load() {
 		return nil
 	}
-	n.sent <- sent{chat, text, images, known, replyTo}
+	n.sent <- sent{chat: chat, text: text, images: images, known: known, reply: replyTo, markup: mk}
 	return []int64{5000 + n.sends.Add(1)}
 }
 
-// React is sent as "react <emoji> to <sender>@<timestamp>".
+// Edit replaces the message in place, or fails while fail is set.
+func (n *fakeNet) Edit(chat feature.Chat, ts int64, text string, images []feature.Picture, known map[string]string, mk feature.Markup) []int64 {
+	if n.fail.Load() {
+		return nil
+	}
+	n.sent <- sent{chat: chat, text: text, images: images, known: known, markup: mk, edit: ts}
+	return []int64{ts}
+}
+
+func (n *fakeNet) Buttons() bool { return n.buttons }
+
+// React is sent as "react <emoji> to <sender>@<timestamp>", the sender
+// "bot" for the bot's own message.
 func (n *fakeNet) React(chat feature.Chat, msg feature.Message, emoji string) {
-	n.sent <- sent{chat: chat, text: fmt.Sprintf("react %s to %s@%d", emoji, msg.Sender, msg.Timestamp)}
+	sender := msg.Sender
+	if msg.Bot {
+		sender = "bot"
+	}
+	n.sent <- sent{chat: chat, text: fmt.Sprintf("react %s to %s@%d", emoji, sender, msg.Timestamp)}
 }
 
 func (n *fakeNet) Typing(feature.Chat) func() {
@@ -161,6 +180,7 @@ type options struct {
 	tools    bool
 	otherAPI bool // the fake model API is not taken for OpenRouter's
 	waitID   bool // the bot isn't connected until the test closes h.net.id
+	buttons  bool // the network shows markup
 	features func(*Bot)
 	cfg      func(*config.Config)
 }
@@ -170,7 +190,7 @@ type options struct {
 func start(t *testing.T, o options) *harness {
 	t.Helper()
 	h := &harness{t: t, logs: &logx.Buffer{}, tools: o.tools,
-		net: &fakeNet{id: make(chan struct{}), running: make(chan struct{}), sent: make(chan sent, 64)}}
+		net: &fakeNet{id: make(chan struct{}), running: make(chan struct{}), sent: make(chan sent, 64), buttons: o.buttons}}
 	t.Cleanup(logx.SetOutput(h.logs, h.logs, true))
 	if !o.waitID {
 		close(h.net.id)

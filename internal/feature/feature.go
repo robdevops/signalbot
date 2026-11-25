@@ -57,6 +57,7 @@ type Message struct {
 	Timestamp int64         // when it was sent, by the sender's clock, as the network names it; 0 for one the bot made, such as a scheduled post. An edit keeps the original's
 	Edited    int64         // for an edit of the message sent at Timestamp, which it replaces, when it was edited; 0 for an original
 	Addressed bool          // it mentions the bot, replies to it, starts (in a group) with one of the bot's commands, or is a DM from an allowed sender
+	Bot       bool          // for React: the bot's own message, whose Timestamp an OnSent gave; Sender is unused
 }
 
 // Quote is the message another one replies to, as the replier's app sent it.
@@ -214,6 +215,7 @@ type Info struct {
 	CallsTools bool     // the model can call tools
 	Provider   string   // the model API's provider, as server tools name it: "openrouter", or "" for another
 	Network    string   // the chat network, as it names itself, such as "signal" or "telegram"
+	Buttons    bool     // the network shows a post's Markup: buttons, a DM's keyboard, silent sends
 	Tools      []string // the Names of every tool group with tools, in feature order; none when it can't call tools
 	Intro      string   // INTRO with {name}, {model}, {tools} and {more} filled in, as in a group
 	IntroDM    string   // the same in a DM, with IntroLine's DM-only lines too
@@ -240,6 +242,43 @@ type Post struct {
 	Audio    []byte                           // one MP3 clip sent with Text, as audio to play, with no title
 	OnSent   func(sent []int64, dropped bool) // if set, called once: with the timestamps sent, or dropped
 	ReplyTo  int64                            // if set, sent as a reply to the bot's own earlier message in Chat that an OnSent gave this timestamp; sent plainly if the network can't find it
+	Markup   Markup                           // what it carries besides its content, where the network shows it
+	// Edit, if set, makes the post an edit of the bot's own earlier message
+	// in Chat that an OnSent gave this timestamp: its text, pictures and
+	// buttons replaced, in place where the network can, else sent anew.
+	// OnSent gets the timestamps that now stand for it; an edit the network
+	// refused is sent, with none. History keeps nothing of it, and Label,
+	// Audio and ReplyTo are unused.
+	Edit int64
+}
+
+// Markup is what a post carries besides its content, on a network that
+// shows it (Info.Buttons); another sends the post without it.
+type Markup struct {
+	Silent     bool       // sent without a notification
+	Buttons    [][]Button // rows of buttons under the post's last message; a press is a Press
+	Keyboard   [][]Key    // in a DM, the chat's reply keyboard from now on
+	NoKeyboard bool       // in a DM, the reply keyboard taken away
+}
+
+// Button is a button under a post. Pressing it is a Press with its Data.
+type Button struct {
+	Label string
+	Data  string // at most 64 bytes
+}
+
+// Key is a key of a DM's reply keyboard: a message of exactly its Label is
+// handled as if Command, such as "/rain", had been sent.
+type Key struct {
+	Label, Command string
+}
+
+// Press is someone pressing a button under one of the bot's messages.
+type Press struct {
+	Chat Chat
+	By   Person // who pressed it
+	Sent int64  // the message the button is under, as an OnSent named it
+	Data string // the button's Data
 }
 
 // Group is a group chat.
@@ -263,6 +302,11 @@ type Host interface {
 	// messages. The first non-empty reply returned is sent to the chat,
 	// without the model.
 	OnEvent(func(context.Context, Event) (reply string))
+	// OnPress sees each press of a button under the bot's messages, in its
+	// chat's slot, so it may block or call the network. The first hook
+	// that takes it (ok) wins; its answer, if not "", is shown to the
+	// presser for a moment.
+	OnPress(func(context.Context, Press) (answer string, ok bool))
 	// Command registers /name: an addressed message whose text is "/name"
 	// or "/name args", the name in any case, gets fn's Action. A name is 1
 	// to 32 lowercase letters, digits, _ or -, and is refused if another
@@ -306,7 +350,8 @@ type Host interface {
 	// the chat's mailbox at low priority: unless msg was deleted or edited
 	// since, and unless the reaction is dropped to make room. chat mirrors
 	// the network's React; msg's own Chat is ignored. A message the bot
-	// made (Timestamp 0) can't be reacted to; nothing happens.
+	// made (Timestamp 0) can't be reacted to; nothing happens. One the bot
+	// sent, with Bot set, can be.
 	React(chat Chat, msg Message, emoji string)
 	// Groups lists the groups the bot shares with user.
 	Groups(ctx context.Context, user string) ([]Group, error)

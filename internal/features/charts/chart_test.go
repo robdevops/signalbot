@@ -156,11 +156,11 @@ func TestDateTicks(t *testing.T) {
 		{"2026-11-15", "2027-03-01", "Dec,Jan 2027,Feb,Mar"},
 		{"2020-06-01", "2023-06-01", "2021,2022,2023"},
 	} {
-		if got := labels(dateTicks(d(tc.from), d(tc.to))); got != tc.want {
+		if got := labels(dateTicks(d(tc.from), d(tc.to), false)); got != tc.want {
 			t.Errorf("%s..%s: %q, want %q", tc.from, tc.to, got, tc.want)
 		}
 	}
-	if n := len(dateTicks(d("2000-01-01"), d("2026-01-01"))); n > 8 {
+	if n := len(dateTicks(d("2000-01-01"), d("2026-01-01"), false)); n > 8 {
 		t.Errorf("%d year ticks, want at most 8", n)
 	}
 }
@@ -714,5 +714,83 @@ func TestAxisAsJSONString(t *testing.T) {
 	}
 	if s, _ := parseChart(chartTool, false, `{"title":"T","y_axis":"Price",`+pts+`}`); s.left.Title != "Price" {
 		t.Fatalf("a plain title: %+v", s.left)
+	}
+}
+
+// A point's date may have a time of day, kept as the wall-clock time
+// written, whatever its offset; anything else is refused.
+func TestWhen(t *testing.T) {
+	for _, tc := range []struct {
+		in    string
+		want  string
+		timed bool
+	}{
+		{"2026-11-24", "2026-11-24 00:00", false},
+		{"2026-11-24 15:30", "2026-11-24 15:30", true},
+		{"2026-11-24T15:30", "2026-11-24 15:30", true},
+		{"2026-11-24 15:30:45", "2026-11-24 15:30", true},
+		{"2026-11-24T15:30:00+11:00", "2026-11-24 15:30", true},
+		{"2026-11-24T00:00:00Z", "2026-11-24 00:00", true},
+	} {
+		got, timed, ok := when(tc.in)
+		if !ok || got.Format("2006-01-02 15:04") != tc.want || timed != tc.timed {
+			t.Errorf("%q: %v %v %v", tc.in, got, timed, ok)
+		}
+	}
+	for _, bad := range []string{"24/11/2026", "2026-11-24 25:00", "2026-11-24 3pm", ""} {
+		if _, _, ok := when(bad); ok {
+			t.Errorf("%q accepted", bad)
+		}
+	}
+	if _, err := parseChart(chartTool, false, `{"title":"T","series":[{"name":"A","points":[{"date":"2026-11-24 09:00","value":1},{"date":"2026-11-24 9am","value":2}]}]}`); err == nil || !strings.Contains(err.Error(), "YYYY-MM-DD HH:MM") {
+		t.Errorf("a bad time: %v", err)
+	}
+	s, err := parseChart(chartTool, false, `{"title":"T","series":[{"name":"A","points":[{"date":"2026-11-24","value":1},{"date":"2026-11-24 12:00","value":2}]}]}`)
+	if err != nil || !s.timed {
+		t.Errorf("dates and times mixed: %+v %v", s, err)
+	}
+}
+
+// Under 2 days of timed points, ticks are hours, at most 8, midnight
+// labelled with its date; dates alone keep their day ticks.
+func TestHourTicks(t *testing.T) {
+	at := func(s string) time.Time { tm, _, _ := when(s); return tm }
+	labels := func(ts []dateTick) string {
+		var b []string
+		for _, tk := range ts {
+			b = append(b, tk.label)
+		}
+		return strings.Join(b, ",")
+	}
+	for _, tc := range []struct{ from, to, want string }{
+		{"2026-11-24 09:00", "2026-11-24 15:00", "09:00,10:00,11:00,12:00,13:00,14:00,15:00"},
+		{"2026-11-24 00:00", "2026-11-24 23:00", "24 Nov,06:00,12:00,18:00"},
+		{"2026-11-23 12:00", "2026-11-25 00:00", "12:00,18:00,24 Nov,06:00,12:00,18:00,25 Nov"},
+	} {
+		ticks := dateTicks(at(tc.from), at(tc.to), true)
+		if got := labels(ticks); got != tc.want || len(ticks) > 8 {
+			t.Errorf("%s to %s: %s", tc.from, tc.to, got)
+		}
+	}
+	if got := labels(dateTicks(at("2026-11-24"), at("2026-11-25"), false)); got != "24 Nov,25 Nov" {
+		t.Errorf("dates alone: %s", got)
+	}
+}
+
+// A value's label is its date for dates, its date and time with times,
+// its time alone within one day.
+func TestStamp(t *testing.T) {
+	at := func(s string) time.Time { tm, _, _ := when(s); return tm }
+	s := &chartSpec{from: at("2026-11-24"), to: at("2026-11-30")}
+	if got := s.stamp(at("2026-11-25")); got != "25 Nov 2026" {
+		t.Errorf("dates: %q", got)
+	}
+	s.timed = true
+	if got := s.stamp(at("2026-11-25 14:00")); got != "25 Nov 14:00" {
+		t.Errorf("times over days: %q", got)
+	}
+	s.from, s.to = at("2026-11-24 00:00"), at("2026-11-24 23:00")
+	if got := s.stamp(at("2026-11-24 14:00")); got != "14:00" {
+		t.Errorf("one day: %q", got)
 	}
 }

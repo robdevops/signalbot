@@ -519,6 +519,37 @@ func TestCanSample(t *testing.T) {
 	}
 }
 
+// The bot's initialize says whether its network shows buttons, and a press
+// is a call of the onPress tool with Press as its arguments.
+func TestButtons(t *testing.T) {
+	got := make(chan Press, 1)
+	s := New(Config{Name: "alerts", Tools: []Tool{{Name: "period", Visibility: []string{"bot"},
+		Call: func(_ context.Context, c *Context, args json.RawMessage) (Result, error) {
+			var p Press
+			if err := DecodeArgs(args, &p); err != nil || c == nil {
+				return Result{}, errors.New("no press")
+			}
+			got <- p
+			return Text("7 days"), nil
+		}}}})
+	c := start(t, s)
+	initialize(c, "signal")
+	if s.Buttons() {
+		t.Error("buttons on Signal")
+	}
+	c.result("initialize", map[string]any{"protocolVersion": Protocol, "capabilities": map[string]any{
+		"experimental": map[string]any{KeyAddon: Capability{Version: Version, Network: "telegram", Buttons: true}}}}, nil)
+	if !s.Buttons() {
+		t.Error("no buttons on Telegram")
+	}
+	var r Result
+	c.result("tools/call", map[string]any{"name": "period", "arguments": Press{Press: "rain 7d", Post: "a1.9"},
+		"_meta": map[string]any{KeyContext: Context{Chat: "c_one", Sender: "u_one", Ref: "r_one"}}}, &r)
+	if p := <-got; p != (Press{Press: "rain 7d", Post: "a1.9"}) || len(r.Content) != 1 || r.Content[0].Text != "7 days" {
+		t.Errorf("press %+v, result %+v", p, r)
+	}
+}
+
 // Sample before Run fails at once.
 func TestSampleBeforeRun(t *testing.T) {
 	if _, err := New(Config{Name: "game"}).Sample(context.Background(), "c_one", question); err == nil {

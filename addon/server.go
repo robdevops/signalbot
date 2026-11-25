@@ -56,6 +56,7 @@ type Server struct {
 	sampling     bool // the bot offered sampling in initialize
 	watchReplies bool // the bot takes a watch with Replies
 	watchReacts  bool // the bot takes a watch with Reactions
+	buttons      bool // the bot shows a post's buttons and keyboard
 	subscribed   bool
 	outbox       []held                 // ops the bot hasn't read past, oldest first
 	seq          int64                  // the last op's sequence number
@@ -146,6 +147,15 @@ func (s *Server) WatchReactions() bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.watchReacts
+}
+
+// Buttons reports whether the bot said in initialize that its network
+// shows a post's Buttons and Keyboard (Telegram). Elsewhere they are left
+// off, so offer another way, such as a command.
+func (s *Server) Buttons() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.buttons
 }
 
 // BotError is the bot's error answer to a request of the addon's, such as
@@ -257,7 +267,7 @@ func (s *Server) Queue(ops ...Op) error {
 }
 
 // QueueIDs is Queue, returning the ID it gave each op, in order, such as
-// for a later post's ReplyTo.
+// for a later post's ReplyTo or a reaction's Post.
 func (s *Server) QueueIDs(ops ...Op) (ids []string, err error) {
 	for _, o := range ops {
 		switch {
@@ -640,6 +650,7 @@ func (s *Server) methods() map[string]handler {
 			s.network = addon.Network
 			s.watchReplies = addon.WatchReplies
 			s.watchReacts = addon.WatchReactions
+			s.buttons = addon.Buttons
 			s.sampling = p.Capabilities.Sampling != nil
 			s.mu.Unlock()
 			r := initializeResult{ProtocolVersion: Protocol, ServerInfo: serverInfo{Name: s.cfg.Name, Title: s.cfg.Title, Version: s.cfg.Version}}

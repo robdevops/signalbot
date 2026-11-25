@@ -290,7 +290,7 @@ func TestAddonLoad(t *testing.T) {
 		`{"mcpServers":{"model":{"command":"x","addon":{}}}}`:                                               `: MCP server "model": an addon's settings start with MODEL_, as the bot's own MODEL_API_KEY does; rename the server`,
 		`{"mcpServers":{"Daily":{"command":"x","addon":{}}}}`:                                               `: MCP server "Daily": an addon's settings start with DAILY_, as the bot's own DAILY_BUDGET does; rename the server`,
 		`{"mcpServers":{"geo":{"command":"x","chat_commands":{"geo":{"tool":"geo","direct":true}}}}}`:       `: MCP server "geo": chat command "geo" is direct, which needs an addon block`,
-		`{"mcpServers":{"geo":{"command":"x","addon":{"chat":["all"]}}}}`:                                   `: MCP server "geo": addon: unknown setting "chat" (settings are chats, dms, post, react, watch, watch_max, names, global_ids, rate, model)`,
+		`{"mcpServers":{"geo":{"command":"x","addon":{"chat":["all"]}}}}`:                                   `: MCP server "geo": addon: unknown setting "chat" (settings are chats, dms, post, react, watch, watch_max, names, global_ids, rate, model, announce)`,
 		`{"mcpServers":{"geo":{"command":"x","addon":{"rate":{"perMinute":1}}}}}`:                           `: MCP server "geo": addon rate: unknown setting "perMinute" (settings are per_minute, burst)`,
 		`{"mcpServers":{"geo":{"command":"x","addon":{"chats":["Family"]}}}}`:                               `: MCP server "geo": addon chats: "Family" isn't a group ID; copy the group's ID as Signal or Telegram shows it, or use "all"`,
 		`{"mcpServers":{"geo":{"command":"x","addon":{"chats":["all","` + groupA + `"]}}}}`:                 `: MCP server "geo": addon chats: "all" goes alone`,

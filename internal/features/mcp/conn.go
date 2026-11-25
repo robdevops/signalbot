@@ -352,7 +352,10 @@ func (c *stdioConn) dispatch(line []byte) {
 		json.Unmarshal(line, &p)
 		c.mu.Lock()
 		if s := c.serving; s != nil && bytes.Equal(bytes.TrimSpace(p.Params.RequestID), s.id) {
+			// The work it started may run on (a model call is finished and
+			// charged), but the addon may send its next request now.
 			s.cancel()
+			c.serving = nil
 		}
 		c.mu.Unlock()
 	case m.Method == "notifications/resources/updated" && c.updated != nil:

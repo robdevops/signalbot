@@ -42,8 +42,17 @@ type Network interface {
 	// first message sent replies to the bot's own message in chat that an
 	// earlier Send returned it for; one the network can't find is sent
 	// without it. audio, if not nil, is one MP3 clip sent with the text,
-	// as audio to play, with no title of its own.
-	Send(chat feature.Chat, text string, pics []feature.Picture, known map[string]string, replyTo int64, audio []byte) (sent []int64)
+	// as audio to play, with no title of its own. mk is shown where the
+	// network can (Buttons), and left off where it can't.
+	Send(chat feature.Chat, text string, pics []feature.Picture, known map[string]string, replyTo int64, audio []byte, mk feature.Markup) (sent []int64)
+	// Edit replaces the bot's own message in chat that Send returned sent
+	// for with text, pics and mk's buttons, and returns the timestamps that
+	// now stand for it: sent, or a new message's where the network can't
+	// edit it in place; none if it failed, which is logged.
+	Edit(chat feature.Chat, sent int64, text string, pics []feature.Picture, known map[string]string, mk feature.Markup) []int64
+	// Buttons reports whether the network shows a post's Markup; it never
+	// blocks.
+	Buttons() bool
 	// React puts emoji on msg in chat, as a reaction from the bot.
 	React(chat feature.Chat, msg feature.Message, emoji string)
 	Typing(chat feature.Chat) (stop func())
@@ -107,7 +116,9 @@ type Bot struct {
 	introLines []introLine      // features' lines for the introduction
 	stores     []string         // the names of the saved states features opened
 	events     []func(context.Context, feature.Event) string
+	presses    []func(context.Context, feature.Press) (string, bool)
 	now        func() time.Time // the clock history and the budget go by
+	keys       *keyboards       // each DM's reply keyboard
 }
 
 // New makes the bot on net and reads what the model can do, so features
@@ -115,7 +126,7 @@ type Bot struct {
 // answered. Work in progress ends with ctx, which should outlive the
 // shutdown signal so that Shutdown can let replies finish.
 func New(ctx context.Context, cfg *config.Config, net Network) *Bot {
-	b := &Bot{cfg: cfg, net: net, timers: timers.New(), slots: make(chan struct{}, cfg.MaxConcurrency), ctx: ctx, now: time.Now}
+	b := &Bot{cfg: cfg, net: net, timers: timers.New(), slots: make(chan struct{}, cfg.MaxConcurrency), ctx: ctx, now: time.Now, keys: newKeyboards(cfg.StateDir)}
 	b.chats = chats.New(cfg.HistoryMax, b.work, b.spawn)
 	b.chats.SetEvicted(func(r Received) { b.dropped(r, errMadeRoom) })
 	b.timerCtx, b.stopTimers = context.WithCancel(ctx)
@@ -186,7 +197,8 @@ func (b *Bot) Shutdown(d time.Duration) {
 // handle runs on the network's reader goroutine for everything received (a
 // member change comes from another of its goroutines), so it never blocks
 // or calls the network. An Incoming message and, with a hook for them, a
-// Happened event go to their chat's mailbox; Chatter goes to the OnMessage
+// Happened event and a Pressed button go to their chat's mailbox (a press
+// with no hook is answered at once); Chatter goes to the OnMessage
 // hooks here, and is never logged. (Posted, Outgoing and Reacted come from
 // Deliver, Post and React, never from the network.)
 func (b *Bot) handle(r Received) {
@@ -208,6 +220,13 @@ func (b *Bot) handle(r Received) {
 		if len(b.events) > 0 { // with no hook, nothing would read it
 			b.post(r)
 		}
+	case Pressed:
+		r.Answer = onceAnswer(r.Answer)
+		if len(b.presses) == 0 { // with no hook, nothing would take it
+			r.Answer("")
+			return
+		}
+		b.post(r)
 	case Incoming:
 		b.post(r)
 	}
@@ -246,7 +265,7 @@ func (b *Bot) pending() chats.Ref {
 // and returns Send's timestamps. History is kept first so a message
 // arriving while the send is out lands after the turn, not before it.
 func (b *Bot) sendKept(key string, p chats.Ref, chat feature.Chat, text string, pics []feature.Picture, known map[string]string) []int64 {
-	sent := b.net.Send(chat, text, pics, known, 0, nil)
+	sent := b.net.Send(chat, text, pics, known, 0, nil, feature.Markup{})
 	b.chats.Retag(key, p.ID, botRefs(sent))
 	return sent
 }
@@ -286,7 +305,11 @@ func refs(msgs ...feature.Message) []chats.Ref {
 // gone reports whether m was deleted, or replaced by a later edit, since it
 // arrived.
 func (b *Bot) gone(m feature.Message) bool {
-	return b.chats.Gone(m.Chat.Key(), ref(m.Sender, m.Timestamp), version(m))
+	sender := m.Sender
+	if m.Bot {
+		sender = botSender
+	}
+	return b.chats.Gone(m.Chat.Key(), ref(sender, m.Timestamp), version(m))
 }
 
 // replaced forgets the versions of the message an edit replaces, in history
@@ -333,6 +356,9 @@ func (b *Bot) dropped(r Received, err error) {
 		if n := len(r.Reactions); n > 1 {
 			what = fmt.Sprintf("%d reactions", n)
 		}
+	case Pressed:
+		what = "a press"
+		r.Answer("")
 	}
 	if errors.Is(err, chats.ErrNoSlot) {
 		logx.Warnf("dropped %s: all %d worker slots are busy (raise MAX_CONCURRENCY)", what, b.cfg.MaxConcurrency)
@@ -342,11 +368,14 @@ func (b *Bot) dropped(r Received, err error) {
 }
 
 // abandon tells the posts among rs, left waiting when shutdown began, that
-// they were dropped.
+// they were dropped, and answers the presses.
 func abandon(rs []Received) {
 	for _, r := range rs {
-		if o, ok := r.(Outgoing); ok {
-			o.Post.OnSent(nil, true)
+		switch r := r.(type) {
+		case Outgoing:
+			r.Post.OnSent(nil, true)
+		case Pressed:
+			r.Answer("")
 		}
 	}
 }
@@ -355,7 +384,7 @@ func abandon(rs []Received) {
 // messages are answered together, as one turn, so "actually" and "forget
 // it" get one reply that sees both; each run stays within one message's
 // picture limits. On its own goes a message a hook acts on (a command or
-// an answer), a delivered one, a post, the bot's reactions, and one that
+// an answer), a delivered one, a post, the bot's reactions, a press, and one that
 // waited for the bot's ID and was not addressed after all. A panic loses
 // only the message or turn that caused it, and nothing new starts once
 // shutdown begins; a post left waiting then, or a hook's answer not yet
@@ -397,6 +426,10 @@ func (b *Bot) work(rs []Received) {
 				return
 			case Reacted:
 				alone(func() { b.react(r) })
+				return
+			case Pressed:
+				alone(func() { b.pressed(r) })
+				r.Answer("") // if shutdown began first
 				return
 			case Incoming:
 				p = r
@@ -512,6 +545,11 @@ func (b *Bot) load(r Incoming) (feature.Message, bool) {
 	msg, ok := r.Load(b.ctx, func(name, id string) { b.chats.Learn(key, name, id) })
 	if !ok || !msg.Addressed {
 		return msg, ok // only one that arrived before the bot's ID was known can be unaddressed
+	}
+	if msg.Chat.GroupID == "" && msg.Edited == 0 && len(msg.Media) == 0 {
+		if cmd, ok := b.keys.command(key, msg.Text); ok { // a key of the DM's keyboard
+			msg.Text = cmd
+		}
 	}
 	edit := ""
 	if msg.Edited != 0 {

@@ -73,10 +73,24 @@ type claim struct {
 	Expires time.Time `json:"expires"`
 }
 
-// lease is a chat an addon may post and react in, until it expires.
+// lease is a chat an addon may post and react in, until it expires, or
+// with Forever (the addon's announce) for good.
 type lease struct {
 	Chat    feature.Chat `json:"chat"`
 	Expires time.Time    `json:"expires"`
+	Forever bool         `json:"forever,omitempty"`
+}
+
+// live reports whether the lease lets the addon post at now.
+func (l lease) live(now time.Time) bool { return l.Forever || now.Before(l.Expires) }
+
+// leaseLocked lets the addon post in chat for the next leaseLife, or with
+// forever for good, as a lease for good already does while the addon may
+// announce. a.mu is held.
+func (a *addon) leaseLocked(chat feature.Chat, now time.Time, forever bool) {
+	id := a.chatID(chat)
+	forever = a.cfg.Announce && (forever || a.leases[id].Forever)
+	a.leases[id] = lease{Chat: chat, Expires: now.Add(leaseLife), Forever: forever}
 }
 
 // match is a message a watch took, for the watch worker.
@@ -110,7 +124,7 @@ func (a *addon) reacted(e feature.Event) bool {
 		}
 	}
 	if tool != "" {
-		a.leases[a.chatID(e.Chat)] = lease{e.Chat, now.Add(leaseLife)}
+		a.leaseLocked(e.Chat, now, false)
 	}
 	a.mu.Unlock()
 	if tool == "" {
@@ -133,11 +147,11 @@ const (
 	maxTries = 3
 )
 
-// lease lets the addon post in chat for the next leaseLife.
-func (a *addon) lease(chat feature.Chat) {
-	id := a.chatID(chat)
+// lease lets the addon post in chat for the next leaseLife, or, with
+// forever and the addon's announce, for good.
+func (a *addon) lease(chat feature.Chat, forever bool) {
 	a.mu.Lock()
-	a.leases[id] = lease{chat, a.now().Add(leaseLife)}
+	a.leaseLocked(chat, a.now(), forever)
 	a.mu.Unlock()
 	a.changed()
 }
@@ -322,7 +336,7 @@ func (a *addon) claim(m feature.Message) feature.Action {
 	if _, ok := a.claims[c]; !ok {
 		a.claims[c] = claim{c, got.tool, now.Unix(), now.Add(claimLife)}
 	}
-	a.leases[a.chatID(m.Chat)] = lease{m.Chat, now.Add(leaseLife)}
+	a.leaseLocked(m.Chat, now, false)
 	a.mu.Unlock()
 	a.changed()
 	select {
