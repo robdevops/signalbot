@@ -5,6 +5,7 @@ package txt
 import (
 	"strconv"
 	"strings"
+	"unicode"
 )
 
 // maxName caps a display name, in runes.
@@ -75,4 +76,24 @@ func Chars(n, max int) string {
 		return strconv.Itoa(max) + " of " + strconv.Itoa(n) + " chars of text"
 	}
 	return strconv.Itoa(n) + " chars of text"
+}
+
+// LogName is name as one of the few log lines that hold a name may show it:
+// control and invisible format characters dropped (one would have
+// journalctl show the whole line as blob data, or a terminal run an escape
+// or reorder the line), made safe, a backslash shown as "/" (so the line
+// can be pasted into a systemd env file), cut to 40 characters; "(no name)"
+// for none.
+func LogName(name string) string {
+	name = strings.Map(func(r rune) rune {
+		if unicode.IsControl(r) && !unicode.IsSpace(r) || unicode.Is(unicode.Cf, r) {
+			return -1
+		}
+		return r
+	}, name)
+	name = strings.ReplaceAll(SafeName(name), `\`, "/")
+	if name = Clamp(name, 40); name == "" {
+		return "(no name)"
+	}
+	return name
 }

@@ -77,3 +77,18 @@ func TestChars(t *testing.T) {
 		t.Errorf("got %q", got)
 	}
 }
+
+// A name for the log loses control and format characters, and a backslash.
+func TestLogName(t *testing.T) {
+	for in, want := range map[string]string{
+		"Family":                "Family",
+		"Fam\\ily \\":           "Fam/ily /",
+		"\x1b[31mRed‮evil\x00":  "[31mRedevil",
+		"​\x07":                 "(no name)",
+		strings.Repeat("a", 50): strings.Repeat("a", 40) + "…",
+	} {
+		if got := LogName(in); got != want {
+			t.Errorf("%q: got %q, want %q", in, got, want)
+		}
+	}
+}
