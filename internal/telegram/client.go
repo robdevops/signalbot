@@ -27,6 +27,7 @@ import (
 	"github.com/robdevops/signalbot/internal/kit/allow"
 	"github.com/robdevops/signalbot/internal/kit/httpx"
 	"github.com/robdevops/signalbot/internal/kit/logx"
+	"github.com/robdevops/signalbot/internal/kit/state"
 )
 
 // pollWait is how long one getUpdates waits for something to arrive.
@@ -62,6 +63,10 @@ type Client struct {
 	admins map[string]adminList         // group ID to its owner and administrators, kept 10 minutes
 	dmOK   map[string]verdict           // user ID to whether they may DM the bot, kept 10 minutes
 	forgot uint64                       // counts forgetting admins or verdicts, so a lookup begun before isn't kept
+	roster map[string]knownGroup        // group ID to what is saved of it, for every group the bot knows it is in
+
+	rosterDoc *state.Doc // telegram-groups.json, the roster
+	rosterMu  sync.Mutex // held while the roster is saved
 
 	test *config.Test // nil in production
 }
@@ -81,15 +86,19 @@ func New(test *config.Test) *Client {
 	default:
 		logx.Noticef("Telegram DMs: allowed from %s (TELEGRAM_DM_USERS)", dm)
 	}
-	return newClient(config.Env("TELEGRAM_API_URL", "https://api.telegram.org"), config.Env("TELEGRAM_BOT_TOKEN", ""), dm, test)
+	return newClient(config.Env("TELEGRAM_API_URL", "https://api.telegram.org"), config.Env("TELEGRAM_BOT_TOKEN", ""), config.StateDir(), dm, test)
 }
 
-func newClient(base, token string, dm allow.Policy, test *config.Test) *Client {
-	return &Client{base: strings.TrimRight(base, "/"), token: token, dm: dm, http: httpx.Client(8),
+// newClient is a client of the API at base, keeping the groups it is in in
+// stateDir ("" for the working directory).
+func newClient(base, token, stateDir string, dm allow.Policy, test *config.Test) *Client {
+	c := &Client{base: strings.TrimRight(base, "/"), token: token, dm: dm, http: httpx.Client(8),
 		backoff: time.Second, typing: 4 * time.Second, known: make(chan struct{}),
 		people: map[string]string{}, chats: map[string]map[string]string{}, groups: map[string]string{},
 		timers: map[string]time.Duration{}, moved: map[string]string{}, topics: map[string]map[string]bool{}, left: map[string]bool{}, sent: map[string]bool{},
-		admins: map[string]adminList{}, dmOK: map[string]verdict{}, test: test}
+		admins: map[string]adminList{}, dmOK: map[string]verdict{}, roster: map[string]knownGroup{}, rosterDoc: rosterDoc(stateDir), test: test}
+	c.loadRoster()
+	return c
 }
 
 // scrub is err with the token taken out of its text: Go's URL errors
@@ -303,6 +312,7 @@ func (c *Client) hello(ctx context.Context) error {
 	c.self.Store(strconv.FormatInt(me.ID, 10))
 	c.once.Do(func() { close(c.known) })
 	logx.Noticef("connected to Telegram as @%s", me.Username)
+	c.logRoster()
 	if me.CanJoin {
 		logx.Warnf("telegram: anyone can add the bot to a group, where they become an admin and so may DM it and schedule posts there; turn off Allow Groups with BotFather's /setjoingroups (switch it on briefly to add the bot to a group yourself)")
 	}
@@ -352,9 +362,11 @@ func (c *Client) poll(ctx context.Context, offset int64) ([]update, error) {
 
 // retrying runs a send, again after a 429's wait if it ends before ctx
 // does, and again at a group's new ID if it became a supergroup, at most
-// three times in all. move is given the new chat ID.
+// three times in all. move is given the new chat ID. A group that refuses
+// it because the bot is no longer in it is dropped from the roster.
 func (c *Client) retrying(ctx context.Context, from string, move func(chatID string), send func() error) error {
 	var err error
+	cur := from // the chat sent to, at its new ID once it moved
 	for range 3 {
 		var ae *apiError
 		if err = send(); !errors.As(err, &ae) {
@@ -365,8 +377,13 @@ func (c *Client) retrying(ctx context.Context, from string, move func(chatID str
 			to := strconv.FormatInt(ae.MigrateTo, 10)
 			c.mu.Lock()
 			c.moved[from] = to
+			changed := c.moveRoster(cur, to)
 			c.mu.Unlock()
+			if changed {
+				c.saveRoster()
+			}
 			move(to)
+			cur = to
 		case ae.RetryAfter > 0:
 			wait := time.Duration(ae.RetryAfter) * time.Second
 			if d, ok := ctx.Deadline(); ok && time.Until(d) < wait {
@@ -376,10 +393,18 @@ func (c *Client) retrying(ctx context.Context, from string, move func(chatID str
 				return err
 			}
 		default:
+			if notIn(ae) {
+				c.dropGroup(cur)
+			}
 			return err
 		}
 	}
 	return err
+}
+
+// notIn reports whether a refusal says the bot is no longer in the chat.
+func notIn(ae *apiError) bool {
+	return ae.Code == 403 && (strings.Contains(ae.Desc, "bot was kicked") || strings.Contains(ae.Desc, "bot is not a member"))
 }
 
 // sleep waits d, and reports false if ctx ended first.

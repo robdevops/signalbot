@@ -180,6 +180,7 @@ merge schedules.json '{schedules: ((.[0].schedules // []) + (.[1].schedules // [
 merge keyboards.json '.[0] * .[1]'
 merge mcp-feeds.json '.[0] as $a | .[1] as $b | ($a * $b) | with_entries(.value.seen = (($a[.key].seen // []) + ($b[.key].seen // []) | reduce .[] as $i ([]; if index([$i]) then . else . + [$i] end)))'
 merge mcp-posts.json '.[0] + .[1]'
+merge telegram-groups.json '.[0] * .[1]'
 EOF
 ```
 
