@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"maps"
+	"slices"
 	"strings"
 	"time"
 
@@ -120,12 +121,7 @@ func (c chatCommand) arguments(text string) (args map[string]any, usage string) 
 // directResult is a tools/call or resources/read result: a tool's content,
 // or a resource's contents, each text or an image.
 type directResult struct {
-	Content []struct {
-		Type     string `json:"type"`
-		Text     string `json:"text"`
-		Data     string `json:"data"`
-		MimeType string `json:"mimeType"`
-	} `json:"content"`
+	Content  []contentPart `json:"content"`
 	Contents []struct {
 		Text     string `json:"text"`
 		Blob     string `json:"blob"`
@@ -134,15 +130,35 @@ type directResult struct {
 	IsError bool `json:"isError"`
 }
 
-// action is what the result says in chat: its text, and its images made
-// safe, at most feature.MaxPictures.
+// contentPart is a part of a tool's result: text or an image.
+type contentPart struct {
+	Type        string `json:"type"`
+	Text        string `json:"text"`
+	Data        string `json:"data"`
+	MimeType    string `json:"mimeType"`
+	Annotations struct {
+		Audience []string `json:"audience"` // MCP's: who it is for, "user" or "assistant"; unset, both
+	} `json:"annotations"`
+}
+
+// action is what the result says in chat: its text for people, and its
+// images made safe, at most feature.MaxPictures. A tool's text marked for
+// the user (MCP's audience) is all the text posted, if it has any, so a
+// server can answer the model in JSON and people in words; a part marked
+// for the assistant alone is never posted. A resource's text is posted if
+// it is words (text/*, or no type), not data such as JSON.
 func (r directResult) action(server string) feature.Action {
 	var parts, images []string
+	forUser := func(audience []string) bool { return len(audience) == 0 || slices.Contains(audience, "user") }
+	marked := slices.ContainsFunc(r.Content, func(p contentPart) bool {
+		return p.Type == "text" && slices.Contains(p.Annotations.Audience, "user")
+	})
 	for _, p := range r.Content {
-		switch p.Type {
-		case "text":
+		switch {
+		case !forUser(p.Annotations.Audience):
+		case p.Type == "text" && (!marked || slices.Contains(p.Annotations.Audience, "user")):
 			parts = append(parts, p.Text)
-		case "image":
+		case p.Type == "image":
 			images = append(images, p.Data)
 		}
 	}
@@ -150,7 +166,7 @@ func (r directResult) action(server string) feature.Action {
 		switch {
 		case p.Blob != "" && strings.HasPrefix(p.MimeType, "image/"):
 			images = append(images, p.Blob)
-		case p.Text != "":
+		case p.Text != "" && (p.MimeType == "" || strings.HasPrefix(p.MimeType, "text/")):
 			parts = append(parts, p.Text)
 		}
 	}

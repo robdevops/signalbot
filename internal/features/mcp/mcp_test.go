@@ -141,13 +141,17 @@ func (f *fakeMCP) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		if p.Cursor == "" {
 			result = `{"tools":[{"name":"echo","description":"echoes","inputSchema":{"type":"object"}}],"nextCursor":"2"}`
 		} else {
-			result = `{"tools":[{"name":"fail","inputSchema":{"type":"object"}},{"name":"pic"}]}`
+			result = `{"tools":[{"name":"fail","inputSchema":{"type":"object"}},{"name":"pic"},{"name":"worded"}]}`
 		}
 	case "resources/read":
 		var p struct {
 			URI string `json:"uri"`
 		}
 		json.Unmarshal(req.Params, &p)
+		if p.URI == "json://now" {
+			result = `{"contents":[{"uri":"json://now","mimeType":"application/json","text":"{\"ok\":true}"},{"uri":"json://now","mimeType":"text/markdown","text":"**All good**"}]}`
+			break
+		}
 		if p.URI == "feed://items" { // under mu
 			text, _ := json.Marshal(f.feed)
 			result = `{"contents":[{"uri":"feed://items","mimeType":"application/json","text":` + string(text) + `}]}`
@@ -165,6 +169,10 @@ func (f *fakeMCP) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		switch p.Name {
 		case "fail":
 			result = `{"content":[{"type":"text","text":"it broke"}],"isError":true}`
+		case "worded":
+			result = `{"content":[{"type":"text","text":"{\"rain\":3}"},{"type":"text","text":"for the model","annotations":{"audience":["assistant"]}},` +
+				`{"type":"image","mimeType":"image/png","data":"` + tinyPNG() + `","annotations":{"audience":["assistant"]}},` +
+				`{"type":"text","text":"3 mm of rain","annotations":{"audience":["user"]}}]}`
 		case "pic":
 			result = `{"content":[{"type":"image","data":"x"},{"type":"image","mimeType":"image/png","data":"` + tinyPNG() + `"},{"type":"text","text":"caption"}]}`
 		default:
@@ -309,7 +317,7 @@ func TestHTTPTools(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if got := names(h); got != "echo,fail,pic" {
+		if got := names(h); got != "echo,fail,pic,worded" {
 			t.Fatalf("sse=%v: tools %q (the second tools/list page must be read)", sse, got)
 		}
 		ts, ctx := tools(h), context.Background()
@@ -342,10 +350,10 @@ func TestToolLists(t *testing.T) {
 	for _, tc := range []struct {
 		name, lists, want string
 	}{
-		{"neither", ``, "echo,fail,pic"},
+		{"neither", ``, "echo,fail,pic,worded"},
 		{"whitelist", `,"allowed_tools":["echo"]`, "echo"},
 		{"empty whitelist", `,"allowed_tools":[]`, ""},
-		{"blacklist", `,"blocked_tools":["fail"]`, "echo,pic"},
+		{"blacklist", `,"blocked_tools":["fail"]`, "echo,pic,worded"},
 	} {
 		h, _, err := register(t, `{"mcpServers":{"fake":{"url":"`+serve(t, &fakeMCP{})+`"`+tc.lists+`}}}`)
 		if err != nil {
@@ -384,7 +392,7 @@ func TestHTTPSessionExpiry(t *testing.T) {
 func TestStartupErrors(t *testing.T) {
 	url, url2 := serve(t, &fakeMCP{}), serve(t, &fakeMCP{})
 	if h, _, err := register(t, `{"mcpServers":{"fake":{"url":"`+url+`","allowed_tools":["echo","typo"]}}}`); err == nil ||
-		err.Error() != h.Settings["MCP_CONFIG"]+`: MCP server "fake": allowed_tools names "typo", which the server doesn't have; its tools are: echo, fail, pic` {
+		err.Error() != h.Settings["MCP_CONFIG"]+`: MCP server "fake": allowed_tools names "typo", which the server doesn't have; its tools are: echo, fail, pic, worded` {
 		t.Errorf("whitelist: %v", err)
 	}
 	if _, _, err := register(t, `{"mcpServers":{"fake":{"url":"`+url+`","blocked_tools":["typo"]}}}`); err == nil || !strings.Contains(err.Error(), `blocked_tools names "typo"`) {
@@ -1186,5 +1194,27 @@ func TestTrimSeen(t *testing.T) {
 	got := trimSeen(seen, []feedItem{{ID: "keep"}, {ID: "0"}})
 	if len(got) != maxSeen+2 || got[0] != "keep" || got[1] != "0" || got[2] != "5" || got[len(got)-1] != fmt.Sprint(maxSeen+4) {
 		t.Fatalf("%d kept: %q ... %q", len(got), got[:3], got[len(got)-1])
+	}
+}
+
+// A tool's text marked for the user is all the text a direct command
+// posts, and parts for the assistant alone never are; a resource's JSON is
+// data, left out, and its words posted.
+func TestPlainDirectAudience(t *testing.T) {
+	h, _, err := register(t, `{"mcpServers":{"fake":{"url":"`+serve(t, &fakeMCP{})+`","chat_commands":{
+		"rain":{"tool":"worded","direct":true},
+		"now":{"resource":"json://now","direct":true}}}}}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	dm := func(text string) feature.Action {
+		return h.Message(ctx, feature.Message{Chat: feature.Chat{User: "a"}, Sender: "a", Text: text, Addressed: true})
+	}
+	if got := dm("/rain"); got.Answer != "3 mm of rain" || len(got.Pictures) != 0 {
+		t.Errorf("/rain: %q, %d pictures", got.Answer, len(got.Pictures))
+	}
+	if got := dm("/now"); got.Answer != "**All good**" {
+		t.Errorf("/now: %q", got.Answer)
 	}
 }

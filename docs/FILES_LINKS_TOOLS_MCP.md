@@ -107,7 +107,7 @@ A command can skip the model: `"direct": true` has the bot call the tool itself 
 | `args` | the tool's arguments, as JSON, such as `{"readings": ["rain"]}` |
 | `arg` | the argument the text after the command fills: `/rain 7d` sets it to `7d`. Without `arg`, any text after the command is ignored |
 | `values` | the values `arg` may take, in any case, such as `["1d", "7d", "1m"]`; another gets a short usage reply |
-| `resource` | a resource to read in place of calling a tool, such as `"ecobot://status"`; its text and images are sent |
+| `resource` | a resource to read in place of calling a tool, such as `"ecobot://status"`; its words (text typed `text/…`, or untyped) and images are sent, never data such as JSON |
 
 ```json
 "chat_commands": {
@@ -117,6 +117,8 @@ A command can skip the model: `"direct": true` has the bot call the tool itself 
 ```
 
 On Telegram, an answer that fits in one message (text, or one picture with a caption of up to 1,024 characters) comes with buttons: one per value (the one it shows marked •), if there are fewer than 25 and each is at most 58 bytes, and 🔄. A press makes the call again, with that value or the same one (🔄 repeats the text after the command too), and edits the post in place; a result that turns from text into a picture, or back, comes as a new post with its own buttons, and one too long for one message as a new post without; a failure is shown on the button for a moment, leaving the post as it was. The bot keeps the newest 300 such posts, with the chat, the command and the value, in `mcp-posts.json` in the state directory (with the text after the command, cut to 200 characters), so their buttons work after a restart; a button under an older one does nothing. Without a usable state directory, there are no buttons, with an error in the log. Signal shows no buttons: `/rain 7d` asks again.
+
+A server can answer the model and people differently with MCP's `audience` annotation: when a result has text marked for the user (`"annotations": {"audience": ["user"]}`), that is all the text posted, and a part marked for the assistant alone, text or image, never is. So a tool can return JSON for the model and a sentence for the chat.
 
 The call carries nothing about the chat or who asked: the server sees only the arguments.
 
