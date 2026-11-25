@@ -54,6 +54,7 @@ type server struct {
 	Addon        *addonConfig           `json:"addon"`        // set for an addon
 	Name         string                 `json:"name"`         // its name for people, in messages and lists; unset: the server's title, else its key
 	Feed         *feedConfig            `json:"feed"`         // a resource of items it posts to the chats that subscribe
+	Keyboard     [][]string             `json:"keyboard"`     // labels and the commands they send, on a DM's reply keyboard
 }
 
 // chatCommand makes "/name ..." a turn in which the model must call tool,
@@ -83,7 +84,7 @@ type chatCommand struct {
 // MCP clients write that the bot has no use for, so a pasted entry starts.
 var (
 	settings = []string{"url", "headers", "command", "args", "env", "allowed_tools", "blocked_tools",
-		"instructions", "keywords", "chat_commands", "disabled", "addon", "name", "feed"}
+		"instructions", "keywords", "chat_commands", "disabled", "addon", "name", "feed", "keyboard"}
 	feedSettings    = []string{"resource", "command"}
 	commandSettings = []string{"tool", "require_arg", "example", "direct", "timeout", "args", "arg", "values", "resource"}
 	ignored         = []string{"type", "transport", "timeout", "alwaysAllow", "autoApprove", "description"}
@@ -155,6 +156,7 @@ func Register(h feature.Host) error {
 	if err := start(ctx, h, path, servers, k, again, fd); err != nil {
 		return err
 	}
+	keyboard(h, servers)
 	if k != nil && len(k.addons) > 0 {
 		// After the chat commands, so a command is never a watch's.
 		h.OnMessage(func(_ context.Context, m feature.Message) feature.Action {
@@ -259,6 +261,9 @@ func load(path string) (map[string]server, error) {
 				cc.timeout = d
 				s.ChatCommands[n] = cc
 			}
+		}
+		if why := checkKeyboard(s.Keyboard); why != "" {
+			return nil, bad("%s", why)
 		}
 		if s.Feed != nil {
 			var entry map[string]json.RawMessage

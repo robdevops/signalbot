@@ -84,6 +84,8 @@ The model can call tools from [MCP](https://modelcontextprotocol.io) servers, re
 | `keywords` | offer the server's tools only when a message has one of these words (see below). A server without them is offered with every message, except one whose page or file the model is shown, so what a document says can't call its tools |
 | `chat_commands` | optional slash-command shortcuts to a tool (you can always just ask): `tool` names it, `require_arg` makes a bare command get a usage reply, and `example` adds one to it; `direct` has the bot call the tool itself, without the model, and `timeout` sets how long that call may take (see [Direct commands](#direct-commands), and for an addon [Addons](#addons)) |
 | `name` | the server's name for people, in its messages ("Weather couldn't do that just now."); unset, the name the server gives itself, else its key |
+| `feed` | a resource of items, such as alerts, posted to the chats that subscribe: see [Feeds](FEEDS.md) |
+| `keyboard` | keys for Telegram's reply keyboard, each a label and the command it sends, such as `[["Status", "/status"], ["Rain", "/rain 7d"]]` (at most 15, three to a row). `/keyboard` shows the keys of every server in a DM, `/keyboard off` hides them; a label in two servers' keyboards is the first's, by server name. Signal has no keyboard, and no `/keyboard` |
 | `addon` | makes a local server an addon, and says where it may act and what it may do (see [Addons](#addons)) |
 | `disabled` | leave the server out without deleting it |
 

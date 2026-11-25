@@ -271,7 +271,7 @@ func TestLoad(t *testing.T) {
 	for bad, want := range map[string]string{
 		`{"mcpServers":{"w":{"url":"u","feed":{"command":"a"}}}}`:                                                            `: MCP server "w": feed needs a resource`,
 		`{"mcpServers":{"w":{"url":"u","feed":{"uri":"a"}}}}`:                                                                `: MCP server "w": feed: unknown setting "uri" (settings are resource, command)`,
-		`{"mcpServers":{"w":{"url":"u","allowedTools":["t"]}}}`:                                                              `: MCP server "w": unknown setting "allowedTools" (settings are url, headers, command, args, env, allowed_tools, blocked_tools, instructions, keywords, chat_commands, disabled, addon, name, feed)`,
+		`{"mcpServers":{"w":{"url":"u","allowedTools":["t"]}}}`:                                                              `: MCP server "w": unknown setting "allowedTools" (settings are url, headers, command, args, env, allowed_tools, blocked_tools, instructions, keywords, chat_commands, disabled, addon, name, feed, keyboard)`,
 		`{"mcpServers":{"w":{"url":"u","chat_commands":{"x":{"tool":"t","requireArg":true}}}}}`:                              `: MCP server "w": chat command "x": unknown setting "requireArg" (settings are tool, require_arg, example, direct, timeout, args, arg, values, resource)`,
 		`{"mcpServers":{"w":{"url":"u","chat_commands":{"x":{"tool":"t","timeout":"30s"}}}}}`:                                `: MCP server "w": chat command "x" has a timeout, which only a direct command takes`,
 		`{"mcpServers":{"w":{"command":"c","addon":{},"chat_commands":{"x":{"tool":"t","direct":true,"timeout":"3m"}}}}}`:    `: MCP server "w": chat command "x": timeout "3m" isn't a time from 1s to 2m, such as 15s or 1m`,
@@ -978,5 +978,41 @@ func TestFeedButtons(t *testing.T) {
 	}
 	if a, ok := h.Press(ctx, feature.Press{Chat: alice, Sent: 7, Data: "feed=eco/k:hail"}); !ok || a != "That choice no longer works." {
 		t.Errorf("unknown kind: %q %v", a, ok)
+	}
+}
+
+// The servers' keyboards make /keyboard, in a DM on a network with a
+// reply keyboard: their keys, a label once, three to a row.
+func TestConfigKeyboard(t *testing.T) {
+	url := serve(t, &fakeMCP{})
+	config := `{"mcpServers":{
+		"a":{"url":"` + url + `","keyboard":[["Status","/status"],["Rain","/rain 7d"],["Wind","/wind"],["Alerts","/alerts"]]},
+		"b":{"url":"` + url + `","keyboard":[["Status","/other"]]}}}`
+	h, _, err := register(t, config, func(h *featuretest.Host) { h.Bot.Caps.Keyboard = true })
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	got := h.Message(ctx, feature.Message{Chat: feature.Chat{User: "a"}, Sender: "a", Text: "/keyboard", Addressed: true})
+	if k := got.Markup.Keyboard; len(k) != 2 || len(k[0]) != 3 || k[0][1] != (feature.Key{Label: "Rain", Command: "/rain 7d"}) || len(k[1]) != 1 {
+		t.Fatalf("keyboard %+v", k)
+	}
+	if got := h.Message(ctx, feature.Message{Chat: feature.Chat{User: "a"}, Sender: "a", Text: "/keyboard off", Addressed: true}); !got.Markup.NoKeyboard {
+		t.Errorf("off %+v", got)
+	}
+	if got := h.Message(ctx, feature.Message{Chat: feature.Chat{GroupID: "g"}, Sender: "a", Text: "/keyboard", Addressed: true}); got.Answer != "The keyboard is for DMs." {
+		t.Errorf("group %+v", got)
+	}
+
+	h, _, err = register(t, config) // no reply keyboard: no command
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := h.Message(ctx, feature.Message{Chat: feature.Chat{User: "a"}, Sender: "a", Text: "/keyboard", Addressed: true}); !got.IsZero() {
+		t.Errorf("without a keyboard %+v", got)
+	}
+	_, _, err = register(t, `{"mcpServers":{"a":{"url":"`+url+`","keyboard":[["Status","status"]]}}}`)
+	if err == nil || !strings.Contains(err.Error(), "isn't a label") {
+		t.Errorf("a bad key: %v", err)
 	}
 }

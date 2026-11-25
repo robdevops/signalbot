@@ -117,6 +117,27 @@ func TestNoFeatureWordsInTheCore(t *testing.T) {
 	}
 }
 
+// No Go file, core or feature, test or not, is written for one bot built on
+// signalbot: a role is an MCP server and its config, served by the
+// features any bot can use.
+func TestNoRolesInTheCode(t *testing.T) {
+	roles := regexp.MustCompile(`(?i)ecobot|finbot|ecobridge`)
+	for _, p := range goFiles(t) {
+		if p == "internal/arch/arch_test.go" {
+			continue
+		}
+		data, err := os.ReadFile(root + "/" + p)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for i, line := range strings.Split(string(data), "\n") {
+			if w := roles.FindString(line); w != "" {
+				t.Errorf("%s:%d mentions %q", p, i+1, w)
+			}
+		}
+	}
+}
+
 // Every setting the bot reads is in docs/CONFIGURATION.md's table: each
 // one its code names to Env, the core's (and number's, in config) and each
 // feature's.
