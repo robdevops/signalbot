@@ -506,16 +506,13 @@ func (c *Client) reacted(d json.RawMessage, removed bool) []bot.Received {
 
 // guild is a guild the bot is in, as the gateway sends at the start and
 // when the bot joins one, or one it left: each of its channels changed.
-// A guild that is only unavailable for a while is left as it was. One
-// that wasn't in READY's list is the bot just added: with an event hook,
-// that is an event in the guild's system channel, if it has one.
+// A guild that is only unavailable for a while is left as it was.
 func (c *Client) guild(d json.RawMessage, gone bool) []bot.Received {
 	var g struct {
 		ID          string        `json:"id"`
 		Name        string        `json:"name"`
 		Owner       string        `json:"owner_id"`
 		Unavailable bool          `json:"unavailable"`
-		System      string        `json:"system_channel_id"`
 		Channels    []wireChannel `json:"channels"`
 		Threads     []wireChannel `json:"threads"`
 		Roles       []role        `json:"roles"`
@@ -529,7 +526,6 @@ func (c *Client) guild(d json.RawMessage, gone bool) []bot.Received {
 	if gone {
 		delete(c.botRoles, g.ID)
 		delete(c.guilds, g.ID)
-		delete(c.joined, g.ID) // if the bot is added again, it is new
 		for id, ch := range c.channels {
 			if ch.guild == g.ID {
 				c.leave(id)
@@ -539,18 +535,9 @@ func (c *Client) guild(d json.RawMessage, gone bool) []bot.Received {
 		return out
 	}
 	c.noteGuild(g.ID, g.Name, g.Owner, g.Roles)
-	system := false
 	for _, ch := range slices.Concat(g.Channels, g.Threads) {
 		c.addChannel(ch.ID, ch.channel(g.ID, g.Name))
 		out = append(out, bot.GroupChanged{Chat: feature.Chat{GroupID: prefix + ch.ID}})
-		system = system || g.System != "" && ch.ID == g.System
-	}
-	if c.joined == nil || c.joined[g.ID] { // before READY, or in its list: not new
-		return out
-	}
-	c.joined[g.ID] = true
-	if system && c.watch.Load() {
-		out = append(out, bot.Happened{Event: feature.Event{Chat: feature.Chat{GroupID: prefix + g.System}, Members: &feature.Members{BotAdded: true}}})
 	}
 	return out
 }
