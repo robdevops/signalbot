@@ -1155,12 +1155,13 @@ func TestWatchQueueFull(t *testing.T) {
 	t.Cleanup(logx.SetOutput(&log, &log, true))
 	a, now := unitAddon(everything)
 	a.watch(t.Context(), said(inA, "alice-id", 1000, "/round"), specAt("r", now.Add(time.Minute)))
+	ctx := logx.With(t.Context(), logx.For("telegram")) // as the core's: the line names the network
 	for i := range maxMatches + 1 {
-		if !a.claim(t.Context(), said(inA, "bob-id", int64(1001+i), "guess 1")).Done {
+		if !a.claim(ctx, said(inA, "bob-id", int64(1001+i), "guess 1")).Done {
 			t.Fatal("not claimed")
 		}
 	}
-	if strings.Count(log.String(), "<4>addon game: watch queue full, a matched message dropped\n") != 1 {
+	if strings.Count(log.String(), "<4>Telegram: addon game: watch queue full, a matched message dropped\n") != 1 {
 		t.Fatalf("log %q", log.String())
 	}
 	if s := a.state(); len(s.Claims) != maxMatches+1 {
