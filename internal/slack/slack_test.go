@@ -51,6 +51,7 @@ type fakeSlack struct {
 	mu      sync.Mutex
 	results map[string]string // method to a response's fields, without "ok"
 	errs    map[string]string // method to an error, given once
+	convs   map[string]string // users.conversations' answers, by "user cursor" (the bot's: no user)
 	calls   []call
 	acks    []string
 	opens   int
@@ -140,6 +141,8 @@ func (f *fakeSlack) serve(w http.ResponseWriter, r *http.Request) {
 		res = fmt.Sprintf(`"upload_url":"http://%s/upload","file_id":"F%08d"`, r.Host, f.nextTS)
 	case "files.info":
 		res = cmp.Or(res, `"file":{"url_private":"http://`+r.Host+`/files/x.png","size":7}`)
+	case "users.conversations":
+		res = f.convs[r.PostForm.Get("user")+" "+r.PostForm.Get("cursor")]
 	case "users.info":
 		res = map[string]string{alice: `"user":{"name":"alice","profile":{"display_name":"Alice"}}`, bob: `"user":{"name":"bob","real_name":"Bob B"}`,
 			botID: `"user":{"name":"botty","profile":{"display_name":"Botty"}}`}[r.PostForm.Get("user")]
@@ -748,8 +751,152 @@ func TestDelivered(t *testing.T) {
 	if !ok || !r.Mentioned || r.Message.Text != "hi" || r.Message.Name != "Alice" || !reflect.DeepEqual(r.Members, []bot.Member{{Name: "Alice", ID: "slack:" + alice}}) {
 		t.Fatalf("ready %+v", r)
 	}
-	if gs, _ := c.Groups(context.Background(), "slack:"+alice); len(gs) != 1 || gs[0].ID != "slack:"+channel {
-		t.Fatalf("groups %v", gs)
+}
+
+// Groups are the channels both the user and the bot are in, by their
+// names, sorted, every page read; the bot's own listing has no user.
+func TestGroups(t *testing.T) {
+	f := newFake(t)
+	f.convs = map[string]string{
+		" ":         `"channels":[{"id":"C0CHANNEL1","name":"team"},{"id":"C0CHANNEL2","name":"alpha\nnews"}],"response_metadata":{"next_cursor":"p2"}`,
+		" p2":       `"channels":[{"id":"C0CHANNEL3","name":"zeta"}],"response_metadata":{"next_cursor":""}`,
+		alice + " ": `"channels":[{"id":"C0CHANNEL3","name":"zeta"},{"id":"C0CHANNEL2","name":"alpha\nnews"},{"id":"C0CHANNEL4","name":"elsewhere"}]`,
+	}
+	c := connected(f.client(t))
+	gs, err := c.Groups(context.Background(), "slack:"+alice)
+	want := []feature.Group{{ID: "slack:C0CHANNEL2", Name: "#alpha news"}, {ID: "slack:C0CHANNEL3", Name: "#zeta"}}
+	if err != nil || !reflect.DeepEqual(gs, want) {
+		t.Fatalf("groups %+v %v", gs, err)
+	}
+	calls := f.callsTo("users.conversations")
+	if len(calls) != 3 || calls[1].Params["cursor"] != "p2" || calls[0].Params["user"] != nil || calls[2].Params["user"] != alice {
+		t.Fatalf("calls %v", calls)
+	}
+	for _, c := range calls {
+		if c.Params["types"] != "public_channel,private_channel" || c.Params["exclude_archived"] != "true" || c.Params["limit"] != "200" {
+			t.Fatalf("params %v", c.Params)
+		}
+	}
+}
+
+// Without the scopes to list channels, Groups lists those the user was
+// seen in, by ID, and says once which scopes are missing, naming no one.
+func TestGroupsMissingScope(t *testing.T) {
+	buf := captureLogs(t)
+	f := newFake(t)
+	c := connected(f.client(t))
+	c.learnName(alice, "Alice")
+	c.seen(channel, alice)
+	for range 2 {
+		f.fail("users.conversations", "missing_scope")
+		gs, err := c.Groups(context.Background(), "slack:"+alice)
+		if err != nil || !reflect.DeepEqual(gs, []feature.Group{{ID: "slack:" + channel, Name: channel}}) {
+			t.Fatalf("groups %+v %v", gs, err)
+		}
+	}
+	log := buf.String()
+	if strings.Count(log, "channels:read") != 1 || !strings.Contains(log, "groups:read") || strings.Contains(log, alice) || strings.Contains(log, "Alice") {
+		t.Fatalf("log %q", log)
+	}
+}
+
+// The people seen in a channel, with their names, are saved and read back
+// after a restart, so a delivered message's members still name them, and
+// @Bob in it links him.
+func TestPeopleSaved(t *testing.T) {
+	f := newFake(t)
+	dir := t.TempDir()
+	c := connected(newClient(f.srv.URL, token, appToken, dir, nil))
+	c.learnName(bob, "Bob")
+	c.seen(channel, bob)
+	c.savePeople()
+	c = connected(newClient(f.srv.URL, token, appToken, dir, nil))
+	r, ok := c.Delivered(context.Background(), feature.Message{Chat: feature.Chat{GroupID: "slack:" + channel}, Sender: "slack:" + alice, Name: "Alice", Text: "ask @Bob"})
+	if !ok || !reflect.DeepEqual(r.Members, []bot.Member{{Name: "Bob", ID: "slack:" + bob}}) {
+		t.Fatalf("ready %+v", r)
+	}
+	if got := mrkdwn(c.trim(parse(r.Message.Text)), map[string]string{"bob": r.Members[0].ID}); got != "ask <@UBOB00001>" {
+		t.Fatalf("got %q", got)
+	}
+}
+
+// Run saves the people seen while they change, and again as it returns.
+func TestPeopleSavedByRun(t *testing.T) {
+	f := newFake(t)
+	run := func(c *Client) (stop func()) {
+		ctx, cancel := context.WithCancel(context.Background())
+		done := make(chan struct{})
+		go func() {
+			defer close(done)
+			c.Run(ctx, func(bot.Received) {})
+		}()
+		return func() { cancel(); <-done }
+	}
+	saved := func(c *Client) string {
+		data, _ := os.ReadFile(filepath.Join(c.stateDir, PeopleFile))
+		return string(data)
+	}
+
+	c := f.client(t)
+	c.saveEvery = 5 * time.Millisecond
+	stop := run(c)
+	c.learnName(alice, "Alice")
+	c.seen(channel, alice)
+	waitFor(t, "a save while running", func() bool { return strings.Contains(saved(c), alice) })
+	stop()
+
+	c = f.client(t)
+	c.saveEvery = time.Hour
+	stop = run(c)
+	c.learnName(bob, "Bob")
+	c.seen(channel, bob)
+	time.Sleep(20 * time.Millisecond)
+	if s := saved(c); s != "" {
+		t.Fatalf("saved before an hour passed: %s", s)
+	}
+	stop()
+	if s := saved(c); !strings.Contains(s, bob) || !strings.Contains(s, `"Bob"`) {
+		t.Fatalf("not saved on return: %s", s)
+	}
+}
+
+// Someone not seen in a channel for 180 days is forgotten there, and a
+// channel the bot left is forgotten.
+func TestPeopleForgotten(t *testing.T) {
+	dir := t.TempDir()
+	old, today := time.Now().AddDate(0, 0, -181).Format(time.DateOnly), time.Now().Format(time.DateOnly)
+	data := fmt.Sprintf(`{"channels":{"C0CHANNEL1":{"UALICE001":{"name":"Alice","seen":%q},"UBOB00001":{"name":"Bob","seen":%q}},"C0CHANNEL2":{"UALICE001":{"name":"Alice","seen":%q}}}}`, old, today, today)
+	if err := os.WriteFile(filepath.Join(dir, PeopleFile), []byte(data), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	c := connected(newClient("http://x", token, appToken, dir, nil))
+	want := map[string]map[string]string{channel: {bob: today}, "C0CHANNEL2": {alice: today}}
+	if !reflect.DeepEqual(c.chans, want) || c.nameOf(bob) != "Bob" {
+		t.Fatalf("loaded %v", c.chans)
+	}
+	c.events(ev(`{"type":"member_left_channel","user":"UBOT00001","channel":"C0CHANNEL2"}`))
+	c.dirty.Store(true)
+	c.savePeople()
+	c = connected(newClient("http://x", token, appToken, dir, nil))
+	if want := map[string]map[string]string{channel: {bob: today}}; !reflect.DeepEqual(c.chans, want) {
+		t.Fatalf("after leaving %v", c.chans)
+	}
+}
+
+// A saved file that can't be read is ignored, and logged without what it
+// holds.
+func TestPeopleCorrupt(t *testing.T) {
+	buf := captureLogs(t)
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, PeopleFile), []byte(`{"channels":{"C0CHANNEL1":{"UALICE001":{"name":"Alice"`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	c := newClient("http://x", token, appToken, dir, nil)
+	if len(c.chans) != 0 || len(c.people) != 0 {
+		t.Fatalf("loaded %v %v", c.chans, c.people)
+	}
+	if log := buf.String(); !strings.Contains(log, PeopleFile) || strings.Contains(log, "Alice") || strings.Contains(log, alice) {
+		t.Fatalf("log %q", log)
 	}
 }
 

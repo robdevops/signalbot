@@ -25,6 +25,7 @@ import (
 	"github.com/robdevops/signalbot/internal/feature"
 	"github.com/robdevops/signalbot/internal/kit/httpx"
 	"github.com/robdevops/signalbot/internal/kit/logx"
+	"github.com/robdevops/signalbot/internal/kit/state"
 	"github.com/robdevops/signalbot/internal/kit/txt"
 	"github.com/robdevops/signalbot/internal/kit/ws"
 )
@@ -57,18 +58,23 @@ type Client struct {
 	commands atomic.Pointer[[]bot.Command] // the commands features registered, for the app manifest
 
 	mu      sync.Mutex
-	people  map[string]string          // user ID to display name, as last seen
-	asking  map[string]bool            // user IDs whose names are being fetched
-	ims     map[string]string          // user ID to the DM channel with the bot
-	imUser  map[string]string          // a DM channel to its user
-	chans   map[string]map[string]bool // channel ID to the user IDs seen there
-	left    map[string]bool            // channels the bot was removed from, so it no longer posts there
-	sent    map[string]bool            // "channel/ts" for messages the bot sent lately
-	sentQ   []string                   // sent's keys, oldest first
-	thread  map[string]string          // "channel/ts" to its thread's ts, for messages in threads the bot sent or read lately
-	threadQ []string                   // thread's keys, oldest first
-	blocks  map[string][]any           // "channel/ts" to the blocks the bot last put in it, but buttons
-	blockQ  []string                   // blocks' keys, oldest first
+	people  map[string]string            // user ID to display name, as last seen
+	asking  map[string]bool              // user IDs whose names are being fetched
+	ims     map[string]string            // user ID to the DM channel with the bot
+	imUser  map[string]string            // a DM channel to its user
+	chans   map[string]map[string]string // channel ID to the user IDs seen there, each to the day last seen, 2006-01-02
+	left    map[string]bool              // channels the bot was removed from, so it no longer posts there
+	sent    map[string]bool              // "channel/ts" for messages the bot sent lately
+	sentQ   []string                     // sent's keys, oldest first
+	thread  map[string]string            // "channel/ts" to its thread's ts, for messages in threads the bot sent or read lately
+	threadQ []string                     // thread's keys, oldest first
+	blocks  map[string][]any             // "channel/ts" to the blocks the bot last put in it, but buttons
+	blockQ  []string                     // blocks' keys, oldest first
+
+	saved     *state.Doc    // slack-people.json: the people seen in each channel, with their names
+	dirty     atomic.Bool   // people or chans changed since they were saved
+	saveEvery time.Duration // how often they are saved while changed; a test's shorter
+	scopeWarn sync.Once     // Groups' missing scopes are logged once
 
 	test *config.Test // nil in production
 }
@@ -97,10 +103,13 @@ func New(test *config.Test) *Client {
 }
 
 func newClient(base, token, appToken, stateDir string, test *config.Test) *Client {
-	return &Client{base: strings.TrimRight(base, "/"), token: token, appToken: appToken, stateDir: stateDir, http: httpx.Client(8),
+	c := &Client{base: strings.TrimRight(base, "/"), token: token, appToken: appToken, stateDir: stateDir, http: httpx.Client(8),
 		backoff: time.Second, slow: 10 * time.Minute, settle: 2 * time.Second, known: make(chan struct{}),
 		people: map[string]string{}, asking: map[string]bool{}, ims: map[string]string{}, imUser: map[string]string{},
-		chans: map[string]map[string]bool{}, left: map[string]bool{}, sent: map[string]bool{}, thread: map[string]string{}, blocks: map[string][]any{}, test: test}
+		chans: map[string]map[string]string{}, left: map[string]bool{}, sent: map[string]bool{}, thread: map[string]string{}, blocks: map[string][]any{},
+		saved: state.Open(state.Dir(stateDir), peopleName), saveEvery: time.Minute, test: test}
+	c.loadPeople()
+	return c
 }
 
 // scrub is err with the tokens taken out of its text.
@@ -275,11 +284,21 @@ func (c *Client) Watch(w bot.Watch) {
 
 // Run learns who the bot is, then holds a Socket Mode connection open and
 // hands each event the core may act on to handle, on this goroutine, until
-// ctx ends. A dropped connection is opened again with backoff, from 1s to
-// 32s; one Slack asks to close is opened again at once. A token Slack
-// refuses is logged naming its setting, and tried again only every 10
-// minutes.
+// ctx ends, saving the people seen at most once a minute while they
+// change, and once more as it returns. A dropped connection is opened
+// again with backoff, from 1s to 32s; one Slack asks to close is opened
+// again at once. A token Slack refuses is logged naming its setting, and
+// tried again only every 10 minutes.
 func (c *Client) Run(ctx context.Context, handle func(bot.Received)) {
+	saver := make(chan struct{})
+	go func() {
+		defer close(saver)
+		c.keepPeople(ctx)
+	}()
+	defer func() {
+		<-saver
+		c.savePeople()
+	}()
 	backoff := c.backoff
 	for ctx.Err() == nil && c.selfID() == "" {
 		err := c.hello(ctx)

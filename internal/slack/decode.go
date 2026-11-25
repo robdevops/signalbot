@@ -497,8 +497,9 @@ func (c *Client) learnName(user, name string) {
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if _, ok := c.people[user]; ok || len(c.people) < 10000 {
+	if old, ok := c.people[user]; (ok || len(c.people) < maxPeople) && old != name {
 		c.people[user] = name
+		c.dirty.Store(true)
 	}
 }
 
@@ -567,21 +568,23 @@ func (c *Client) userInfo(ctx context.Context, user string) (string, error) {
 	return txt.SafeName(cmp.Or(u.Profile.DisplayName, u.Profile.RealName, u.RealName, u.Name)), nil
 }
 
-// seen notes that user posted in channel, for Groups, Delivered's members
-// and Redact.
+// seen notes that user posted in channel today, for Groups, Delivered's
+// members and Redact, and marks the people seen for saving if that is new.
 func (c *Client) seen(channel, user string) {
+	day := time.Now().Format(time.DateOnly)
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	people := c.chans[channel]
 	if people == nil {
-		if len(c.chans) >= 1000 {
+		if len(c.chans) >= maxChans {
 			return
 		}
-		people = map[string]bool{}
+		people = map[string]string{}
 		c.chans[channel] = people
 	}
-	if len(people) < 1000 {
-		people[user] = true
+	if last, ok := people[user]; (ok || len(people) < maxChanPeople) && last != day {
+		people[user] = day
+		c.dirty.Store(true)
 	}
 }
 
@@ -641,21 +644,95 @@ func (c *Client) Reachable(ctx context.Context, chat feature.Chat) bool {
 	return !c.left[channel]
 }
 
-// Groups lists the channels where user has been seen since the bot
-// started, named by their IDs: the bot's scopes don't let it read a
-// channel's name.
+// Groups lists the channels both user and the bot are in, by
+// users.conversations, named "#name" and sorted by name; threads are not
+// listed. If Slack refuses, such as for an app installed without
+// channels:read and groups:read, it lists the channels where user has been
+// seen instead, named by their IDs.
 func (c *Client) Groups(ctx context.Context, user string) ([]feature.Group, error) {
 	user = strings.TrimPrefix(user, prefix)
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	mine, err := c.conversations(ctx, "")
+	var theirs map[string]string
+	if err == nil {
+		theirs, err = c.conversations(ctx, user)
+	}
+	if err != nil {
+		if code(err) == "missing_scope" {
+			c.scopeWarn.Do(func() {
+				logx.Warnf("Slack refused to list channels (missing_scope): the app needs the scopes channels:read and groups:read, so paste the app manifest again at api.slack.com/apps → your app → App Manifest and reinstall the app; until then channels are named by their IDs")
+			})
+		} else {
+			logx.Warnf("slack users.conversations failed: %v; listing the channels seen instead", err)
+		}
+		return c.seenGroups(user), nil
+	}
+	var out []feature.Group
+	c.mu.Lock()
+	for id, name := range theirs {
+		if _, ok := mine[id]; ok && !c.left[id] {
+			out = append(out, feature.Group{ID: prefix + id, Name: "#" + cmp.Or(txt.SafeName(name), id)})
+		}
+	}
+	c.mu.Unlock()
+	slices.SortFunc(out, func(a, b feature.Group) int {
+		return cmp.Or(strings.Compare(a.Name, b.Name), strings.Compare(a.ID, b.ID))
+	})
+	return out, nil
+}
+
+// conversations are the channels user is in that the bot can see, or with
+// no user the bot's own, by ID to name: users.conversations, page by page,
+// at most 50 pages.
+func (c *Client) conversations(ctx context.Context, user string) (map[string]string, error) {
+	out := map[string]string{}
+	cursor := ""
+	for range 50 {
+		vals := url.Values{"types": {"public_channel,private_channel"}, "exclude_archived": {"true"}, "limit": {"200"}}
+		if user != "" {
+			vals.Set("user", user)
+		}
+		if cursor != "" {
+			vals.Set("cursor", cursor)
+		}
+		var r struct {
+			Channels []struct {
+				ID   string `json:"id"`
+				Name string `json:"name"`
+			} `json:"channels"`
+			Meta struct {
+				Next string `json:"next_cursor"`
+			} `json:"response_metadata"`
+		}
+		if err := c.form(ctx, "users.conversations", c.token, vals, &r); err != nil {
+			return nil, err
+		}
+		for _, ch := range r.Channels {
+			if ch.ID != "" {
+				out[ch.ID] = ch.Name
+			}
+		}
+		if cursor = r.Meta.Next; cursor == "" {
+			break
+		}
+	}
+	return out, nil
+}
+
+// seenGroups are the channels where user has been seen, named by their
+// IDs, for when Slack won't list them.
+func (c *Client) seenGroups(user string) []feature.Group {
 	c.mu.Lock()
 	var out []feature.Group
 	for ch, people := range c.chans {
-		if people[user] && !c.left[ch] {
+		if _, ok := people[user]; ok && !c.left[ch] {
 			out = append(out, feature.Group{ID: prefix + ch, Name: ch})
 		}
 	}
 	c.mu.Unlock()
 	slices.SortFunc(out, func(a, b feature.Group) int { return strings.Compare(a.ID, b.ID) })
-	return out, nil
+	return out
 }
 
 // slackID is a Slack user, channel, team or file ID.
