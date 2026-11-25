@@ -190,6 +190,7 @@ func captureLevels(t *testing.T) *logx.Buffer {
 	t.Helper()
 	var buf logx.Buffer
 	t.Cleanup(logx.SetOutput(&buf, &buf, true))
+	prefixed(t, &buf)
 	return &buf
 }
 
