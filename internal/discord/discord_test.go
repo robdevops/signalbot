@@ -729,7 +729,8 @@ func TestGuilds(t *testing.T) {
 // added, and warned of, but not one back from an outage. A later READY
 // starts no new line, and a guild the bot was added to meanwhile is new.
 func TestServersLogged(t *testing.T) {
-	logs := captureLogs(t)
+	logs := &logx.Buffer{}
+	t.Cleanup(logx.SetOutput(logs, logs, true)) // with priorities: the line a notice, the warning a warning
 	c := connected(newFake(t).client())
 	c.listed.Store(true) // no slash commands to send
 	c.settle = time.Hour
@@ -755,11 +756,11 @@ func TestServersLogged(t *testing.T) {
 	}
 	c.events("GUILD_CREATE", guildJSON(g2, "Back\\slash\n"+strings.Repeat("x", 50)))
 	want := "Discord servers (2): Test server (" + guild + "), Back/slash " + strings.Repeat("x", 29) + "… (" + g2 + ")"
-	if !strings.Contains(logs.String(), want) || count("Discord servers") != 1 || count("added") != 0 {
+	if !strings.Contains(logs.String(), "<5>"+want) || count("Discord servers") != 1 || count("added") != 0 {
 		t.Fatalf("want %q in %s", want, logs)
 	}
 	c.events("GUILD_CREATE", guildJSON(g3, "New server"))
-	if count("Discord: the bot was added to a server: New server ("+g3+")") != 1 {
+	if count("<4>Discord: the bot was added to a server: New server ("+g3+")") != 1 {
 		t.Fatalf("no warning of the added server: %s", logs)
 	}
 	c.events("GUILD_DELETE", json.RawMessage(`{"id":"`+g3+`","unavailable":true}`))
