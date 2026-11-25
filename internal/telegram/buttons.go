@@ -10,7 +10,6 @@ import (
 
 	"github.com/robdevops/signalbot/internal/bot"
 	"github.com/robdevops/signalbot/internal/feature"
-	"github.com/robdevops/signalbot/internal/kit/logx"
 	"github.com/robdevops/signalbot/internal/kit/mdstyle"
 )
 
@@ -78,7 +77,7 @@ func (c *Client) answerPress(queryID, text string) {
 		err = c.call(ctx, "answerCallbackQuery", p, nil)
 	}
 	if err != nil {
-		logx.Warnf("telegram: answering a press failed: %v", err)
+		log.Warnf("answering a press failed: %v", err)
 	}
 }
 
@@ -135,7 +134,7 @@ func (c *Client) Edit(ch feature.Chat, sent int64, text string, pics []feature.P
 		err = c.editCall(ctx, d.chat, "editMessageReplyMarkup", params, "")
 	}
 	if err != nil && !notModified(err) {
-		logx.Errorf("edit failed: %v", err)
+		log.Errorf("edit failed: %v", err)
 		return nil
 	}
 	return []int64{sent}

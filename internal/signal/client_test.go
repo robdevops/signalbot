@@ -38,6 +38,7 @@ const (
 func TestNew(t *testing.T) {
 	var logs logx.Buffer
 	t.Cleanup(logx.SetOutput(&logs, &logs, false))
+	prefixed(t, &logs)
 	t.Setenv("SIGNALCLI_SOCKET", "")
 	t.Setenv("SIGNAL_DM_USERS", "")
 	if c := New(nil); c.addr != "127.0.0.1:7583" || c.network() != "tcp" || !c.dm.Admins || len(c.dm.IDs) != 0 {
@@ -51,8 +52,7 @@ func TestNew(t *testing.T) {
 	}
 	t.Setenv("SIGNAL_DM_USERS", "none")
 	New(nil)
-	if got := logs.String(); got != "Signal DMs: allowed from admins and mods (SIGNAL_DM_USERS)\n"+"Signal DMs: allowed from 3 IDs (SIGNAL_DM_USERS)\n"+
-		"Signal DMs are off: SIGNAL_DM_USERS is none; the bot answers only in groups\n" {
+	if got := logs.String(); got != "Signal: DMs are off: SIGNAL_DM_USERS is none; the bot answers only in groups\n" {
 		t.Errorf("logs %q", got)
 	}
 }
@@ -166,7 +166,28 @@ func captureLogs(t *testing.T) *logx.Buffer {
 	t.Helper()
 	var buf logx.Buffer
 	t.Cleanup(logx.SetOutput(&buf, &buf, false))
+	prefixed(t, &buf)
 	return &buf
+}
+
+// prefixed fails t unless every line logged to buf, at the end of the test,
+// starts with "Signal: ", after its priority if shown: each of the package's
+// lines goes through its log, once.
+func prefixed(t *testing.T, buf *logx.Buffer) {
+	t.Helper()
+	t.Cleanup(func() {
+		for _, l := range strings.Split(strings.TrimSuffix(buf.String(), "\n"), "\n") {
+			if l == "" {
+				continue
+			}
+			if len(l) > 3 && l[0] == '<' && l[2] == '>' {
+				l = l[3:]
+			}
+			if !strings.HasPrefix(l, "Signal: ") || strings.HasPrefix(l[len("Signal: "):], "Signal: ") {
+				t.Errorf("a line not prefixed exactly once with %q: %q", "Signal: ", l)
+			}
+		}
+	})
 }
 
 func eventually(t *testing.T, what string, ok func() bool) {

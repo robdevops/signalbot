@@ -8,9 +8,7 @@ import (
 	"slices"
 	"strings"
 	"time"
-	"unicode"
 
-	"github.com/robdevops/signalbot/internal/kit/logx"
 	"github.com/robdevops/signalbot/internal/kit/state"
 	"github.com/robdevops/signalbot/internal/kit/txt"
 )
@@ -42,7 +40,7 @@ func (c *Client) loadRoster() {
 	var saved map[string]knownGroup
 	found, err := c.rosterDoc.Load(&saved)
 	if err != nil {
-		logx.Warnf("telegram: %s can't be read, so the bot starts knowing of no groups; it is replaced at the next change", c.rosterDoc.Path())
+		log.Warnf("%s can't be read, so the bot starts knowing of no groups; it is replaced at the next change", c.rosterDoc.Path())
 		return
 	}
 	if !found {
@@ -71,7 +69,7 @@ func (c *Client) saveRoster() {
 		snap := maps.Clone(c.roster)
 		c.mu.Unlock()
 		if err := c.rosterDoc.Save(snap); err != nil {
-			logx.Warnf("telegram: saving the groups the bot is in failed: %v", err)
+			log.Warnf("saving the groups the bot is in failed: %v", err)
 		}
 	})
 }
@@ -105,7 +103,7 @@ func (c *Client) learnGroup(ch chat) {
 	}
 	c.mu.Unlock()
 	if !ok {
-		logx.Warnf("Telegram: the bot is in a new group: %s", listed(gid, ch.Title))
+		log.Warnf("the bot is in a new group: %s", listed(gid, ch.Title))
 	}
 	c.saveRoster()
 }
@@ -146,7 +144,7 @@ func (c *Client) logRoster() {
 	}
 	c.mu.Unlock()
 	if len(gs) == 0 {
-		logx.Noticef("Telegram groups the bot knows of: none")
+		log.Noticef("groups the bot knows of: none")
 		return
 	}
 	slices.SortFunc(gs, func(a, b entry) int {
@@ -156,24 +154,14 @@ func (c *Client) logRoster() {
 	for _, g := range gs {
 		parts = append(parts, listed(g.id, g.title))
 	}
-	logx.Noticef("Telegram groups the bot knows of (%d): %s", len(gs), strings.Join(parts, ", "))
+	log.Noticef("groups the bot knows of (%d): %s", len(gs), strings.Join(parts, ", "))
 }
 
-// listed is a group as the log shows it: "Title (id)", its title made safe
-// and cut to 40 characters, a backslash shown as "/" (in an env file
-// systemd reads, one that ends a line would join the next to it), and
-// control and format characters (a terminal escape, a bidi override) left
-// out, as whoever adds the bot to a group chooses its title. These lines
-// are the only ones that hold a group's title.
+// listed is a group as the log shows it: "Title (id)", its title as
+// txt.LogName shows a name, as whoever adds the bot to a group chooses it.
+// These lines are the only ones that hold a group's title.
 func listed(gid, title string) string {
-	title = strings.Map(func(r rune) rune {
-		if unicode.IsControl(r) && !unicode.IsSpace(r) || unicode.Is(unicode.Cf, r) {
-			return -1
-		}
-		return r
-	}, title)
-	t := txt.Clamp(strings.ReplaceAll(txt.SafeName(title), `\`, "/"), 40)
-	return fmt.Sprintf("%s (%s)", cmp.Or(t, "(no title)"), gid)
+	return fmt.Sprintf("%s (%s)", txt.LogName(title), gid)
 }
 
 // rosterDoc is the roster's file in dir.

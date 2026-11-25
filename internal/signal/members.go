@@ -11,7 +11,6 @@ import (
 
 	"github.com/robdevops/signalbot/internal/bot"
 	"github.com/robdevops/signalbot/internal/feature"
-	"github.com/robdevops/signalbot/internal/kit/logx"
 )
 
 // members keeps each group's members, as signal-cli's listGroups last gave
@@ -57,7 +56,7 @@ func (m *members) start(ctx context.Context, handle func(bot.Received)) {
 	if loaded || !m.on.Load() {
 		return
 	}
-	if gs, ok := m.load(ctx, logx.Debugf); ok { // the first update loads them anyway
+	if gs, ok := m.load(ctx, log.Debugf); ok { // the first update loads them anyway
 		m.mu.Lock()
 		if m.known == nil {
 			m.known = gs
@@ -120,7 +119,7 @@ func (m *members) compare() {
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 	m.c.refresh(ctx) // names for newcomers, if the list may be loaded
-	now, ok := m.load(ctx, logx.Warnf)
+	now, ok := m.load(ctx, log.Warnf)
 	m.mu.Lock()
 	before, handle := maps.Clone(m.known), m.handle
 	if ok && m.known == nil {

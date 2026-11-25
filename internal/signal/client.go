@@ -31,6 +31,17 @@ import (
 	"github.com/robdevops/signalbot/internal/kit/txt"
 )
 
+// log is the network's log: its every line starts with "Signal: ".
+var log = logx.For("signal")
+
+// recoverLog is logx.Recover on log: a panic while doing what, logged
+// without its value, and dropped.
+func recoverLog(what string) {
+	if recover() != nil {
+		log.Errorf("internal error while %s; dropped", what)
+	}
+}
+
 // maxLine caps one JSON-RPC frame from signal-cli, whose bodies, mentions
 // and quotes the sender controls: room for a getAttachment result, the
 // largest image the bot fetches in base64, and more. A longer frame is
@@ -60,11 +71,12 @@ type rpcMsg struct {
 // Client is a JSON-RPC client for a signal-cli daemon socket.
 type Client struct {
 	addr         string
-	dm           allow.Policy // who may DM the bot (SIGNAL_DM_USERS)
-	groupIDs     groupSet     // the groups the bot answers in (SIGNAL_GROUP_IDS)
-	ignored      ignored      // the unlisted groups a message was ignored in, logged once each
-	report       atomic.Bool  // the groups the bot is in are yet to be logged this run
-	verdicts     verdicts     // whether a DM's sender is a group admin, lately asked
+	dm           allow.Policy  // who may DM the bot (SIGNAL_DM_USERS)
+	groupIDs     groupSet      // the groups the bot answers in (SIGNAL_GROUP_IDS)
+	ignored      ignored       // the unlisted groups a message was ignored in, logged once each
+	refused      allow.Refused // the senders a DM was refused from, logged once each
+	report       atomic.Bool   // the groups the bot is in are yet to be logged this run
+	verdicts     verdicts      // whether a DM's sender is a group admin, lately asked
 	typingEvery  time.Duration
 	writeTimeout time.Duration // writeTimeout; a test's shorter
 	backoff      time.Duration // the first wait before reconnecting; a test's shorter
@@ -92,9 +104,7 @@ func New(test *config.Test) *Client {
 	addr := config.Env("SIGNALCLI_SOCKET", "127.0.0.1:7583")
 	dm := allow.Parse(config.Env("SIGNAL_DM_USERS", ""))
 	if dm.None() {
-		logx.Warnf("Signal DMs are off: SIGNAL_DM_USERS is none; the bot answers only in groups")
-	} else {
-		logx.Noticef("Signal DMs: allowed from %s (SIGNAL_DM_USERS)", dm)
+		log.Warnf("DMs are off: SIGNAL_DM_USERS is none; the bot answers only in groups")
 	}
 	c := newClient(addr, dm, test)
 	c.groupIDs = parseGroups(config.Env("SIGNAL_GROUP_IDS", "all"))
@@ -102,9 +112,9 @@ func New(test *config.Test) *Client {
 	switch {
 	case c.groupIDs.all: // once connected, it warns, with the line to set
 	case len(c.groupIDs.ids) == 0:
-		logx.Warnf("Signal groups are off: SIGNAL_GROUP_IDS is none; the bot answers only in DMs")
+		log.Warnf("groups are off: SIGNAL_GROUP_IDS is none; the bot answers only in DMs")
 	default:
-		logx.Noticef("Signal groups: answering in %d listed in SIGNAL_GROUP_IDS, and ignoring any other", len(c.groupIDs.ids))
+		log.Noticef("groups: answering in %d listed in SIGNAL_GROUP_IDS, and ignoring any other", len(c.groupIDs.ids))
 	}
 	return c
 }
@@ -112,7 +122,7 @@ func New(test *config.Test) *Client {
 // newClient is New with its settings given.
 func newClient(addr string, dm allow.Policy, test *config.Test) *Client {
 	c := &Client{addr: addr, dm: dm, groupIDs: groupSet{all: true}, typingEvery: 10 * time.Second, writeTimeout: writeTimeout, backoff: time.Second, pending: map[string]chan *rpcMsg{},
-		known: make(chan struct{}), test: test}
+		known: make(chan struct{}), refused: allow.Refused{Setting: "SIGNAL_DM_USERS", L: log}, test: test}
 	c.members.c = c
 	c.names.byID, c.names.numbers, c.names.minRefresh = map[string]rankedName{}, map[string]string{}, 15*time.Second
 	if test != nil && test.ReloadGap > 0 {
@@ -155,7 +165,7 @@ func (c *Client) Run(ctx context.Context, handle func(bot.Received)) {
 	for ctx.Err() == nil {
 		conn, err := net.DialTimeout(c.network(), c.addr, 10*time.Second)
 		if err != nil {
-			logx.Warnf("signal-cli connect failed: %v; retrying in %s", err, backoff)
+			log.Warnf("signal-cli connect failed: %v; retrying in %s", err, backoff)
 		} else {
 			began := time.Now()
 			c.serve(ctx, conn, handle)
@@ -177,7 +187,7 @@ func (c *Client) serve(ctx context.Context, conn net.Conn, handle func(bot.Recei
 	c.mu.Lock()
 	c.conn = conn
 	c.mu.Unlock()
-	logx.Noticef("connected to signal-cli at %s", c.addr)
+	log.Noticef("connected to signal-cli at %s", c.addr)
 
 	defer context.AfterFunc(ctx, func() { conn.Close() })()
 	go func() {
@@ -185,13 +195,13 @@ func (c *Client) serve(ctx context.Context, conn net.Conn, handle func(bot.Recei
 		defer cancel()
 		id, err := c.listAccounts(rctx)
 		if err != nil {
-			logx.Errorf("listAccounts failed: %v", err)
+			log.Errorf("listAccounts failed: %v", err)
 			conn.Close()
 			return
 		}
 		c.id.Store(id)
 		c.knownOnce.Do(func() { close(c.known) })
-		logx.Noticef("bot account %s", id)
+		log.Noticef("connected as %s", id)
 		c.refreshSoon() // names, on every (re)connect
 		mctx, mcancel := context.WithTimeout(ctx, 15*time.Second)
 		defer mcancel()
@@ -201,7 +211,7 @@ func (c *Client) serve(ctx context.Context, conn net.Conn, handle func(bot.Recei
 
 	err := readFrames(conn, maxLine, func(line []byte) { c.dispatch(line, handle) }, c.skipped)
 	if err != nil && !errors.Is(err, io.EOF) && ctx.Err() == nil {
-		logx.Warnf("signal-cli read failed: %v; reconnecting", err)
+		log.Warnf("signal-cli read failed: %v; reconnecting", err)
 	}
 	conn.Close()
 	c.mu.Lock()
@@ -254,7 +264,7 @@ func last(b []byte, n int) []byte { return b[max(0, len(b)-n):] }
 // skipped fails the request a frame over maxLine answers, if its ID is
 // found in tail, the frame's end.
 func (c *Client) skipped(tail []byte) {
-	logx.Warnf("signal-cli sent a frame over %d MiB, skipped", maxLine>>20)
+	log.Warnf("signal-cli sent a frame over %d MiB, skipped", maxLine>>20)
 	m := frameID.FindSubmatch(tail)
 	if m == nil {
 		return
@@ -269,10 +279,10 @@ func (c *Client) skipped(tail []byte) {
 }
 
 func (c *Client) dispatch(line []byte, handle func(bot.Received)) {
-	defer logx.Recover("reading a message")
+	defer recoverLog("reading a message")
 	var m rpcMsg
 	if err := json.Unmarshal(line, &m); err != nil {
-		logx.Warnf("bad JSON from signal-cli (%d bytes), ignored", len(line)) // not err: it can quote the frame
+		log.Warnf("bad JSON from signal-cli (%d bytes), ignored", len(line)) // not err: it can quote the frame
 		return
 	}
 	switch {
@@ -304,7 +314,7 @@ func (c *Client) dispatch(line []byte, handle func(bot.Received)) {
 // sendReaction.
 func unmatched(m *rpcMsg) {
 	if m.Error != nil {
-		logx.Errorf("signal-cli request %s failed: %s", m.ID, txt.Clamp(m.Error.Message, 200))
+		log.Errorf("signal-cli request %s failed: %s", m.ID, txt.Clamp(m.Error.Message, 200))
 		return
 	}
 	var r struct {
@@ -317,7 +327,7 @@ func unmatched(m *rpcMsg) {
 	}
 	for _, res := range r.Results {
 		if res.Type != "" && res.Type != "SUCCESS" {
-			logx.Warnf("signal-cli request %s not delivered: %s", m.ID, txt.SafeName(res.Type))
+			log.Warnf("signal-cli request %s not delivered: %s", m.ID, txt.SafeName(res.Type))
 		}
 	}
 }

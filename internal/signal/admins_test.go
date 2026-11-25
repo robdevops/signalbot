@@ -58,12 +58,8 @@ func TestDMFromAnAdmin(t *testing.T) {
 	if n := len(f.calls("listGroups")); n != 2 {
 		t.Fatalf("%d listGroups", n)
 	}
-	receive(conn, `{"sourceUuid":"`+bobID+`","dataMessage":{"message":"please"}}`)
-	eventually(t, "the second refusal", func() bool { return strings.Count(logs.String(), "ignored because") == 2 })
-	select {
-	case r := <-got:
+	if r, ok := c.event(parse(t, `{"sourceUuid":"`+bobID+`","dataMessage":{"message":"please"}}`)); ok {
 		t.Fatalf("Bob's second DM reached the core: %+v", r)
-	default:
 	}
 	if r, ok := c.event(parse(t, `{"sourceUuid":"`+bobID+`","dataMessage":{"reaction":{"emoji":"👍","targetAuthorUuid":"`+botID+`","targetSentTimestamp":5}}}`)); ok {
 		t.Fatalf("Bob's reaction reached the core: %+v", r)
@@ -75,7 +71,8 @@ func TestDMFromAnAdmin(t *testing.T) {
 	if n := len(f.calls("listGroups")); n != 2 {
 		t.Fatalf("%d listGroups", n)
 	}
-	if want := bobID + " ignored because not in SIGNAL_DM_USERS (add this ID to allow DMs)\n"; strings.Count(logs.String(), want) != 2 || strings.Contains(logs.String(), aliceID) {
+	// Refused twice, Bob is warned of once.
+	if want := "Signal: a DM from " + bobID + " ignored: SIGNAL_DM_USERS doesn't allow it; add the ID to SIGNAL_DM_USERS to allow DMs from them\n"; strings.Count(logs.String(), want) != 1 || strings.Count(logs.String(), "a DM from") != 1 || strings.Contains(logs.String(), aliceID) {
 		t.Fatalf("logs %q", logs)
 	}
 

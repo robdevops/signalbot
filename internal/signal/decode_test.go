@@ -242,7 +242,7 @@ func TestEvents(t *testing.T) {
 			t.Errorf("%s reached the core: %+v", env, r)
 		}
 	}
-	if out := logs.String(); out != bobID+" ignored because not in SIGNAL_DM_USERS (add this ID to allow DMs)\n" {
+	if out := logs.String(); out != "Signal: a DM from "+bobID+" ignored: SIGNAL_DM_USERS doesn't allow it; add the ID to SIGNAL_DM_USERS to allow DMs from them\n" {
 		t.Errorf("logged %q", out)
 	}
 }
@@ -280,7 +280,7 @@ func TestEventsBeforeTheIDIsKnown(t *testing.T) {
 	if m, ok := rs[1].Load(ctx, learn); !ok || m.Addressed || m.Text != "the moon" {
 		t.Errorf("chatter loaded as %+v %v", m, ok)
 	}
-	if _, ok := rs[2].Load(ctx, learn); ok || !strings.Contains(logs.String(), bobID+" ignored because not in SIGNAL_DM_USERS") {
+	if _, ok := rs[2].Load(ctx, learn); ok || !strings.Contains(logs.String(), "Signal: a DM from "+bobID+" ignored: SIGNAL_DM_USERS doesn't allow it") {
 		t.Errorf("a stranger's DM loaded; logs %q", logs)
 	}
 }

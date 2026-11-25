@@ -13,7 +13,6 @@ import (
 	"github.com/robdevops/signalbot/internal/bot"
 	"github.com/robdevops/signalbot/internal/feature"
 	"github.com/robdevops/signalbot/internal/kit/img"
-	"github.com/robdevops/signalbot/internal/kit/logx"
 	"github.com/robdevops/signalbot/internal/kit/mdstyle"
 	"github.com/robdevops/signalbot/internal/kit/txt"
 )
@@ -359,7 +358,7 @@ func (c *Client) judge(env *envelope, self string, dm bool) (addressed, other bo
 	case fromSelf(env, self):
 	case env.chat().GroupID == "":
 		if !dm {
-			logx.Infof("%s ignored because not in SIGNAL_DM_USERS (add this ID to allow DMs)", cmp.Or(env.sender(), "unknown sender"))
+			c.refused.Log(cmp.Or(env.sender(), "unknown sender"))
 		}
 	default:
 		return false, true
@@ -505,18 +504,18 @@ func (c *Client) Delivered(ctx context.Context, msg feature.Message) (bot.Ready,
 	wait, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
 	if c.WaitID(wait) == "" {
-		logx.Warnf("delivered message dropped: not connected to signal-cli after 10s")
+		log.Warnf("delivered message dropped: not connected to signal-cli after 10s")
 		return bot.Ready{}, false
 	}
 	c.loadNames(wait, &envelope{})
 	if msg.Chat.GroupID == "" && !c.dmAllowed(wait, msg.Sender, c.number(msg.Sender)) {
-		logx.Infof("delivered message dropped: its sender may no longer DM the bot (SIGNAL_DM_USERS)")
+		log.Infof("delivered message dropped: its sender may no longer DM the bot (SIGNAL_DM_USERS)")
 		return bot.Ready{}, false
 	}
 	msg.Name = cmp.Or(msg.Name, c.name(msg.Sender))
 	var r bot.Ready
 	if msg.Chat.GroupID != "" && !c.groupIDs.has(msg.Chat.GroupID) {
-		logx.Infof("delivered message dropped: its group is not in SIGNAL_GROUP_IDS")
+		log.Infof("delivered message dropped: its group is not in SIGNAL_GROUP_IDS")
 		return bot.Ready{}, false
 	}
 	if msg.Chat.GroupID != "" {
@@ -524,12 +523,12 @@ func (c *Client) Delivered(ctx context.Context, msg feature.Message) (bot.Ready,
 		gs, err := c.groups(ctx, msg.Sender)
 		cancel()
 		if err != nil {
-			logx.Warnf("delivered message dropped: listGroups failed: %v", err)
+			log.Warnf("delivered message dropped: listGroups failed: %v", err)
 			return bot.Ready{}, false
 		}
 		i := slices.IndexFunc(gs, func(g group) bool { return g.ID == msg.Chat.GroupID })
 		if i < 0 {
-			logx.Infof("delivered message dropped: its sender is not in the group")
+			log.Infof("delivered message dropped: its sender is not in the group")
 			return bot.Ready{}, false
 		}
 		for _, m := range gs[i].Members {
@@ -552,7 +551,7 @@ func (c *Client) Reachable(ctx context.Context, chat feature.Chat) bool {
 	wait, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
 	if c.WaitID(wait) == "" {
-		logx.Warnf("not connected to signal-cli after 10s")
+		log.Warnf("not connected to signal-cli after 10s")
 		return false
 	}
 	if chat.GroupID == "" {
@@ -564,7 +563,7 @@ func (c *Client) Reachable(ctx context.Context, chat feature.Chat) bool {
 	}
 	var gs []group
 	if err := c.call(wait, "listGroups", nil, &gs); err != nil {
-		logx.Warnf("listGroups failed: %v", err)
+		log.Warnf("listGroups failed: %v", err)
 		return false
 	}
 	return slices.ContainsFunc(gs, func(g group) bool { return g.IsMember && g.ID == chat.GroupID })

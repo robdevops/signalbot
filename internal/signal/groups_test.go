@@ -3,6 +3,7 @@ package signal
 import (
 	"context"
 	"fmt"
+	"github.com/robdevops/signalbot/internal/kit/txt"
 	"maps"
 	"strings"
 	"testing"
@@ -61,8 +62,8 @@ func TestNewGroups(t *testing.T) {
 		t.Errorf("none: %+v", c.groupIDs)
 	}
 	out := logs.String()
-	if !strings.Contains(out, "Signal groups: answering in 2 listed in SIGNAL_GROUP_IDS, and ignoring any other\n") ||
-		!strings.Contains(out, "Signal groups are off: SIGNAL_GROUP_IDS is none; the bot answers only in DMs\n") ||
+	if !strings.Contains(out, "Signal: groups: answering in 2 listed in SIGNAL_GROUP_IDS, and ignoring any other\n") ||
+		!strings.Contains(out, "Signal: groups are off: SIGNAL_GROUP_IDS is none; the bot answers only in DMs\n") ||
 		strings.Contains(out, groupID) || strings.Contains(out, "any group") {
 		t.Errorf("logs %q", out)
 	}
@@ -112,7 +113,7 @@ func TestUnlistedGroupIgnored(t *testing.T) {
 	} else if _, isI := r.(bot.Incoming); !isI {
 		t.Errorf("mention %+v", r)
 	}
-	if out := logs.String(); out != "a message in group "+otherID+" ignored: not in SIGNAL_GROUP_IDS\n" {
+	if out := logs.String(); out != "Signal: a message in group "+otherID+" ignored: not in SIGNAL_GROUP_IDS\n" {
 		t.Errorf("logged %q", out)
 	}
 }
@@ -189,6 +190,7 @@ func captureLevels(t *testing.T) *logx.Buffer {
 	t.Helper()
 	var buf logx.Buffer
 	t.Cleanup(logx.SetOutput(&buf, &buf, true))
+	prefixed(t, &buf)
 	return &buf
 }
 
@@ -208,13 +210,13 @@ func TestReportGroupsAll(t *testing.T) {
 	line := "<4>Signal: to answer only in the groups the bot is in now, set: SIGNAL_GROUP_IDS=" + groupID + "," + otherID + "  # Fam/ily /, Ot her\n"
 	eventually(t, "the suggestion", func() bool { return strings.Contains(logs.String(), line) })
 	if out := logs.String(); !strings.Contains(out, "<4>Signal: the bot answers in any group anyone adds it to, as SIGNAL_GROUP_IDS is unset or all") ||
-		!strings.Contains(out, "<5>Signal groups (2): Fam/ily / ("+groupID+"), Ot her ("+otherID+")\n") || strings.Contains(out, "ignored") {
+		!strings.Contains(out, "<5>Signal: groups (2): Fam/ily / ("+groupID+"), Ot her ("+otherID+")\n") || strings.Contains(out, "ignored") {
 		t.Fatalf("logs %q", out)
 	}
 	conn.Close() // reconnects: not listed or suggested again
 	eventually(t, "the reconnect", func() bool { return len(f.calls("listAccounts")) == 2 })
 	c.reportGroups(context.Background())
-	if n, m := strings.Count(logs.String(), "SIGNAL_GROUP_IDS="), strings.Count(logs.String(), "Signal groups ("); n != 1 || m != 1 {
+	if n, m := strings.Count(logs.String(), "SIGNAL_GROUP_IDS="), strings.Count(logs.String(), "Signal: groups ("); n != 1 || m != 1 {
 		t.Fatalf("suggested %d times, listed %d", n, m)
 	}
 
@@ -222,7 +224,7 @@ func TestReportGroupsAll(t *testing.T) {
 	f.set("listGroups", `[{"id":"bGVmdA==","name":"Old","isMember":false}]`)
 	c.report.Store(true)
 	c.reportGroups(context.Background())
-	if out := logs.String()[before:]; !strings.Contains(out, "<5>Signal groups (0): none\n") || !strings.Contains(out, "<4>Signal: the bot is in no group yet") ||
+	if out := logs.String()[before:]; !strings.Contains(out, "<5>Signal: groups (0): none\n") || !strings.Contains(out, "<4>Signal: the bot is in no group yet") ||
 		strings.Contains(out, "SIGNAL_GROUP_IDS=") || strings.Contains(out, "Old") {
 		t.Fatalf("logs %q", out)
 	}
@@ -235,7 +237,7 @@ func TestReportGroupsAll(t *testing.T) {
 	c.reportGroups(ctx)
 	if out := logs.String()[before:]; !strings.Contains(out, "answers in any group") ||
 		!strings.Contains(out, "<4>Signal: listGroups failed, so the groups the bot is in aren't listed, nor SIGNAL_GROUP_IDS suggested") ||
-		strings.Contains(out, "SIGNAL_GROUP_IDS=") || strings.Contains(out, "Signal groups (") {
+		strings.Contains(out, "SIGNAL_GROUP_IDS=") || strings.Contains(out, "Signal: groups (") {
 		t.Fatalf("logs %q", out)
 	}
 }
@@ -254,10 +256,10 @@ func TestReportGroupsListed(t *testing.T) {
 	c := New(nil)
 	c.names.refreshedAt = time.Now()
 	run(t, c, f)
-	all := "<5>Signal groups (2): Family (" + groupID + "), Other (" + otherID + ")\n"
+	all := "<5>Signal: groups (2): Family (" + groupID + "), Other (" + otherID + ")\n"
 	eventually(t, "the list", func() bool { return strings.Contains(logs.String(), all) })
 	c.reportGroups(context.Background()) // once a run
-	if out := logs.String(); strings.Count(out, "Signal groups (") != 1 || strings.Contains(out, "any group") || strings.Contains(out, "SIGNAL_GROUP_IDS=") || strings.Contains(out, "<4>Signal groups") {
+	if out := logs.String(); strings.Count(out, "Signal: groups (") != 1 || strings.Contains(out, "any group") || strings.Contains(out, "SIGNAL_GROUP_IDS=") || strings.Contains(out, "<4>Signal: groups") {
 		t.Fatalf("logs %q", out)
 	}
 
@@ -276,8 +278,8 @@ func TestReportGroupsListed(t *testing.T) {
 	c = connect(groupID, twoGroups)
 	c.report.Store(true)
 	c.reportGroups(context.Background())
-	want := "<4>Signal groups (2): Other (" + otherID + ") — not in SIGNAL_GROUP_IDS, ignored, Family (" + groupID + ")\n"
-	if out := logs.String()[before:]; !strings.Contains(out, want) || strings.Count(out, "Signal groups (") != 1 {
+	want := "<4>Signal: groups (2): Other (" + otherID + ") — not in SIGNAL_GROUP_IDS, ignored, Family (" + groupID + ")\n"
+	if out := logs.String()[before:]; !strings.Contains(out, want) || strings.Count(out, "Signal: groups (") != 1 {
 		t.Fatalf("logs %q, want %q", out, want)
 	}
 
@@ -285,7 +287,7 @@ func TestReportGroupsListed(t *testing.T) {
 	c = connect("none", twoGroups)
 	c.report.Store(true)
 	c.reportGroups(context.Background())
-	if out := logs.String()[before:]; !strings.Contains(out, "<4>Signal groups (2): ") || strings.Count(out, "not in SIGNAL_GROUP_IDS, ignored") != 2 {
+	if out := logs.String()[before:]; !strings.Contains(out, "<4>Signal: groups (2): ") || strings.Count(out, "not in SIGNAL_GROUP_IDS, ignored") != 2 {
 		t.Fatalf("logs %q", out)
 	}
 
@@ -296,7 +298,7 @@ func TestReportGroupsListed(t *testing.T) {
 	defer cancel()
 	c.reportGroups(ctx)
 	if out := logs.String()[before:]; !strings.Contains(out, "<4>Signal: listGroups failed, so the groups the bot is in aren't listed: ") ||
-		strings.Contains(out, "Family") || strings.Contains(out, "SIGNAL_GROUP_IDS=") || strings.Contains(out, "Signal groups (") {
+		strings.Contains(out, "Family") || strings.Contains(out, "SIGNAL_GROUP_IDS=") || strings.Contains(out, "Signal: groups (") {
 		t.Fatalf("logs %q", out)
 	}
 }
@@ -319,9 +321,9 @@ func TestReportGroupsCapped(t *testing.T) {
 	c.report.Store(true)
 	run(t, c, f)
 	last := fmt.Sprintf("G%d (g%d=) — not in SIGNAL_GROUP_IDS, ignored", groupsShown+2, groupsShown+2)
-	eventually(t, "the list", func() bool { return strings.Contains(logs.String(), "Signal groups (") })
+	eventually(t, "the list", func() bool { return strings.Contains(logs.String(), "Signal: groups (") })
 	out := logs.String()
-	if !strings.Contains(out, fmt.Sprintf("<4>Signal groups (%d): %s, G0 (g0=), ", groupsShown+3, last)) || !strings.Contains(out, ", and 3 more\n") ||
+	if !strings.Contains(out, fmt.Sprintf("<4>Signal: groups (%d): %s, G0 (g0=), ", groupsShown+3, last)) || !strings.Contains(out, ", and 3 more\n") ||
 		strings.Contains(out, fmt.Sprintf("G%d (", groupsShown+1)) {
 		t.Fatalf("logs %q", out)
 	}
@@ -331,7 +333,7 @@ func TestReportGroupsCapped(t *testing.T) {
 // a stranger's group name can't hide the startup line from journalctl,
 // which shows a line holding one as "[blob data]", nor reorder it in a
 // terminal; whitespace is collapsed, a backslash shown as "/".
-func TestGroupName(t *testing.T) {
+func TestGroupLogName(t *testing.T) {
 	for in, want := range map[string]string{
 		"Family":                "Family",
 		"Fam\x1b[2Kily":         "Fam[2Kily",
@@ -341,8 +343,8 @@ func TestGroupName(t *testing.T) {
 		"\x1b​":                 "(no name)",
 		strings.Repeat("é", 50): strings.Repeat("é", 40) + "…",
 	} {
-		if got := groupName(in); got != want {
-			t.Errorf("groupName(%q) = %q, want %q", in, got, want)
+		if got := txt.LogName(in); got != want {
+			t.Errorf("LogName(%q) = %q, want %q", in, got, want)
 		}
 	}
 }

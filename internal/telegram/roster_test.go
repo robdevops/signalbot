@@ -101,7 +101,7 @@ func TestRosterAtStartup(t *testing.T) {
 	if err := empty.hello(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(logs.String(), "Telegram groups the bot knows of: none") {
+	if !strings.Contains(logs.String(), "Telegram: groups the bot knows of: none") {
 		t.Fatalf("no groups:\n%s", logs)
 	}
 	dir := t.TempDir()
@@ -112,11 +112,11 @@ func TestRosterAtStartup(t *testing.T) {
 	if err := c.hello(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	want := "Telegram groups the bot knows of (3): Al[31mpha line (-100111), beta/ (-100222), " + strings.Repeat("x", 40) + "… (-100333)"
+	want := "Telegram: groups the bot knows of (3): Al[31mpha line (-100111), beta/ (-100222), " + strings.Repeat("x", 40) + "… (-100333)"
 	if !strings.Contains(logs.String(), want) || strings.Contains(logs.String(), "Bob") {
 		t.Fatalf("want %q in\n%s", want, logs)
 	}
-	if strings.Index(logs.String(), "connected to Telegram") > strings.Index(logs.String(), want) {
+	if strings.Index(logs.String(), "Telegram: connected as @") > strings.Index(logs.String(), want) {
 		t.Fatalf("listed before getMe:\n%s", logs)
 	}
 }

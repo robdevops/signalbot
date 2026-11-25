@@ -5,8 +5,6 @@ import (
 	"slices"
 	"sync"
 	"time"
-
-	"github.com/robdevops/signalbot/internal/kit/logx"
 )
 
 // verdictAge is how long whether someone is a group admin is believed, and
@@ -111,7 +109,7 @@ func (c *Client) dmAllowed(ctx context.Context, ids ...string) bool {
 	gen := c.verdicts.generation()
 	var gs []group
 	if err := c.call(ctx, "listGroups", nil, &gs); err != nil {
-		logx.Warnf("listGroups failed, so a DM's sender is taken for no admin: %v", err)
+		log.Warnf("listGroups failed, so a DM's sender is taken for no admin: %v", err)
 		return false
 	}
 	admin := slices.ContainsFunc(gs, func(g group) bool {

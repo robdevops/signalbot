@@ -5,8 +5,6 @@ import (
 	"errors"
 	"slices"
 	"time"
-
-	"github.com/robdevops/signalbot/internal/kit/logx"
 )
 
 // keepFor is how long a group's administrators, and whether someone may DM
@@ -72,7 +70,7 @@ func (c *Client) dmAllowed(ctx context.Context, user string) bool {
 	c.mu.Unlock()
 	admin, err := c.isAdmin(ctx, user)
 	if err != nil {
-		logx.Warnf("telegram: a DM refused: checking whether its user is an admin failed: %v", err)
+		log.Warnf("a DM refused: checking whether its user is an admin failed: %v", err)
 		return false
 	}
 	c.mu.Lock()
@@ -89,12 +87,6 @@ func (c *Client) dmAllowed(ctx context.Context, user string) bool {
 		c.dmOK[user] = verdict{ok: admin, until: time.Now().Add(keepFor)}
 	}
 	return admin
-}
-
-// refusedDM logs a DM, or a delivered message for one, refused by
-// TELEGRAM_DM_USERS, by the sender's ID only.
-func refusedDM(user string) {
-	logx.Infof("%s ignored because not allowed by TELEGRAM_DM_USERS (add this ID to allow DMs)", user)
 }
 
 // isAdmin reports whether user is the owner or an administrator of a group

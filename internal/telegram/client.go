@@ -30,14 +30,26 @@ import (
 	"github.com/robdevops/signalbot/internal/kit/state"
 )
 
+// log is the network's log: its every line starts with "Telegram: ".
+var log = logx.For("telegram")
+
+// recoverLog is logx.Recover on log: a panic while doing what, logged
+// without its value, and dropped.
+func recoverLog(what string) {
+	if recover() != nil {
+		log.Errorf("internal error while %s; dropped", what)
+	}
+}
+
 // pollWait is how long one getUpdates waits for something to arrive.
 const pollWait = 50 * time.Second
 
 // Client is a Telegram Bot API client, by long polling.
 type Client struct {
-	base    string       // the API's base URL, without the token
-	token   string       // never logged: scrub every error
-	dm      allow.Policy // who may DM the bot: TELEGRAM_DM_USERS
+	base    string        // the API's base URL, without the token
+	token   string        // never logged: scrub every error
+	dm      allow.Policy  // who may DM the bot: TELEGRAM_DM_USERS
+	refused allow.Refused // the senders a DM was refused from, logged once each
 	http    *http.Client
 	backoff time.Duration // the first wait after a failed poll; a test's shorter
 	typing  time.Duration // how often Typing is renewed; Telegram's lasts 5s
@@ -82,11 +94,9 @@ func New(test *config.Test) *Client {
 	dm := allow.Parse(config.Env("TELEGRAM_DM_USERS", ""))
 	switch {
 	case dm.None():
-		logx.Warnf("Telegram DMs are off: TELEGRAM_DM_USERS is none; the bot answers only in groups")
+		log.Warnf("DMs are off: TELEGRAM_DM_USERS is none; the bot answers only in groups")
 	case !dm.All && !dm.Admins && len(dm.IDs) == 0:
-		logx.Warnf("Telegram DMs are off: TELEGRAM_DM_USERS allows only mods, and Telegram has none; the bot answers only in groups")
-	default:
-		logx.Noticef("Telegram DMs: allowed from %s (TELEGRAM_DM_USERS)", dm)
+		log.Warnf("DMs are off: TELEGRAM_DM_USERS allows only mods, and Telegram has none; the bot answers only in groups")
 	}
 	return newClient(config.Env("TELEGRAM_API_URL", "https://api.telegram.org"), config.Env("TELEGRAM_BOT_TOKEN", ""), config.StateDir(), dm, test)
 }
@@ -94,7 +104,7 @@ func New(test *config.Test) *Client {
 // newClient is a client of the API at base, keeping the groups it is in in
 // stateDir ("" for the working directory).
 func newClient(base, token, stateDir string, dm allow.Policy, test *config.Test) *Client {
-	c := &Client{base: strings.TrimRight(base, "/"), token: token, dm: dm, http: httpx.Client(8),
+	c := &Client{base: strings.TrimRight(base, "/"), token: token, dm: dm, refused: allow.Refused{Setting: "TELEGRAM_DM_USERS", L: log}, http: httpx.Client(8),
 		backoff: time.Second, typing: 4 * time.Second, known: make(chan struct{}),
 		people: map[string]string{}, chats: map[string]map[string]string{}, groups: map[string]string{},
 		timers: map[string]time.Duration{}, moved: map[string]string{}, topics: map[string]map[string]bool{}, left: map[string]bool{}, sent: map[string]bool{},
@@ -120,7 +130,7 @@ type apiError struct {
 	MigrateTo  int64 // the chat's new ID, when a group became a supergroup
 }
 
-func (e *apiError) Error() string { return fmt.Sprintf("telegram: %d %s", e.Code, e.Desc) }
+func (e *apiError) Error() string { return fmt.Sprintf("%d %s", e.Code, e.Desc) }
 
 // call posts params as JSON to method and decodes the result into out.
 func (c *Client) call(ctx context.Context, method string, params, out any) error {
@@ -178,7 +188,7 @@ func (c *Client) post(ctx context.Context, method, ctype string, body io.Reader,
 		} `json:"parameters"`
 	}
 	if err := json.NewDecoder(io.LimitReader(resp.Body, 8<<20)).Decode(&r); err != nil {
-		return fmt.Errorf("telegram: %s: bad response (status %d)", method, resp.StatusCode)
+		return fmt.Errorf("%s: bad response (status %d)", method, resp.StatusCode)
 	}
 	if !r.OK {
 		return &apiError{Code: r.ErrorCode, Desc: r.Description, RetryAfter: r.Parameters.RetryAfter, MigrateTo: r.Parameters.MigrateTo}
@@ -187,7 +197,7 @@ func (c *Client) post(ctx context.Context, method, ctype string, body io.Reader,
 		return nil
 	}
 	if err := json.Unmarshal(r.Result, out); err != nil {
-		return fmt.Errorf("telegram: %s: malformed result", method)
+		return fmt.Errorf("%s: malformed result", method)
 	}
 	return nil
 }
@@ -237,7 +247,7 @@ func (c *Client) Run(ctx context.Context, handle func(bot.Received)) {
 	backoff := c.backoff
 	for ctx.Err() == nil && c.selfID() == "" {
 		if err := c.hello(ctx); err != nil {
-			logx.Warnf("telegram getMe failed: %v; retrying in %s", err, backoff)
+			log.Warnf("getMe failed: %v; retrying in %s", err, backoff)
 			if !sleep(ctx, backoff) {
 				return
 			}
@@ -251,7 +261,7 @@ func (c *Client) Run(ctx context.Context, handle func(bot.Received)) {
 			cctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
 			if err := c.call(cctx, "getUpdates", map[string]any{"offset": offset, "timeout": 0, "limit": 1}, nil); err != nil {
-				logx.Warnf("telegram: confirming the last updates failed: %v", err)
+				log.Warnf("confirming the last updates failed: %v", err)
 			}
 		}
 	}()
@@ -271,7 +281,7 @@ func (c *Client) Run(ctx context.Context, handle func(bot.Received)) {
 			} else {
 				backoff = min(2*backoff, 32*time.Second)
 			}
-			logx.Warnf("telegram getUpdates failed: %v; retrying in %s", err, wait)
+			log.Warnf("getUpdates failed: %v; retrying in %s", err, wait)
 			if !sleep(ctx, wait) {
 				return
 			}
@@ -281,7 +291,7 @@ func (c *Client) Run(ctx context.Context, handle func(bot.Received)) {
 		for _, u := range ups {
 			offset = max(offset, u.UpdateID+1)
 			func() {
-				defer logx.Recover("reading an update")
+				defer recoverLog("reading an update")
 				for _, r := range c.events(u) {
 					handle(r)
 				}
@@ -314,10 +324,10 @@ func (c *Client) hello(ctx context.Context) error {
 	c.username.Store(me.Username)
 	c.self.Store(strconv.FormatInt(me.ID, 10))
 	c.once.Do(func() { close(c.known) })
-	logx.Noticef("connected to Telegram as @%s", me.Username)
+	log.Noticef("connected as @%s", me.Username)
 	c.logRoster()
 	if me.CanJoin {
-		logx.Warnf("telegram: anyone can add the bot to a group, where they become an admin and so may DM it and schedule posts there; turn off Allow Groups with BotFather's /setjoingroups (switch it on briefly to add the bot to a group yourself)")
+		log.Warnf("anyone can add the bot to a group, where they become an admin and so may DM it and schedule posts there; turn off Allow Groups with BotFather's /setjoingroups (switch it on briefly to add the bot to a group yourself)")
 	}
 	c.publishCommands(ctx)
 	return nil
@@ -346,7 +356,7 @@ func (c *Client) publishCommands(ctx context.Context) {
 		menu = []map[string]string{}
 	}
 	if err := c.call(ctx, "setMyCommands", map[string]any{"commands": menu}, nil); err != nil {
-		logx.Warnf("telegram setMyCommands failed: %v", err)
+		log.Warnf("setMyCommands failed: %v", err)
 	}
 }
 

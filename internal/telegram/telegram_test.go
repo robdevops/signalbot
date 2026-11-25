@@ -475,7 +475,7 @@ func TestCanJoinGroupsWarning(t *testing.T) {
 		if err := f.client().hello(context.Background()); err != nil {
 			t.Fatal(err)
 		}
-		warned := strings.Contains(logs.String(), "<4>telegram: anyone can add the bot to a group") && strings.Contains(logs.String(), "/setjoingroups")
+		warned := strings.Contains(logs.String(), "<4>Telegram: anyone can add the bot to a group") && strings.Contains(logs.String(), "/setjoingroups")
 		if warned != canJoin {
 			t.Errorf("can_join_groups %v: logs %q", canJoin, logs)
 		}
