@@ -45,10 +45,22 @@ type part struct {
 // one message; the first message replies to the bot's own message replyTo
 // if it isn't 0 (sent anyway if that message is gone). mk's buttons go on
 // the last message, and with Silent every message is sent without a
-// notification. The first message after a slash command replaces its
-// "thinking…". It returns the IDs of the messages sent. A failure is
-// logged.
+// notification. While the core is answering a slash command (Answering),
+// the first message replaces that command's "thinking…"; any other send
+// in the chat is posted as usual. It returns the IDs of the messages sent.
+// A failure is logged.
 func (c *Client) Send(ch feature.Chat, text string, pics []feature.Picture, known map[string]string, replyTo int64, audio []byte, mk feature.Markup) (sent []int64) {
+	return c.post(ch, text, pics, known, replyTo, audio, mk, c.take(ch))
+}
+
+// post is Send with the first message replacing ix's "thinking…" if ix
+// isn't nil; if nothing is sent, the "thinking…" is taken away.
+func (c *Client) post(ch feature.Chat, text string, pics []feature.Picture, known map[string]string, replyTo int64, audio []byte, mk feature.Markup, ix *interaction) (sent []int64) {
+	defer func() {
+		if ix != nil { // not used: set to nil once it is
+			go c.unthink(ix)
+		}
+	}()
 	if n := utf8.RuneCountInString(text); n > maxReply {
 		logx.Warnf("reply truncated from %d chars", n)
 	}
@@ -86,7 +98,6 @@ func (c *Client) Send(ch feature.Chat, text string, pics []feature.Picture, know
 	for _, p := range parts {
 		msgs = append(msgs, msg{part: p})
 	}
-	ix := c.take(ch)
 	for i, m := range msgs {
 		payload := map[string]any{"content": m.text, "allowed_mentions": allowed(m.users)}
 		if i == len(msgs)-1 && len(mk.Buttons) > 0 {
@@ -290,8 +301,25 @@ func attachments(files []upload) []map[string]any {
 
 // components is buttons as Discord's action rows, at most 5 of 5, each
 // button's Data its custom_id, and a highlighted one primary (blurple)
-// where the rest are secondary (grey).
+// where the rest are secondary (grey). More than 5 rows are packed again,
+// in order, 5 buttons to a row; buttons past 25 are dropped, with a
+// warning.
 func components(buttons [][]feature.Button) []map[string]any {
+	if len(buttons) > 5 {
+		var all []feature.Button
+		for _, row := range buttons {
+			all = append(all, row...)
+		}
+		if len(all) > 25 {
+			logx.Warnf("discord: %d buttons, only the first 25 shown", len(all))
+			all = all[:25]
+		}
+		buttons = nil
+		for len(all) > 0 {
+			n := min(len(all), 5)
+			buttons, all = append(buttons, all[:n]), all[n:]
+		}
+	}
 	rows := []map[string]any{}
 	for _, row := range buttons[:min(len(buttons), 5)] {
 		var bs []map[string]any
@@ -383,8 +411,8 @@ func (c *Client) Edit(ch feature.Chat, sent int64, text string, pics []feature.P
 // which is no message, gets it as its reply instead, as does a message
 // when Discord refuses the emoji.
 func (c *Client) React(ch feature.Chat, msg feature.Message, emoji string) {
-	if c.waiting(ch, msg.Timestamp) {
-		c.Send(ch, emoji, nil, nil, 0, nil, feature.Markup{})
+	if ix, found := c.takeID(ch, msg.Timestamp); found {
+		c.post(ch, emoji, nil, nil, 0, nil, feature.Markup{}, ix)
 		return
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)

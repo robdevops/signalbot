@@ -4,6 +4,7 @@ import (
 	"cmp"
 	"context"
 	"encoding/json"
+	"math"
 	"regexp"
 	"slices"
 	"strings"
@@ -48,6 +49,7 @@ type message struct {
 	Content     string       `json:"content"`
 	Edited      string       `json:"edited_timestamp"`
 	Mentions    []user       `json:"mentions"`
+	Roles       []string     `json:"mention_roles"`
 	Attachments []attachment `json:"attachments"`
 	Reference   *struct {
 		MessageID string `json:"message_id"`
@@ -96,6 +98,8 @@ func (c *Client) events(t string, d json.RawMessage) []bot.Received {
 		}
 	case "GUILD_CREATE", "GUILD_DELETE":
 		return c.guild(d, t == "GUILD_DELETE")
+	case "GUILD_ROLE_CREATE", "GUILD_ROLE_UPDATE", "GUILD_ROLE_DELETE":
+		c.roleChanged(d, t == "GUILD_ROLE_DELETE")
 	case "CHANNEL_CREATE", "THREAD_CREATE":
 		var ch struct {
 			ID      string `json:"id"`
@@ -172,7 +176,7 @@ func chatOf(guild, channel, sender string) feature.Chat {
 // attachments and the quoted message's.
 func (c *Client) message(m *message, edited int64) feature.Message {
 	self := c.selfID()
-	body, mentioned := c.text(m)
+	body, mentioned := c.text(m, m.GuildID)
 	msg := feature.Message{Chat: chatOf(m.GuildID, m.ChannelID, m.Author.ID), Sender: prefix + m.Author.ID, Name: nameOf(m.Author, m.Member),
 		Text: body, Timestamp: snowflake(m.ID), Edited: edited}
 	var images, files []feature.Media
@@ -194,7 +198,7 @@ func (c *Client) message(m *message, edited int64) feature.Message {
 	replyToBot := false
 	if r := m.Referenced; m.Reference != nil && r != nil && r.Author != nil {
 		replyToBot = r.Author.ID == self || c.authorOf(snowflake(r.ID)) == prefix+self
-		text, _ := c.text(r)
+		text, _ := c.text(r, m.GuildID)
 		msg.Quote = &feature.Quote{Text: text, Author: nameOf(r.Author, r.Member), Bot: replyToBot, Sender: prefix + r.Author.ID, Sent: snowflake(r.ID)}
 		add(r, true)
 	} else if m.Reference != nil {
@@ -208,11 +212,30 @@ func (c *Client) message(m *message, edited int64) feature.Message {
 // mention is a user's mention in a message's text, <@id> or <@!id>.
 var mention = regexp.MustCompile(`<@!?([0-9]+)>`)
 
-// text is m's text with the bot's mention taken out and others' written
-// @Name; mentioned says the bot's was there.
-func (c *Client) text(m *message) (string, bool) {
+// roleMention is a role's mention in a message's text, <@&id>.
+var roleMention = regexp.MustCompile(`<@&([0-9]+)>`)
+
+// text is m's text, posted in guild, with the bot's mention taken out,
+// whether of the bot itself or of its own role there (which Discord's
+// autocomplete often picks), and others' written @Name; mentioned says
+// the bot's was there.
+func (c *Client) text(m *message, guild string) (string, bool) {
 	self, mentioned := c.selfID(), false
-	s := mention.ReplaceAllStringFunc(m.Content, func(s string) string {
+	c.mu.Lock()
+	role := c.botRoles[guild]
+	c.mu.Unlock()
+	s := m.Content
+	if role != "" {
+		mentioned = slices.Contains(m.Roles, role)
+		s = roleMention.ReplaceAllStringFunc(s, func(s string) string {
+			if roleMention.FindStringSubmatch(s)[1] == role {
+				mentioned = true
+				return ""
+			}
+			return s
+		})
+	}
+	s = mention.ReplaceAllStringFunc(s, func(s string) string {
 		uid := mention.FindStringSubmatch(s)[1]
 		if uid == self {
 			mentioned = true
@@ -321,7 +344,7 @@ func (c *Client) deleted(d json.RawMessage) []bot.Received {
 	if sender == "" || e.GuildID == "" && dmUser == "" {
 		return nil
 	}
-	r := bot.Deleted{Chat: chatOf(e.GuildID, e.ChannelID, dmUser), Sender: sender, Sent: snowflake(e.ID), At: at(time.Now())}
+	r := bot.Deleted{Chat: chatOf(e.GuildID, e.ChannelID, dmUser), Sender: sender, Sent: snowflake(e.ID), At: math.MaxInt64} // every version goes
 	if sender == prefix+c.selfID() {
 		r.Sender, r.Bot = "", true
 	}
@@ -381,6 +404,7 @@ func (c *Client) guild(d json.RawMessage, gone bool) []bot.Received {
 			ID   string `json:"id"`
 			Name string `json:"name"`
 		} `json:"threads"`
+		Roles []role `json:"roles"`
 	}
 	if json.Unmarshal(d, &g) != nil || g.Unavailable {
 		return nil
@@ -389,6 +413,7 @@ func (c *Client) guild(d json.RawMessage, gone bool) []bot.Received {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if gone {
+		delete(c.botRoles, g.ID)
 		for id, ch := range c.channels {
 			if ch.guild == g.ID {
 				c.leave(id)
@@ -397,11 +422,54 @@ func (c *Client) guild(d json.RawMessage, gone bool) []bot.Received {
 		}
 		return out
 	}
+	for _, r := range g.Roles {
+		c.noteRole(g.ID, r)
+	}
 	for _, ch := range slices.Concat(g.Channels, g.Threads) {
 		c.addChannel(ch.ID, channel{guild: g.ID, name: txt.SafeName(ch.Name), guildName: txt.SafeName(g.Name)})
 		out = append(out, bot.GroupChanged{Chat: feature.Chat{GroupID: prefix + ch.ID}})
 	}
 	return out
+}
+
+// role is a guild's role; one Discord made for a bot names it in its tags.
+type role struct {
+	ID   string `json:"id"`
+	Tags *struct {
+		BotID string `json:"bot_id"`
+	} `json:"tags"`
+}
+
+// noteRole remembers r if it is the bot's own role in guild, under c.mu.
+func (c *Client) noteRole(guild string, r role) {
+	if r.Tags == nil || r.Tags.BotID == "" || r.Tags.BotID != c.selfID() || r.ID == "" {
+		return
+	}
+	if _, ok := c.botRoles[guild]; ok || len(c.botRoles) < maxGroups {
+		c.botRoles[guild] = r.ID
+	}
+}
+
+// roleChanged notes a guild's role made, changed or deleted: the bot's
+// own, which a mention of addresses it.
+func (c *Client) roleChanged(d json.RawMessage, deleted bool) {
+	var e struct {
+		GuildID string `json:"guild_id"`
+		Role    role   `json:"role"`
+		RoleID  string `json:"role_id"`
+	}
+	if json.Unmarshal(d, &e) != nil || e.GuildID == "" {
+		return
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if deleted {
+		if c.botRoles[e.GuildID] == e.RoleID {
+			delete(c.botRoles, e.GuildID)
+		}
+		return
+	}
+	c.noteRole(e.GuildID, e.Role)
 }
 
 // Delivered readies a message a feature delivers as its sender, in its

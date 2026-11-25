@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math"
 	"mime"
 	"mime/multipart"
 	"net/http"
@@ -57,7 +58,8 @@ type fake struct {
 	public  bool              // the application's bot_public
 	nextID  int64
 	conns   chan *gwConn
-	noAck   bool // heartbeats go unanswered
+	noAck   bool                     // heartbeats go unanswered
+	hold    map[string]chan struct{} // "METHOD /path" to wait on before answering
 }
 
 type call struct {
@@ -76,7 +78,7 @@ type gwConn struct {
 }
 
 func newFake(t *testing.T) *fake {
-	f := &fake{t: t, results: map[string]string{}, errs: map[string][]int{}, nextID: 1300000000000000000, conns: make(chan *gwConn, 8)}
+	f := &fake{t: t, results: map[string]string{}, errs: map[string][]int{}, hold: map[string]chan struct{}{}, nextID: 1300000000000000000, conns: make(chan *gwConn, 8)}
 	f.srv = httptest.NewServer(http.HandlerFunc(f.serve))
 	t.Cleanup(f.srv.Close)
 	return f
@@ -123,7 +125,11 @@ func (f *fake) serve(w http.ResponseWriter, r *http.Request) {
 	f.nextID++
 	n := f.nextID
 	public := f.public
+	hold := f.hold[route]
 	f.mu.Unlock()
+	if hold != nil {
+		<-hold
+	}
 	switch {
 	case status == 429:
 		w.WriteHeader(429)
@@ -522,12 +528,12 @@ func TestEditsAndDeletes(t *testing.T) {
 		t.Fatalf("an embed's update %+v", rs)
 	}
 	d, ok := one(t, c.events("MESSAGE_DELETE", json.RawMessage(`{"id":"1200000000000000001",`+inGuild+`}`))).(bot.Deleted)
-	if !ok || d.Chat.GroupID != group || d.Sender != prefix+alice || d.Bot || d.Sent != 1200000000000000001 || d.At <= d.Sent {
+	if !ok || d.Chat.GroupID != group || d.Sender != prefix+alice || d.Bot || d.Sent != 1200000000000000001 || d.At != math.MaxInt64 {
 		t.Fatalf("delete %+v", d)
 	}
 	sent := c.Send(feature.Chat{GroupID: group}, "hello", nil, nil, 0, nil, feature.Markup{})
 	d, ok = one(t, c.events("MESSAGE_DELETE", json.RawMessage(`{"id":"`+id(sent[0])+`",`+inGuild+`}`))).(bot.Deleted)
-	if !ok || !d.Bot || d.Sent != sent[0] {
+	if !ok || !d.Bot || d.Sent != sent[0] || d.At != math.MaxInt64 {
 		t.Fatalf("the bot's own %+v", d)
 	}
 	if rs := c.events("MESSAGE_DELETE", json.RawMessage(`{"id":"1",`+inGuild+`}`)); len(rs) != 0 {
@@ -702,6 +708,24 @@ func TestPress(t *testing.T) {
 	if a := f.waitCalls("POST /webhooks/app1/itok", 1)[0]; a.Body["content"] != "7 days" || a.Body["flags"] != float64(64) {
 		t.Fatalf("answer %+v", a)
 	}
+
+	// The answer waits for the press to be acknowledged: Discord refuses
+	// it before.
+	release := make(chan struct{})
+	f.mu.Lock()
+	f.hold["POST /interactions/1250000000000000009/itok2/callback"] = release
+	f.mu.Unlock()
+	p = one(t, c.events("INTERACTION_CREATE", json.RawMessage(`{"id":"1250000000000000009","application_id":"app1","type":3,"token":"itok2",`+inGuild+
+		`,"member":{"user":{"id":"`+alice+`","username":"alice"}},"message":{"id":"1200000000000000004"},"data":{"custom_id":"rain 30d","component_type":2}}`))).(bot.Pressed)
+	f.waitCalls("POST /interactions/1250000000000000009/itok2/callback", 1)
+	p.Answer("30 days")
+	time.Sleep(50 * time.Millisecond)
+	got := len(f.callsTo("POST /webhooks/app1/itok2"))
+	close(release)
+	if got != 0 {
+		t.Fatal("answered before the press was acknowledged")
+	}
+	f.waitCalls("POST /webhooks/app1/itok2", 1)
 }
 
 // A slash command is an addressed message, "/name text", acknowledged with
@@ -721,7 +745,9 @@ func TestSlashCommand(t *testing.T) {
 	if a := f.waitCalls("POST /interactions/1250000000000000002/tok1250000000000000002/callback", 1)[0]; a.Body["type"] != float64(5) {
 		t.Fatalf("ack %+v", a)
 	}
+	c.Answering(m.Chat, m.Timestamp)
 	sent := c.Send(m.Chat, "hi, I'm Botty", nil, nil, 0, nil, feature.Markup{})
+	c.Answered(m.Chat)
 	o := f.callsTo("PATCH /webhooks/app1/tok1250000000000000002/messages/@original")
 	if len(sent) != 1 || len(o) != 1 || o[0].Body["content"] != "hi, I'm Botty" || len(f.callsTo("POST /channels/"+dmChan+"/messages")) != 0 {
 		t.Fatalf("sent %v; calls %v", sent, f.routes())
@@ -739,6 +765,130 @@ func TestSlashCommand(t *testing.T) {
 	c.React(m.Chat, m, "👍")
 	if o := f.waitCalls("PATCH /webhooks/app1/tok1250000000000000004/messages/@original", 1)[0]; o.Body["content"] != "👍" {
 		t.Fatalf("reaction %+v", o)
+	}
+
+	// One the core answers with nothing loses its "thinking…" at once.
+	c.pending = time.Hour
+	m = load(t, cmd("1250000000000000005"))
+	c.Answering(m.Chat, m.Timestamp)
+	c.Answered(m.Chat)
+	f.waitCalls("DELETE /webhooks/app1/tok1250000000000000005/messages/@original", 1)
+}
+
+// Each slash command pending in a chat keeps its own interaction: only the
+// answer to it fills its "thinking…", and any other send in the chat, such
+// as a timer's post or the answer to someone else's message, is posted as
+// usual.
+func TestSlashCommandsPending(t *testing.T) {
+	f := newFake(t)
+	c := connected(f.client())
+	c.pending = time.Hour
+	cmd := func(iid, who string) feature.Message {
+		return load(t, one(t, c.events("INTERACTION_CREATE", json.RawMessage(`{"id":"`+iid+`","application_id":"app1","type":2,"token":"tok`+iid+`",`+inGuild+
+			`,"member":{"user":{"id":"`+who+`","username":"u`+who+`"}},"data":{"name":"hello","type":1}}`))))
+	}
+	a, b := cmd("1250000000000000011", alice), cmd("1250000000000000012", bob)
+	ch := a.Chat
+	posts := "POST /channels/" + chanID + "/messages"
+	origA := "PATCH /webhooks/app1/tok1250000000000000011/messages/@original"
+	origB := "PATCH /webhooks/app1/tok1250000000000000012/messages/@original"
+
+	c.Send(ch, "a timer's post", nil, nil, 0, nil, feature.Markup{})
+	c.Answering(ch, 1200000000000000001) // someone's message, not a command
+	c.Send(ch, "an answer to a message", nil, nil, 0, nil, feature.Markup{})
+	c.Answered(ch)
+	if n := len(f.callsTo(posts)); n != 2 || len(f.callsTo(origA))+len(f.callsTo(origB)) != 0 {
+		t.Fatalf("other sends took a command's interaction: %v", f.routes())
+	}
+
+	c.Answering(ch, b.Timestamp)
+	c.Send(ch, "for bob", nil, nil, 0, nil, feature.Markup{})
+	c.Send(ch, "for bob, more", nil, nil, 0, nil, feature.Markup{})
+	c.Answered(ch)
+	c.Send(ch, "between", nil, nil, 0, nil, feature.Markup{})
+	c.Answering(ch, a.Timestamp)
+	c.Send(ch, "for alice", nil, nil, 0, nil, feature.Markup{})
+	c.Answered(ch)
+
+	if o := f.callsTo(origA); len(o) != 1 || o[0].Body["content"] != "for alice" {
+		t.Fatalf("alice's: %+v", o)
+	}
+	if o := f.callsTo(origB); len(o) != 1 || o[0].Body["content"] != "for bob" {
+		t.Fatalf("bob's: %+v", o)
+	}
+	var texts []string
+	for _, p := range f.callsTo(posts) {
+		texts = append(texts, fmt.Sprint(p.Body["content"]))
+	}
+	if strings.Join(texts, "|") != "a timer's post|an answer to a message|for bob, more|between" {
+		t.Fatalf("posts %q", texts)
+	}
+	if r := f.routes(); strings.Contains(strings.Join(r, " "), "DELETE") {
+		t.Fatalf("a \"thinking…\" taken away: %v", r)
+	}
+}
+
+// More than 5 rows of buttons are packed again 5 to a row, in order, up to
+// 25.
+func TestComponentsRepacked(t *testing.T) {
+	buf := captureLogs(t)
+	var rows [][]feature.Button
+	for i := range 11 {
+		rows = append(rows, []feature.Button{{Label: fmt.Sprint(2 * i), Data: "a"}, {Label: fmt.Sprint(2*i + 1), Data: "b"}})
+	}
+	got := components(rows)
+	if len(got) != 5 {
+		t.Fatalf("%d rows", len(got))
+	}
+	var labels []string
+	for _, r := range got {
+		bs := r["components"].([]map[string]any)
+		if len(bs) > 5 {
+			t.Fatalf("a row of %d", len(bs))
+		}
+		for _, b := range bs {
+			labels = append(labels, b["label"].(string))
+		}
+	}
+	if len(labels) != 22 || labels[0] != "0" || labels[5] != "5" || labels[21] != "21" {
+		t.Fatalf("labels %v", labels)
+	}
+	if strings.Contains(buf.String(), "buttons") {
+		t.Fatalf("warned with none dropped: %s", buf.String())
+	}
+	rows = append(rows, rows...)
+	if got := components(rows); len(got) != 5 || !strings.Contains(buf.String(), "44 buttons") {
+		t.Fatalf("%d rows; log %q", len(got), buf.String())
+	}
+	if got := components(rows[:2]); len(got) != 2 {
+		t.Fatalf("2 rows became %d", len(got))
+	}
+}
+
+// Mentioning the bot's own role, as Discord's autocomplete often does,
+// addresses it as a mention of the bot does, and is taken out of the
+// text; another role's mention isn't.
+func TestRoleMention(t *testing.T) {
+	c := connected(newFake(t).client())
+	c.events("GUILD_CREATE", json.RawMessage(`{"id":"`+guild+`","name":"Test server","channels":[{"id":"`+chanID+`","name":"general","type":0}],"threads":[],`+
+		`"roles":[{"id":"700000000000000001","name":"everyone"},{"id":"700000000000000002","name":"Botty","tags":{"bot_id":"`+botID+`"}},{"id":"700000000000000003","name":"Other","tags":{"bot_id":"7"}}]}`))
+	msg := func(content, roles string) bot.Received {
+		return one(t, c.events("MESSAGE_CREATE", json.RawMessage(`{"id":"1200000000000000001",`+inGuild+`,`+fromA+`,"content":"`+content+`","mention_roles":[`+roles+`]}`)))
+	}
+	if m := load(t, msg("<@&700000000000000002> what is up", `"700000000000000002"`)); m.Text != "what is up" || !m.Addressed {
+		t.Fatalf("its role: %+v", m)
+	}
+	if ch, ok := msg("<@&700000000000000003> hi", `"700000000000000003"`).(bot.Chatter); !ok || ch.Message.Text != "<@&700000000000000003> hi" {
+		t.Fatalf("another bot's role: %+v", ch)
+	}
+	// A role made later, such as when the bot's is made again.
+	c.events("GUILD_ROLE_CREATE", json.RawMessage(`{"guild_id":"`+guild+`","role":{"id":"700000000000000004","tags":{"bot_id":"`+botID+`"}}}`))
+	if m := load(t, msg("hi <@&700000000000000004>", `"700000000000000004"`)); m.Text != "hi" || !m.Addressed {
+		t.Fatalf("a new role: %+v", m)
+	}
+	c.events("GUILD_ROLE_DELETE", json.RawMessage(`{"guild_id":"`+guild+`","role_id":"700000000000000004"}`))
+	if _, ok := msg("hi <@&700000000000000004>", `"700000000000000004"`).(bot.Chatter); !ok {
+		t.Fatal("a deleted role still addresses the bot")
 	}
 }
 
