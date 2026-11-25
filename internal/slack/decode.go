@@ -223,12 +223,19 @@ func (c *Client) received(e, m *event, edited int64) (bot.Received, bool) {
 		c.learnName(m.User, cmp.Or(m.Profile.DisplayName, m.Profile.RealName))
 	}
 	msg := c.message(ch, m, edited)
+	dm := ch.GroupID == ""
 	switch {
 	case msg.Text == "" && len(msg.Media) == 0:
+		return nil, false
+	case dm && !c.dmReader(m.User):
 		return nil, false
 	case msg.Addressed || m.ThreadTS != "" && m.ThreadTS != m.TS && c.sentByBot(e.Channel, m.ThreadTS):
 		msg.Addressed = true
 		return bot.Incoming{Chat: ch, Load: func(ctx context.Context, learn func(name, id string)) (feature.Message, bool) {
+			if dm && !c.dmAllowed(ctx, m.User, false) {
+				refused(m.User)
+				return feature.Message{}, false
+			}
 			c.names(ctx, append([]string{m.User}, mentions(m.Text)...))
 			full := c.message(ch, m, edited) // with the names just fetched
 			full.Addressed = true
@@ -363,7 +370,7 @@ func (c *Client) reacted(e *event) (bot.Received, bool) {
 		return nil, false
 	}
 	ch := c.chatIn(e.Item.Channel, "", c.threadOf(e.Item.Channel, e.Item.TS), e.Item.TS, e.User)
-	if ch == (feature.Chat{}) {
+	if ch == (feature.Chat{}) || !c.dmGate(ch, e.User) {
 		return nil, false
 	}
 	byBot := e.ItemUser != "" && e.ItemUser == c.selfID()
@@ -436,7 +443,7 @@ func (c *Client) pressed(a *action) []bot.Received {
 		msgTS, thread = cmp.Or(a.Message.TS, msgTS), cmp.Or(a.Message.ThreadTS, thread)
 	}
 	ch := c.chatIn(a.Channel.ID, "", thread, msgTS, a.User.ID)
-	if ch == (feature.Chat{}) || msgTS == "" {
+	if ch == (feature.Chat{}) || msgTS == "" || !c.dmGate(ch, a.User.ID) {
 		return nil
 	}
 	if c.nameOf(a.User.ID) == "" {
@@ -456,14 +463,20 @@ func (c *Client) pressed(a *action) []bot.Received {
 
 // command is a slash command as the core gets it: a message "/name args"
 // addressed to the bot, in the channel it was used in. In a DM it is the
-// user's DM with the bot, whichever DM it was typed in.
+// user's DM with the bot, whichever DM it was typed in, gated as a DM
+// message is; Slack has its acknowledgement, which the envelope's gave,
+// either way.
 func (c *Client) command(s *slash) []bot.Received {
 	name := strings.TrimPrefix(s.Command, "/")
 	if name == "" || s.UserID == "" || s.ChannelID == "" || s.UserID == c.selfID() {
 		return nil
 	}
 	ch := feature.Chat{GroupID: prefix + s.ChannelID}
-	if strings.HasPrefix(s.ChannelID, "D") {
+	dm := strings.HasPrefix(s.ChannelID, "D")
+	if dm {
+		if !c.dmReader(s.UserID) {
+			return nil
+		}
 		ch = feature.Chat{User: prefix + s.UserID}
 	} else {
 		c.seen(s.ChannelID, s.UserID)
@@ -471,6 +484,10 @@ func (c *Client) command(s *slash) []bot.Received {
 	text, _ := c.plain(strings.TrimSpace("/" + strings.ToLower(name) + " " + s.Text))
 	user := s.UserID
 	return []bot.Received{bot.Incoming{Chat: ch, Load: func(ctx context.Context, learn func(name, id string)) (feature.Message, bool) {
+		if dm && !c.dmAllowed(ctx, user, false) {
+			refused(user)
+			return feature.Message{}, false
+		}
 		c.names(ctx, []string{user})
 		n := c.nameOf(user)
 		if ch.GroupID != "" && n != "" {
@@ -520,10 +537,10 @@ func (c *Client) names(ctx context.Context, users []string) {
 		if u == "" || u == c.selfID() || c.nameOf(u) != "" {
 			continue
 		}
-		if n, err := c.userInfo(ctx, u); err != nil {
+		if in, err := c.userInfo(ctx, u); err != nil {
 			logx.Debugf("slack users.info failed: %v", err)
 		} else {
-			c.learnName(u, n)
+			c.learnName(u, in.name)
 		}
 	}
 }
@@ -553,23 +570,45 @@ func (c *Client) namesLater(users []string) {
 	}()
 }
 
-// userInfo is a user's display name, by users.info.
-func (c *Client) userInfo(ctx context.Context, user string) (string, error) {
+// userInfo is a user as users.info says: their display name, and whether
+// they are an owner or admin of the bot's workspace, which is kept as
+// their verdict for verdictAge. Someone from another workspace, in a
+// channel shared with it, is no admin of the bot's.
+func (c *Client) userInfo(ctx context.Context, user string) (info, error) {
 	var r struct {
 		User struct {
-			Name     string `json:"name"`
-			RealName string `json:"real_name"`
-			Profile  struct {
+			Name           string `json:"name"`
+			RealName       string `json:"real_name"`
+			TeamID         string `json:"team_id"`
+			IsAdmin        bool   `json:"is_admin"`
+			IsOwner        bool   `json:"is_owner"`
+			IsPrimaryOwner bool   `json:"is_primary_owner"`
+			IsStranger     bool   `json:"is_stranger"`
+			Enterprise     struct {
+				ID string `json:"enterprise_id"`
+			} `json:"enterprise_user"`
+			Profile struct {
 				DisplayName string `json:"display_name"`
 				RealName    string `json:"real_name"`
 			} `json:"profile"`
 		} `json:"user"`
 	}
 	if err := c.form(ctx, "users.info", c.token, url.Values{"user": {user}}, &r); err != nil {
-		return "", err
+		return info{}, err
 	}
 	u := r.User
-	return txt.SafeName(cmp.Or(u.Profile.DisplayName, u.Profile.RealName, u.RealName, u.Name)), nil
+	team, ent := c.teamOf()
+	ours := !u.IsStranger && (u.TeamID == "" || team == "" || u.TeamID == team || ent != "" && u.Enterprise.ID == ent)
+	in := info{name: txt.SafeName(cmp.Or(u.Profile.DisplayName, u.Profile.RealName, u.RealName, u.Name)),
+		admin: ours && (u.IsAdmin || u.IsOwner || u.IsPrimaryOwner)}
+	c.verdicts.put(user, in.admin)
+	return in, nil
+}
+
+// info is a user as users.info says.
+type info struct {
+	name  string
+	admin bool // an owner or admin of the bot's workspace
 }
 
 // seen notes that user posted in channel, for Groups, Delivered's members
@@ -592,7 +631,9 @@ func (c *Client) seen(channel, user string) {
 
 // Delivered readies a message a feature delivers as its sender, in its
 // slot: its sender's name, the bot's @name taken out, and in a channel or
-// a thread in one its members, as members lists them.
+// a thread in one its members, as members lists them. In a DM it goes
+// only if its user may DM the bot now, asking users.info afresh when
+// that decides it.
 func (c *Client) Delivered(ctx context.Context, msg feature.Message) (bot.Ready, bool) {
 	wait, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
@@ -603,6 +644,10 @@ func (c *Client) Delivered(ctx context.Context, msg feature.Message) (bot.Ready,
 	sender := strings.TrimPrefix(msg.Sender, prefix)
 	msg.Name = cmp.Or(msg.Name, c.nameOf(sender))
 	var r bot.Ready
+	if msg.Chat.GroupID == "" && !c.dmAllowed(wait, strings.TrimPrefix(msg.Chat.User, prefix), true) {
+		logx.Infof("delivered message dropped: its sender may no longer DM the bot (SLACK_DM_USER_IDS)")
+		return bot.Ready{}, false
+	}
 	if msg.Chat.GroupID != "" {
 		channel, _ := c.channelOf(msg.Chat)
 		if !c.stillIn(wait, sender, channel) {
@@ -654,8 +699,8 @@ func (c *Client) stillIn(ctx context.Context, user, channel string) bool {
 	return true
 }
 
-// Reachable reports whether the bot may still post in chat on its own: a
-// DM, or a channel it hasn't been removed from.
+// Reachable reports whether the bot may still post in chat on its own: the
+// DM of someone who may DM it, or a channel it hasn't been removed from.
 func (c *Client) Reachable(ctx context.Context, chat feature.Chat) bool {
 	wait, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
@@ -664,7 +709,7 @@ func (c *Client) Reachable(ctx context.Context, chat feature.Chat) bool {
 		return false
 	}
 	if chat.GroupID == "" {
-		return true
+		return c.dmAllowed(wait, strings.TrimPrefix(chat.User, prefix), false)
 	}
 	channel, _ := c.channelOf(chat)
 	c.mu.Lock()
@@ -676,11 +721,18 @@ func (c *Client) Reachable(ctx context.Context, chat feature.Chat) bool {
 // users.conversations, named "#name" and sorted by name; threads are not
 // listed. If Slack refuses, such as for an app installed without
 // channels:read and groups:read, it lists the channels where user has been
-// seen instead, named by their IDs.
+// seen instead, named by their IDs. Each is Admin if user is an owner or
+// admin of the workspace (users.info, kept for verdictAge; a failed lookup
+// counts as no admin), and none Mod: Slack doesn't tell a bot who manages
+// a channel.
 func (c *Client) Groups(ctx context.Context, user string) ([]feature.Group, error) {
 	user = strings.TrimPrefix(user, prefix)
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
+	admin, err := c.isAdmin(ctx, user)
+	if err != nil {
+		logx.Warnf("slack users.info failed, so a user is taken for no admin of their channels: %v", err)
+	}
 	mine, err := c.conversations(ctx, "")
 	var theirs map[string]string
 	if err == nil {
@@ -694,13 +746,13 @@ func (c *Client) Groups(ctx context.Context, user string) ([]feature.Group, erro
 		} else {
 			logx.Warnf("slack users.conversations failed: %v; listing the channels seen instead", err)
 		}
-		return c.seenGroups(user), nil
+		return c.seenGroups(user, admin), nil
 	}
 	var out []feature.Group
 	c.mu.Lock()
 	for id, name := range theirs {
 		if _, ok := mine[id]; ok && !c.left[id] {
-			out = append(out, feature.Group{ID: prefix + id, Name: "#" + cmp.Or(txt.SafeName(name), id)})
+			out = append(out, feature.Group{ID: prefix + id, Name: "#" + cmp.Or(txt.SafeName(name), id), Admin: admin})
 		}
 	}
 	c.mu.Unlock()
@@ -749,13 +801,14 @@ func (c *Client) conversations(ctx context.Context, user string) (map[string]str
 }
 
 // seenGroups are the channels where user has been seen, named by their
-// IDs, for when Slack won't list them.
-func (c *Client) seenGroups(user string) []feature.Group {
+// IDs, for when Slack won't list them, each Admin if user is a workspace
+// admin.
+func (c *Client) seenGroups(user string, admin bool) []feature.Group {
 	c.mu.Lock()
 	var out []feature.Group
 	for ch, people := range c.chans {
 		if people[user] && !c.left[ch] {
-			out = append(out, feature.Group{ID: prefix + ch, Name: ch})
+			out = append(out, feature.Group{ID: prefix + ch, Name: ch, Admin: admin})
 		}
 	}
 	c.mu.Unlock()

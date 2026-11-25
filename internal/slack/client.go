@@ -23,6 +23,7 @@ import (
 	"github.com/robdevops/signalbot/internal/bot"
 	"github.com/robdevops/signalbot/internal/config"
 	"github.com/robdevops/signalbot/internal/feature"
+	"github.com/robdevops/signalbot/internal/kit/allow"
 	"github.com/robdevops/signalbot/internal/kit/httpx"
 	"github.com/robdevops/signalbot/internal/kit/logx"
 	"github.com/robdevops/signalbot/internal/kit/txt"
@@ -52,6 +53,10 @@ type Client struct {
 	known  chan struct{}
 	once   sync.Once
 	hellos atomic.Int64 // Socket Mode connections made
+	team   atomic.Value // [2]string: the bot's workspace and any Enterprise Grid org, as auth.test says
+
+	dm       allow.Policy // SLACK_DM_USER_IDS: who may DM the bot
+	verdicts verdicts     // whether people are workspace admins, as users.info lately said
 
 	watch    atomic.Bool                   // the core has an event hook
 	commands atomic.Pointer[[]bot.Command] // the commands features registered, for the app manifest
@@ -93,15 +98,22 @@ func Check() error {
 }
 
 // New makes the client its settings say: SLACK_BOT_TOKEN, the bot's token;
-// SLACK_APP_TOKEN, the app-level token Socket Mode needs; and SLACK_API_URL,
-// by default Slack's. The bot answers anyone who DMs it and any channel it
-// is in: the workspace's settings decide who can reach it.
+// SLACK_APP_TOKEN, the app-level token Socket Mode needs; SLACK_API_URL,
+// by default Slack's; and SLACK_DM_USER_IDS, who may DM the bot, by
+// default the workspace's owners and admins. The bot answers anyone in
+// any channel it is in: the workspace's settings decide who can reach it.
 func New(test *config.Test) *Client {
-	return newClient(config.Env("SLACK_API_URL", "https://slack.com/api"), config.Env("SLACK_BOT_TOKEN", ""), config.Env("SLACK_APP_TOKEN", ""), config.StateDir(), test)
+	dm := allow.Parse(config.Env("SLACK_DM_USER_IDS", ""))
+	if dm.None() {
+		logx.Warnf("Slack DMs are off: SLACK_DM_USER_IDS is none; the bot answers only in channels")
+	} else {
+		logx.Noticef("Slack DMs: allowed from %s (SLACK_DM_USER_IDS)", dm)
+	}
+	return newClient(config.Env("SLACK_API_URL", "https://slack.com/api"), config.Env("SLACK_BOT_TOKEN", ""), config.Env("SLACK_APP_TOKEN", ""), config.StateDir(), dm, test)
 }
 
-func newClient(base, token, appToken, stateDir string, test *config.Test) *Client {
-	return &Client{base: strings.TrimRight(base, "/"), token: token, appToken: appToken, stateDir: stateDir, http: httpx.Client(8),
+func newClient(base, token, appToken, stateDir string, dm allow.Policy, test *config.Test) *Client {
+	return &Client{base: strings.TrimRight(base, "/"), token: token, appToken: appToken, stateDir: stateDir, dm: dm, http: httpx.Client(8),
 		backoff: time.Second, slow: 10 * time.Minute, settle: 2 * time.Second, known: make(chan struct{}),
 		people: map[string]string{}, asking: map[string]bool{}, ims: map[string]string{}, imUser: map[string]string{},
 		chans: map[string]map[string]bool{}, left: map[string]bool{}, sent: map[string]bool{}, thread: map[string]string{}, blocks: map[string][]any{}, test: test}
@@ -218,6 +230,13 @@ func (c *Client) postOnce(ctx context.Context, method, token, ctype string, body
 		return fmt.Errorf("slack: %s: malformed result", method)
 	}
 	return nil
+}
+
+// teamOf is the bot's workspace and Enterprise Grid org, as auth.test
+// said, or "" for either it didn't.
+func (c *Client) teamOf() (team, enterprise string) {
+	t, _ := c.team.Load().([2]string)
+	return t[0], t[1]
 }
 
 // selfID is the bot's user ID, without the prefix, or "" until auth.test
@@ -337,8 +356,10 @@ func (c *Client) hello(ctx context.Context) error {
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 	var me struct {
-		UserID string `json:"user_id"`
-		User   string `json:"user"`
+		UserID       string `json:"user_id"`
+		User         string `json:"user"`
+		TeamID       string `json:"team_id"`
+		EnterpriseID string `json:"enterprise_id"`
 	}
 	if err := c.form(ctx, "auth.test", c.token, nil, &me); err != nil {
 		return err
@@ -347,11 +368,12 @@ func (c *Client) hello(ctx context.Context) error {
 		return errors.New("slack: auth.test: no user ID: is SLACK_BOT_TOKEN a bot token?")
 	}
 	name := me.User
+	c.team.Store([2]string{me.TeamID, me.EnterpriseID})
 	u, err := c.userInfo(ctx, me.UserID)
 	if err != nil {
 		logx.Debugf("slack users.info for the bot failed: %v", err)
-	} else if u != "" {
-		name = u
+	} else if u.name != "" {
+		name = u.name
 	}
 	c.handle.Store(me.User)
 	c.name.Store(name)
@@ -375,8 +397,8 @@ func (c *Client) rename(ctx context.Context) {
 		logx.Debugf("slack users.info for the bot failed: %v", err)
 		return
 	}
-	if u != "" {
-		c.name.Store(u)
+	if u.name != "" {
+		c.name.Store(u.name)
 	}
 	c.named.Store(true)
 	c.writeManifest()
