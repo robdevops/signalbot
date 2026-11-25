@@ -26,7 +26,7 @@ func TestScenarioAllNetworks(t *testing.T) {
 	t.Cleanup(slAPI.Close)
 	h := startBot(t, world{Env: map[string]string{
 		"TELEGRAM_BOT_TOKEN": tgToken, "TELEGRAM_API_URL": tgAPI.URL,
-		"DISCORD_BOT_TOKEN": dcToken, "DISCORD_API_URL": dcAPI.URL,
+		"DISCORD_BOT_TOKEN": dcToken, "DISCORD_API_URL": dcAPI.URL, "DISCORD_DM_USER_IDS": dcBob,
 		"SLACK_BOT_TOKEN": slToken, "SLACK_APP_TOKEN": slAppToken, "SLACK_API_URL": slAPI.URL,
 	}})
 	h.waitLog("on signal and telegram and discord and slack at once")

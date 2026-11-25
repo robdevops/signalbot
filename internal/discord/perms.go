@@ -124,6 +124,7 @@ func (c *Client) guildUpdated(d json.RawMessage) {
 	defer c.mu.Unlock()
 	if c.guilds[g.ID] != nil {
 		c.noteGuild(g.ID, g.Name, g.Owner, g.Roles)
+		c.forgetVerdicts()
 	}
 }
 
@@ -249,7 +250,11 @@ func (c *Client) perms(g *guildInfo, ch channel, user string, roles []string) ui
 // any timeout, and a private thread, or a channel the bot knows only from
 // a message, where it has also seen them post. Where their roles can't be
 // read, it lists only the channels it has seen them post in (Delivered
-// checks again before posting); if ctx ends first, it fails.
+// checks again before posting); if ctx ends first, it fails. Each is
+// marked Admin or Mod by user's permissions in that channel, its
+// overwrites counted: Administrator or Manage Server make an admin,
+// Manage Channels, Manage Messages, Moderate Members, Kick Members or Ban
+// Members a mod, and the owner and an administrator are both.
 func (c *Client) Groups(ctx context.Context, user string) ([]feature.Group, error) {
 	uid, ok := strings.CutPrefix(user, prefix)
 	if !ok || snowflake(uid) <= 0 {
@@ -301,7 +306,11 @@ func (c *Client) Groups(ctx context.Context, user string) ([]feature.Group, erro
 		if gn := cmp.Or(g.nameOr(), ch.guildName); gn != "" {
 			name += " (" + gn + ")"
 		}
-		out = append(out, feature.Group{ID: prefix + id, Name: name})
+		grp := feature.Group{ID: prefix + id, Name: name}
+		if ok && g != nil && !s.failed && s.in {
+			grp.Admin, grp.Mod = rank(c.perms(g, ch, uid, s.roles))
+		}
+		out = append(out, grp)
 	}
 	c.mu.Unlock()
 	slices.SortFunc(out, func(a, b feature.Group) int {
