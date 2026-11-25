@@ -289,7 +289,8 @@ func (c *Client) ready(d json.RawMessage) bool {
 }
 
 // checkApp asks, once, for the bot's application: its ID, and whether
-// anyone may add the bot to a server, which is warned about.
+// anyone may add the bot to a server, or install it on their own account
+// and use its commands anywhere, each warned about.
 func (c *Client) checkApp(ctx context.Context) error {
 	if c.checked.Load() {
 		return nil
@@ -297,8 +298,9 @@ func (c *Client) checkApp(ctx context.Context) error {
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 	var app struct {
-		ID     string `json:"id"`
-		Public bool   `json:"bot_public"`
+		ID     string                     `json:"id"`
+		Public bool                       `json:"bot_public"`
+		Types  map[string]json.RawMessage `json:"integration_types_config"` // "1" is user install
 	}
 	err := c.call(ctx, http.MethodGet, "/applications/@me", nil, &app)
 	switch {
@@ -314,6 +316,9 @@ func (c *Client) checkApp(ctx context.Context) error {
 	}
 	if app.Public {
 		logx.Warnf("discord: anyone can add this bot to their server: in the developer portal, under your application's Installation and Bot, turn off Public Bot")
+	}
+	if _, ok := app.Types["1"]; ok {
+		logx.Warnf("discord: anyone can install this bot on their own account and use its commands anywhere, without sharing a server: in the developer portal, under your application's Installation, untick User Install")
 	}
 	return nil
 }

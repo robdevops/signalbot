@@ -341,6 +341,23 @@ func TestConnectAndResume(t *testing.T) {
 	}
 }
 
+// With User Install on, anyone could use the bot's commands without
+// sharing a server with it, which is warned about.
+func TestUserInstallWarned(t *testing.T) {
+	for _, types := range []string{`{"0":{}}`, `{"0":{},"1":{}}`} {
+		logs := captureLogs(t)
+		f := newFake(t)
+		f.results["GET /applications/@me"] = `{"id":"app1","bot_public":false,"integration_types_config":` + types + `}`
+		c := f.client()
+		if err := c.checkApp(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+		if warned := strings.Contains(logs.String(), "untick User Install"); warned != strings.Contains(types, `"1"`) {
+			t.Fatalf("with %s, logs:\n%s", types, logs)
+		}
+	}
+}
+
 // The commands Discord takes become slash commands, each with an optional
 // text option.
 func TestSlashCommandList(t *testing.T) {
