@@ -10,6 +10,9 @@ Every setting, read from the environment (`/etc/signalbot.env` in the install). 
 | `TELEGRAM_API_URL` | `https://api.telegram.org` | The Bot API's base URL, for a self-hosted [Bot API server](https://github.com/tdlib/telegram-bot-api) |
 | `DISCORD_BOT_TOKEN` | empty | The bot's token from Discord's developer portal (your application, Bot, Reset Token). Set, the bot answers on Discord instead of Signal; with another network's setting too, on each at once. Never logged; see [Discord](../README.md#discord) |
 | `DISCORD_API_URL` | `https://discord.com/api/v10` | Discord's REST API base URL; the gateway's address comes from it. Only tests change it |
+| `SLACK_BOT_TOKEN` | empty | The Slack app's Bot User OAuth Token, `xoxb-…`. Set, the bot answers on Slack, alongside any other network whose setting is set. Never logged; see [Slack](../README.md#slack) |
+| `SLACK_APP_TOKEN` | empty | The Slack app's app-level token, `xapp-…`, with `connections:write`, for Socket Mode; required with `SLACK_BOT_TOKEN`, and a missing one stops the bot at start. Never logged |
+| `SLACK_API_URL` | `https://slack.com/api` | Slack's Web API base URL |
 | `MODEL` | `deepseek/deepseek-v4.1-flash-1017` | The model's name at the API: on OpenRouter as `provider/model` |
 | `MODEL_API_KEY` | empty | API key for the model's API, such as your [OpenRouter](https://openrouter.ai) key; none is sent when empty. With neither this nor `MODEL_API_URL` the bot has [no model](MODELS.md#no-model) |
 | `MODEL_API_URL` | `https://openrouter.ai/api/v1` | Base URL of an OpenAI-compatible chat completions API; see [Language models](MODELS.md#other-providers) |

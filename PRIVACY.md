@@ -91,6 +91,21 @@ On Discord (`DISCORD_BOT_TOKEN` set) the above holds, with these differences:
 - **A slash command's or a button's answer** goes through Discord's interaction, whose token works for 15 minutes; the bot keeps it in memory only that long. A button's answer is shown only to whoever pressed it.
 - **The token** is sent in a header, never in a URL, and never logged.
 
+## Slack
+
+On Slack (`SLACK_BOT_TOKEN` set) the above holds, with these differences:
+
+- **On several networks at once,** each chat is kept apart as on Signal and Telegram together: a Slack chat's history, context and budget are never shown in a chat on another network, or the reverse.
+- **Not end-to-end encrypted.** Slack's servers see every message in the bot's DMs and channels, every reply, and every file it uploads (a chart, for one); the workspace's owners may export or keep them under its retention settings. Slack's own policy, and the workspace's, apply to them.
+- **What the bot sees.** Every message in a channel it is in, and every DM to it, kept as context as above. It is in a channel only once someone invites it.
+- **Names and channels.** The bot asks Slack for a person's display name (`users.info`) and keeps, in memory, the names of people it has seen and which channels they posted in, and each DM's channel; a restart clears them. It never reads a channel's name or member list.
+- **Files** are fetched from Slack's file host with the bot token, only while answering the message that has them, and never from any other host.
+- **Who it answers.** Anyone in the workspace who DMs the bot or uses its slash commands, and any channel it is in, as the workspace allows. A button's answer is shown only to whoever pressed it.
+- **Deletes and edits** reach the bot: a deleted message leaves its history, and an edit replaces the original, as on Signal.
+- **Threads.** Each thread keeps its own history.
+- **The app manifest,** `slack-manifest.json` in the state directory, holds the bot's name and its commands, nothing anyone sent.
+- **The tokens** are sent only in request headers to Slack, and taken out of every error before logging.
+
 ## Addons
 
 An addon is a program the bot runs on its own machine, as an [MCP server](docs/FILES_LINKS_TOOLS_MCP.md#addons), that answers its own commands, reads the messages it asks for and posts on its own, such as the [GeoGuess](https://github.com/robdevops/GeoGuess) game. With none configured, none of this applies.

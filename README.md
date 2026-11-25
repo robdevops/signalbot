@@ -1,6 +1,6 @@
 # signalbot
 
-A small, [privacy-conscious](PRIVACY.md) chat bot for Signal, through a running [signal-cli](https://github.com/AsamK/signal-cli) daemon, or for [Telegram](#telegram) or [Discord](#discord), that answers using a model from [OpenRouter](https://openrouter.ai) or a [compatible provider](docs/MODELS.md).
+A small, [privacy-conscious](PRIVACY.md) chat bot for Signal, through a running [signal-cli](https://github.com/AsamK/signal-cli) daemon, or for [Telegram](#telegram), [Discord](#discord) or [Slack](#slack), that answers using a model from [OpenRouter](https://openrouter.ai) or a [compatible provider](docs/MODELS.md).
 
 - [Features](#features)
 - [Use cases](#use-cases)
@@ -11,6 +11,7 @@ A small, [privacy-conscious](PRIVACY.md) chat bot for Signal, through a running 
   - [Install as a Docker container](#install-as-a-docker-container)
   - [Telegram](#telegram)
   - [Discord](#discord)
+  - [Slack](#slack)
   - [Test](#test)
 - [Docs](#docs)
 
@@ -125,9 +126,9 @@ docker logs -f signalbot
 
 Logs go to journald where the host has it, otherwise to Docker's rotating `local` driver; `docker logs` reads both. Under journald, `journalctl CONTAINER_NAME=signalbot -p err` shows warnings and errors.
 
-### Build without charts, Signal, Telegram or Discord
+### Build without charts, Signal, Telegram, Discord or Slack
 
-Charts and their fonts can be left out of the binary (about 0.7 MB of 10 MB) with a build tag: `go build -tags nocharts`, or for Docker, add `TAGS=nocharts` after `sudo` in the build command above. Likewise `nosignal`, `notelegram` or `nodiscord` leaves out a chat network, and tags combine with commas (`-tags nocharts,notelegram`); leaving out every network fails to build. To stop files reaching the model without rebuilding, set `FILES=off` instead (see [Configuration](docs/CONFIGURATION.md)).
+Charts and their fonts can be left out of the binary (about 0.7 MB of 10 MB) with a build tag: `go build -tags nocharts`, or for Docker, add `TAGS=nocharts` after `sudo` in the build command above. Likewise `nosignal`, `notelegram`, `nodiscord` or `noslack` leaves out a chat network, and tags combine with commas (`-tags nocharts,notelegram`); leaving out every network fails to build. To stop files reaching the model without rebuilding, set `FILES=off` instead (see [Configuration](docs/CONFIGURATION.md)).
 
 ### Block someone, or other signal-cli chores
 
@@ -199,6 +200,23 @@ The bot answers anyone who DMs it and every channel it can see: the server's rol
 To run on Discord with Signal or Telegram, set each network's setting: one bot then answers on all of them, each chat on its own network, as above.
 
 Discord differs from Signal as Telegram does: bot chats are not end-to-end encrypted, and a reply is capped at 2,000 characters a message. See [PRIVACY.md](PRIVACY.md#discord).
+
+### Slack
+
+The same bot can answer in a Slack workspace, instead of the other networks or as well, through Slack's Web API and Socket Mode (a WebSocket the bot opens, so it needs no public address).
+
+1. At [api.slack.com/apps](https://api.slack.com/apps), choose **Create New App → From a manifest**, pick your workspace, and paste the manifest `signalbot -slack-manifest` prints (from a checkout, `go run . -slack-manifest`; with Docker, `sudo docker compose run --rm signalbot -slack-manifest`). It names the bot, turns on Socket Mode and buttons, and asks for the scopes and events the bot needs.
+2. Under **Basic Information → App-Level Tokens**, generate a token with the `connections:write` scope: that is `SLACK_APP_TOKEN`, `xapp-…`.
+3. Under **Install App**, install it to the workspace, and copy the **Bot User OAuth Token**: that is `SLACK_BOT_TOKEN`, `xoxb-…`.
+4. In `/etc/signalbot.env`, set both. Leave `SIGNALCLI_SOCKET` unset for Slack alone. The tokens are passwords: anyone with them controls the bot.
+5. Install as above, skipping signal-cli and its socket, and start the bot.
+6. Invite the bot to a channel (`/invite @yourbot`) and @mention it, or DM it.
+
+**Slash commands.** Slack keeps an app's slash commands in its manifest, which the bot can't change itself. At start it writes the manifest, with the commands its features registered, to `slack-manifest.json` in the state directory, and when they changed it logs a line saying to paste it at api.slack.com/apps → your app → **App Manifest**; `signalbot -slack-manifest` prints the one last written (before the first start, one without commands). A command typed in a channel is answered there, and one typed in any DM in the bot's DM with whoever typed it. The bot must be in a channel to answer there.
+
+The bot answers anyone who DMs it, and any channel it is in: the workspace's own settings decide who can install, invite and reach it. Each chat has its own `DAILY_BUDGET`, so keep one set. A thread is its own conversation, with its own history: the bot answers in a thread when mentioned there, and any reply in a thread under one of its own messages is addressed to it. Buttons show as Slack buttons, a highlighted one in green; a press's answer shows only to whoever pressed it. Slack has no typing indicator for bots, and no replies outside threads.
+
+Slack differs from Signal in a few ways: messages are not end-to-end encrypted, the bot sees every message in the channels it is in, and a reply is shown in sections of up to 3,000 characters. See [PRIVACY.md](PRIVACY.md#slack).
 
 ### Test
 

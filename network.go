@@ -13,11 +13,20 @@ import (
 // by its own network_<name>.go, which a build tag can leave out.
 var networks = map[string]func(*config.Test) bot.Network{}
 
+// networkChecks report, for a network that has them, settings it can't
+// start without, before any network is made.
+var networkChecks = map[string]func() error{}
+
+// networkFlags are a network's own command-line flags, each a chore that
+// runs instead of the bot, such as -slack-manifest.
+var networkFlags = map[string]func(){}
+
 // The setting that chooses each network, and the tag that leaves it out.
 var networkSettings = []struct{ name, setting, tag string }{
 	{"signal", "SIGNALCLI_SOCKET", "nosignal"},
 	{"telegram", "TELEGRAM_BOT_TOKEN", "notelegram"},
 	{"discord", "DISCORD_BOT_TOKEN", "nodiscord"},
+	{"slack", "SLACK_BOT_TOKEN", "noslack"},
 }
 
 // newNetwork is the chat networks the bot answers on, joined: those whose
@@ -27,6 +36,13 @@ func newNetwork(t *config.Test) (bot.Network, error) {
 	names, err := chooseNetwork(func(k string) string { return config.Env(k, "") })
 	if err != nil {
 		return nil, err
+	}
+	for _, name := range names {
+		if check := networkChecks[name]; check != nil {
+			if err := check(); err != nil {
+				return nil, err
+			}
+		}
 	}
 	var nets []bot.Network
 	for _, name := range names {
