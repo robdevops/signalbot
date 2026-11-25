@@ -20,7 +20,7 @@ import (
 // settingNames is every environment variable the bot reads; each scenario
 // starts with all of them cleared.
 var settingNames = []string{"SIGNALCLI_SOCKET", "MODEL_API_URL", "MODEL_API_KEY", "MODEL", "MODEL_SEARCH", "MODEL_REASONING",
-	"SIGNAL_DM_USERS", "MODEL_SYSTEM_PROMPT", "INTRO", "MAX_CONCURRENCY", "HISTORY_MAX", "TOOL_LINGER_ROUNDS",
+	"SIGNAL_DM_USERS", "SIGNAL_GROUP_IDS", "MODEL_SYSTEM_PROMPT", "INTRO", "MAX_CONCURRENCY", "HISTORY_MAX", "TOOL_LINGER_ROUNDS",
 	"MCP_CONFIG", "GROUP_CONTEXT", "FILES", "CHARTS", "JOURNAL_STREAM", "TELEGRAM_BOT_TOKEN", "SLACK_BOT_TOKEN", "SLACK_APP_TOKEN"}
 
 // startBot starts the bot in w, connected to its fakes, and returns once it

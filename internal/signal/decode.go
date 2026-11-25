@@ -220,6 +220,9 @@ func (c *Client) event(env *envelope) (bot.Received, bool) {
 		return c.synced(env)
 	}
 	chat := env.chat()
+	if c.unlisted(chat.GroupID) { // nothing from a group not in SIGNAL_GROUP_IDS: no answer, history, event or member
+		return nil, false
+	}
 	if g := d.GroupInfo; g != nil && g.Type == "UPDATE" {
 		c.refreshSoon()     // so new members are known and departed ones forgotten
 		c.verdicts.forget() // an admin may have come or gone
@@ -313,6 +316,9 @@ func (c *Client) synced(env *envelope) (bot.Received, bool) {
 	chat := feature.Chat{User: cmp.Or(m.DestinationUUID, m.Destination, m.DestinationNumber)}
 	if g := m.GroupInfo; g != nil && g.GroupID != "" {
 		chat = feature.Chat{GroupID: g.GroupID}
+	}
+	if c.unlisted(chat.GroupID) {
+		return nil, false
 	}
 	if target == 0 || chat == (feature.Chat{}) {
 		return nil, false
@@ -493,8 +499,8 @@ func (c *Client) text(msg string, ms []mention, self string) string {
 // Delivered readies a message a feature delivers, in its slot, as if its
 // sender had just posted it, waiting up to 10s for signal-cli and the bot's
 // own name: a DM's sender must still be allowed to DM the bot, by ACI or
-// number, or as a group admin, and a group's still a member. A drop is
-// logged without content or anyone's ID.
+// number, or as a group admin, and a group's still a member, of a group
+// in SIGNAL_GROUP_IDS. A drop is logged without content or anyone's ID.
 func (c *Client) Delivered(ctx context.Context, msg feature.Message) (bot.Ready, bool) {
 	wait, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
@@ -509,6 +515,10 @@ func (c *Client) Delivered(ctx context.Context, msg feature.Message) (bot.Ready,
 	}
 	msg.Name = cmp.Or(msg.Name, c.name(msg.Sender))
 	var r bot.Ready
+	if msg.Chat.GroupID != "" && !c.groupIDs.has(msg.Chat.GroupID) {
+		logx.Infof("delivered message dropped: its group is not in SIGNAL_GROUP_IDS")
+		return bot.Ready{}, false
+	}
 	if msg.Chat.GroupID != "" {
 		ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 		gs, err := c.groups(ctx, msg.Sender)
@@ -535,8 +545,9 @@ func (c *Client) Delivered(ctx context.Context, msg feature.Message) (bot.Ready,
 
 // Reachable reports whether the bot may still post in chat on its own,
 // waiting up to 10s for signal-cli: in a group, while the bot is a member
-// (listGroups); in a DM, while the user may DM the bot (SIGNAL_DM_USERS),
-// by ACI or number, or as a group admin. A failure is logged.
+// (listGroups) and the group is in SIGNAL_GROUP_IDS; in a DM, while the
+// user may DM the bot (SIGNAL_DM_USERS), by ACI or number, or as a group
+// admin. A failure is logged.
 func (c *Client) Reachable(ctx context.Context, chat feature.Chat) bool {
 	wait, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
@@ -547,6 +558,9 @@ func (c *Client) Reachable(ctx context.Context, chat feature.Chat) bool {
 	if chat.GroupID == "" {
 		c.loadNames(wait, &envelope{})
 		return c.dmAllowed(wait, chat.User, c.number(chat.User))
+	}
+	if !c.groupIDs.has(chat.GroupID) {
+		return false
 	}
 	var gs []group
 	if err := c.call(wait, "listGroups", nil, &gs); err != nil {

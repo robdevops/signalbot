@@ -180,7 +180,8 @@ func (m *members) compare() {
 	}
 }
 
-// load is every group the bot is in with its members, by ACI else number;
+// load is every group the bot is in and answers in (SIGNAL_GROUP_IDS)
+// with its members, by ACI else number;
 // a failure is logged with logf. Before the bot's ID is known it loads
 // nothing, so the bot is never taken for a member.
 func (m *members) load(ctx context.Context, logf func(string, ...any)) (map[string][]string, bool) {
@@ -195,7 +196,7 @@ func (m *members) load(ctx context.Context, logf func(string, ...any)) (map[stri
 	}
 	out := map[string][]string{}
 	for _, g := range gs {
-		if !g.IsMember || g.ID == "" {
+		if !g.IsMember || g.ID == "" || !m.c.groupIDs.has(g.ID) {
 			continue
 		}
 		ids := []string{}
