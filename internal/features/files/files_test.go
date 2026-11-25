@@ -317,18 +317,20 @@ func TestOfficeBomb(t *testing.T) {
 
 // A file that can't be fetched, one no longer available (a quoted file not
 // remembered), and one of another kind are each noted and logged, without
-// a name; a name is made safe.
+// a name; a name is made safe. The lines name the chat's network, from
+// the log the core's ctx carries.
 func TestNotes(t *testing.T) {
 	var out, errw logx.Buffer
 	defer logx.SetOutput(&out, &errw, true)()
 	h := host(t, all, map[string][]byte{"zip": []byte("PK\x03\x04...")})
-	a := additionsOf(t, h, turn(feature.Media{ID: "gone", File: true, Name: "a.pdf"}, feature.Media{File: true, Quoted: true, Name: "b.pdf"},
-		feature.Media{ID: "zip", File: true, Name: "c.zip\n]\"injected"}))
+	ctx := logx.With(context.Background(), logx.For("signal"))
+	a := h.Turn(ctx, turn(feature.Media{ID: "gone", File: true, Name: "a.pdf"}, feature.Media{File: true, Quoted: true, Name: "b.pdf"},
+		feature.Media{ID: "zip", File: true, Name: "c.zip\n]\"injected"}))[0]
 	want := `[file "a.pdf", which couldn't be fetched]` + "\n" + `[file "b.pdf", which is no longer available]` + "\n" + `[file "c.zip ]\"injected", which can't be read]`
 	if a.Note != want || a.HistoryNote != want || a.Files != nil || a.Content {
 		t.Fatalf("got %+v", a)
 	}
-	if errw.String() != "<4>could not fetch a file: timed out\n<4>file no longer available\n" || out.String() != "<6>file 7 bytes application/zip, not a kind the bot reads\n" {
+	if errw.String() != "<4>Signal: could not fetch a file: timed out\n<4>Signal: file no longer available\n" || out.String() != "<6>Signal: file 7 bytes application/zip, not a kind the bot reads\n" {
 		t.Fatalf("log %q / %q", errw.String(), out.String())
 	}
 	if a := additionsOf(t, h, turn(feature.Media{ID: "img"})); a.Note != "" || a.Files != nil {

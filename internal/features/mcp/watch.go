@@ -90,12 +90,13 @@ type match struct {
 	// reaction, for a reaction a watch took: the call's arguments are it,
 	// and msg is the message reacted to, from the reactor.
 	reaction *feature.Reaction
+	log      logx.L // for its chat's lines: the log of the core's work for the message
 }
 
 // reacted passes a reaction to one of the addon's own messages to the
 // first of the chat's live watches that takes reactions and knows the
 // message, and reports whether one did.
-func (a *addon) reacted(e feature.Event) bool {
+func (a *addon) reacted(ctx context.Context, e feature.Event) bool {
 	r := e.Reaction
 	if r == nil || !r.Bot || r.Sent == 0 || e.By.ID == "" || !a.allows(e.Chat) {
 		return false
@@ -119,9 +120,9 @@ func (a *addon) reacted(e feature.Event) bool {
 	a.changed()
 	m := feature.Message{Chat: e.Chat, Sender: e.By.ID, Name: e.By.Name, Timestamp: r.Sent}
 	select {
-	case a.matches <- match{msg: m, tool: tool, at: now, reaction: r}:
+	case a.matches <- match{msg: m, tool: tool, at: now, reaction: r, log: logx.Ctx(ctx)}:
 	default:
-		logx.Warnf("addon %s: watch queue full, a reaction dropped", a.server)
+		logx.Ctx(ctx).Warnf("addon %s: watch queue full, a reaction dropped", a.server)
 	}
 	return true
 }
@@ -145,9 +146,10 @@ func (a *addon) lease(chat feature.Chat) {
 // watch makes the watch spec asks for in m's chat, after the command m,
 // and returns it, or nil if it is refused, which is logged without the
 // pattern.
-func (a *addon) watch(m feature.Message, spec ext.Watch) *watch {
+func (a *addon) watch(ctx context.Context, m feature.Message, spec ext.Watch) *watch {
+	log := logx.Ctx(ctx)
 	refuse := func(why string) *watch {
-		logx.Warnf("MCP server %s: a watch refused: %s", a.server, why)
+		log.Warnf("MCP server %s: a watch refused: %s", a.server, why)
 		return nil
 	}
 	now := a.now()
@@ -200,7 +202,7 @@ func (a *addon) watch(m feature.Message, spec ext.Watch) *watch {
 	a.watches[w.key] = append(live, w)
 	a.mu.Unlock()
 	a.changed()
-	logx.Infof("MCP server %s: watching a chat for %s", a.server, until.Sub(now).Round(time.Second))
+	log.Infof("MCP server %s: watching a chat for %s", a.server, until.Sub(now).Round(time.Second))
 	return w
 }
 
@@ -289,7 +291,7 @@ func (a *addon) takes(w *watch, m feature.Message) bool {
 // its Timestamp: on Signal that is its sender's clock, which may be behind.
 // An edit's original must be from Since on, so an older message's edit is
 // never taken. A reply watch takes only what takes says.
-func (a *addon) claim(m feature.Message) feature.Action {
+func (a *addon) claim(ctx context.Context, m feature.Message) feature.Action {
 	if !a.allows(m.Chat) {
 		return feature.Action{}
 	}
@@ -302,7 +304,7 @@ func (a *addon) claim(m feature.Message) feature.Action {
 		return a.guard(m, live, now)
 	}
 	c := claimKey{key, a.userID(m.Chat, m.Sender), m.Timestamp}
-	got := match{msg: m, at: now}
+	got := match{msg: m, at: now, log: logx.Ctx(ctx)}
 	if m.Edited != 0 {
 		a.mu.Lock()
 		if old, ok := a.claims[c]; ok && now.Before(old.Expires) {
@@ -328,7 +330,7 @@ func (a *addon) claim(m feature.Message) feature.Action {
 	select {
 	case a.matches <- got:
 	default:
-		logx.Warnf("addon %s: watch queue full, a matched message dropped", a.server)
+		logx.Ctx(ctx).Warnf("addon %s: watch queue full, a matched message dropped", a.server)
 	}
 	return feature.Action{Done: true}
 }
@@ -431,7 +433,7 @@ func (a *addon) work(ctx context.Context) {
 				if m.tries++; m.tries < maxTries {
 					queue, down = slices.Insert(queue, 0, m), a.up
 				} else {
-					logx.Warnf("addon %s: a matched message dropped: the server was down for %d calls", a.server, maxTries)
+					m.log.Warnf("addon %s: a matched message dropped: the server was down for %d calls", a.server, maxTries)
 				}
 			}
 			continue
@@ -476,11 +478,11 @@ func (a *addon) forward(ctx context.Context, m match) (down bool) {
 	case r.IsError:
 		outcome = "an error result"
 	}
-	logx.Infof("MCP server %s: a watch called %s: %s in %dms, %d bytes", a.server, m.tool, outcome, time.Since(start).Milliseconds(), len(res))
+	m.log.Infof("MCP server %s: a watch called %s: %s in %dms, %d bytes", a.server, m.tool, outcome, time.Since(start).Milliseconds(), len(res))
 	if outcome == "ok" && r.Meta.React != "" && m.reaction == nil { // never a reaction to the bot's own message
 		msg := feature.Message{Chat: m.msg.Chat, Sender: m.msg.Sender, Timestamp: m.msg.Timestamp, Edited: m.msg.Edited} // without its text
 		if why := a.react(msg, r.Meta.React); why != "" {
-			logx.Warnf("addon %s: a reaction dropped: %s", a.server, why)
+			m.log.Warnf("addon %s: a reaction dropped: %s", a.server, why)
 		}
 	}
 	return errors.Is(err, errNotRunning) || errors.Is(err, errExited)

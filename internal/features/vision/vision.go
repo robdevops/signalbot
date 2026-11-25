@@ -26,6 +26,7 @@ func Register(h feature.Host) error {
 // can't be fetched is skipped, and the model told it couldn't be fetched, so it
 // doesn't conclude that it can't see images.
 func additions(ctx context.Context, h feature.Host, m feature.Message) feature.Additions {
+	log := logx.Ctx(ctx)
 	see := h.Info().Images
 	var notes, kept, seen []string
 	note := func(n string) { notes, kept = append(notes, n), append(kept, n) }
@@ -51,7 +52,7 @@ func additions(ctx context.Context, h feature.Host, m feature.Message) feature.A
 	}
 	switch failed := images - len(seen); {
 	case !see && images > 0:
-		logx.Infof("%s not sent: this model can't see images", plural(images))
+		log.Infof("%s not sent: this model can't see images", plural(images))
 		note(imageNote(images, "attached, which you can't see with this model"))
 	case failed == 1:
 		note("[1 image attached, which couldn't be fetched; you can see images, just not this one]")
@@ -65,7 +66,7 @@ func additions(ctx context.Context, h feature.Host, m feature.Message) feature.A
 		}
 		switch {
 		case !see:
-			logx.Infof("sticker not sent: this model can't see images")
+			log.Infof("sticker not sent: this model can't see images")
 			note("[sticker attached" + label + ", which you can't see]")
 		case url == "":
 			note("[sticker attached" + label + ", which couldn't be fetched]")
@@ -94,7 +95,7 @@ func plural(n int) string {
 // "image" or "sticker", for the log line each gets: its size, the size
 // sent if shrunk, and the time taken.
 func fetch(ctx context.Context, h feature.Host, m feature.Message, i int, what string) string {
-	start := time.Now()
+	log, start := logx.Ctx(ctx), time.Now()
 	data, err := h.Media(ctx, m, i)
 	size := len(data)
 	if err == nil {
@@ -105,13 +106,13 @@ func fetch(ctx context.Context, h feature.Host, m feature.Message, i int, what s
 		if what == "sticker" {
 			a = "a "
 		}
-		logx.Warnf("could not fetch %s%s: %v", a, what, err)
+		log.Warnf("could not fetch %s%s: %v", a, what, err)
 		return ""
 	}
 	if len(data) != size {
-		logx.Infof("%s %d bytes, sent as %d bytes, %.1fs", what, size, len(data), time.Since(start).Seconds())
+		log.Infof("%s %d bytes, sent as %d bytes, %.1fs", what, size, len(data), time.Since(start).Seconds())
 	} else {
-		logx.Infof("%s %d bytes, %.1fs", what, size, time.Since(start).Seconds())
+		log.Infof("%s %d bytes, %.1fs", what, size, time.Since(start).Seconds())
 	}
 	return "data:" + http.DetectContentType(data) + ";base64," + base64.StdEncoding.EncodeToString(data)
 }

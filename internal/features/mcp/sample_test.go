@@ -59,11 +59,12 @@ func ask(chat, text string, maxTokens int) json.RawMessage {
 
 // A request is run on the bot's model, charged to the chat it names, with
 // the system prompt first and maxTokens capped; the answer is MCP's; the
-// log has no prompt or answer.
+// log has no prompt or answer, and names the chat's network.
 func TestSample(t *testing.T) {
 	var log logx.Buffer
 	t.Cleanup(logx.SetOutput(&log, &log, true))
 	a, h, bodies := sampler(&modelConfig{PerHour: 30, MaxTokens: 100})
+	h.Bot.Network = "telegram"
 	a.lease(inA)
 	res, rerr := a.sample(context.Background(), ask(a.chatID(inA), "Alice asks for the capital of Australia", 500))
 	if rerr != nil {
@@ -82,7 +83,7 @@ func TestSample(t *testing.T) {
 		t.Fatalf("body %s", got)
 	}
 	l := log.String()
-	if !strings.Contains(l, "<6>MCP server game: a model request: ok in ") || !strings.Contains(l, ", 3 tokens, $0.0012\n") {
+	if !strings.Contains(l, "<6>Telegram: MCP server game: a model request: ok in ") || !strings.Contains(l, ", 3 tokens, $0.0012\n") {
 		t.Fatalf("log %q", l)
 	}
 	for _, s := range []string{"Alice", "Canberra", "quiz"} {
@@ -551,10 +552,10 @@ func TestReplyWatch(t *testing.T) {
 	replies := func(id, pattern string) ext.Watch {
 		return ext.Watch{ID: id, Pattern: pattern, Replies: true, Until: now.Add(time.Minute).Format(time.RFC3339), Tool: "guess"}
 	}
-	if a.watch(cmd, ext.Watch{ID: "x", Until: now.Add(time.Minute).Format(time.RFC3339), Tool: "guess"}) != nil {
+	if a.watch(t.Context(), cmd, ext.Watch{ID: "x", Until: now.Add(time.Minute).Format(time.RFC3339), Tool: "guess"}) != nil {
 		t.Fatal("a watch with no pattern and no replies was taken")
 	}
-	if a.watch(cmd, replies("q", "")) == nil {
+	if a.watch(t.Context(), cmd, replies("q", "")) == nil {
 		t.Fatalf("refused: %s", log.String())
 	}
 	a.replied(inA, []int64{5000})
@@ -562,7 +563,7 @@ func TestReplyWatch(t *testing.T) {
 
 	answer := replyTo(said(inA, "bob-id", 1001, "Paris"), 5000)
 	for _, m := range []feature.Message{answer, edit(answer, 1002, "Lyon"), replyTo(said(inA, "alice-id", 1003, "lol"), 5000)} {
-		if !a.claim(m).Done {
+		if !a.claim(t.Context(), m).Done {
 			t.Fatalf("%q not taken", m.Text)
 		}
 	}
@@ -578,7 +579,7 @@ func TestReplyWatch(t *testing.T) {
 		notBot,
 		replyTo(said(inB, "bob-id", 1009, "Rome"), 6000),
 	} {
-		if !a.claim(m).IsZero() {
+		if !a.claim(t.Context(), m).IsZero() {
 			t.Fatalf("taken: %+v", m)
 		}
 	}
@@ -592,29 +593,29 @@ func TestReplyWatch(t *testing.T) {
 	if len(s.Watches) != 1 || len(s.Watches[0].Sent) != maxSent || s.Watches[0].Sent[0] != 10036 || !s.Watches[0].Replies {
 		t.Fatalf("saved %+v", s.Watches)
 	}
-	if !a.claim(replyTo(said(inA, "bob-id", 1010, "Rome"), 10099)).Done || !a.claim(replyTo(said(inA, "bob-id", 1011, "Rome"), 5000)).IsZero() {
+	if !a.claim(t.Context(), replyTo(said(inA, "bob-id", 1010, "Rome"), 10099)).Done || !a.claim(t.Context(), replyTo(said(inA, "bob-id", 1011, "Rome"), 5000)).IsZero() {
 		t.Fatal("not the last maxSent")
 	}
 
 	b, later := unitAddon(everything) // the bot started again
 	*later = *now
 	b.restore(s)
-	if !b.claim(replyTo(said(inA, "bob-id", 1012, "Oslo"), 10050)).Done {
+	if !b.claim(t.Context(), replyTo(said(inA, "bob-id", 1012, "Oslo"), 10050)).Done {
 		t.Fatal("not taken after a restart")
 	}
 	*later = later.Add(time.Minute)
-	if !b.claim(replyTo(said(inA, "bob-id", 1013, "Oslo"), 10050)).IsZero() {
+	if !b.claim(t.Context(), replyTo(said(inA, "bob-id", 1013, "Oslo"), 10050)).IsZero() {
 		t.Fatal("taken after the watch ended")
 	}
 
 	c, _ := unitAddon(everything)
 	*now = time.Unix(1800000000, 0)
 	c.now = func() time.Time { return *now }
-	if c.watch(cmd, replies("p", `(?i)^\s*[a-d]\s*$`)) == nil {
+	if c.watch(t.Context(), cmd, replies("p", `(?i)^\s*[a-d]\s*$`)) == nil {
 		t.Fatalf("a pattern refused: %s", log.String())
 	}
 	c.replied(inA, []int64{5000})
-	if !c.claim(replyTo(said(inA, "bob-id", 1014, " B "), 5000)).Done || !c.claim(replyTo(said(inA, "bob-id", 1015, "Paris"), 5000)).IsZero() {
+	if !c.claim(t.Context(), replyTo(said(inA, "bob-id", 1014, " B "), 5000)).Done || !c.claim(t.Context(), replyTo(said(inA, "bob-id", 1015, "Paris"), 5000)).IsZero() {
 		t.Fatal("the pattern wasn't applied")
 	}
 }

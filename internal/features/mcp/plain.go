@@ -61,7 +61,7 @@ func (d *plainDirect) call(ctx context.Context, name string, c chatCommand, text
 	case d.busy <- struct{}{}:
 		defer func() { <-d.busy }()
 	default:
-		logx.Warnf("MCP server %s: /%s refused: %d calls already in flight", d.server, name, maxDirect)
+		logx.Ctx(ctx).Warnf("MCP server %s: /%s refused: %d calls already in flight", d.server, name, maxDirect)
 		return feature.Action{Answer: d.title + " is busy, try again in a moment."}, false
 	}
 	ctx, cancel := context.WithTimeout(ctx, cmp.Or(c.timeout, directTimeout))
@@ -82,11 +82,11 @@ func (d *plainDirect) call(ctx context.Context, name string, c chatCommand, text
 	case r.IsError:
 		outcome = "an error result"
 	}
-	logx.Infof("MCP server %s: /%s read %s: %s in %dms, %d bytes", d.server, name, what, outcome, time.Since(start).Milliseconds(), len(res))
+	logx.Ctx(ctx).Infof("MCP server %s: /%s read %s: %s in %dms, %d bytes", d.server, name, what, outcome, time.Since(start).Milliseconds(), len(res))
 	if outcome != "ok" {
 		return feature.Action{Answer: d.title + " couldn't do that just now."}, false
 	}
-	act = r.action(d.server)
+	act = r.action(logx.Ctx(ctx), d.server)
 	if act.Answer == "" && len(act.Pictures) == 0 {
 		act.Answer = d.title + " had nothing to show."
 	}
@@ -147,7 +147,7 @@ type contentPart struct {
 // server can answer the model in JSON and people in words; a part marked
 // for the assistant alone is never posted. A resource's text is posted if
 // it is words (text/*, or no type), not data such as JSON.
-func (r directResult) action(server string) feature.Action {
+func (r directResult) action(log logx.L, server string) feature.Action {
 	var parts, images []string
 	forUser := func(audience []string) bool { return len(audience) == 0 || slices.Contains(audience, "user") }
 	marked := slices.ContainsFunc(r.Content, func(p contentPart) bool {
@@ -184,7 +184,7 @@ func (r directResult) action(server string) feature.Action {
 		pics = append(pics, feature.Picture{Data: data})
 	}
 	if left > 0 {
-		logx.Warnf("MCP server %s: %d images left out: not images, too big, or past %d", server, left, feature.MaxPictures)
+		log.Warnf("MCP server %s: %d images left out: not images, too big, or past %d", server, left, feature.MaxPictures)
 	}
 	return feature.Action{Answer: txt.Clamp(strings.TrimSpace(strings.Join(parts, "\n")), maxAnswer), Pictures: pics}
 }

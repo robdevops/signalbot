@@ -312,7 +312,7 @@ func (a *addon) post(o ext.Op, again bool) (why string) {
 	for _, im := range o.Images {
 		b64 = append(b64, im.Data)
 	}
-	out := &outgoing{Post: feature.Post{Chat: l.Chat, Label: a.title, Text: txt.Clamp(a.fill(l.Chat, strings.TrimSpace(o.Text)), maxAnswer), Pictures: a.pictures(b64)},
+	out := &outgoing{Post: feature.Post{Chat: l.Chat, Label: a.title, Text: txt.Clamp(a.fill(l.Chat, strings.TrimSpace(o.Text)), maxAnswer), Pictures: a.pictures(a.logFor(l.Chat), b64)},
 		ops: []string{o.ID}, replyTo: o.ReplyTo}
 	if o.Audio != nil {
 		clip, err := base64.StdEncoding.DecodeString(o.Audio.Data)
@@ -413,7 +413,7 @@ func (a *addon) mail(id string, out *outgoing) {
 			}
 			a.rememberPosted(id, out.ops, sent)
 		}
-		a.sent(out.ops, !dropped)
+		a.sent(a.logFor(p.Chat), out.ops, !dropped)
 		a.mailNext(id)
 	}
 	a.host.Post(p)
@@ -483,7 +483,7 @@ func (a *addon) trimPosted() {
 // sent records that the post carrying ops was sent, or dropped before it
 // was: a dropped one is read and posted again later, until it has been
 // tried maxPostTries times.
-func (a *addon) sent(ops []string, ok bool) {
+func (a *addon) sent(log logx.L, ops []string, ok bool) {
 	now := a.now()
 	given, retries := 0, map[time.Duration]bool{}
 	a.mu.Lock()
@@ -509,7 +509,7 @@ func (a *addon) sent(ops []string, ok bool) {
 	a.mu.Unlock()
 	a.changed()
 	if given > 0 {
-		logx.Warnf("addon %s: %d posts dropped: not sent after %d tries", a.server, given, maxPostTries)
+		log.Warnf("addon %s: %d posts dropped: not sent after %d tries", a.server, given, maxPostTries)
 	}
 	for retry := range retries {
 		time.AfterFunc(retry, a.poke)

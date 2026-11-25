@@ -96,7 +96,8 @@ func TestOff(t *testing.T) {
 }
 
 // The tool asks for the prompt as written, with a known aspect ratio, and
-// returns the picture named by its title, history noting the prompt.
+// returns the picture named by its title, history noting the prompt. Its
+// log line names the chat's network.
 func TestRun(t *testing.T) {
 	var logs logx.Buffer
 	defer logx.SetOutput(&logs, &logs, false)()
@@ -105,11 +106,11 @@ func TestRun(t *testing.T) {
 	h.API = answering(t, pngBytes(t), &got, nil)
 	Register(h)
 	run := h.ToolGroups()[0].Tools[0].Run
-	out, pics, err := run(context.Background(), `{"prompt":"  a fox in the snow ","aspect_ratio":"16:9","title":"Snow fox"}`)
+	out, pics, err := run(logx.With(context.Background(), logx.For("signal")), `{"prompt":"  a fox in the snow ","aspect_ratio":"16:9","title":"Snow fox"}`)
 	if err != nil || len(pics) != 1 || !strings.Contains(out, "attached") {
 		t.Fatalf("%q %v %v", out, pics, err)
 	}
-	if !strings.Contains(logs.String(), "image asked: no kind, 0 requirements, 16:9") || strings.Contains(logs.String(), "fox") {
+	if !strings.Contains(logs.String(), "Signal: image asked: no kind, 0 requirements, 16:9") || strings.Contains(logs.String(), "fox") {
 		t.Errorf("log %q", logs.String())
 	}
 	if got != (req{Path: "/images", Model: "x/painter", Prompt: "a fox in the snow", AspectRatio: "16:9", Quality: "high"}) {

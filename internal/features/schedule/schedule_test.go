@@ -34,7 +34,7 @@ type world struct {
 func newWorld(t *testing.T) *world {
 	t.Helper()
 	w := &world{t: t, h: featuretest.New(), dir: t.TempDir(), now: date("2030-01-15T12:00"), logs: &logx.Buffer{}}
-	w.h.Bot = feature.Info{Name: "Botty"}
+	w.h.Bot = feature.Info{Name: "Botty", Network: "signal"}
 	w.h.Settings["STATE_DIRECTORY"] = w.dir
 	w.h.Shared = []feature.Group{{ID: "g-family", Name: "🏡 Family 🎉", Admin: true}, {ID: "g-work", Name: "Work", Admin: true}}
 	t.Cleanup(logx.SetOutput(w.logs, w.logs, true))
@@ -51,10 +51,13 @@ func (w *world) start() *world {
 	return w
 }
 
-// dm is what Alice's DM to the bot says back.
+// dm is what Alice's DM to the bot says back. Its ctx carries the chat's
+// network's log, as the core's does.
 func (w *world) dm(text string) string {
 	w.t.Helper()
-	a := w.h.Message(context.Background(), feature.Message{Chat: feature.Chat{User: alice}, Sender: alice, Name: "Alice", Text: text, Addressed: true})
+	chat := feature.Chat{User: alice}
+	ctx := logx.With(context.Background(), logx.For(w.h.Net(chat).Name))
+	a := w.h.Message(ctx, feature.Message{Chat: chat, Sender: alice, Name: "Alice", Text: text, Addressed: true})
 	if a.ToolChoice != "" || a.Context != "" {
 		w.t.Fatalf("%q: got %+v", text, a)
 	}
@@ -288,7 +291,7 @@ func TestRefusals(t *testing.T) {
 	if n := len(w.saved()); n != 2 {
 		t.Fatalf("saved %d", n)
 	}
-	if !strings.Contains(w.logs.String(), "<4>schedule refused: too many timers\n") {
+	if !strings.Contains(w.logs.String(), "<4>Signal: schedule refused: too many timers\n") {
 		t.Fatalf("logs:\n%s", w.logs)
 	}
 	// Not commands of its own: carried on.
@@ -436,14 +439,14 @@ func TestRepeatRuns(t *testing.T) {
 	if n := len(w.h.Delivered()); n != 1 {
 		t.Fatalf("%d delivered", n)
 	}
-	if !strings.Contains(w.logs.String(), "<6>a repeating schedule skipped a run missed by 3h20m0s\n") {
+	if !strings.Contains(w.logs.String(), "<6>Signal: a repeating schedule skipped a run missed by 3h20m0s\n") {
 		t.Fatalf("logs:\n%s", w.logs)
 	}
 	// At the cap, it can't be set again, which is logged.
 	w.h.TimerErr = errors.New("too many timers")
 	w.now = date("2030-01-15T18:00")
 	w.fire()
-	if len(w.h.Delivered()) != 2 || !strings.Contains(w.logs.String(), "<3>a repeating schedule can't be set again: too many timers\n") {
+	if len(w.h.Delivered()) != 2 || !strings.Contains(w.logs.String(), "<3>Signal: a repeating schedule can't be set again: too many timers\n") {
 		t.Fatalf("logs:\n%s", w.logs)
 	}
 	w.noTextLogged("stand-up")
@@ -476,7 +479,7 @@ func TestLoad(t *testing.T) {
 		p[0].Text != `I was offline at Tue 15 Jan 2030 10:59 UTC, so your reminder "stale one" didn't post.` {
 		t.Fatalf("posted %+v", p)
 	}
-	for _, want := range []string{"<3>schedules.json: entry 4 skipped: no text; it will be removed at the next save\n", "<4>a one-off schedule was dropped: it was due 1h1m0s ago\n", "<5>loaded 3 schedules\n"} {
+	for _, want := range []string{"<3>schedules.json: entry 4 skipped: no text; it will be removed at the next save\n", "<4>Signal: a one-off schedule was dropped: it was due 1h1m0s ago\n", "<5>loaded 3 schedules\n"} {
 		if !strings.Contains(logs, want) {
 			t.Errorf("no %q in:\n%s", want, logs)
 		}

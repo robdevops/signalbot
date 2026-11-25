@@ -107,20 +107,21 @@ func (o outcome) kept() string {
 // one handles m.Media[i]. It logs one line, what the file came to, by kind
 // and size: never its name or declared type, which the sender chose.
 func one(ctx context.Context, h feature.Host, info feature.Info, m feature.Message, i int, off bool) outcome {
+	log := logx.Ctx(ctx)
 	md := m.Media[i]
 	o := outcome{subject: "file " + strconv.Quote(cmp.Or(txt.SafeName(md.Name), "untitled"))}
 	with := func(status string) outcome { o.status = status; return o }
 	if off {
-		logx.Infof("file not fetched: FILES is off")
+		log.Infof("file not fetched: FILES is off")
 		return with(" attached, but reading files is turned off")
 	}
 	if md.ID == "" {
-		logx.Warnf("file no longer available")
+		log.Warnf("file no longer available")
 		return with(", which is no longer available")
 	}
 	data, err := h.Media(ctx, m, i)
 	if err != nil {
-		logx.Warnf("could not fetch a file: %v", err)
+		log.Warnf("could not fetch a file: %v", err)
 		return with(", which couldn't be fetched")
 	}
 	name := cmp.Or(txt.SafeName(md.Name), "untitled")
@@ -134,28 +135,28 @@ func one(ctx context.Context, h feature.Host, info feature.Info, m feature.Messa
 	switch kind {
 	case "pdf":
 		if !info.PDFs {
-			logx.Infof("%s, not sent: this model can't read PDFs", head)
+			log.Infof("%s, not sent: this model can't read PDFs", head)
 			return with(", a PDF, which you can't read with this model")
 		}
-		logx.Infof("%s, attached", head)
+		log.Infof("%s, attached", head)
 		o.file = &feature.File{Name: name, MIME: "application/pdf", Data: data}
 		return with(" attached")
 	case "audio":
 		if !info.Audio {
-			logx.Infof("%s, not sent: this model can't hear audio", head)
+			log.Infof("%s, not sent: this model can't hear audio", head)
 			return with(", audio such as a voice note, which you can't hear with this model")
 		}
 		mime := md.MIME
 		if !strings.HasPrefix(strings.ToLower(mime), "audio/") {
 			mime = cmp.Or(audioExts[ext], "audio/aac")
 		}
-		logx.Infof("%s, attached", head)
+		log.Infof("%s, attached", head)
 		o.file = &feature.File{Name: name, MIME: mime, Data: data}
 		return with(" attached")
 	case "office":
 		text, cut, err := officeText(data, ext)
 		if err != nil || strings.TrimSpace(text) == "" {
-			logx.Warnf("could not read an Office file (%s, %d bytes): %s", what, len(data), errKind(cmp.Or(err, errEmpty)))
+			log.Warnf("could not read an Office file (%s, %d bytes): %s", what, len(data), errKind(cmp.Or(err, errEmpty)))
 			return with(", which can't be read")
 		}
 		// The count is what the fence shows, without the newlines it trims.
@@ -167,18 +168,18 @@ func one(ctx context.Context, h feature.Host, info feature.Info, m feature.Messa
 		} else {
 			shown = txt.Chars(n, maxText)
 		}
-		logx.Infof("%s, %s", head, shown)
+		log.Infof("%s, %s", head, shown)
 		o.text = text
 		if cut {
 			return with(" attached; only the first part of its text is shown, as the file is too big to read whole")
 		}
 		return with(" attached; its text follows")
 	case "text":
-		logx.Infof("%s, %s", head, txt.Chars(utf8.RuneCount(bytes.Trim(data, "\n")), maxText))
+		log.Infof("%s, %s", head, txt.Chars(utf8.RuneCount(bytes.Trim(data, "\n")), maxText))
 		o.text = string(data)
 		return with(" attached; its text follows")
 	}
-	logx.Infof("file %d bytes %s, not a kind the bot reads", len(data), txt.Clamp(sniffed, 40))
+	log.Infof("file %d bytes %s, not a kind the bot reads", len(data), txt.Clamp(sniffed, 40))
 	return with(", which can't be read")
 }
 

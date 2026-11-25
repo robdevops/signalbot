@@ -230,10 +230,11 @@ func spec(id string, d time.Duration, guard string) string {
 }
 
 // round starts a round, watch spec, by Alice in chat at ts, and says its
-// picture went out at 5000.
+// picture went out at 5000. Its ctx carries Signal's log, as the core's
+// would.
 func round(t *testing.T, h *featuretest.Host, chat feature.Chat, ts int64, spec string) feature.Action {
 	t.Helper()
-	act := h.Message(context.Background(), to(said(chat, "alice-id", ts, "/round "+spec)))
+	act := h.Message(logx.With(context.Background(), logx.For("signal")), to(said(chat, "alice-id", ts, "/round "+spec)))
 	if act.Answer != "Round on" || len(act.Pictures) != 1 {
 		t.Fatalf("round: %+v", act)
 	}
@@ -270,7 +271,7 @@ func queue(t *testing.T, h *featuretest.Host, notify int, ops ...map[string]any)
 // the guard; nothing else is touched, and no text reaches the log.
 func TestWatch(t *testing.T) {
 	h, log := startGame(t, gameConfig(""), t.TempDir())
-	ctx := context.Background()
+	ctx := logx.With(context.Background(), logx.For("signal")) // as the core's: the lines name the network
 	act := round(t, h, inA, 1000, spec("r1", time.Hour, "No hints during a round"))
 	if act.OnSent == nil {
 		t.Fatal("no OnSent, so no guard")
@@ -329,8 +330,8 @@ func TestWatch(t *testing.T) {
 		}
 	}
 	l := log.String()
-	if !regexp.MustCompile(`<6>MCP server game: watching a chat for (59m59s|1h0m0s)\n`).MatchString(l) ||
-		!regexp.MustCompile(`<6>MCP server game: a watch called guess: ok in \d+ms, \d+ bytes\n`).MatchString(l) {
+	if !regexp.MustCompile(`<6>Signal: MCP server game: watching a chat for (59m59s|1h0m0s)\n`).MatchString(l) ||
+		!regexp.MustCompile(`<6>Signal: MCP server game: a watch called guess: ok in \d+ms, \d+ bytes\n`).MatchString(l) {
 		t.Fatalf("log %q", l)
 	}
 	for _, s := range []string{"guess 4", "guess 1", "oops", "hints", "lol"} {
@@ -360,7 +361,7 @@ func TestWatchRefused(t *testing.T) {
 	}
 	for _, want := range []string{"its pattern matches ordinary chat", "its pattern isn't RE2", "its tool isn't one the bot may call",
 		"its until isn't an RFC 3339 time", "its pattern is over 1,024 characters"} {
-		if !strings.Contains(log.String(), "<4>MCP server game: a watch refused: "+want+"\n") {
+		if !strings.Contains(log.String(), "<4>Signal: MCP server game: a watch refused: "+want+"\n") {
 			t.Errorf("log %q, want %q", log.String(), want)
 		}
 	}
@@ -596,6 +597,7 @@ func TestOutboxDelivery(t *testing.T) {
 	cfg.Rate = rateConfig{600, 100}
 	a, now := unitAddon(cfg)
 	h := featuretest.New()
+	h.Bot.Network = "slack"
 	a.host = h
 	a.lease(inA)
 	id := a.chatID(inA)
@@ -641,7 +643,7 @@ func TestOutboxDelivery(t *testing.T) {
 		}
 		*now = now.Add(maxRetryDelay)
 	}
-	if !a.done["6"] || a.cursor != "c.5" || !strings.Contains(log.String(), "<4>addon game: 1 posts dropped: not sent after 6 tries\n") {
+	if !a.done["6"] || a.cursor != "c.5" || !strings.Contains(log.String(), "<4>Slack: addon game: 1 posts dropped: not sent after 6 tries\n") {
 		t.Fatalf("cursor %q, log %q", a.cursor, log.String())
 	}
 }
@@ -1004,12 +1006,12 @@ func TestWatchSizesInCharacters(t *testing.T) {
 	}
 	pattern := `\bdevinette \d+ ` + strings.Repeat("é", maxPattern-len(`\bdevinette \d+ `))
 	for _, s := range []ext.Watch{w(strings.Repeat("é", maxWatchID), `\bguess \d+`), w("p", pattern)} {
-		if a.watch(cmd, s) == nil {
+		if a.watch(t.Context(), cmd, s) == nil {
 			t.Fatalf("refused at the limit, %d bytes: %s", len(s.ID)+len(s.Pattern), log.String())
 		}
 	}
 	for _, s := range []ext.Watch{w(strings.Repeat("é", maxWatchID+1), `\bguess \d+`), w("q", pattern+"é")} {
-		if a.watch(cmd, s) != nil {
+		if a.watch(t.Context(), cmd, s) != nil {
 			t.Fatalf("taken past the limit: %d characters of ID", utf8.RuneCountInString(s.ID))
 		}
 	}
@@ -1023,33 +1025,33 @@ func TestWatchLimits(t *testing.T) {
 	a, now := unitAddon(everything)
 	cmd := said(inA, "alice-id", 1000, "/round")
 	for i := range maxWatches {
-		if a.watch(cmd, specAt(strconv.Itoa(i), now.Add(time.Minute))) == nil {
+		if a.watch(t.Context(), cmd, specAt(strconv.Itoa(i), now.Add(time.Minute))) == nil {
 			t.Fatalf("watch %d refused", i)
 		}
 	}
-	if a.watch(cmd, specAt("9", now.Add(time.Minute))) != nil || !strings.Contains(log.String(), "8 watches are already live in the chat") {
+	if a.watch(t.Context(), cmd, specAt("9", now.Add(time.Minute))) != nil || !strings.Contains(log.String(), "8 watches are already live in the chat") {
 		t.Fatalf("a 9th: %q", log.String())
 	}
-	if a.watch(cmd, specAt("0", now.Add(time.Minute))) == nil {
+	if a.watch(t.Context(), cmd, specAt("0", now.Add(time.Minute))) == nil {
 		t.Fatal("one replacing another of its ID was refused")
 	}
-	if a.watch(said(inB, "alice-id", 1000, "/round"), specAt("0", now.Add(time.Minute))) == nil {
+	if a.watch(t.Context(), said(inB, "alice-id", 1000, "/round"), specAt("0", now.Add(time.Minute))) == nil {
 		t.Fatal("refused in another chat")
 	}
 
 	bobs := said(inA, "bob-id", 1001, "guess 1")
-	if !a.claim(bobs).Done {
+	if !a.claim(t.Context(), bobs).Done {
 		t.Fatal("not claimed")
 	}
 	*now = now.Add(time.Minute)
-	if !a.claim(said(inA, "bob-id", 1002, "guess 2")).IsZero() {
+	if !a.claim(t.Context(), said(inA, "bob-id", 1002, "guess 2")).IsZero() {
 		t.Fatal("claimed after the watch ended")
 	}
-	if !a.claim(edit(bobs, 1003, "guess 3")).Done {
+	if !a.claim(t.Context(), edit(bobs, 1003, "guess 3")).Done {
 		t.Fatal("an edit not claimed after the watch ended")
 	}
 	*now = now.Add(claimLife)
-	if !a.claim(edit(bobs, 1004, "guess 4")).IsZero() {
+	if !a.claim(t.Context(), edit(bobs, 1004, "guess 4")).IsZero() {
 		t.Fatal("an edit claimed after its claim ended")
 	}
 	if s := a.state(); len(s.Watches) != 0 || len(s.Claims) != 0 || len(s.Leases) != 0 {
@@ -1058,7 +1060,7 @@ func TestWatchLimits(t *testing.T) {
 
 	a.unwatch(a.chatID(inA), "late")
 	*now = now.Add(tombLife + time.Second)
-	if a.watch(cmd, specAt("late", now.Add(time.Minute))) == nil {
+	if a.watch(t.Context(), cmd, specAt("late", now.Add(time.Minute))) == nil {
 		t.Fatal("a tombstone outlived tombLife")
 	}
 }
@@ -1067,11 +1069,11 @@ func TestWatchLimits(t *testing.T) {
 // command's; an edit only of an original from the command on.
 func TestWatchClock(t *testing.T) {
 	a, now := unitAddon(everything)
-	a.watch(said(inA, "alice-id", 1000, "/round"), specAt("r", now.Add(time.Minute)))
-	if !a.claim(said(inA, "bob-id", 900, "guess 1")).Done {
+	a.watch(t.Context(), said(inA, "alice-id", 1000, "/round"), specAt("r", now.Add(time.Minute)))
+	if !a.claim(t.Context(), said(inA, "bob-id", 900, "guess 1")).Done {
 		t.Fatal("an original by a slow clock not taken")
 	}
-	if !a.claim(edit(said(inA, "bob-id", 999, "hello"), 1100, "guess 2")).IsZero() {
+	if !a.claim(t.Context(), edit(said(inA, "bob-id", 999, "hello"), 1100, "guess 2")).IsZero() {
 		t.Fatal("an older message's edit taken")
 	}
 }
@@ -1117,11 +1119,11 @@ func TestWatchWorker(t *testing.T) {
 	go func() { a.work(ctx); close(done) }()
 	defer func() { cancel(); <-done }()
 	for _, chat := range []feature.Chat{inA, inB, inDM} {
-		a.watch(said(chat, "alice-id", 1000, "/round"), specAt("r", now.Add(time.Minute)))
+		a.watch(t.Context(), said(chat, "alice-id", 1000, "/round"), specAt("r", now.Add(time.Minute)))
 	}
-	a.claim(said(inA, "bob-id", 1001, "guess 1"))
-	a.claim(said(inA, "bob-id", 1002, "guess 2")) // due in a minute
-	a.claim(said(inB, "bob-id", 1003, "guess 3"))
+	a.claim(t.Context(), said(inA, "bob-id", 1001, "guess 1"))
+	a.claim(t.Context(), said(inA, "bob-id", 1002, "guess 2")) // due in a minute
+	a.claim(t.Context(), said(inB, "bob-id", 1003, "guess 3"))
 	eventually(t, "the calls", func() bool { texts, _ := c.state(); return len(texts) == 2 })
 	if texts, _ := c.state(); !slices.Equal(texts, []string{"guess 1", "guess 3"}) {
 		t.Fatalf("called with %q", texts)
@@ -1130,7 +1132,7 @@ func TestWatchWorker(t *testing.T) {
 	c.mu.Lock()
 	c.down = true
 	c.mu.Unlock()
-	a.claim(said(inDM, "bob-id", 1004, "guess 4"))
+	a.claim(t.Context(), said(inDM, "bob-id", 1004, "guess 4"))
 	eventually(t, "the failed call", func() bool { _, fails := c.state(); return fails == 1 })
 	c.mu.Lock()
 	c.down = false
@@ -1152,9 +1154,9 @@ func TestWatchQueueFull(t *testing.T) {
 	var log logx.Buffer
 	t.Cleanup(logx.SetOutput(&log, &log, true))
 	a, now := unitAddon(everything)
-	a.watch(said(inA, "alice-id", 1000, "/round"), specAt("r", now.Add(time.Minute)))
+	a.watch(t.Context(), said(inA, "alice-id", 1000, "/round"), specAt("r", now.Add(time.Minute)))
 	for i := range maxMatches + 1 {
-		if !a.claim(said(inA, "bob-id", int64(1001+i), "guess 1")).Done {
+		if !a.claim(t.Context(), said(inA, "bob-id", int64(1001+i), "guess 1")).Done {
 			t.Fatal("not claimed")
 		}
 	}
@@ -1236,7 +1238,7 @@ func TestGuardPosted(t *testing.T) {
 	a, now := unitAddon(everything)
 	s := specAt("g", now.Add(time.Minute))
 	s.Guard = "No hints"
-	w := a.watch(said(inA, "alice-id", 1000, "/round"), s)
+	w := a.watch(t.Context(), said(inA, "alice-id", 1000, "/round"), s)
 	if w == nil {
 		t.Fatal("watch refused")
 	}
@@ -1292,14 +1294,14 @@ func TestWatchReactions(t *testing.T) {
 	a, now := unitAddon(everything)
 	s := specAt("lobby", now.Add(time.Minute))
 	s.Reactions = true
-	if a.watch(said(inA, "alice-id", 1000, "/round"), s) == nil {
+	if a.watch(t.Context(), said(inA, "alice-id", 1000, "/round"), s) == nil {
 		t.Fatal("watch refused")
 	}
 	a.replied(inA, []int64{555})
 	ev := func(sent int64, bot bool, removed bool) feature.Event {
 		return feature.Event{Chat: inA, By: feature.Person{ID: "bob-id", Name: "Bob"}, Reaction: &feature.Reaction{Emoji: "👍", Bot: bot, Sent: sent, Removed: removed}}
 	}
-	if !a.reacted(ev(555, true, false)) {
+	if !a.reacted(t.Context(), ev(555, true, false)) {
 		t.Fatal("a reaction to the addon's message wasn't taken")
 	}
 	m := <-a.matches
@@ -1309,16 +1311,16 @@ func TestWatchReactions(t *testing.T) {
 	if got := args(m); got["reaction"] != "👍" || got["removed"] != false {
 		t.Errorf("args %v", got)
 	}
-	if !a.reacted(ev(555, true, true)) || args(<-a.matches)["removed"] != true {
+	if !a.reacted(t.Context(), ev(555, true, true)) || args(<-a.matches)["removed"] != true {
 		t.Error("a reaction taken back")
 	}
 	for _, e := range []feature.Event{ev(556, true, false), ev(555, false, false), {Chat: inB, By: feature.Person{ID: "bob-id"}, Reaction: &feature.Reaction{Emoji: "👍", Bot: true, Sent: 555}}} {
-		if a.reacted(e) {
+		if a.reacted(t.Context(), e) {
 			t.Errorf("taken: %+v", e.Reaction)
 		}
 	}
 	*now = now.Add(2 * time.Minute)
-	if a.reacted(ev(555, true, false)) {
+	if a.reacted(t.Context(), ev(555, true, false)) {
 		t.Error("taken after the watch ended")
 	}
 	if got := args(match{msg: feature.Message{Text: "hi"}}); got["text"] != "hi" {
@@ -1332,14 +1334,14 @@ func TestReplyWatchInDM(t *testing.T) {
 	a, now := unitAddon(everything)
 	s := ext.Watch{ID: "q", Until: now.Add(time.Minute).Format(time.RFC3339), Tool: "guess", Replies: true}
 	dm := feature.Chat{User: "alice-id"}
-	w := a.watch(said(dm, "alice-id", 1000, "/quiz"), s)
+	w := a.watch(t.Context(), said(dm, "alice-id", 1000, "/quiz"), s)
 	if w == nil {
 		t.Fatal("watch refused")
 	}
 	if !a.takes(w, said(dm, "alice-id", 1001, "Brown eyes")) {
 		t.Error("a plain message in a DM wasn't taken")
 	}
-	g := a.watch(said(inA, "alice-id", 1000, "/quiz"), s)
+	g := a.watch(t.Context(), said(inA, "alice-id", 1000, "/quiz"), s)
 	if g == nil || a.takes(g, to(said(inA, "bob-id", 1001, "Brown eyes"))) {
 		t.Error("a message that isn't a reply was taken in a group")
 	}
@@ -1356,33 +1358,33 @@ func TestWatchOver(t *testing.T) {
 		return m
 	}
 	s := ext.Watch{ID: "g1", Until: now.Add(time.Minute).Format(time.RFC3339), Tool: "guess", Replies: true, Over: "That game is over."}
-	if a.watch(said(inA, "alice-id", 1000, "/song"), s) == nil {
+	if a.watch(t.Context(), said(inA, "alice-id", 1000, "/song"), s) == nil {
 		t.Fatal("watch refused")
 	}
 	a.replied(inA, []int64{555})
 	a.unwatch(a.chatID(inA), "g1")
-	if got := a.claim(reply(555)); got.Answer != "That game is over." {
+	if got := a.claim(t.Context(), reply(555)); got.Answer != "That game is over." {
 		t.Errorf("a reply after the unwatch: %+v", got)
 	}
-	if got := a.claim(reply(556)); !got.IsZero() {
+	if got := a.claim(t.Context(), reply(556)); !got.IsZero() {
 		t.Errorf("a reply to another message: %+v", got)
 	}
-	if got := a.claim(to(said(inA, "bob-id", 2001, "hello"))); !got.IsZero() {
+	if got := a.claim(t.Context(), to(said(inA, "bob-id", 2001, "hello"))); !got.IsZero() {
 		t.Errorf("a message that isn't a reply: %+v", got)
 	}
 	*now = now.Add(overLife + time.Second)
-	if got := a.claim(reply(555)); !got.IsZero() {
+	if got := a.claim(t.Context(), reply(555)); !got.IsZero() {
 		t.Errorf("a reply after the hour: %+v", got)
 	}
 
 	// Ended by its time, not yet let go of.
 	s.ID, s.Until = "g2", now.Add(time.Minute).Format(time.RFC3339)
-	if a.watch(said(inA, "alice-id", 3000, "/song"), s) == nil {
+	if a.watch(t.Context(), said(inA, "alice-id", 3000, "/song"), s) == nil {
 		t.Fatal("watch refused")
 	}
 	a.replied(inA, []int64{777})
 	*now = now.Add(2 * time.Minute)
-	if got := a.claim(reply(777)); got.Answer != "That game is over." {
+	if got := a.claim(t.Context(), reply(777)); got.Answer != "That game is over." {
 		t.Errorf("a reply after the watch's time: %+v", got)
 	}
 }

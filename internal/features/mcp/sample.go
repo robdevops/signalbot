@@ -68,7 +68,8 @@ func (g *gate) sample(ctx context.Context, params json.RawMessage) (any, *rpcErr
 // never the prompt or the answer.
 func (a *addon) sample(ctx context.Context, params json.RawMessage) (any, *rpcError) {
 	start := time.Now()
-	res, size, why, rerr := a.ask(ctx, params)
+	var log logx.L // the chat's network's, once the request names one it may
+	res, size, why, rerr := a.ask(ctx, params, &log)
 	outcome := "ok"
 	if rerr != nil {
 		outcome = why
@@ -83,10 +84,10 @@ func (a *addon) sample(ctx context.Context, params json.RawMessage) (any, *rpcEr
 		line += fmt.Sprintf(", $%.4f", *cost)
 	}
 	if rerr != nil {
-		logx.Warnf("%s", line)
+		log.Warnf("%s", line)
 		return nil, rerr
 	}
-	logx.Infof("%s", line)
+	log.Infof("%s", line)
 	return res.result, nil
 }
 
@@ -98,8 +99,9 @@ type answer struct {
 }
 
 // ask is sample's work: the answer, the size of the request's text, and
-// for a refusal, why, for the log, and the error to send.
-func (a *addon) ask(ctx context.Context, params json.RawMessage) (*answer, int, string, *rpcError) {
+// for a refusal, why, for the log, and the error to send. It sets log to
+// the log of the chat that pays, once it is known.
+func (a *addon) ask(ctx context.Context, params json.RawMessage, log *logx.L) (*answer, int, string, *rpcError) {
 	invalid := func(why, msg string) (*answer, int, string, *rpcError) {
 		return nil, 0, why, &rpcError{Code: -32602, Message: msg}
 	}
@@ -141,6 +143,7 @@ func (a *addon) ask(ctx context.Context, params json.RawMessage) (*answer, int, 
 	if req.Meta.Chat == "" || !ok || !now.Before(l.Expires) || !a.allows(l.Chat) {
 		return nil, size, "refused: no chat", &rpcError{Code: -32602, Message: "_meta needs the chat that pays, one the addon may post in now"}
 	}
+	*log = a.logFor(l.Chat)
 	if !a.asks.allow("", now) {
 		return nil, size, "refused: over the hourly rate", &rpcError{Code: -32000, Message: "too many requests this hour"}
 	}

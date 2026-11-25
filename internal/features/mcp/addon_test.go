@@ -423,7 +423,7 @@ func TestDirect(t *testing.T) {
 			t.Errorf("log %q, want %q", log.String(), want)
 		}
 	}
-	ctx := context.Background()
+	ctx := logx.With(context.Background(), logx.For("signal")) // as the core's, naming the chat's network
 	if got := h.Message(ctx, in(inA, "/play 3m")); got.Answer != "you said 3m\n@Alice plays" || got.Done || len(got.Pictures) != 0 {
 		t.Fatalf("play: %+v", got)
 	}
@@ -450,8 +450,9 @@ func TestDirect(t *testing.T) {
 	if strings.Contains(got.Answer, "alice-id") || strings.Contains(got.Answer, groupA) || strings.Contains(got.Answer, "Alice") {
 		t.Fatalf("a real name or ID reached the addon: %s", got.Answer)
 	}
-	// Each call is logged by tool, outcome and size only.
-	if !regexp.MustCompile(`<6>MCP server game: /play called play: ok in \d+ms, \d+ bytes\n`).MatchString(log.String()) {
+	// Each call is logged by tool, outcome and size only, with the chat's
+	// network.
+	if !regexp.MustCompile(`<6>Signal: MCP server game: /play called play: ok in \d+ms, \d+ bytes\n`).MatchString(log.String()) {
 		t.Errorf("log %q", log.String())
 	}
 }
@@ -483,15 +484,15 @@ func TestDirectResults(t *testing.T) {
 	defer func(d time.Duration) { directTimeout = d }(directTimeout)
 	directTimeout = 3 * time.Second
 	h, log := startAddon(t, `{"mcpServers":{"game":`+addonServer("addon", `{"dms":true}`, direct)+`}}`)
-	ctx := context.Background()
+	ctx := logx.With(context.Background(), logx.For("discord"))
 	if got := h.Message(ctx, in(inDM, "/pics")); got.Answer != "" || len(got.Pictures) != 2 || got.Done {
 		t.Fatalf("pics: %+v", got)
 	}
 	if got := h.Message(ctx, in(inDM, "/big")); got.Answer != "two" || len(got.Pictures) != 1 {
 		t.Fatalf("big: %d pictures, %q", len(got.Pictures), got.Answer)
 	}
-	if !strings.Contains(log.String(), "<4>MCP server game: 1 images left out: not images, or past 2 images or 2 MB\n") ||
-		!strings.Contains(log.String(), "<4>MCP server game: 2 images left out") {
+	if !strings.Contains(log.String(), "<4>Discord: MCP server game: 1 images left out: not images, or past 2 images or 2 MB\n") ||
+		!strings.Contains(log.String(), "<4>Discord: MCP server game: 2 images left out") {
 		t.Errorf("log %q", log.String())
 	}
 	if got := h.Message(ctx, in(inDM, "/empty")); !got.Done || got.Answer != "" {
@@ -516,7 +517,7 @@ func TestDirectResults(t *testing.T) {
 	}
 	l := log.String()
 	for _, want := range []string{"/fail called fail: an error result", "/rpcfail called rpcfail: rpc error -32000", "/hang called hang: no answer in time",
-		"<4>MCP server game: /hang refused: 2 calls already in flight\n"} {
+		"<4>Discord: MCP server game: /hang refused: 2 calls already in flight\n"} {
 		if !strings.Contains(l, want) {
 			t.Errorf("log %q, want %q", l, want)
 		}
