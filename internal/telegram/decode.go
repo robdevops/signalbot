@@ -569,6 +569,7 @@ func (c *Client) botMembership(u *memberUpd) (bot.Received, bool) {
 	c.mu.Lock()
 	delete(c.admins, g)
 	clear(c.dmOK)
+	c.forgot++
 	if now {
 		delete(c.left, g)
 	} else if len(c.left) < 2*maxGroups {

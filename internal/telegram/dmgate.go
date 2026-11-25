@@ -67,6 +67,9 @@ func (c *Client) dmAllowed(ctx context.Context, user string) bool {
 	}
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
+	c.mu.Lock()
+	forgot := c.forgot
+	c.mu.Unlock()
 	admin, err := c.isAdmin(ctx, user)
 	if err != nil {
 		logx.Warnf("telegram: a DM refused: checking whether its sender is an admin failed: %v", err)
@@ -82,7 +85,7 @@ func (c *Client) dmAllowed(ctx context.Context, user string) bool {
 			}
 		}
 	}
-	if len(c.dmOK) < maxVerdicts {
+	if c.forgot == forgot && len(c.dmOK) < maxVerdicts { // else what it was decided by may be stale
 		c.dmOK[user] = verdict{ok: admin, until: time.Now().Add(keepFor)}
 	}
 	return admin
@@ -151,6 +154,7 @@ func isAdminStatus(status string) bool { return status == "creator" || status ==
 func (c *Client) groupAdmins(ctx context.Context, group string) ([]user, error) {
 	c.mu.Lock()
 	a, ok := c.admins[group]
+	forgot := c.forgot
 	c.mu.Unlock()
 	if ok && time.Now().Before(a.until) {
 		return a.users, nil
@@ -180,7 +184,7 @@ func (c *Client) groupAdmins(ctx context.Context, group string) ([]user, error) 
 			}
 		}
 	}
-	if _, ok := c.admins[params["chat_id"]]; ok || len(c.admins) < maxGroups {
+	if _, ok := c.admins[params["chat_id"]]; c.forgot == forgot && (ok || len(c.admins) < maxGroups) {
 		c.admins[params["chat_id"]] = adminList{users: users, until: time.Now().Add(keepFor)}
 	}
 	return users, nil
@@ -196,11 +200,13 @@ func (c *Client) adminChanged(u *memberUpd) {
 	defer c.mu.Unlock()
 	delete(c.admins, id(u.Chat.ID))
 	delete(c.dmOK, id(u.New.User.ID))
+	c.forgot++
 }
 
 // forgetNoes forgets the verdicts that refused someone, as a group the bot
 // newly knows may make them an admin. c.mu is held.
 func (c *Client) forgetNoes() {
+	c.forgot++
 	for k, v := range c.dmOK {
 		if !v.ok {
 			delete(c.dmOK, k)

@@ -2,6 +2,8 @@ package telegram
 
 import (
 	"context"
+	"net/http"
+	"net/http/httptest"
 	"reflect"
 	"strings"
 	"testing"
@@ -255,5 +257,38 @@ func TestDMStartupLog(t *testing.T) {
 		if logs.String() != want {
 			t.Errorf("%q: %q", value, logs)
 		}
+	}
+}
+
+// A lookup under way when Alice stops being an admin keeps neither her
+// group's administrators nor her verdict, as both may be from before.
+func TestDMForgetsDuringLookup(t *testing.T) {
+	captureLogs(t)
+	f, c := gated(t, "")
+	asked, release := make(chan struct{}), make(chan struct{})
+	slow := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		rec := httptest.NewRecorder()
+		f.serve(rec, r)
+		if strings.HasSuffix(r.URL.Path, "/getChatAdministrators") {
+			close(asked) // answered, but held till she is demoted
+			<-release
+		}
+		w.Write(rec.Body.Bytes())
+	}))
+	t.Cleanup(slow.Close)
+	c.base = slow.URL
+	done := make(chan bool)
+	go func() {
+		_, answered := dm(t, c, fromA, inDM)
+		done <- answered
+	}()
+	<-asked
+	f.set("getChatAdministrators", `[]`)
+	c.event(parse(t, `{"update_id":6,"chat_member":{`+inGroup+`,`+fromB+`,"old_chat_member":{"status":"creator"},"new_chat_member":{"status":"member","user":{"id":1111111,"first_name":"Alice"}}}}`))
+	close(release)
+	<-done
+	c.base = f.srv.URL
+	if _, answered := dm(t, c, fromA, inDM); answered {
+		t.Fatal("answered by what a lookup begun before her demotion said")
 	}
 }

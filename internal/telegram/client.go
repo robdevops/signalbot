@@ -61,6 +61,7 @@ type Client struct {
 	sentQ  []string                     // sent's keys, oldest first
 	admins map[string]adminList         // group ID to its owner and administrators, kept 10 minutes
 	dmOK   map[string]verdict           // user ID to whether they may DM the bot, kept 10 minutes
+	forgot uint64                       // counts forgetting admins or verdicts, so a lookup begun before isn't kept
 
 	test *config.Test // nil in production
 }
