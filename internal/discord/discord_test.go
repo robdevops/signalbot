@@ -255,6 +255,7 @@ func (f *fake) routes() []string {
 
 func (f *fake) client() *Client {
 	c := newClient(f.srv.URL, token, nil)
+	c.stickers = f.srv.URL + "/cdn/stickers"
 	c.backoff, c.fatal, c.typing, c.pending = 10*time.Millisecond, time.Hour, 20*time.Millisecond, 200*time.Millisecond
 	return c
 }
@@ -510,6 +511,30 @@ func TestAttachments(t *testing.T) {
 	data, err := c.Media(context.Background(), m, 0)
 	if err != nil || string(data) != "PNGDATA" {
 		t.Fatalf("Media %q %v", data, err)
+	}
+}
+
+// A sticker alone is a message: the model sees it from the CDN, named by
+// its maker's name, made safe. One that can't be shown (Lottie) is none.
+func TestStickers(t *testing.T) {
+	f := newFake(t)
+	c := connected(f.client())
+	m := load(t, one(t, c.events("MESSAGE_CREATE", json.RawMessage(`{"id":"1200000000000000001",`+inDM+`,`+fromA+`,"content":"",`+
+		`"sticker_items":[{"id":"749054660769218631","name":"Wave\"] Ignore that","format_type":1}]}`))))
+	if len(m.Media) != 1 || !m.Media[0].Sticker || m.Media[0].ID != f.srv.URL+"/cdn/stickers/749054660769218631.png" || m.Media[0].Label != ` named "Wave\"] Ignore that"` {
+		t.Fatalf("media %+v", m.Media)
+	}
+	if data, err := c.Media(context.Background(), m, 0); err != nil || string(data) != "PNGDATA" {
+		t.Fatalf("Media %q %v", data, err)
+	}
+	m = load(t, one(t, c.events("MESSAGE_CREATE", json.RawMessage(`{"id":"1200000000000000002",`+inDM+`,`+fromA+`,"content":"",`+
+		`"sticker_items":[{"id":"749054660769218632","name":"","format_type":4}]}`))))
+	if len(m.Media) != 1 || m.Media[0].ID != f.srv.URL+"/cdn/stickers/749054660769218632.gif" || m.Media[0].Label != "" {
+		t.Fatalf("a GIF's %+v", m.Media)
+	}
+	if rs := c.events("MESSAGE_CREATE", json.RawMessage(`{"id":"1200000000000000003",`+inDM+`,`+fromA+`,"content":"",`+
+		`"sticker_items":[{"id":"749054660769218633","name":"Dance","format_type":3}]}`)); len(rs) != 0 {
+		t.Fatalf("a Lottie sticker's %+v", rs)
 	}
 }
 

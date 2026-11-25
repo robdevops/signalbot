@@ -7,6 +7,7 @@ import (
 	"math"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -51,7 +52,12 @@ type message struct {
 	Mentions    []user       `json:"mentions"`
 	Roles       []string     `json:"mention_roles"`
 	Attachments []attachment `json:"attachments"`
-	Reference   *struct {
+	Stickers    []struct {
+		ID     string `json:"id"`
+		Name   string `json:"name"`
+		Format int    `json:"format_type"`
+	} `json:"sticker_items"`
+	Reference *struct {
 		MessageID string `json:"message_id"`
 	} `json:"message_reference"`
 	Referenced *message `json:"referenced_message"`
@@ -195,6 +201,18 @@ func (c *Client) message(m *message, edited int64) feature.Message {
 		}
 	}
 	add(m, false)
+	var stickers []feature.Media
+	for _, st := range m.Stickers {
+		ext := map[int]string{1: ".png", 2: ".png", 4: ".gif"}[st.Format] // 3 is Lottie, which can't be shown
+		if ext == "" || snowflake(st.ID) <= 0 || len(stickers) > 0 {
+			continue
+		}
+		label := ""
+		if n := txt.SafeName(st.Name); n != "" {
+			label = " named " + strconv.Quote(txt.Clamp(n, 40))
+		}
+		stickers = append(stickers, feature.Media{ID: c.stickers + "/" + st.ID + ext, Sticker: true, Label: label})
+	}
 	replyToBot := false
 	if r := m.Referenced; m.Reference != nil && r != nil && r.Author != nil {
 		replyToBot = r.Author.ID == self || c.authorOf(snowflake(r.ID)) == prefix+self
@@ -205,7 +223,7 @@ func (c *Client) message(m *message, edited int64) feature.Message {
 		replyToBot = c.authorOf(snowflake(m.Reference.MessageID)) == prefix+self
 	}
 	msg.Addressed = m.GuildID == "" || mentioned || replyToBot
-	msg.Media = slices.Concat(images, files)
+	msg.Media = slices.Concat(images, files, stickers)
 	return msg
 }
 
