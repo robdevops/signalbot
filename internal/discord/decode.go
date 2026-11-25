@@ -387,7 +387,12 @@ func (c *Client) leave(id string) {
 	delete(c.channels, id)
 	for uid := range c.chats[id] {
 		delete(c.seenIn[uid], id)
-		if len(c.seenIn[uid]) == 0 && !c.seenElsewhere(uid, id) {
+		if len(c.seenIn[uid]) > 0 {
+			continue
+		}
+		if ch := c.seenElsewhere(uid, id); ch != "" {
+			c.seenIn[uid] = map[string]bool{ch: true} // so the next channel lost needn't look again
+		} else {
 			delete(c.seenIn, uid)
 			delete(c.people, uid)
 		}
@@ -398,15 +403,15 @@ func (c *Client) leave(id string) {
 	}
 }
 
-// seenElsewhere reports whether uid is among the people seen in a channel
-// other than id, under c.mu: seenIn holds at most 200 of a person's.
-func (c *Client) seenElsewhere(uid, id string) bool {
+// seenElsewhere is a channel other than id where uid was seen, or "",
+// under c.mu: seenIn holds at most 200 of a person's.
+func (c *Client) seenElsewhere(uid, id string) string {
 	for ch, people := range c.chats {
 		if _, ok := people[uid]; ok && ch != id {
-			return true
+			return ch
 		}
 	}
-	return false
+	return ""
 }
 
 // noteAuthor remembers who sent a message, at most the last 5000, under
@@ -602,7 +607,7 @@ func (c *Client) roleChanged(d json.RawMessage, deleted bool) {
 // slot: its sender's name, the bot's @name taken out, and in a channel its
 // members: the people seen posting there, and with the Server Members
 // intent those in the server's member list who can see the channel, but
-// bots; a name seen wins over the list's.
+// bots and in a private thread; a name seen wins over the list's.
 func (c *Client) Delivered(ctx context.Context, msg feature.Message) (bot.Ready, bool) {
 	wait, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
@@ -621,7 +626,9 @@ func (c *Client) Delivered(ctx context.Context, msg feature.Message) (bot.Ready,
 	ch, known := c.channels[g]
 	info := c.guilds[ch.guild]
 	c.mu.Unlock()
-	if inGroup && known && ch.kind != unknown && info != nil {
+	// A private thread's members are those added to it, which the list
+	// doesn't say, and an @mention there would add someone: only the seen.
+	if inGroup && known && ch.kind != unknown && ch.kind != typePrivateThread && info != nil {
 		if list, ok := c.guildList(wait, ch.guild); ok {
 			c.mu.Lock()
 			for _, m := range list {

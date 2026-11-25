@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"maps"
 	"math"
 	"mime"
 	"mime/multipart"
@@ -1361,6 +1362,15 @@ func TestDeliveredMembers(t *testing.T) {
 	if got := members(t, c, thread); !slices.Equal(got, []string{"Bobby " + bob}) {
 		t.Fatalf("the thread's %q", got)
 	}
+	// A private thread's members are only those seen there: the list
+	// doesn't say who was added, and an @mention would add them.
+	if got := members(t, c, private); len(got) != 0 {
+		t.Fatalf("the private thread's %q", got)
+	}
+	c.events("MESSAGE_CREATE", json.RawMessage(`{"id":"1200000000000000002","guild_id":"`+guild+`","channel_id":"`+private+`",`+fromA+`,"content":"chatter"}`))
+	if got := members(t, c, private); !slices.Equal(got, []string{"Alice " + alice}) {
+		t.Fatalf("the private thread's once Alice is seen %q", got)
+	}
 	c.events("MESSAGE_CREATE", json.RawMessage(`{"id":"1200000000000000001",`+inGuild+`,`+fromBob+`,"content":"chatter"}`))
 	if got := members(t, c, chanID); !slices.Equal(got, []string{"Alice " + alice, "Bob " + bob}) {
 		t.Fatalf("#general's once Bob is seen %q", got)
@@ -1471,6 +1481,22 @@ func TestNamesPruned(t *testing.T) {
 	c.mu.Unlock()
 	if in {
 		t.Fatal("Alice still seen in a channel")
+	}
+	c.mu.Lock()
+	bobIn := maps.Clone(c.seenIn[bob])
+	c.mu.Unlock()
+	if !maps.Equal(bobIn, map[string]bool{chanID: true}) {
+		t.Fatalf("Bob seen in %v", bobIn)
+	}
+	c.mu.Lock()
+	delete(c.seenIn, bob) // as if past seenIn's cap: only chats knows #general
+	c.seenIn[bob] = map[string]bool{secret: true}
+	c.chats[secret] = map[string]string{bob: "Bob"}
+	c.leave(secret)
+	bobIn = maps.Clone(c.seenIn[bob])
+	c.mu.Unlock()
+	if !maps.Equal(bobIn, map[string]bool{chanID: true}) || c.Redact("Bob") != "redacted" {
+		t.Fatalf("Bob seen in %v, once found in #general's people", bobIn)
 	}
 	c.events("CHANNEL_DELETE", json.RawMessage(`{"id":"`+chanID+`"}`))
 	if got := c.Redact("Bob"); got != "Bob" {
