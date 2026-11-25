@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -702,4 +703,19 @@ func TestSampleInACall(t *testing.T) {
 		}
 	}
 	inW.Close()
+}
+
+// A bot on several networks names them all; Network is the first.
+func TestInitializeNetworks(t *testing.T) {
+	s := New(Config{Name: "game", Version: "1", Tools: []Tool{echoTool()}})
+	c := start(t, s)
+	var r map[string]any
+	c.result("initialize", map[string]any{
+		"protocolVersion": Protocol,
+		"capabilities": map[string]any{"experimental": map[string]any{KeyAddon: Capability{Version: Version,
+			Network: "signal", Networks: []string{"signal", "telegram"}}}},
+	}, &r)
+	if s.Network() != "signal" || !slices.Equal(s.Networks(), []string{"signal", "telegram"}) {
+		t.Errorf("network %q, networks %q", s.Network(), s.Networks())
+	}
 }

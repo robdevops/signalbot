@@ -101,12 +101,21 @@ func (j *joined) React(chat feature.Chat, msg feature.Message, emoji string) {
 
 func (j *joined) Typing(chat feature.Chat) (stop func()) { return j.on(chat).Typing(chat) }
 
+// Delivered and Reachable wait, in the chat's slot, for the chat's network
+// to know the bot's ID, however long it takes, as on one network the
+// timers do: they start once the first network is up, and a post due then
+// on another must wait for its own, not be dropped.
 func (j *joined) Delivered(ctx context.Context, msg feature.Message) (Ready, bool) {
-	return j.on(msg.Chat).Delivered(ctx, msg)
+	n := j.on(msg.Chat)
+	if n.WaitID(ctx) == "" {
+		return Ready{}, false // stopping
+	}
+	return n.Delivered(ctx, msg)
 }
 
 func (j *joined) Reachable(ctx context.Context, chat feature.Chat) bool {
-	return j.on(chat).Reachable(ctx, chat)
+	n := j.on(chat)
+	return n.WaitID(ctx) != "" && n.Reachable(ctx, chat)
 }
 
 func (j *joined) Name() string    { return j.all[0].Name() }

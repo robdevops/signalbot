@@ -19,7 +19,8 @@ type stubNet struct {
 	Network
 	name, prefix string
 	caps         feature.Caps
-	id           chan string
+	known        chan struct{} // closed once it knows its ID, idv
+	idv          string
 
 	mu    sync.Mutex
 	calls []string
@@ -48,12 +49,17 @@ func (n *stubNet) Run(ctx context.Context, handle func(Received)) {
 }
 func (n *stubNet) WaitID(ctx context.Context) string {
 	select {
-	case id := <-n.id:
-		return id
+	case <-n.known:
+		return n.idv
 	case <-ctx.Done():
 		return ""
 	}
 }
+func (n *stubNet) Delivered(_ context.Context, msg feature.Message) (Ready, bool) {
+	n.log("delivered " + msg.Text)
+	return Ready{}, true
+}
+func (n *stubNet) Reachable(context.Context, feature.Chat) bool { return true }
 func (n *stubNet) Send(chat feature.Chat, text string, _ []feature.Picture, _ map[string]string, _ int64, _ []byte, _ feature.Markup) []int64 {
 	n.log("send " + text)
 	return []int64{1}
@@ -68,8 +74,8 @@ func (n *stubNet) Redact(text string) string { return strings.ReplaceAll(text, n
 // it, the first if none does; Run, Watch and WaitID go to all; Caps is
 // what any can do.
 func TestJoin(t *testing.T) {
-	a := &stubNet{name: "a", prefix: "a", caps: feature.Caps{Caption: 10}, id: make(chan string, 1)}
-	z := &stubNet{name: "z", prefix: "z", caps: feature.Caps{Buttons: true, Caption: 1024}, id: make(chan string, 1)}
+	a := &stubNet{name: "a", prefix: "a", caps: feature.Caps{Caption: 10}, known: make(chan struct{})}
+	z := &stubNet{name: "z", prefix: "z", caps: feature.Caps{Buttons: true, Caption: 1024}, known: make(chan struct{}), idv: "zid"}
 	if Join(a) != Network(a) {
 		t.Fatal("one network isn't itself")
 	}
@@ -89,7 +95,7 @@ func TestJoin(t *testing.T) {
 	if got := j.Redact("a-z"); got != "x-x" {
 		t.Errorf("redact %q", got)
 	}
-	z.id <- "zid"
+	close(z.known)
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
 	if id := j.WaitID(ctx); id != "zid" {
@@ -108,5 +114,34 @@ func TestJoin(t *testing.T) {
 	b := &Bot{net: j, cfg: &config.Config{Model: "p/m", Intro: "I am {name}"}}
 	if n := b.Net(feature.Chat{User: "z9"}); n.Name != "z" || n.Bot != "zbot" || !n.Caps.Buttons || n.Intro != "I am zbot" {
 		t.Errorf("Net %+v", n)
+	}
+}
+
+// A post due before its chat's network is up waits for it, however long,
+// rather than being dropped: the timers start once the first network is.
+func TestJoinWaitsForTheChatsNetwork(t *testing.T) {
+	a := &stubNet{name: "a", prefix: "a", known: make(chan struct{}), idv: "aid"}
+	z := &stubNet{name: "z", prefix: "z", known: make(chan struct{}), idv: "zid"}
+	close(z.known)
+	j := Join(a, z)
+	done := make(chan bool, 1)
+	go func() {
+		_, ok := j.Delivered(context.Background(), feature.Message{Chat: feature.Chat{User: "a1"}, Text: "due"})
+		done <- ok && j.Reachable(context.Background(), feature.Chat{User: "a1"})
+	}()
+	select {
+	case <-done:
+		t.Fatal("delivered before its network was up")
+	case <-time.After(50 * time.Millisecond):
+	}
+	close(a.known)
+	if ok := <-done; !ok || !slices.Equal(a.got(), []string{"delivered due"}) {
+		t.Fatalf("ok %v, a %q", ok, a.got())
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	b := &stubNet{name: "b", prefix: "b", known: make(chan struct{})}
+	if _, ok := Join(b, z).Delivered(ctx, feature.Message{Chat: feature.Chat{User: "b1"}}); ok {
+		t.Error("delivered while stopping")
 	}
 }

@@ -53,6 +53,7 @@ type Server struct {
 
 	mu           sync.Mutex
 	network      string
+	networks     []string
 	sampling     bool // the bot offered sampling in initialize
 	watchReplies bool // the bot takes a watch with Replies
 	watchReacts  bool // the bot takes a watch with Reactions
@@ -117,11 +118,20 @@ func New(c Config) *Server {
 }
 
 // Network is the chat network the bot said it is on ("signal",
-// "telegram"), or "" before initialize or if it said none.
+// "telegram"), or "" before initialize or if it said none. On several, it
+// is the first: a call's chat's is its Context's Network.
 func (s *Server) Network() string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.network
+}
+
+// Networks are the chat networks the bot said it is on, when on more than
+// one; nil otherwise.
+func (s *Server) Networks() []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return slices.Clone(s.networks)
 }
 
 // CanSample reports whether the bot offered sampling in initialize, so
@@ -637,7 +647,7 @@ func (s *Server) methods() map[string]handler {
 			json.Unmarshal(raw, &p) // optional: a bot that offers no network still gets an answer
 			addon := p.Capabilities.Experimental[KeyAddon]
 			s.mu.Lock()
-			s.network = addon.Network
+			s.network, s.networks = addon.Network, addon.Networks
 			s.watchReplies = addon.WatchReplies
 			s.watchReacts = addon.WatchReactions
 			s.sampling = p.Capabilities.Sampling != nil

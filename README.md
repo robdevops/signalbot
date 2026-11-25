@@ -161,16 +161,23 @@ Anyone on Telegram can find a bot by its username and add it to a group of their
 To move from two bots, one for each network, to one, stop both, then fold the Telegram bot's state into the Signal one's (the IDs of the two networks never collide, so each file is a union), and start one bot with both settings:
 
 ```sh
-S=/var/lib/private/signalbot T=/var/lib/private/signalbot-telegram   # the two state directories
-cd /tmp
-sudo jq -s '{schedules: ((.[0].schedules // []) + (.[1].schedules // [])), last_id: ((.[0].last_id // {}) + (.[1].last_id // {}))}' $S/schedules.json $T/schedules.json > schedules.json
-sudo jq -s '.[0] * .[1]' $S/keyboards.json $T/keyboards.json > keyboards.json
-sudo jq -s '.[0] * .[1]' $S/mcp-feeds.json $T/mcp-feeds.json > mcp-feeds.json
-sudo jq -s '.[0] + .[1]' $S/mcp-posts.json $T/mcp-posts.json > mcp-posts.json
-sudo install -m 600 schedules.json keyboards.json mcp-feeds.json mcp-posts.json $S/ && rm schedules.json keyboards.json mcp-feeds.json mcp-posts.json
+sudo bash -s /var/lib/private/signalbot /var/lib/private/signalbot-telegram <<'EOF'   # the Signal bot's state directory, then the Telegram one's
+set -e
+S=$1 T=$2 own=$(stat -c %u:%g "$1")
+merge() { # file, jq program over [Signal's, Telegram's]
+  if [ -f "$S/$1" ] && [ -f "$T/$1" ]; then jq -s "$2" "$S/$1" "$T/$1" > "$S/$1.new"
+  elif [ -f "$T/$1" ]; then cp "$T/$1" "$S/$1.new"
+  else return 0; fi
+  chown "$own" "$S/$1.new" && chmod 600 "$S/$1.new" && mv "$S/$1.new" "$S/$1"
+}
+merge schedules.json '{schedules: ((.[0].schedules // []) + (.[1].schedules // [])), last_id: ((.[0].last_id // {}) + (.[1].last_id // {}))}'
+merge keyboards.json '.[0] * .[1]'
+merge mcp-feeds.json '.[0] as $a | .[1] as $b | ($a * $b) | with_entries(.value.seen = (($a[.key].seen // []) + ($b[.key].seen // []) | reduce .[] as $i ([]; if index([$i]) then . else . + [$i] end)))'
+merge mcp-posts.json '.[0] + .[1]'
+EOF
 ```
 
-Skip a line for a file only one bot has (copy it across instead). Today's spending (`budget.json`) starts afresh for the Telegram chats, and an addon's state there (`mcp.json`: its rounds and pseudonyms) starts over, as the Signal bot's is kept.
+A file only the Telegram bot has is copied across, and each file keeps the state directory's owner. Today's spending (`budget.json`) starts afresh for the Telegram chats, and an addon's state there (`mcp.json`: its rounds and pseudonyms) starts over, as the Signal bot's is kept.
 
 Telegram differs from Signal in a few ways: bot chats are not end-to-end encrypted, the Bot API never tells a bot about deleted messages, and a reply is capped at 4,096 characters a message. See [PRIVACY.md](PRIVACY.md#telegram).
 
