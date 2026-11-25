@@ -31,7 +31,8 @@ type user struct {
 type member struct {
 	Nick  string   `json:"nick"`
 	User  *user    `json:"user"`
-	Roles []string `json:"roles"` // a guild member's, from the REST API
+	Roles []string `json:"roles"`                        // a guild member's, from the REST API
+	Until string   `json:"communication_disabled_until"` // their timeout's end, if timed out
 }
 
 type attachment struct {
@@ -626,6 +627,28 @@ func (c *Client) Delivered(ctx context.Context, msg feature.Message) (bot.Ready,
 	ch, known := c.channels[g]
 	info := c.guilds[ch.guild]
 	c.mu.Unlock()
+	// As on Signal, a post goes out only while its sender may still post
+	// there: still in the server, allowed to send in the channel, and not
+	// timed out; a lookup that fails drops it.
+	if inGroup {
+		uid := strings.TrimPrefix(msg.Sender, prefix)
+		if !known || info == nil || snowflake(uid) <= 0 {
+			logx.Infof("delivered message dropped: the channel or its sender is unknown")
+			return bot.Ready{}, false
+		}
+		m, err := c.member(wait, ch.guild, uid)
+		if err != nil {
+			logx.Warnf("delivered message dropped: reading its sender's roles failed: %v", err)
+			return bot.Ready{}, false
+		}
+		c.mu.Lock()
+		ok := c.canPost(info, ch, uid, m)
+		c.mu.Unlock()
+		if !ok {
+			logx.Infof("delivered message dropped: its sender can no longer post in the channel")
+			return bot.Ready{}, false
+		}
+	}
 	// A private thread's members are those added to it, which the list
 	// doesn't say, and an @mention there would add someone: only the seen.
 	if inGroup && known && ch.kind != unknown && ch.kind != typePrivateThread && info != nil {

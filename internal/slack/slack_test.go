@@ -143,7 +143,10 @@ func (f *fakeSlack) serve(w http.ResponseWriter, r *http.Request) {
 	case "files.info":
 		res = cmp.Or(res, `"file":{"url_private":"http://`+r.Host+`/files/x.png","size":7}`)
 	case "users.conversations":
-		res = f.convs[r.PostForm.Get("user")+" "+r.PostForm.Get("cursor")]
+		var ok bool
+		if res, ok = f.convs[r.PostForm.Get("user")+" "+r.PostForm.Get("cursor")]; !ok && r.PostForm.Get("user") == alice {
+			res = `"channels":[{"id":"` + channel + `","name":"team"}]` // Alice is in the channel, unless a test says otherwise
+		}
 	case "conversations.members", "users.list":
 		res = f.pages[method+" "+r.PostForm.Get("channel")+" "+r.PostForm.Get("cursor")]
 	case "users.info":
@@ -889,21 +892,63 @@ func TestDeliveredMembersCached(t *testing.T) {
 }
 
 // A chat whose channel isn't one Slack could list is never looked up, so
-// the workspace's names, cached under "", are never taken for its members.
+// the workspace's names, cached under "", are never taken for its members;
+// Delivered drops a message for one.
 func TestDeliveredMembersNotAChannel(t *testing.T) {
 	f := newFake(t)
 	f.pages = rosterPages()
 	c := connected(f.client(t))
-	if r, ok := c.Delivered(context.Background(), feature.Message{Chat: feature.Chat{GroupID: "slack:" + channel}, Text: "hi"}); !ok || len(r.Members) != 2 {
+	if r, ok := c.Delivered(context.Background(), feature.Message{Chat: feature.Chat{GroupID: "slack:" + channel}, Sender: "slack:" + alice, Text: "hi"}); !ok || len(r.Members) != 2 {
 		t.Fatalf("ready %+v", r)
 	}
 	for _, g := range []string{"slack:", "slack:/1700000000.000100", "slack:not-a-channel"} {
-		if r, ok := c.Delivered(context.Background(), feature.Message{Chat: feature.Chat{GroupID: g}, Text: "hi"}); !ok || len(r.Members) != 0 {
-			t.Fatalf("%s: ready %+v", g, r)
+		if r, ok := c.Delivered(context.Background(), feature.Message{Chat: feature.Chat{GroupID: g}, Sender: "slack:" + alice, Text: "hi"}); ok {
+			t.Fatalf("%s: delivered %+v", g, r)
+		}
+		ch, _ := c.channelOf(feature.Chat{GroupID: g})
+		if ms := c.members(context.Background(), ch); len(ms) != 0 {
+			t.Fatalf("%s: members %+v", g, ms)
 		}
 	}
 	if n := len(f.callsTo("conversations.members")); n != 2 {
 		t.Fatalf("members calls %d", n)
+	}
+}
+
+// A delivered message goes out only while its sender is still in the
+// channel, as Slack says; not if they left, nor if Slack can't say, and
+// without the scopes to ask, the scopes are named once; the log names no
+// one.
+func TestDeliveredChecksSender(t *testing.T) {
+	buf := captureLogs(t)
+	f := newFake(t)
+	c := connected(f.client(t))
+	deliver := func(sender string) bool {
+		_, ok := c.Delivered(context.Background(), feature.Message{Chat: feature.Chat{GroupID: "slack:" + channel + "/1700000000.000100"}, Sender: "slack:" + sender, Text: "hi"})
+		return ok
+	}
+	if !deliver(alice) {
+		t.Fatal("not delivered for a member")
+	}
+	if c := f.callsTo("users.conversations"); len(c) != 1 || c[0].Params["user"] != alice {
+		t.Fatalf("calls %v", c)
+	}
+	if deliver(bob) {
+		t.Fatal("delivered for someone not in the channel")
+	}
+	f.fail("users.conversations", "internal_error")
+	if deliver(alice) {
+		t.Fatal("delivered when Slack couldn't say")
+	}
+	for range 2 {
+		f.fail("users.conversations", "missing_scope")
+		if deliver(alice) {
+			t.Fatal("delivered without the scopes to check")
+		}
+	}
+	log := buf.String()
+	if strings.Count(log, "channels:read") != 1 || !strings.Contains(log, "can no longer post") || strings.Contains(log, alice) || strings.Contains(log, bob) || strings.Contains(log, channel) {
+		t.Fatalf("log %q", log)
 	}
 }
 

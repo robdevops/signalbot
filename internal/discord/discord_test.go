@@ -1108,7 +1108,7 @@ func TestRoleMention(t *testing.T) {
 // Delivered takes out the bot's @name and lists the people seen in the
 // channel; Redact hides their names and Discord's IDs.
 func TestDeliveredAndRedact(t *testing.T) {
-	c := connected(newFake(t).client())
+	c := groupsClient(newFake(t))
 	c.events("MESSAGE_CREATE", json.RawMessage(`{"id":"1200000000000000001",`+inGuild+`,`+fromBob+`,"content":"chatter"}`))
 	r, ok := c.Delivered(context.Background(), feature.Message{Chat: feature.Chat{GroupID: group}, Sender: prefix + bob, Text: "@Botty hello"})
 	if !ok || !r.Mentioned || r.Message.Text != "hello" || r.Message.Name != "Bob" || len(r.Members) != 1 || r.Members[0] != (bot.Member{Name: "Bob", ID: prefix + bob}) {
@@ -1165,6 +1165,7 @@ const (
 	voice    = "400000000000000005"
 	guild2   = "300000000000000002"
 	chanID2  = "400000000000000006"
+	everyone = "274877910016" // VIEW_CHANNEL, SEND_MESSAGES and SEND_MESSAGES_IN_THREADS
 	aliceGet = "GET /guilds/" + guild + "/members/" + alice
 	bobGet   = "GET /guilds/" + guild + "/members/" + bob
 )
@@ -1176,13 +1177,13 @@ func groupsClient(f *fake) *Client {
 	f.results[bobGet] = `{"roles":["` + roleID + `"]}`
 	c := connected(f.client())
 	c.events("GUILD_CREATE", json.RawMessage(`{"id":"`+guild+`","name":"Test server","owner_id":"700000000000000001",
-		"roles":[{"id":"`+guild+`","permissions":"1024"},{"id":"`+roleID+`","permissions":"0"}],
+		"roles":[{"id":"`+guild+`","permissions":"`+everyone+`"},{"id":"`+roleID+`","permissions":"0"}],
 		"channels":[{"id":"`+chanID+`","name":"general","type":0},
 			{"id":"`+secret+`","name":"secret","type":0,"permission_overwrites":[{"id":"`+guild+`","type":0,"allow":"0","deny":"1024"},{"id":"`+roleID+`","type":0,"allow":"1024","deny":"0"}]},
 			{"id":"`+voice+`","name":"voice","type":2}],
 		"threads":[{"id":"`+thread+`","name":"plans","type":11,"parent_id":"`+secret+`"},{"id":"`+private+`","name":"quiet","type":12,"parent_id":"`+chanID+`"}]}`))
 	c.events("GUILD_CREATE", json.RawMessage(`{"id":"`+guild2+`","name":"Other server","owner_id":"700000000000000001",
-		"roles":[{"id":"`+guild2+`","permissions":"1024"}],"channels":[{"id":"`+chanID2+`","name":"lobby","type":0}]}`))
+		"roles":[{"id":"`+guild2+`","permissions":"`+everyone+`"}],"channels":[{"id":"`+chanID2+`","name":"lobby","type":0}]}`))
 	return c
 }
 
@@ -1234,11 +1235,101 @@ func TestGroups(t *testing.T) {
 	}
 
 	// A member's own overwrite comes last.
-	c.events("GUILD_ROLE_UPDATE", json.RawMessage(`{"guild_id":"`+guild+`","role":{"id":"`+guild+`","permissions":"1024"}}`))
+	c.events("GUILD_ROLE_UPDATE", json.RawMessage(`{"guild_id":"`+guild+`","role":{"id":"`+guild+`","permissions":"`+everyone+`"}}`))
 	c.events("CHANNEL_UPDATE", json.RawMessage(`{"id":"`+secret+`","guild_id":"`+guild+`","name":"secret","type":0,"permission_overwrites":[
 		{"id":"`+guild+`","type":0,"allow":"0","deny":"1024"},{"id":"`+roleID+`","type":0,"allow":"1024","deny":"0"},{"id":"`+bob+`","type":1,"allow":"0","deny":"1024"}]}`))
 	if got := groupNames(t, c, bob); !slices.Equal(got, []string{"#general (Test server)", "#quiet (Test server)"}) {
 		t.Fatalf("Bob's, denied his own %q", got)
+	}
+}
+
+// Groups lists only where a member may post: a read-only channel or an
+// announcement channel only to those allowed to send there, a thread to
+// those allowed to send in threads, and nothing while they are timed out,
+// unless they own the server.
+func TestGroupsPostOnly(t *testing.T) {
+	const (
+		rules = "400000000000000007"
+		news  = "400000000000000008"
+	)
+	f := newFake(t)
+	c := groupsClient(f)
+	c.events("CHANNEL_CREATE", json.RawMessage(`{"id":"`+rules+`","guild_id":"`+guild+`","name":"rules","type":0,"permission_overwrites":[{"id":"`+guild+`","type":0,"allow":"0","deny":"2048"}]}`))
+	c.events("CHANNEL_CREATE", json.RawMessage(`{"id":"`+news+`","guild_id":"`+guild+`","name":"news","type":5,"permission_overwrites":[{"id":"`+guild+`","type":0,"allow":"0","deny":"2048"},{"id":"`+roleID+`","type":0,"allow":"3072","deny":"0"}]}`))
+	if got := groupNames(t, c, alice); !slices.Equal(got, []string{"#general (Test server)"}) {
+		t.Fatalf("Alice's %q", got)
+	}
+	if got := groupNames(t, c, bob); !slices.Equal(got, []string{"#general (Test server)", "#news (Test server)", "#plans (Test server)", "#secret (Test server)"}) {
+		t.Fatalf("Bob's %q", got)
+	}
+
+	// Not allowed to send in threads: #secret, not its thread.
+	c.events("CHANNEL_UPDATE", json.RawMessage(`{"id":"`+secret+`","guild_id":"`+guild+`","name":"secret","type":0,"permission_overwrites":[
+		{"id":"`+guild+`","type":0,"allow":"0","deny":"1024"},{"id":"`+roleID+`","type":0,"allow":"1024","deny":"274877906944"}]}`))
+	if got := groupNames(t, c, bob); slices.Contains(got, "#plans (Test server)") || !slices.Contains(got, "#secret (Test server)") {
+		t.Fatalf("Bob's, no threads %q", got)
+	}
+
+	// Timed out: nothing, until it ends; the owner is never timed out.
+	f.results[aliceGet] = `{"roles":[],"communication_disabled_until":"` + time.Now().Add(time.Hour).Format(time.RFC3339) + `"}`
+	c.mu.Lock()
+	clear(c.members)
+	c.mu.Unlock()
+	if got := groupNames(t, c, alice); len(got) != 0 {
+		t.Fatalf("timed out, Alice's %q", got)
+	}
+	c.events("GUILD_UPDATE", json.RawMessage(`{"id":"`+guild+`","name":"Test server","owner_id":"`+alice+`"}`))
+	if got := groupNames(t, c, alice); len(got) == 0 {
+		t.Fatal("the owner, timed out, has none")
+	}
+	c.events("GUILD_UPDATE", json.RawMessage(`{"id":"`+guild+`","name":"Test server","owner_id":"700000000000000001"}`))
+	f.results[aliceGet] = `{"roles":[],"communication_disabled_until":"` + time.Now().Add(-time.Hour).Format(time.RFC3339) + `"}`
+	c.mu.Lock()
+	clear(c.members)
+	c.mu.Unlock()
+	if got := groupNames(t, c, alice); !slices.Equal(got, []string{"#general (Test server)"}) {
+		t.Fatalf("after the timeout, Alice's %q", got)
+	}
+}
+
+// A delivered post goes out only while its sender may still post in the
+// channel: not once they left, lost the right to send, or can't be looked
+// up; the log names no one.
+func TestDeliveredChecksSender(t *testing.T) {
+	logs := captureLogs(t)
+	f := newFake(t)
+	c := groupsClient(f)
+	deliver := func(ch, sender string) bool {
+		_, ok := c.Delivered(context.Background(), feature.Message{Chat: feature.Chat{GroupID: prefix + ch}, Sender: prefix + sender, Text: "hello"})
+		c.mu.Lock()
+		clear(c.members)
+		c.mu.Unlock()
+		return ok
+	}
+	if !deliver(chanID, alice) || !deliver(secret, bob) {
+		t.Fatal("not delivered for those who may post")
+	}
+	if deliver(secret, alice) {
+		t.Fatal("delivered in a channel Alice can't see")
+	}
+	delete(f.results, aliceGet) // the fake's 404: she left
+	if deliver(chanID, alice) {
+		t.Fatal("delivered for someone who left")
+	}
+	f.results[aliceGet] = `{"roles":[]}`
+	c.events("CHANNEL_UPDATE", json.RawMessage(`{"id":"`+chanID+`","guild_id":"`+guild+`","name":"general","type":0,"permission_overwrites":[{"id":"`+alice+`","type":1,"allow":"0","deny":"2048"}]}`))
+	if deliver(chanID, alice) {
+		t.Fatal("delivered for someone denied sending")
+	}
+	f.errs[bobGet] = []int{500}
+	if deliver(secret, bob) {
+		t.Fatal("delivered when the lookup failed")
+	}
+	if deliver(chanID, "not-an-id") || deliver("499999999999999999", bob) {
+		t.Fatal("delivered for an unknown sender or channel")
+	}
+	if !strings.Contains(logs.String(), "can no longer post") || strings.Contains(logs.String(), alice) || strings.Contains(logs.String(), bob) || strings.Contains(logs.String(), guild) {
+		t.Fatalf("log %q", logs.String())
 	}
 }
 
@@ -1267,7 +1358,7 @@ func TestGroupsFallBack(t *testing.T) {
 // members is Delivered's members in channel ch, as "Name ID" each.
 func members(t *testing.T, c *Client, ch string) []string {
 	t.Helper()
-	r, ok := c.Delivered(context.Background(), feature.Message{Chat: feature.Chat{GroupID: prefix + ch}, Text: "hello"})
+	r, ok := c.Delivered(context.Background(), feature.Message{Chat: feature.Chat{GroupID: prefix + ch}, Sender: prefix + bob, Text: "hello"})
 	if !ok {
 		t.Fatal("not delivered")
 	}
@@ -1343,7 +1434,7 @@ func TestDeliveredMembers(t *testing.T) {
 	got := make([][]string, 3)
 	for i := range got {
 		wg.Go(func() {
-			r, _ := c.Delivered(context.Background(), feature.Message{Chat: feature.Chat{GroupID: group}, Text: "hello"})
+			r, _ := c.Delivered(context.Background(), feature.Message{Chat: feature.Chat{GroupID: group}, Sender: prefix + bob, Text: "hello"})
 			got[i] = memberNames(r.Members)
 		})
 	}

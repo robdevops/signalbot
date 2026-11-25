@@ -605,6 +605,9 @@ func (c *Client) Delivered(ctx context.Context, msg feature.Message) (bot.Ready,
 	var r bot.Ready
 	if msg.Chat.GroupID != "" {
 		channel, _ := c.channelOf(msg.Chat)
+		if !c.stillIn(wait, sender, channel) {
+			return bot.Ready{}, false
+		}
 		r.Members = c.members(ctx, channel)
 	}
 	rs := []rune(msg.Text)
@@ -620,6 +623,35 @@ func (c *Client) Delivered(ctx context.Context, msg feature.Message) (bot.Ready,
 	}
 	r.Message = msg
 	return r, true
+}
+
+// stillIn reports whether user is still in channel, as Slack says
+// (users.conversations), so a delivered message goes out only while its
+// sender could post there, as on Signal; if Slack can't say, it drops it.
+// Slack doesn't tell a bot a channel's own posting limits, such as only
+// admins posting in #general, so those aren't checked.
+func (c *Client) stillIn(ctx context.Context, user, channel string) bool {
+	if !userID.MatchString(user) || !channelID.MatchString(channel) {
+		logx.Infof("delivered message dropped: the channel or its sender is unknown")
+		return false
+	}
+	theirs, err := c.conversations(ctx, user)
+	switch {
+	case code(err) == "missing_scope":
+		c.scopeWarn.Do(func() {
+			logx.Warnf("Slack refused to list channels (missing_scope): the app needs the scopes channels:read and groups:read, so paste the app manifest again at api.slack.com/apps → your app → App Manifest and reinstall the app; until then channels are named by their IDs and scheduled posts in channels are dropped")
+		})
+		logx.Warnf("delivered message dropped: Slack won't say whether its sender is still in the channel")
+		return false
+	case err != nil:
+		logx.Warnf("delivered message dropped: checking its sender is still in the channel failed: %v", err)
+		return false
+	}
+	if _, ok := theirs[channel]; !ok {
+		logx.Infof("delivered message dropped: its sender can no longer post in the channel")
+		return false
+	}
+	return true
 }
 
 // Reachable reports whether the bot may still post in chat on its own: a
@@ -657,7 +689,7 @@ func (c *Client) Groups(ctx context.Context, user string) ([]feature.Group, erro
 	if err != nil {
 		if code(err) == "missing_scope" {
 			c.scopeWarn.Do(func() {
-				logx.Warnf("Slack refused to list channels (missing_scope): the app needs the scopes channels:read and groups:read, so paste the app manifest again at api.slack.com/apps → your app → App Manifest and reinstall the app; until then channels are named by their IDs")
+				logx.Warnf("Slack refused to list channels (missing_scope): the app needs the scopes channels:read and groups:read, so paste the app manifest again at api.slack.com/apps → your app → App Manifest and reinstall the app; until then channels are named by their IDs and scheduled posts in channels are dropped")
 			})
 		} else {
 			logx.Warnf("slack users.conversations failed: %v; listing the channels seen instead", err)

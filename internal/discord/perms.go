@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"math"
 	"net/http"
 	"slices"
 	"strconv"
@@ -18,8 +19,10 @@ import (
 
 // The permissions Groups reads, as Discord numbers its bits.
 const (
-	permAdmin = 1 << 3  // ADMINISTRATOR: every permission, in every channel
-	permView  = 1 << 10 // VIEW_CHANNEL
+	permAdmin       = 1 << 3  // ADMINISTRATOR: every permission, in every channel
+	permView        = 1 << 10 // VIEW_CHANNEL
+	permSend        = 1 << 11 // SEND_MESSAGES
+	permSendThreads = 1 << 38 // SEND_MESSAGES_IN_THREADS
 )
 
 // The channel types Groups lists to anyone who can view them: a text
@@ -124,35 +127,37 @@ func (c *Client) guildUpdated(d json.RawMessage) {
 	}
 }
 
-// memberInfo is a guild member's roles, or that user isn't a member, as
-// the REST API said at a time.
+// memberInfo is a guild member's roles and the end of any timeout, or
+// that user isn't a member, as the REST API said at a time.
 type memberInfo struct {
 	roles []string
 	in    bool
+	until time.Time // timed out, unable to post, until then
 	at    time.Time
 }
 
-// member is the roles user has in guild, and whether they are a member at
-// all, asked of the REST API (GET /guilds/{guild}/members/{user}, which
-// needs no privileged intent) and kept for 10 minutes.
-func (c *Client) member(ctx context.Context, guild, user string) (roles []string, in bool, err error) {
+// member is user in guild: their roles, any timeout, and whether they are
+// a member at all, asked of the REST API (GET /guilds/{guild}/members/{user},
+// which needs no privileged intent) and kept for 10 minutes.
+func (c *Client) member(ctx context.Context, guild, user string) (memberInfo, error) {
 	key := guild + "/" + user
 	c.mu.Lock()
 	m, ok := c.members[key]
 	c.mu.Unlock()
 	if ok && time.Since(m.at) < memberTTL {
-		return m.roles, m.in, nil
+		return m, nil
 	}
 	var got member
-	err = c.call(ctx, http.MethodGet, "/guilds/"+guild+"/members/"+user, nil, &got)
+	err := c.call(ctx, http.MethodGet, "/guilds/"+guild+"/members/"+user, nil, &got)
 	var ae *apiError
 	switch {
 	case errors.As(err, &ae) && (ae.Status == http.StatusNotFound || ae.Code == 10007): // an unknown member
 		m = memberInfo{at: time.Now()}
 	case err != nil:
-		return nil, false, err
+		return memberInfo{}, err
 	default:
 		m = memberInfo{roles: got.Roles, in: true, at: time.Now()}
+		m.until, _ = time.Parse(time.RFC3339, got.Until)
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -170,19 +175,47 @@ func (c *Client) member(ctx context.Context, guild, user string) (roles []string
 		}
 	}
 	c.members[key] = m
-	return m.roles, m.in, nil
+	return m, nil
 }
 
-// canView reports whether user, with roles, can see ch in g, by Discord's
-// own reckoning, under c.mu: the @everyone role's permissions and those of
+// canView reports whether user, with roles, can see ch in g, under c.mu.
+func (c *Client) canView(g *guildInfo, ch channel, user string, roles []string) bool {
+	return c.perms(g, ch, user, roles)&permView != 0
+}
+
+// canPost reports whether member m, user, may post in ch in g, under c.mu:
+// see it and send there (in a thread, send in threads), and not be timed
+// out, which the owner and administrators never are.
+func (c *Client) canPost(g *guildInfo, ch channel, user string, m memberInfo) bool {
+	if !m.in {
+		return false
+	}
+	p := c.perms(g, ch, user, m.roles)
+	send := uint64(permSend)
+	if isThread(ch.kind) {
+		send = permSendThreads
+	}
+	if p&permView == 0 || p&send == 0 {
+		return false
+	}
+	return time.Now().After(m.until) || user == g.owner || p&permAdmin != 0
+}
+
+func isThread(kind int) bool {
+	return kind == typeNewsThread || kind == typePublicThread || kind == typePrivateThread
+}
+
+// perms is user's permissions, with roles, in ch in g, by Discord's own
+// reckoning, under c.mu: the @everyone role's permissions and those of
 // the user's roles, all of them for the owner or an administrator, then
 // the channel's overwrites, @everyone's, the roles' together, and the
-// user's own. A thread is seen by whoever can see its channel.
-func (c *Client) canView(g *guildInfo, ch channel, user string, roles []string) bool {
-	if ch.kind == typeNewsThread || ch.kind == typePublicThread || ch.kind == typePrivateThread {
+// user's own. A thread's are its channel's; one whose channel isn't known
+// has none.
+func (c *Client) perms(g *guildInfo, ch channel, user string, roles []string) uint64 {
+	if isThread(ch.kind) {
 		parent, ok := c.channels[ch.parent]
 		if !ok {
-			return false
+			return 0
 		}
 		ch = parent
 	}
@@ -191,7 +224,7 @@ func (c *Client) canView(g *guildInfo, ch channel, user string, roles []string) 
 		perms |= g.roles[r]
 	}
 	if user == g.owner || perms&permAdmin != 0 {
-		return true
+		return math.MaxUint64
 	}
 	var allow, deny uint64
 	for _, o := range ch.overwrites {
@@ -207,15 +240,16 @@ func (c *Client) canView(g *guildInfo, ch channel, user string, roles []string) 
 			perms = perms&^o.deny | o.allow
 		}
 	}
-	return perms&permView != 0
+	return perms
 }
 
-// Groups lists, by name, the channels user can see in the servers they
-// share with the bot: text and announcement channels and their public
-// threads, by the server's roles and the channels' permissions, and a
-// private thread, or a channel the bot knows only from a message, where
-// it has seen them post. Where their roles can't be read, it lists only
-// the channels it has seen them post in; if ctx ends first, it fails.
+// Groups lists, by name, the channels user may post in, in the servers
+// they share with the bot: text and announcement channels and their
+// public threads, by the server's roles, the channels' permissions and
+// any timeout, and a private thread, or a channel the bot knows only from
+// a message, where it has also seen them post. Where their roles can't be
+// read, it lists only the channels it has seen them post in (Delivered
+// checks again before posting); if ctx ends first, it fails.
 func (c *Client) Groups(ctx context.Context, user string) ([]feature.Group, error) {
 	uid, ok := strings.CutPrefix(user, prefix)
 	if !ok || snowflake(uid) <= 0 {
@@ -229,19 +263,19 @@ func (c *Client) Groups(ctx context.Context, user string) ([]feature.Group, erro
 	c.mu.Unlock()
 	slices.Sort(guilds)
 	type standing struct {
-		roles      []string
-		in, failed bool
+		memberInfo
+		failed bool
 	}
 	in := map[string]standing{}
 	for _, g := range guilds {
-		roles, member, err := c.member(ctx, g, uid)
+		m, err := c.member(ctx, g, uid)
 		if ctx.Err() != nil { // given up on: not a failure for each server
 			return nil, ctx.Err()
 		}
 		if err != nil {
 			logx.Warnf("discord: reading a server member's roles failed, so only the channels they were seen in are listed: %v", err)
 		}
-		in[g] = standing{roles: roles, in: member, failed: err != nil}
+		in[g] = standing{memberInfo: m, failed: err != nil}
 	}
 	c.mu.Lock()
 	var out []feature.Group
@@ -256,9 +290,9 @@ func (c *Client) Groups(ctx context.Context, user string) ([]feature.Group, erro
 		case !s.in:
 			show = false
 		case ch.kind == typeText, ch.kind == typeNews, ch.kind == typeNewsThread, ch.kind == typePublicThread:
-			show = c.canView(g, ch, uid, s.roles)
+			show = c.canPost(g, ch, uid, s.memberInfo)
 		default:
-			show = seen && (ch.kind == typePrivateThread || ch.kind == unknown || c.canView(g, ch, uid, s.roles))
+			show = seen && c.canPost(g, ch, uid, s.memberInfo)
 		}
 		if !show {
 			continue
