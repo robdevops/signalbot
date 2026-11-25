@@ -20,6 +20,7 @@ import (
 
 	"github.com/robdevops/signalbot/internal/bot"
 	"github.com/robdevops/signalbot/internal/feature"
+	"github.com/robdevops/signalbot/internal/kit/allow"
 	"github.com/robdevops/signalbot/internal/kit/logx"
 	"github.com/robdevops/signalbot/internal/kit/mdstyle"
 	"github.com/robdevops/signalbot/internal/kit/ws/wstest"
@@ -53,6 +54,7 @@ type fakeSlack struct {
 	errs    map[string]string // method to an error, given once
 	convs   map[string]string // users.conversations' answers, by "user cursor" (the bot's: no user)
 	pages   map[string]string // conversations.members' and users.list's answers, by "method channel cursor"
+	infos   map[string]string // users.info's answers, by user, instead of the usual ones
 	calls   []call
 	acks    []string
 	opens   int
@@ -152,6 +154,9 @@ func (f *fakeSlack) serve(w http.ResponseWriter, r *http.Request) {
 	case "users.info":
 		res = map[string]string{alice: `"user":{"name":"alice","profile":{"display_name":"Alice"}}`, bob: `"user":{"name":"bob","real_name":"Bob B"}`,
 			botID: `"user":{"name":"botty","profile":{"display_name":"Botty"}}`}[r.PostForm.Get("user")]
+		if v, ok := f.infos[r.PostForm.Get("user")]; ok {
+			res = v
+		}
 	}
 	f.mu.Unlock()
 	switch {
@@ -192,7 +197,7 @@ func (f *fakeSlack) fail(method, code string) {
 }
 
 func (f *fakeSlack) client(t *testing.T) *Client {
-	c := newClient(f.srv.URL, token, appToken, t.TempDir(), nil)
+	c := newClient(f.srv.URL, token, appToken, t.TempDir(), anyone, nil)
 	c.backoff, c.slow, c.settle = 10*time.Millisecond, 50*time.Millisecond, time.Millisecond
 	return c
 }
@@ -763,7 +768,7 @@ func TestDialErrorHidesTicket(t *testing.T) {
 func TestRefusedToken(t *testing.T) {
 	logs := captureLogs(t)
 	f := newFake(t)
-	c := newClient(f.srv.URL, "xoxb-wrong-SECRET", appToken, t.TempDir(), nil)
+	c := newClient(f.srv.URL, "xoxb-wrong-SECRET", appToken, t.TempDir(), anyone, nil)
 	c.backoff, c.slow = time.Millisecond, 20*time.Millisecond
 	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
 	defer cancel()
@@ -1059,5 +1064,8 @@ func TestMediaHost(t *testing.T) {
 	}
 }
 
-func c0() *Client                  { return connected(newClient("http://x", token, appToken, "", nil)) }
+func c0() *Client                  { return connected(newClient("http://x", token, appToken, "", anyone, nil)) }
 func parse(md string) mdstyle.Text { return mdstyle.Parse(md, true) }
+
+// anyone lets anyone DM the bot, as the tests but those of SLACK_DM_USER_IDS do.
+var anyone = allow.Parse("all")

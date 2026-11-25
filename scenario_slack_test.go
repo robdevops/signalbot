@@ -44,8 +44,9 @@ type slHarness struct {
 	nextTS  int
 	envs    int
 	calls   []slCall
-	replies []string   // the model's next replies; then "ok"
-	reqs    [][]string // each chat completions request's messages, role and text
+	replies []string        // the model's next replies; then "ok"
+	admins  map[string]bool // users users.info says are workspace admins
+	reqs    [][]string      // each chat completions request's messages, role and text
 	logs    bytes.Buffer
 }
 
@@ -59,14 +60,23 @@ type slCall struct {
 // extra features registered after the bot's own, and returns once it has
 // connected.
 func startSlack(t *testing.T, extra ...func(feature.Host) error) *slHarness {
-	h := &slHarness{t: t}
+	return startSlackWith(t, nil, extra...)
+}
+
+// startSlackWith is startSlack with the settings env too.
+func startSlackWith(t *testing.T, env map[string]string, extra ...func(feature.Host) error) *slHarness {
+	h := &slHarness{t: t, admins: map[string]bool{}}
 	api := httptest.NewServer(http.HandlerFunc(h.serveAPI))
 	t.Cleanup(api.Close)
 	model := httptest.NewServer(http.HandlerFunc(h.serveModel))
 	t.Cleanup(model.Close)
 	for _, k := range []string{"SIGNALCLI_SOCKET", "TELEGRAM_BOT_TOKEN", "MODEL_API_KEY", "MODEL_SEARCH", "MODEL_REASONING", "MODEL_SYSTEM_PROMPT",
-		"INTRO", "MAX_CONCURRENCY", "HISTORY_MAX", "TOOL_LINGER_ROUNDS", "MCP_CONFIG", "GROUP_CONTEXT", "FILES", "CHARTS", "JOURNAL_STREAM", "DAILY_BUDGET"} {
+		"INTRO", "MAX_CONCURRENCY", "HISTORY_MAX", "TOOL_LINGER_ROUNDS", "MCP_CONFIG", "GROUP_CONTEXT", "FILES", "CHARTS", "JOURNAL_STREAM", "DAILY_BUDGET",
+		"SLACK_DM_USER_IDS", "SCHEDULE_USER_IDS"} {
 		t.Setenv(k, "")
+	}
+	for k, v := range env {
+		t.Setenv(k, v)
 	}
 	for k, v := range map[string]string{"SLACK_BOT_TOKEN": slToken, "SLACK_APP_TOKEN": slAppToken, "SLACK_API_URL": api.URL,
 		"MODEL_API_URL": model.URL, "MODEL": "test/test-model", "STATE_DIRECTORY": t.TempDir()} {
@@ -165,8 +175,10 @@ func (h *slHarness) serveAPI(w http.ResponseWriter, r *http.Request) {
 	case "apps.connections.open":
 		res = `"url":"ws://` + r.Host + `/socket"`
 	case "users.info":
-		res = map[string]string{slAlice: `"user":{"profile":{"display_name":"Alice"}}`, slBob: `"user":{"profile":{"display_name":"Bob"}}`,
-			"UBOT00001": `"user":{"profile":{"display_name":"Botty"}}`}[r.PostForm.Get("user")]
+		u := r.PostForm.Get("user")
+		if n := map[string]string{slAlice: "Alice", slBob: "Bob", "UBOT00001": "Botty"}[u]; n != "" {
+			res = fmt.Sprintf(`"user":{"is_admin":%t,"profile":{"display_name":%q}}`, h.admins[u], n)
+		}
 	case "conversations.open":
 		res = `"channel":{"id":"D0ALICEDM1"}`
 	case "chat.postMessage":
@@ -303,13 +315,80 @@ func (h *slHarness) requests() [][]string {
 
 // --- scenarios --------------------------------------------------------------------
 
-// Anyone's DM is answered, in the DM.
+// A DM from someone SLACK_DM_USER_IDS lists is answered, in the DM.
 func TestSlackDM(t *testing.T) {
-	h := startSlack(t)
+	h := startSlackWith(t, map[string]string{"SLACK_DM_USER_IDS": slAlice})
 	h.message(slAlice, "D0ALICEDM1", "hello")
 	s := h.waitCalls("chat.postMessage", 1)[0]
 	if s.Params["channel"] != "D0ALICEDM1" || s.Params["text"] != "ok" || sectionText(s) != "ok" {
 		t.Fatalf("sent %v", s.Params)
+	}
+}
+
+// setAdmin says whether users.info has user as a workspace admin.
+func (h *slHarness) setAdmin(user string, admin bool) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.admins[user] = admin
+}
+
+// waitLog waits for a log line holding s.
+func (h *slHarness) waitLog(s string) {
+	h.t.Helper()
+	h.waitFor(fmt.Sprintf("the log line %q", s), func() bool { return strings.Contains(h.logText(), s) })
+}
+
+// By default a workspace admin's DM is answered and a stranger's isn't:
+// not answered or kept, and logged by their ID alone.
+func TestSlackDMDefault(t *testing.T) {
+	h := startSlack(t)
+	h.waitLog("Slack DMs: allowed from admins and mods (SLACK_DM_USER_IDS)")
+	h.setAdmin(slAlice, true)
+	h.message(slBob, "D0BOBDM001", "a secret question")
+	h.waitLog("slack:" + slBob + " ignored because not allowed by SLACK_DM_USER_IDS")
+	h.message(slAlice, "D0ALICEDM1", "hello")
+	if s := h.waitCalls("chat.postMessage", 1); len(s) != 1 || s[0].Params["channel"] != "D0ALICEDM1" {
+		t.Fatalf("sent %v", s)
+	}
+	if r := h.requests(); len(r) != 1 || !slices.Equal(r[0], []string{"user: hello"}) {
+		t.Fatalf("model saw %q", r)
+	}
+	if l := h.logText(); strings.Contains(l, "secret") || strings.Contains(l, "Bob") {
+		t.Fatalf("logged:\n%s", l)
+	}
+}
+
+// With SLACK_DM_USER_IDS=none no one's DM is answered, an admin's either.
+func TestSlackDMNone(t *testing.T) {
+	h := startSlackWith(t, map[string]string{"SLACK_DM_USER_IDS": "none"})
+	h.waitLog("Slack DMs are off: SLACK_DM_USER_IDS is none")
+	h.setAdmin(slAlice, true)
+	h.message(slAlice, "D0ALICEDM1", "hello")
+	h.waitLog("slack:" + slAlice + " ignored because not allowed by SLACK_DM_USER_IDS")
+	h.message(slAlice, slChannel, "<@UBOT00001> hello")
+	if s := h.waitCalls("chat.postMessage", 1); len(s) != 1 || s[0].Params["channel"] != slChannel {
+		t.Fatalf("sent %v", s)
+	}
+}
+
+// A schedule in an admin's DM is dropped at its time once they are no
+// longer an admin, so may no longer DM the bot, naming no one.
+func TestSlackDMScheduleDropped(t *testing.T) {
+	h := startSlack(t)
+	h.setAdmin(slAlice, true)
+	at := time.Now().Truncate(time.Second).Add(2 * time.Second)
+	h.message(slAlice, "D0ALICEDM1", `/schedule "lunch is ready" `+at.Format("2006-01-02T15:04:05"))
+	s := h.waitCalls("chat.postMessage", 1)[0]
+	if txt, _ := s.Params["text"].(string); !strings.HasPrefix(txt, "Scheduled for ") {
+		t.Fatalf("sent %v", s.Params)
+	}
+	h.setAdmin(slAlice, false)
+	h.waitLog("delivered message dropped: its sender may no longer DM the bot (SLACK_DM_USER_IDS)")
+	if n := len(h.callsTo("chat.postMessage")); n != 1 {
+		t.Fatalf("%d sends", n)
+	}
+	if l := h.logText(); strings.Contains(l, "lunch") || strings.Contains(l, slAlice) {
+		t.Fatalf("logged:\n%s", l)
 	}
 }
 
