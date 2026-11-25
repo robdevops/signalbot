@@ -16,6 +16,8 @@ func TestOwns(t *testing.T) {
 		{GroupID: "Z3JvdXBJRGlzYmFzZTY0Zm9yU2lnbmFsMTIzNA="}: true,
 		{User: "123456789"}:                                  false,
 		{GroupID: "-1001234567890/42"}:                       false,
+		{GroupID: "discord:123456789012345678"}:              false,
+		{User: "slack:U012AB3CD"}:                            false,
 		{}:                                                   false,
 	} {
 		if got := c.Owns(chat); got != want {
