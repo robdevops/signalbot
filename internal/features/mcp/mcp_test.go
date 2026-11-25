@@ -21,6 +21,7 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	ext "github.com/robdevops/signalbot/addon"
 	"github.com/robdevops/signalbot/internal/feature"
@@ -1014,5 +1015,118 @@ func TestConfigKeyboard(t *testing.T) {
 	_, _, err = register(t, `{"mcpServers":{"a":{"url":"`+url+`","keyboard":[["Status","status"]]}}}`)
 	if err == nil || !strings.Contains(err.Error(), "isn't a label") {
 		t.Errorf("a bad key: %v", err)
+	}
+}
+
+// A bare command whose default isn't one of its values refreshes bare; a
+// press under an older message in a forum topic, which names the group
+// alone, finds the post in its topic and edits it there.
+func TestRerunDefaultAndTopic(t *testing.T) {
+	config := `{"mcpServers":{"fake":{"url":"` + serve(t, &fakeMCP{}) + `","allowed_tools":["echo"],"chat_commands":{
+		"rain":{"tool":"echo","direct":true,"args":{"period":"24h"},"arg":"period","values":["1d","7d"]}}}}}`
+	h, _, err := register(t, config, func(h *featuretest.Host) { h.Bot.Caps.Buttons, h.Settings["STATE_DIRECTORY"] = true, t.TempDir() })
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	topic := feature.Chat{GroupID: "-100/7"}
+	got := h.Message(ctx, feature.Message{Chat: topic, Sender: "a", Text: "/rain", Addressed: true})
+	got.OnSent([]int64{40}, false)
+	if _, ok := h.Press(ctx, feature.Press{Chat: feature.Chat{GroupID: "-200"}, Sent: 40, Data: "rerun"}); ok {
+		t.Error("a press in another group was taken")
+	}
+	if a, ok := h.Press(ctx, feature.Press{Chat: feature.Chat{GroupID: "-100"}, Sent: 40, Data: "rerun"}); !ok || a != "" {
+		t.Fatalf("refresh: %q %v", a, ok)
+	}
+	if p := h.Posts(); len(p) != 1 || p[0].Chat != topic || p[0].Text != `echo {"period":"24h"}` {
+		t.Fatalf("posts %+v", p)
+	}
+}
+
+// A feed menu's buttons name the topic they are in, so a press under an
+// older message, which names the group alone, changes the topic's alerts.
+// An item with an overlong ID is skipped, and a long link cut.
+func TestFeedTopicAndLimits(t *testing.T) {
+	old := feedEvery
+	feedEvery = 20 * time.Millisecond
+	t.Cleanup(func() { feedEvery = old })
+	fake := &fakeMCP{feed: `{"kinds":[{"kind":"rain"},{"kind":"a/b"}],"items":[]}`}
+	config := `{"mcpServers":{"a-server-name-that-is-rather-long-indeed-and-then-some-more":{"url":"` + serve(t, fake) + `","feed":{"resource":"feed://items"}}}}`
+	h, _, err := register(t, config, func(h *featuretest.Host) { h.Bot.Caps.Buttons, h.Settings["STATE_DIRECTORY"] = true, t.TempDir() })
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	topic := feature.Chat{GroupID: "-100/7"}
+	var got feature.Action
+	for range 200 {
+		if got = h.Message(ctx, feature.Message{Chat: topic, Sender: "a", Text: "/alerts on", Addressed: true}); len(got.Markup.Buttons) > 1 {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	var all []feature.Button
+	for _, row := range got.Markup.Buttons {
+		all = append(all, row...)
+	}
+	if len(all) != 3 || all[0].Data != "feed=alerts/off/7" || all[2].Data != "feed=alerts/k:rain/7" {
+		t.Fatalf("buttons %+v", all)
+	}
+	if _, ok := h.Press(ctx, feature.Press{Chat: feature.Chat{GroupID: "-100"}, Sent: 9, Data: all[0].Data}); !ok {
+		t.Fatal("press not taken")
+	}
+	if a := h.Message(ctx, feature.Message{Chat: topic, Sender: "a", Text: "/alerts", Addressed: true}); !strings.Contains(a.Answer, "off here") {
+		t.Fatalf("the topic's alerts: %q", a.Answer)
+	}
+	if p := h.Posts(); len(p) != 1 || p[0].Chat != topic || p[0].Edit != 9 {
+		t.Fatalf("posts %+v", p)
+	}
+	h.Message(ctx, feature.Message{Chat: topic, Sender: "a", Text: "/alerts on", Addressed: true})
+	now := time.Now().UTC().Format(time.RFC3339)
+	fake.mu.Lock()
+	fake.feed = `{"items":[{"id":"` + strings.Repeat("x", 201) + `","time":"` + now + `","text":"long id"},{"id":"2","time":"` + now + `","text":"ok","link":"https://x/` + strings.Repeat("y", 600) + `"}]}`
+	fake.mu.Unlock()
+	for range 200 {
+		if len(h.Posts()) > 1 {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	time.Sleep(3 * feedEvery)
+	p := h.Posts()
+	if len(p) != 2 || !strings.HasPrefix(p[1].Text, "ok\nhttps://x/") || utf8.RuneCountInString(p[1].Text) > 3+maxLink+1 {
+		t.Fatalf("posts %d, last %q", len(p), p[len(p)-1].Text)
+	}
+}
+
+// A server that can't be reached adds no keys; a state directory that
+// can't be used leaves direct commands without buttons and feeds off,
+// but every server still starts.
+func TestKeyboardDownAndNoState(t *testing.T) {
+	url := serve(t, &fakeMCP{})
+	config := `{"mcpServers":{
+		"up":{"url":"` + url + `","keyboard":[["Up","/up"]],"feed":{"resource":"feed://items"},"chat_commands":{"up":{"tool":"echo","direct":true}}},
+		"down":{"url":"http://127.0.0.1:1","keyboard":[["Down","/down"]]}}}`
+	h, log, err := register(t, config, func(h *featuretest.Host) {
+		h.Bot.Caps.Keyboard, h.Bot.Caps.Buttons, h.StoreErr = true, true, errors.New("no state directory")
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	dm := func(text string) feature.Action {
+		return h.Message(ctx, feature.Message{Chat: feature.Chat{User: "a"}, Sender: "a", Text: text, Addressed: true})
+	}
+	if k := dm("/keyboard").Markup.Keyboard; len(k) != 1 || len(k[0]) != 1 || k[0][0].Label != "Up" {
+		t.Errorf("keyboard %+v", k)
+	}
+	if got := dm("/up"); got.Answer != "echo {}" || got.Markup.Buttons != nil {
+		t.Errorf("/up %+v", got)
+	}
+	if got := dm("/alerts"); !got.IsZero() {
+		t.Errorf("/alerts %+v", got)
+	}
+	if !strings.Contains(log.String(), "feeds are off") || !strings.Contains(log.String(), "direct commands have no buttons") {
+		t.Errorf("log %q", log.String())
 	}
 }

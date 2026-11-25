@@ -77,9 +77,12 @@ func (r *reruns) offer(act *feature.Action, chat feature.Chat, d *plainDirect, n
 	}
 }
 
-// buttons are a post's buttons, for c with value: one per value, the
-// current one marked, if they fit, and refresh.
+// buttons are a post's buttons, for c with value ("" for its default):
+// one per value, the current one marked, if they fit, and refresh.
 func buttons(c chatCommand, value string) [][]feature.Button {
+	if value == "" {
+		value, _ = c.Args[c.Arg].(string)
+	}
 	var row []feature.Button
 	var rows [][]feature.Button
 	fit := len(c.Values) < maxRows*maxPerRow
@@ -114,6 +117,14 @@ func clampLabel(s string) string {
 	return s
 }
 
+// sameChat reports whether a post in chat could be pressed as in pressed:
+// the same chat, or, on Telegram, a forum topic of the group a press under
+// an older message names alone. Telegram's message IDs are the group's,
+// whatever the topic.
+func sameChat(chat, pressed feature.Chat) bool {
+	return chat == pressed || pressed.GroupID != "" && !strings.Contains(pressed.GroupID, "/") && strings.HasPrefix(chat.GroupID, pressed.GroupID+"/")
+}
+
 // keep remembers p, in place of the post sent as old if that isn't 0, and
 // saves them all.
 func (r *reruns) keep(p rerunPost, old int64) {
@@ -140,7 +151,7 @@ func (r *reruns) press(ctx context.Context, p feature.Press) (answer string, ok 
 		return "", false
 	}
 	r.mu.Lock()
-	i := slices.IndexFunc(r.posts, func(x rerunPost) bool { return x.Chat == p.Chat && x.Sent == p.Sent })
+	i := slices.IndexFunc(r.posts, func(x rerunPost) bool { return x.Sent == p.Sent && sameChat(x.Chat, p.Chat) })
 	var post rerunPost
 	if i >= 0 {
 		post = r.posts[i]
@@ -149,6 +160,7 @@ func (r *reruns) press(ctx context.Context, p feature.Press) (answer string, ok 
 	if i < 0 {
 		return "", false // an addon's, or forgotten
 	}
+	p.Chat = post.Chat // in a forum, its topic, which a press on an older message doesn't name
 	cmd, known := r.cmds[post.Server+"/"+post.Command]
 	switch {
 	case !known:

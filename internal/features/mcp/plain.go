@@ -39,8 +39,10 @@ func newPlainDirect(server, title string, c conn, again *reruns) *plainDirect {
 func (d *plainDirect) run(ctx context.Context, chat feature.Chat, name string, c chatCommand, text string) feature.Action {
 	act, done := d.call(ctx, name, c, text)
 	if done && d.again != nil {
-		args, _ := c.arguments(text)
-		value, _ := args[c.Arg].(string)
+		value := "" // the arg's default, for a bare command: refresh makes it bare again
+		if args, _ := c.arguments(text); len(c.Values) > 0 && strings.TrimSpace(text) != "" {
+			value, _ = args[c.Arg].(string)
+		}
 		d.again.offer(&act, chat, d, name, value)
 	}
 	return act

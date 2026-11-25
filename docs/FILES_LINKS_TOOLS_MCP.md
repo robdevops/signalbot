@@ -85,7 +85,7 @@ The model can call tools from [MCP](https://modelcontextprotocol.io) servers, re
 | `chat_commands` | optional slash-command shortcuts to a tool (you can always just ask): `tool` names it, `require_arg` makes a bare command get a usage reply, and `example` adds one to it; `direct` has the bot call the tool itself, without the model, and `timeout` sets how long that call may take (see [Direct commands](#direct-commands), and for an addon [Addons](#addons)) |
 | `name` | the server's name for people, in its messages ("Weather couldn't do that just now."); unset, the name the server gives itself, else its key |
 | `feed` | a resource of items, such as alerts, posted to the chats that subscribe: see [Feeds](FEEDS.md) |
-| `keyboard` | keys for Telegram's reply keyboard, each a label and the command it sends, such as `[["Status", "/status"], ["Rain", "/rain 7d"]]` (at most 15, three to a row). `/keyboard` shows the keys of every server in a DM, `/keyboard off` hides them; a label in two servers' keyboards is the first's, by server name. Signal has no keyboard, and no `/keyboard` |
+| `keyboard` | keys for Telegram's reply keyboard, each a label and the command it sends, such as `[["Status", "/status"], ["Rain", "/rain 7d"]]` (at most 15, three to a row). `/keyboard` shows the keys of every server that started in a DM, `/keyboard off` hides them; a label in two servers' keyboards is the first's, by server name. Signal has no keyboard, and no `/keyboard` |
 | `addon` | makes a local server an addon, and says where it may act and what it may do (see [Addons](#addons)) |
 | `disabled` | leave the server out without deleting it |
 
@@ -116,7 +116,7 @@ A command can skip the model: `"direct": true` has the bot call the tool itself 
 }
 ```
 
-On Telegram, the answer comes with buttons: one per value (the one it shows marked •), if there are fewer than 25 and each is at most 58 bytes, and 🔄. A press makes the call again, with that value or the same one, and edits the post in place; a failure is shown on the button for a moment, leaving the post as it was. The bot keeps the newest 300 such posts, with the chat, the command and the value, in `mcp-posts.json` in the state directory, so their buttons work after a restart; a button under an older one does nothing. Signal shows no buttons: `/rain 7d` asks again.
+On Telegram, the answer comes with buttons: one per value (the one it shows marked •), if there are fewer than 25 and each is at most 58 bytes, and 🔄. A press makes the call again, with that value or the same one, and edits the post in place; a failure is shown on the button for a moment, leaving the post as it was. The bot keeps the newest 300 such posts, with the chat, the command and the value, in `mcp-posts.json` in the state directory, so their buttons work after a restart; a button under an older one does nothing. Without a usable state directory, there are no buttons, with an error in the log. Signal shows no buttons: `/rain 7d` asks again.
 
 The call carries nothing about the chat or who asked: the server sees only the arguments.
 

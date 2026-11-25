@@ -137,21 +137,21 @@ func Register(h feature.Host) error {
 	h.Go(func(life context.Context) { <-life.Done(); cancel() })
 	var again *reruns // with buttons, plain servers' direct commands' posts, to make again
 	if h.Info().Caps.Buttons && slices.ContainsFunc(slices.Collect(maps.Values(servers)), plainDirects) {
-		store, err := h.Store("mcp-posts")
-		if err != nil {
-			return err
+		if store, err := h.Store("mcp-posts"); err != nil {
+			logx.Errorf("direct commands have no buttons: their posts can't be kept: %v", err)
+		} else {
+			again = newReruns(h, store)
+			h.OnPress(again.press)
 		}
-		again = newReruns(h, store)
-		h.OnPress(again.press)
 	}
 	var fd *feeds // the servers' feeds, and the chats subscribed
 	if slices.ContainsFunc(slices.Collect(maps.Values(servers)), func(s server) bool { return s.Feed != nil }) {
-		store, err := h.Store("mcp-feeds")
-		if err != nil {
-			return err
+		if store, err := h.Store("mcp-feeds"); err != nil {
+			logx.Errorf("feeds are off: what they sent and who subscribed can't be kept: %v", err)
+		} else {
+			fd = newFeeds(h, store)
+			h.OnPress(fd.press)
 		}
-		fd = newFeeds(h, store)
-		h.OnPress(fd.press)
 	}
 	if err := start(ctx, h, path, servers, k, again, fd); err != nil {
 		return err
@@ -482,6 +482,7 @@ func start(ctx context.Context, h feature.Host, path string, servers map[string]
 		if err != nil {
 			gt.open(nil)
 			logx.Errorf("MCP server %s unavailable, its tools are left out: %s", name, describe(err, cfg.Addon != nil))
+			delete(servers, name) // so no key of its keyboard sends a command it never registered
 			continue
 		}
 		for list, names := range map[string][]string{"allowed_tools": cfg.AllowedTools, "blocked_tools": cfg.BlockedTools} {
@@ -564,7 +565,7 @@ func start(ctx context.Context, h feature.Host, path string, servers map[string]
 				own = append(own, cmd)
 			}
 		}
-		if cfg.Feed != nil {
+		if cfg.Feed != nil && fd != nil {
 			if cmd := fd.add(name, cmp.Or(cfg.Name, hs.title, name), *cfg.Feed, c, has); cmd != "" {
 				own = append(own, cmd)
 			}

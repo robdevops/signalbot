@@ -27,9 +27,15 @@ const (
 	// newsFor is how long an item without "expires" is news, after its
 	// "time".
 	newsFor = time.Hour
-	// pressFeed starts a feed menu's buttons' data: then the server, "/"
-	// and what the button does.
+	// pressFeed starts a feed menu's buttons' data: then the feed's
+	// command, "/", what the button does, and, in a forum topic, "/" and
+	// the topic, which a press on an older message doesn't name.
 	pressFeed = "feed="
+	// maxID is the longest item ID kept, in bytes; an item with a longer
+	// one is skipped.
+	maxID = 200
+	// maxLink is the longest link posted, in runes.
+	maxLink = 500
 	// maxKinds is how many kinds a feed's menu shows.
 	maxKinds = 20
 )
@@ -85,9 +91,9 @@ type feeds struct {
 	store feature.Store
 	now   func() time.Time
 
-	mu   sync.Mutex
-	doc  map[string]*feedState // by server
-	byID map[string]*feed      // by server
+	mu    sync.Mutex
+	doc   map[string]*feedState // by server
+	byCmd map[string]*feed      // by command
 }
 
 // feedState is a feed's saved state.
@@ -115,7 +121,7 @@ type feed struct {
 }
 
 func newFeeds(h feature.Host, store feature.Store) *feeds {
-	fs := &feeds{h: h, store: store, now: time.Now, doc: map[string]*feedState{}, byID: map[string]*feed{}}
+	fs := &feeds{h: h, store: store, now: time.Now, doc: map[string]*feedState{}, byCmd: map[string]*feed{}}
 	if _, err := store.Load(&fs.doc); err != nil || fs.doc == nil {
 		if err != nil {
 			logx.Warnf("MCP: the feeds' state can't be read, so they start afresh: %v", err)
@@ -157,7 +163,7 @@ func (fs *feeds) add(server, title string, cfg feedConfig, c conn, has map[strin
 		return ""
 	}
 	fs.mu.Lock()
-	fs.byID[server] = f
+	fs.byCmd[f.command] = f
 	fs.mu.Unlock()
 	fs.h.Go(func(ctx context.Context) {
 		t := time.NewTicker(feedEvery)
@@ -211,7 +217,14 @@ func (fs *feeds) poll(ctx context.Context, f *feed) {
 		logx.Infof("MCP server %s: the feed can be read again", f.server)
 	}
 	f.failing = false
-	f.kinds = doc.Kinds[:min(len(doc.Kinds), maxKinds)]
+	var kinds []feedKind // those a button can name: short, without "/"
+	for _, k := range doc.Kinds {
+		if k.Kind != "" && len(k.Kind) <= maxLabel && !strings.Contains(k.Kind, "/") && len(kinds) < maxKinds {
+			k.Label = clampLabel(strings.TrimSpace(k.Label))
+			kinds = append(kinds, k)
+		}
+	}
+	f.kinds = kinds
 	st := fs.state(f.server)
 	if doc.Identity != st.Identity {
 		if st.Started {
@@ -226,8 +239,9 @@ func (fs *feeds) poll(ctx context.Context, f *feed) {
 	}
 	var fresh []feedItem
 	changed := first
-	for _, it := range doc.Items {
-		if it.ID == "" || seen[it.ID] {
+	items := doc.Items[max(0, len(doc.Items)-maxSeen):] // the newest, so what is kept stays bounded
+	for _, it := range items {
+		if it.ID == "" || len(it.ID) > maxID || seen[it.ID] {
 			continue
 		}
 		seen[it.ID], changed = true, true
@@ -239,7 +253,7 @@ func (fs *feeds) poll(ctx context.Context, f *feed) {
 		fresh = append(fresh, it)
 	}
 	st.Started = true
-	if n := len(st.Seen) - max(maxSeen, len(doc.Items)); n > 0 {
+	if n := len(st.Seen) - maxSeen; n > 0 {
 		st.Seen = slices.Delete(st.Seen, 0, n)
 	}
 	if len(fresh) > maxNew {
@@ -272,8 +286,8 @@ func (fs *feeds) send(ctx context.Context, f *feed, it feedItem, subs []feedSub)
 		return
 	}
 	text := txt.Clamp(strings.TrimSpace(it.Text), maxAnswer)
-	if it.Link != "" {
-		text += "\n" + it.Link
+	if link := strings.TrimSpace(it.Link); link != "" {
+		text += "\n" + txt.Clamp(link, maxLink)
 	}
 	var pics []feature.Picture
 	if it.Chart != nil {
@@ -403,7 +417,13 @@ func (fs *feeds) menu(f *feed, chat feature.Chat) (string, [][]feature.Button) {
 		b.WriteString(".")
 		return b.String(), nil
 	}
-	data := func(what string) string { return pressFeed + f.server + "/" + what }
+	data := func(what string) string {
+		d := pressFeed + f.command + "/" + what
+		if _, topic, ok := strings.Cut(chat.GroupID, "/"); ok {
+			d += "/" + topic
+		}
+		return d
+	}
 	if s == nil {
 		return b.String(), [][]feature.Button{{{Label: "Turn on", Data: data("on")}}}
 	}
@@ -422,7 +442,7 @@ func (fs *feeds) menu(f *feed, chat feature.Chat) (string, [][]feature.Button) {
 			mark = "▫️ "
 		}
 		row = append(row, feature.Button{Label: clampLabel(mark + kindLabel(k)), Data: data("k:" + k.Kind)})
-		if len(row) == 3 {
+		if len(row) == maxPerRow {
 			rows, row = append(rows, row), nil
 		}
 	}
@@ -443,13 +463,17 @@ func kindLabel(k feedKind) string {
 // menu in place.
 func (fs *feeds) press(_ context.Context, p feature.Press) (string, bool) {
 	rest, ok := strings.CutPrefix(p.Data, pressFeed)
-	server, what, ok2 := strings.Cut(rest, "/")
-	if !ok || !ok2 {
+	parts := strings.Split(rest, "/")
+	if !ok || len(parts) < 2 || len(parts) > 3 {
 		return "", false
+	}
+	cmd, what := parts[0], parts[1]
+	if len(parts) == 3 && p.Chat.GroupID != "" && !strings.Contains(p.Chat.GroupID, "/") {
+		p.Chat.GroupID += "/" + parts[2] // the topic the menu was posted in
 	}
 	fs.mu.Lock()
 	defer fs.mu.Unlock()
-	f := fs.byID[server]
+	f := fs.byCmd[cmd]
 	if f == nil || !strings.HasPrefix(what, "k:") && !slices.Contains([]string{"on", "off", "soundon", "soundoff"}, what) {
 		return "That button no longer works.", true
 	}

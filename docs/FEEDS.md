@@ -24,7 +24,7 @@ A server with a feed starts even with [no model](MODELS.md#no-model). A second f
 - `/alerts sound on` and `/alerts sound off`: alerts are silent (no notification, where the network can do that) unless the sound is on.
 - `/alerts` and a kind (its `kind`, `label` or one of its `words`) turns that kind off, or on again.
 
-On Telegram, `/alerts` answers with buttons that do the same, and a press redraws the menu in place. Anyone who can address the bot in a chat can change that chat's alerts.
+On Telegram, `/alerts` answers with buttons that do the same, and a press redraws the menu in place; in a forum, each topic has its own alerts. Anyone who can address the bot in a chat can change that chat's alerts.
 
 ## The format
 
@@ -48,18 +48,18 @@ The resource's first content is text, a JSON object:
 | Field | What it is |
 |---|---|
 | `identity` | anything that changes when the server's IDs start over (a new log, a reset); the bot then treats every item as unseen |
-| `kinds` | the kinds a chat may turn off, in the order the menu shows them (at most 20). List only the kinds this server can send now |
-| `items` | the items it still offers, oldest first. Keep the recent ones: the bot remembers the IDs it has had, so an item listed again isn't sent again |
-| `id` | unique within the `identity`; required |
+| `kinds` | the kinds a chat may turn off, in the order the menu shows them (at most 20; a `kind` at most 32 bytes, without `/`, and a `label` cut to 32 characters). List only the kinds this server can send now |
+| `items` | the items it still offers, oldest first. Keep the recent ones: the bot remembers the IDs of the last 1,000 it has had, and reads only the newest 1,000 listed, so an item listed again isn't sent again |
+| `id` | unique within the `identity`, at most 200 bytes; required |
 | `kind` | one of `kinds`; an item of a kind not listed always goes out |
 | `time` | when it happened, RFC 3339 |
 | `expires` | when it stops being news; unset, an hour after `time` |
 | `text` | what the bot posts, in Markdown; an item without text is skipped |
-| `link` | if set, posted under the text |
+| `link` | if set, posted under the text, cut to 500 characters |
 | `chart` | a tool of the same server the bot calls, with these arguments, for the pictures posted with it (drawn once per item). Put any time the picture must match, such as `as_of`, in the arguments |
 
 An expired item is never sent, so the server decides what still matters: a passing warning can expire in minutes, a condition such as "battery low" can stay until it clears. On its first read the bot sends the items not yet expired (an item with neither `time` nor `expires` is only sent if it appears later). One read sends at most 10 new items; more are logged and the oldest skipped. A feed that can't be read is logged once, and again when it can be.
 
 ## State
 
-The bot keeps, in `mcp-feeds.json` in the state directory, each feed's `identity` and the IDs it has had, and the chats subscribed: their IDs, the kinds turned off and the sound setting, until `/alerts off`. See [PRIVACY.md](../PRIVACY.md).
+The bot keeps, in `mcp-feeds.json` in the state directory, each feed's `identity` and the IDs it has had, and the chats subscribed: their IDs, the kinds turned off and the sound setting, until `/alerts off`. See [PRIVACY.md](../PRIVACY.md). Without a usable state directory, feeds are off, with an error in the log.
