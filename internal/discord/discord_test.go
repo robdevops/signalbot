@@ -20,6 +20,7 @@ import (
 
 	"github.com/robdevops/signalbot/internal/bot"
 	"github.com/robdevops/signalbot/internal/feature"
+	"github.com/robdevops/signalbot/internal/kit/allow"
 	"github.com/robdevops/signalbot/internal/kit/logx"
 	"github.com/robdevops/signalbot/internal/kit/ws/wstest"
 )
@@ -267,6 +268,7 @@ func (f *fake) routes() []string {
 func (f *fake) client() *Client {
 	c := newClient(f.srv.URL, token, nil)
 	c.stickers = f.srv.URL + "/cdn/stickers"
+	c.dm = allow.Parse("all") // DM tests of who may set their own
 	c.backoff, c.fatal, c.typing, c.pending = 10*time.Millisecond, time.Hour, 20*time.Millisecond, 200*time.Millisecond
 	return c
 }

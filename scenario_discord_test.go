@@ -57,21 +57,26 @@ type dcHarness struct {
 	replies []string // the model's next replies; then "ok"
 	reqs    [][]string
 	logs    strings.Builder
-	presses []feature.Press // what the test feature's OnPress saw
+	presses []feature.Press   // what the test feature's OnPress saw
+	members map[string]string // a server member's JSON, by user ID; anyone else is no member
 }
 
 // startDiscord starts the bot on Discord with its fakes, as main does, and
-// a test feature with /buttons, whose buttons' presses it records, and
-// returns once the bot has connected.
-func startDiscord(t *testing.T) *dcHarness {
-	h := &dcHarness{t: t, events: make(chan string, 64), nextID: 1300000000000000000}
+// env's settings, and a test feature with /buttons, whose buttons' presses
+// it records, and returns once the bot has connected. DISCORD_DM_USER_IDS
+// is unset unless env sets it.
+func startDiscord(t *testing.T, env map[string]string) *dcHarness {
+	h := &dcHarness{t: t, events: make(chan string, 64), nextID: 1300000000000000000, members: map[string]string{}}
 	api := httptest.NewServer(http.HandlerFunc(h.serveAPI))
 	t.Cleanup(api.Close)
 	model := httptest.NewServer(http.HandlerFunc(h.serveModel))
 	t.Cleanup(model.Close)
 	for _, k := range []string{"SIGNALCLI_SOCKET", "SIGNAL_DM_USER_IDS", "TELEGRAM_BOT_TOKEN", "MODEL_API_KEY", "MODEL_SEARCH", "MODEL_REASONING", "MODEL_SYSTEM_PROMPT",
-		"INTRO", "MAX_CONCURRENCY", "HISTORY_MAX", "TOOL_LINGER_ROUNDS", "MCP_CONFIG", "GROUP_CONTEXT", "FILES", "CHARTS", "JOURNAL_STREAM", "DAILY_BUDGET"} {
+		"INTRO", "MAX_CONCURRENCY", "HISTORY_MAX", "TOOL_LINGER_ROUNDS", "MCP_CONFIG", "GROUP_CONTEXT", "FILES", "CHARTS", "JOURNAL_STREAM", "DAILY_BUDGET", "DISCORD_DM_USER_IDS"} {
 		t.Setenv(k, "")
+	}
+	for k, v := range env {
+		t.Setenv(k, v)
 	}
 	for k, v := range map[string]string{"DISCORD_BOT_TOKEN": dcToken, "DISCORD_API_URL": api.URL,
 		"MODEL_API_URL": model.URL, "MODEL": "test/test-model", "STATE_DIRECTORY": t.TempDir()} {
@@ -175,6 +180,16 @@ func (h *dcHarness) serveAPI(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprintf(w, `{"url":"ws://%s/gw"}`, r.Host)
 	case call.Route == "GET /applications/@me":
 		fmt.Fprint(w, `{"id":"app1","bot_public":false}`)
+	case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/guilds/"+dcGuild+"/members/"):
+		h.mu.Lock()
+		m, ok := h.members[strings.TrimPrefix(r.URL.Path, "/guilds/"+dcGuild+"/members/")]
+		h.mu.Unlock()
+		if !ok {
+			w.WriteHeader(http.StatusNotFound)
+			fmt.Fprint(w, `{"message":"Unknown Member","code":10007}`)
+			return
+		}
+		fmt.Fprint(w, m)
 	case call.Route == "POST /users/@me/channels":
 		fmt.Fprintf(w, `{"id":%q}`, dcDM)
 	case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/messages"), strings.HasSuffix(r.URL.Path, "/@original"):
@@ -335,10 +350,10 @@ func (h *dcHarness) requests() [][]string {
 
 // --- scenarios --------------------------------------------------------------------
 
-// Anyone's DM is answered in the DM's channel, and the bot's commands
-// became Discord's slash commands.
+// A DM from someone DISCORD_DM_USER_IDS lists is answered in the DM's
+// channel, and the bot's commands became Discord's slash commands.
 func TestDiscordDM(t *testing.T) {
-	h := startDiscord(t)
+	h := startDiscord(t, map[string]string{"DISCORD_DM_USER_IDS": dcBob})
 	h.send("MESSAGE_CREATE", `{"id":"$ID","type":0,`+dcInDM+`,`+dcFromBob+`,"content":"hello"}`)
 	if s := h.waitCalls("POST /channels/"+dcDM+"/messages", 1)[0].Body; s["content"] != "ok" {
 		t.Fatalf("sent %v", s)
@@ -352,7 +367,7 @@ func TestDiscordDM(t *testing.T) {
 // In a channel, the bot answers a mention, with the chatter before it as
 // context, in Discord's Markdown; chatter alone gets no answer.
 func TestDiscordMention(t *testing.T) {
-	h := startDiscord(t)
+	h := startDiscord(t, nil)
 	h.send("MESSAGE_CREATE", `{"id":"$ID","type":0,`+dcInChannel+`,`+dcFromBob+`,"content":"the moon is made of cheese"}`)
 	h.mu.Lock()
 	h.replies = append(h.replies, "**Yes**, see [the docs](https://example.com/d)")
@@ -374,7 +389,7 @@ func TestDiscordMention(t *testing.T) {
 // A slash command is answered in place of Discord's "thinking…", without
 // the model.
 func TestDiscordSlashCommand(t *testing.T) {
-	h := startDiscord(t)
+	h := startDiscord(t, nil)
 	h.send("INTERACTION_CREATE", `{"id":"1250000000000000001","application_id":"app1","type":2,"token":"tok1",`+dcInChannel+
 		`,"member":{"user":{"id":"`+dcAlice+`","username":"alice","global_name":"Alice"}},"data":{"name":"intro","type":1}}`)
 	if a := h.waitCalls("POST /interactions/1250000000000000001/tok1/callback", 1)[0].Body; a["type"] != float64(5) {
@@ -392,7 +407,7 @@ func TestDiscordSlashCommand(t *testing.T) {
 // A feature's buttons are Discord's, and a press reaches the feature, is
 // acknowledged at once, and its answer is shown only to the presser.
 func TestDiscordButtons(t *testing.T) {
-	h := startDiscord(t)
+	h := startDiscord(t, nil)
 	h.send("MESSAGE_CREATE", `{"id":"$ID","type":0,`+dcInChannel+`,`+dcFromAlice+`,"content":"<@`+dcBot+`> /buttons","mentions":[{"id":"`+dcBot+`","username":"botty"}]}`)
 	s := h.waitCalls("POST /channels/"+dcChannel+"/messages", 1)[0].Body
 	if c, _ := json.Marshal(s["components"]); s["content"] != "pick one" || !strings.Contains(string(c), `"custom_id":"a","label":"A","style":1`) {
@@ -410,5 +425,108 @@ func TestDiscordButtons(t *testing.T) {
 	defer h.mu.Unlock()
 	if len(h.presses) != 1 || h.presses[0].Chat.GroupID != "discord:"+dcChannel || h.presses[0].By.ID != "discord:"+dcBob || h.presses[0].Sent != 1300000000000000099 {
 		t.Fatalf("presses %+v", h.presses)
+	}
+}
+
+// dcSoon is a time a schedule can be set for: the next whole second, at
+// least 400ms away.
+func dcSoon() time.Time {
+	now := time.Now()
+	at := now.Truncate(time.Second).Add(time.Second)
+	if at.Sub(now) < 400*time.Millisecond {
+		at = at.Add(time.Second)
+	}
+	return at
+}
+
+// dmSent is what the bot has posted in the DM's channel.
+func (h *dcHarness) dmSent() []string {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	var out []string
+	for _, c := range h.calls {
+		if c.Route == "POST /channels/"+dcDM+"/messages" {
+			s, _ := c.Body["content"].(string)
+			out = append(out, s)
+		}
+	}
+	return out
+}
+
+// By default only a server's admins and mods may DM the bot: a stranger's
+// DM is refused, logged by their ID alone, while the owner's, and then a
+// mod's, by a role with Manage Messages, are answered.
+func TestDiscordDMAdminsAndMods(t *testing.T) {
+	h := startDiscord(t, nil)
+	if !strings.Contains(h.logText(), "Discord DMs: allowed from admins and mods (DISCORD_DM_USER_IDS)") {
+		t.Fatalf("log %s", h.logText())
+	}
+	h.mu.Lock()
+	h.members[dcAlice] = `{"roles":[]}`
+	h.members[dcBob] = `{"roles":["600000000000000001"]}` // a role the server doesn't have yet
+	h.mu.Unlock()
+	h.send("MESSAGE_CREATE", `{"id":"$ID","type":0,`+dcInDM+`,`+dcFromBob+`,"content":"hello there"}`)
+	h.waitFor("the refusal", func() bool {
+		return strings.Contains(h.logText(), "discord:"+dcBob+" ignored because not allowed by DISCORD_DM_USER_IDS")
+	})
+	h.send("GUILD_UPDATE", `{"id":"`+dcGuild+`","name":"Test server","owner_id":"`+dcAlice+`"}`)
+	h.send("MESSAGE_CREATE", `{"id":"$ID","type":0,`+dcInDM+`,`+dcFromAlice+`,"content":"hello"}`)
+	h.waitFor("the owner's answer", func() bool { return len(h.dmSent()) == 1 })
+	h.send("GUILD_ROLE_CREATE", `{"guild_id":"`+dcGuild+`","role":{"id":"600000000000000001","permissions":"8192"}}`)
+	h.send("MESSAGE_CREATE", `{"id":"$ID","type":0,`+dcInDM+`,`+dcFromBob+`,"content":"hello again"}`)
+	h.waitFor("the mod's answer", func() bool { return len(h.dmSent()) == 2 })
+	if n := len(h.requests()); n != 2 {
+		t.Fatalf("the model was asked %d times", n)
+	}
+	if strings.Contains(h.logText(), "hello") {
+		t.Fatalf("message text logged:\n%s", h.logText())
+	}
+}
+
+// DISCORD_DM_USER_IDS=none refuses everyone's DM, even the owner's, and
+// says so at startup.
+func TestDiscordDMNone(t *testing.T) {
+	h := startDiscord(t, map[string]string{"DISCORD_DM_USER_IDS": "none"})
+	if !strings.Contains(h.logText(), "Discord DMs are off") {
+		t.Fatalf("log %s", h.logText())
+	}
+	h.send("GUILD_UPDATE", `{"id":"`+dcGuild+`","name":"Test server","owner_id":"`+dcAlice+`"}`)
+	h.send("MESSAGE_CREATE", `{"id":"$ID","type":0,`+dcInDM+`,`+dcFromAlice+`,"content":"hello"}`)
+	h.waitFor("the refusal", func() bool {
+		return strings.Contains(h.logText(), "discord:"+dcAlice+" ignored because not allowed by DISCORD_DM_USER_IDS")
+	})
+	if s := h.dmSent(); len(s) != 0 || len(h.requests()) != 0 {
+		t.Fatalf("sent %q", s)
+	}
+}
+
+// A schedule in a DM is dropped once its user may no longer DM the bot,
+// and the log names no one.
+func TestDiscordDMScheduleDropped(t *testing.T) {
+	h := startDiscord(t, nil)
+	h.mu.Lock()
+	h.members[dcAlice] = `{"roles":[]}`
+	h.mu.Unlock()
+	h.send("GUILD_UPDATE", `{"id":"`+dcGuild+`","name":"Test server","owner_id":"`+dcAlice+`"}`)
+	at := dcSoon()
+	h.send("MESSAGE_CREATE", `{"id":"$ID","type":0,`+dcInDM+`,`+dcFromAlice+`,"content":`+dcJSON(`/schedule "lunch is ready" `+at.Format("2006-01-02T15:04:05"))+`}`)
+	h.waitFor("the schedule", func() bool { return len(h.dmSent()) == 1 })
+	if s := h.dmSent()[0]; !strings.HasPrefix(s, "Scheduled for ") {
+		t.Fatalf("sent %q", s)
+	}
+	h.send("GUILD_UPDATE", `{"id":"`+dcGuild+`","name":"Test server","owner_id":"700000000000000001"}`)
+	h.waitFor("the run dropped", func() bool {
+		return strings.Contains(h.logText(), "delivered message dropped: its sender may no longer DM the bot")
+	})
+	if s := h.dmSent(); len(s) != 1 {
+		t.Fatalf("sent %q", s)
+	}
+	if time.Now().Before(at) {
+		t.Fatalf("dropped before %v", at)
+	}
+	for _, l := range strings.Split(h.logText(), "\n") {
+		if strings.Contains(l, "dropped") && strings.Contains(l, dcAlice) {
+			t.Fatalf("log names her: %q", l)
+		}
 	}
 }

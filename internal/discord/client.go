@@ -13,7 +13,9 @@ import (
 
 	"github.com/robdevops/signalbot/internal/bot"
 	"github.com/robdevops/signalbot/internal/config"
+	"github.com/robdevops/signalbot/internal/kit/allow"
 	"github.com/robdevops/signalbot/internal/kit/httpx"
+	"github.com/robdevops/signalbot/internal/kit/logx"
 )
 
 // prefix starts every chat and user ID the client hands the core, so a bot
@@ -30,6 +32,7 @@ type Client struct {
 	fatal    time.Duration // the wait after Discord refuses the token or the intents
 	typing   time.Duration // how often Typing is renewed; Discord's lasts 10s
 	pending  time.Duration // how long a slash command's "thinking…" waits for a reply
+	dm       allow.Policy  // who may DM the bot: DISCORD_DM_USER_IDS
 
 	self       atomic.Value // string: the bot's user ID
 	username   atomic.Value // string: its username
@@ -65,6 +68,8 @@ type Client struct {
 	answering map[string]int64                  // the message the core is answering, by chat key
 	botRoles  map[string]string                 // a guild's ID to the bot's own role there
 	hooks     map[int64]*interaction            // a slash command's reply, by its message ID, for an edit
+	verdicts  map[string]verdict                // whether a user is an admin or a mod, by user ID, for DMs
+	forgets   uint64                            // how many times the verdicts were forgotten
 
 	test *config.Test // nil in production
 }
@@ -97,11 +102,19 @@ type guildInfo struct {
 }
 
 // New makes the client its settings say: DISCORD_BOT_TOKEN, the bot's token
-// from Discord's developer portal, and DISCORD_API_URL, by default
-// Discord's. The bot answers anyone who DMs it and every channel it is in:
-// Discord's own settings decide who can reach it.
+// from Discord's developer portal, DISCORD_API_URL, by default Discord's,
+// and DISCORD_DM_USER_IDS, who may DM the bot, by default the admins and
+// mods of its servers. The bot answers anyone in every channel it is in:
+// Discord's own settings decide who can reach it there.
 func New(test *config.Test) *Client {
-	return newClient(config.Env("DISCORD_API_URL", "https://discord.com/api/v10"), config.Env("DISCORD_BOT_TOKEN", ""), test)
+	c := newClient(config.Env("DISCORD_API_URL", "https://discord.com/api/v10"), config.Env("DISCORD_BOT_TOKEN", ""), test)
+	c.dm = allow.Parse(config.Env("DISCORD_DM_USER_IDS", ""))
+	if c.dm.None() {
+		logx.Warnf("Discord DMs are off: DISCORD_DM_USER_IDS is none; the bot answers only in channels")
+	} else {
+		logx.Noticef("Discord DMs: allowed from %s (DISCORD_DM_USER_IDS)", c.dm)
+	}
+	return c
 }
 
 func newClient(base, token string, test *config.Test) *Client {
@@ -111,5 +124,5 @@ func newClient(base, token string, test *config.Test) *Client {
 		channels: map[string]channel{}, guilds: map[string]*guildInfo{}, members: map[string]memberInfo{}, lists: map[string]*memberList{}, left: map[string]bool{}, dms: map[string]string{}, dmUsers: map[string]string{},
 		authors: map[int64]string{}, asked: map[string]map[int64]*interaction{},
 		answering: map[string]int64{}, botRoles: map[string]string{}, hooks: map[int64]*interaction{},
-		test: test}
+		dm: allow.Parse(""), verdicts: map[string]verdict{}, test: test}
 }

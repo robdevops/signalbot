@@ -29,7 +29,11 @@ const tokenLife = 14 * time.Minute
 // interaction is a button press or a slash command as the core gets it.
 // Either is acknowledged at once, as Discord wants within 3 seconds: a
 // press with nothing shown, a slash command with "thinking…", which the
-// reply to it replaces.
+// reply to it replaces. In a DM, DISCORD_DM_USER_IDS decides: a press,
+// handed on at once, counts only from someone listed or with a fresh
+// verdict, as no lookup can wait on the reader; a slash command whose
+// sender must be looked up is decided in its slot. A slash command
+// refused loses its "thinking…", with nothing said.
 func (c *Client) interaction(d json.RawMessage) bot.Received {
 	var e struct {
 		ID        string  `json:"id"`
@@ -64,6 +68,23 @@ func (c *Client) interaction(d json.RawMessage) bot.Received {
 		go c.respond(ix, e.ID, 6)
 		return nil
 	}
+	dmOK, known := true, true
+	if e.GuildID == "" {
+		dmOK, known = c.dmDecided(who.ID)
+	}
+	switch {
+	case dmOK || !known:
+	case e.Type == 2 && e.Data.Name != "": // a slash command refused: its "thinking…" taken away, nothing said
+		refuseDM(who.ID)
+		go func() {
+			c.respond(ix, e.ID, 5)
+			c.unthink(ix)
+		}()
+		return nil
+	default:
+		go c.respond(ix, e.ID, 6)
+		return nil
+	}
 	ch := chatOf(e.GuildID, e.ChannelID, who.ID)
 	by := feature.Person{ID: prefix + who.ID, Name: nameOf(who, e.Member)}
 	c.mu.Lock()
@@ -74,7 +95,7 @@ func (c *Client) interaction(d json.RawMessage) bot.Received {
 	}
 	c.mu.Unlock()
 	switch {
-	case e.Type == 3 && e.Message != nil && e.Data.CustomID != "": // a button
+	case e.Type == 3 && e.Message != nil && e.Data.CustomID != "" && known: // a button
 		go c.respond(ix, e.ID, 6)
 		return bot.Pressed{Press: feature.Press{Chat: ch, By: by, Sent: snowflake(e.Message.ID), Data: e.Data.CustomID}, Answer: func(text string) {
 			if text = strings.TrimSpace(text); text != "" {
@@ -92,6 +113,13 @@ func (c *Client) interaction(d json.RawMessage) bot.Received {
 		c.await(ch, ix)
 		msg := feature.Message{Chat: ch, Sender: by.ID, Name: by.Name, Text: text, Timestamp: ix.id, Addressed: true}
 		return bot.Incoming{Chat: ch, Load: func(ctx context.Context, learn func(name, id string)) (feature.Message, bool) {
+			if !known && !c.mayDM(ctx, who.ID) { // a lookup, so in the slot
+				refuseDM(who.ID)
+				if taken, _ := c.takeID(ch, ix.id); taken != nil {
+					go c.unthink(taken)
+				}
+				return feature.Message{}, false
+			}
 			if ch.GroupID != "" && by.Name != "" {
 				learn(by.Name, by.ID)
 			}

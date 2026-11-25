@@ -162,12 +162,22 @@ func (c *Client) events(t string, d json.RawMessage) []bot.Received {
 }
 
 // received is a message, or with edited an edit of one, as the core gets
-// it; nil for the bot's own, another bot's, and those that aren't a
-// person's message or reply.
+// it; nil for the bot's own, another bot's, those that aren't a person's
+// message or reply, and a DM DISCORD_DM_USER_IDS refuses, which is logged
+// by its sender's ID. A DM whose sender must be looked up is decided in
+// its slot, by Load.
 func (c *Client) received(m *message, edited int64) bot.Received {
 	self := c.selfID()
 	if m.Author == nil || m.Author.Bot || m.WebhookID != "" || m.Type != 0 && m.Type != 19 || self == "" || m.Author.ID == self {
 		return nil
+	}
+	uid, known := m.Author.ID, true
+	if m.GuildID == "" { // a DM: one refused now isn't kept, not even its channel
+		var ok bool
+		if ok, known = c.dmDecided(uid); known && !ok {
+			refuseDM(uid)
+			return nil
+		}
 	}
 	c.seen(m)
 	msg := c.message(m, edited)
@@ -176,6 +186,10 @@ func (c *Client) received(m *message, edited int64) bot.Received {
 		return nil
 	case msg.Addressed:
 		return bot.Incoming{Chat: msg.Chat, Load: func(ctx context.Context, learn func(name, id string)) (feature.Message, bool) {
+			if !known && !c.mayDM(ctx, uid) { // a lookup, so in the slot
+				refuseDM(uid)
+				return feature.Message{}, false
+			}
 			if msg.Chat.GroupID != "" {
 				if msg.Name != "" {
 					learn(msg.Name, msg.Sender)
@@ -460,8 +474,10 @@ func (c *Client) deleted(d json.RawMessage) []bot.Received {
 }
 
 // reacted is a reaction put on a message or taken off, as the core gets
-// it, but the bot's own. A server's own emoji, which has an ID, is
-// :name:, its name made safe.
+// it, but the bot's own, and one in a DM from someone who may not DM the
+// bot, as far as can be told without a lookup (listed, or a fresh
+// verdict). A server's own emoji, which has an ID, is :name:, its name
+// made safe.
 func (c *Client) reacted(d json.RawMessage, removed bool) []bot.Received {
 	var e struct {
 		UserID    string  `json:"user_id"`
@@ -477,6 +493,11 @@ func (c *Client) reacted(d json.RawMessage, removed bool) []bot.Received {
 	}
 	if json.Unmarshal(d, &e) != nil || e.UserID == "" || e.UserID == c.selfID() || e.Emoji.Name == "" {
 		return nil
+	}
+	if e.GuildID == "" {
+		if ok, _ := c.dmDecided(e.UserID); !ok { // on the reader: no lookup
+			return nil
+		}
 	}
 	emoji := txt.Clamp(e.Emoji.Name, 16)
 	if e.Emoji.ID != "" {
@@ -523,6 +544,7 @@ func (c *Client) guild(d json.RawMessage, gone bool) []bot.Received {
 	var out []bot.Received
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	c.forgetVerdicts()
 	if gone {
 		delete(c.botRoles, g.ID)
 		delete(c.guilds, g.ID)
@@ -575,6 +597,7 @@ func (c *Client) roleChanged(d json.RawMessage, deleted bool) {
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	c.forgetVerdicts()
 	g := c.guilds[e.GuildID]
 	if deleted {
 		if c.botRoles[e.GuildID] == e.RoleID {
@@ -615,8 +638,13 @@ func (c *Client) Delivered(ctx context.Context, msg feature.Message) (bot.Ready,
 	info := c.guilds[ch.guild]
 	c.mu.Unlock()
 	// As on Signal, a post goes out only while its sender may still post
-	// there: still in the server, allowed to send in the channel, and not
-	// timed out; a lookup that fails drops it.
+	// there: in a DM, while DISCORD_DM_USER_IDS allows them; in a channel,
+	// still in the server, allowed to send in the channel, and not timed
+	// out; a lookup that fails drops it.
+	if !inGroup && !c.mayDM(wait, strings.TrimPrefix(msg.Chat.User, prefix)) {
+		logx.Infof("delivered message dropped: its sender may no longer DM the bot")
+		return bot.Ready{}, false
+	}
 	if inGroup {
 		uid := strings.TrimPrefix(msg.Sender, prefix)
 		if !known || info == nil || snowflake(uid) <= 0 {
