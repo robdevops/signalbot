@@ -10,8 +10,6 @@ import (
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
-	"os"
-	"path/filepath"
 	"slices"
 	"strings"
 	"sync"
@@ -261,11 +259,8 @@ func (f *fake) routes() []string {
 	return out
 }
 
-func (f *fake) client() *Client { return f.clientIn(f.t.TempDir()) }
-
-// clientIn is a client whose state directory is dir.
-func (f *fake) clientIn(dir string) *Client {
-	c := newClient(f.srv.URL, token, dir, nil)
+func (f *fake) client() *Client {
+	c := newClient(f.srv.URL, token, nil)
 	c.stickers = f.srv.URL + "/cdn/stickers"
 	c.backoff, c.fatal, c.typing, c.pending = 10*time.Millisecond, time.Hour, 20*time.Millisecond, 200*time.Millisecond
 	return c
@@ -427,7 +422,7 @@ func TestRefused(t *testing.T) {
 	// A token the REST API refuses, too.
 	logs := captureLogs(t)
 	f := newFake(t)
-	c := newClient(f.srv.URL, "wrong", t.TempDir(), nil)
+	c := newClient(f.srv.URL, "wrong", nil)
 	c.backoff, c.fatal = 10*time.Millisecond, time.Hour
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
@@ -1263,46 +1258,6 @@ func TestGroupsFallBack(t *testing.T) {
 	}
 }
 
-// The people seen in each channel are saved as they change and when Run
-// ends, and a new client links them as members.
-func TestNamesSaved(t *testing.T) {
-	f := newFake(t)
-	dir := t.TempDir()
-	c := connected(f.clientIn(dir))
-	c.saveEvery = 10 * time.Millisecond
-	ctx, cancel := context.WithCancel(context.Background())
-	done := make(chan struct{})
-	go func() { defer close(done); c.Run(ctx, func(bot.Received) {}) }()
-	c.events("MESSAGE_CREATE", json.RawMessage(`{"id":"1200000000000000001",`+inGuild+`,`+fromBob+`,"content":"chatter"}`))
-	path := filepath.Join(dir, "discord-people.json")
-	waitFor(t, "the names saved", func() bool { data, _ := os.ReadFile(path); return strings.Contains(string(data), `"Bob"`) })
-	c.events("MESSAGE_CREATE", json.RawMessage(`{"id":"1200000000000000002",`+inGuild+`,`+fromA+`,"content":"chatter"}`))
-	cancel()
-	<-done
-	if data, _ := os.ReadFile(path); !strings.Contains(string(data), `"Alice"`) || !strings.Contains(string(data), `"seen": "`+time.Now().UTC().Format(time.DateOnly)+`"`) {
-		t.Fatalf("not saved at the end: %s", data)
-	}
-
-	c = connected(f.clientIn(dir))
-	r, ok := c.Delivered(context.Background(), feature.Message{Chat: feature.Chat{GroupID: group}, Sender: prefix + bob, Text: "hello @Alice"})
-	if !ok || r.Message.Name != "Bob" || len(r.Members) != 2 || r.Members[1] != (bot.Member{Name: "Bob", ID: prefix + bob}) {
-		t.Fatalf("Delivered %+v", r)
-	}
-	if got := c.Redact("Bob"); got != "redacted" {
-		t.Fatalf("Redact %q", got)
-	}
-}
-
-// writeNames saves Alice in the channel on day aliceSeen, and Bob today.
-func writeNames(t *testing.T, dir, aliceSeen string) {
-	t.Helper()
-	data := `{"channels":{"` + chanID + `":{"` + alice + `":{"name":"Alice","seen":"` + aliceSeen + `"},"` +
-		bob + `":{"name":"Bob","seen":"` + time.Now().UTC().Format(time.DateOnly) + `"}}}}`
-	if err := os.WriteFile(filepath.Join(dir, "discord-people.json"), []byte(data), 0o600); err != nil {
-		t.Fatal(err)
-	}
-}
-
 func members(t *testing.T, c *Client) []bot.Member {
 	t.Helper()
 	r, ok := c.Delivered(context.Background(), feature.Message{Chat: feature.Chat{GroupID: group}, Text: "hello"})
@@ -1310,74 +1265,6 @@ func members(t *testing.T, c *Client) []bot.Member {
 		t.Fatal("not delivered")
 	}
 	return r.Members
-}
-
-// Someone not seen in a channel for 180 days is forgotten there, when the
-// names are read and once a day while the bot runs.
-func TestNamesExpire(t *testing.T) {
-	f := newFake(t)
-	dir := t.TempDir()
-	writeNames(t, dir, time.Now().UTC().AddDate(0, 0, -181).Format(time.DateOnly))
-	c := connected(f.clientIn(dir))
-	if got := members(t, c); len(got) != 1 || got[0].Name != "Bob" {
-		t.Fatalf("members %+v", got)
-	}
-	c.saveNames()
-	if data, _ := os.ReadFile(filepath.Join(dir, "discord-people.json")); strings.Contains(string(data), "Alice") {
-		t.Fatalf("Alice still saved: %s", data)
-	}
-
-	c.mu.Lock()
-	c.chats[chanID][bob] = person{name: "Bob", day: "2000-01-01"}
-	c.pruned = ""
-	c.mu.Unlock()
-	c.saveNames()
-	if got := members(t, c); len(got) != 0 || c.Redact("Bob") != "Bob" {
-		t.Fatalf("Bob not forgotten: %+v", got)
-	}
-	if data, _ := os.ReadFile(filepath.Join(dir, "discord-people.json")); strings.Contains(string(data), "Bob") {
-		t.Fatalf("Bob still saved: %s", data)
-	}
-}
-
-// A deleted channel's people are forgotten at the next save.
-func TestNamesOfDeletedChannel(t *testing.T) {
-	f := newFake(t)
-	dir := t.TempDir()
-	c := connected(f.clientIn(dir))
-	c.events("MESSAGE_CREATE", json.RawMessage(`{"id":"1200000000000000001",`+inGuild+`,`+fromBob+`,"content":"chatter"}`))
-	c.saveNames()
-	path := filepath.Join(dir, "discord-people.json")
-	if data, _ := os.ReadFile(path); !strings.Contains(string(data), chanID) {
-		t.Fatalf("not saved: %s", data)
-	}
-	c.events("CHANNEL_DELETE", json.RawMessage(`{"id":"`+chanID+`"}`))
-	c.saveNames()
-	if data, _ := os.ReadFile(path); strings.Contains(string(data), chanID) || strings.Contains(string(data), "Bob") {
-		t.Fatalf("the channel still saved: %s", data)
-	}
-}
-
-// A file that can't be read is logged, without what it holds, and
-// ignored, then replaced.
-func TestNamesUnreadable(t *testing.T) {
-	logs := captureLogs(t)
-	f := newFake(t)
-	dir := t.TempDir()
-	path := filepath.Join(dir, "discord-people.json")
-	os.WriteFile(path, []byte(`{"channels":{"`+chanID+`":Bob`), 0o600)
-	c := connected(f.clientIn(dir))
-	if got := members(t, c); len(got) != 0 {
-		t.Fatalf("members %+v", got)
-	}
-	if !strings.Contains(logs.String(), "can't be read") || strings.Contains(logs.String(), "Bob") || strings.Contains(logs.String(), chanID) {
-		t.Fatalf("log %q", logs.String())
-	}
-	c.events("MESSAGE_CREATE", json.RawMessage(`{"id":"1200000000000000001",`+inGuild+`,`+fromA+`,"content":"chatter"}`))
-	c.saveNames()
-	if data, _ := os.ReadFile(path); !strings.Contains(string(data), "Alice") {
-		t.Fatalf("not replaced: %s", data)
-	}
 }
 
 // A Groups whose context ends fails, rather than warning for each server
@@ -1396,49 +1283,26 @@ func TestGroupsCanceled(t *testing.T) {
 	}
 }
 
-// A saved day still to come is read as today, so it expires, and
-// someone's name is the one where they were last seen.
-func TestNamesRead(t *testing.T) {
-	f := newFake(t)
-	dir := t.TempDir()
-	data := `{"channels":{"` + chanID + `":{"` + bob + `":{"name":"Bobby","seen":"2100-01-01"}},"` +
-		secret + `":{"` + bob + `":{"name":"Bob","seen":"` + time.Now().UTC().AddDate(0, 0, -1).Format(time.DateOnly) + `"}}}}`
-	if err := os.WriteFile(filepath.Join(dir, "discord-people.json"), []byte(data), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	c := connected(f.clientIn(dir))
-	c.mu.Lock()
-	name, day := c.people[bob], c.chats[chanID][bob].day
-	c.mu.Unlock()
-	if name != "Bobby" || day != time.Now().UTC().Format(time.DateOnly) {
-		t.Fatalf("name %q, day %q", name, day)
-	}
-	c.saveNames()
-	if data, _ := os.ReadFile(filepath.Join(dir, "discord-people.json")); strings.Contains(string(data), "2100") {
-		t.Fatalf("a day to come still saved: %s", data)
-	}
-}
-
-// Someone no longer seen in one channel but seen in another keeps their
-// name; no longer seen in any, they lose it, even if seen in a channel
-// since deleted.
+// Someone seen in a channel the bot loses keeps their name while they
+// were seen in another channel; seen in none, they lose it.
 func TestNamesPruned(t *testing.T) {
 	f := newFake(t)
-	c := connected(f.clientIn(t.TempDir()))
+	c := connected(f.client())
 	c.events("MESSAGE_CREATE", json.RawMessage(`{"id":"1200000000000000001",`+inGuild+`,`+fromBob+`,"content":"chatter"}`))
 	c.events("MESSAGE_CREATE", json.RawMessage(`{"id":"1200000000000000002","guild_id":"`+guild+`","channel_id":"`+secret+`",`+fromBob+`,"content":"chatter"}`))
-	c.events("MESSAGE_CREATE", json.RawMessage(`{"id":"1200000000000000003","guild_id":"`+guild+`","channel_id":"`+voice+`",`+fromBob+`,"content":"chatter"}`))
-	c.events("CHANNEL_DELETE", json.RawMessage(`{"id":"`+voice+`"}`))
+	c.events("MESSAGE_CREATE", json.RawMessage(`{"id":"1200000000000000003","guild_id":"`+guild+`","channel_id":"`+secret+`",`+fromA+`,"content":"chatter"}`))
+	c.events("CHANNEL_DELETE", json.RawMessage(`{"id":"`+secret+`"}`))
+	if got := c.Redact("Alice and Bob"); got != "Alice and redacted" {
+		t.Fatalf("Redact %q", got)
+	}
 	c.mu.Lock()
-	c.chats[chanID][bob] = person{name: "Bob", day: "2000-01-01"}
-	c.prune()
-	kept := c.people[bob]
-	c.chats[secret][bob] = person{name: "Bob", day: "2000-01-01"}
-	c.prune()
-	_, still := c.people[bob]
-	_, in := c.seenIn[bob]
+	_, in := c.seenIn[alice]
 	c.mu.Unlock()
-	if kept != "Bob" || still || in {
-		t.Fatalf("kept %q, then still %v, %v", kept, still, in)
+	if in {
+		t.Fatal("Alice still seen in a channel")
+	}
+	c.events("CHANNEL_DELETE", json.RawMessage(`{"id":"`+chanID+`"}`))
+	if got := c.Redact("Bob"); got != "Bob" {
+		t.Fatalf("Redact %q", got)
 	}
 }

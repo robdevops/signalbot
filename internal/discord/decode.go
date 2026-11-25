@@ -341,27 +341,24 @@ func (c *Client) seen(m *message) {
 	if name == "" {
 		return
 	}
-	c.note(m.ChannelID, uid, person{name: name, day: today()})
+	c.note(m.ChannelID, uid, name)
 }
 
-// note remembers p seen in a channel, under c.mu, within the caps: 2,000
-// channels, 1,000 people in each and 10,000 in all, and 200 channels for
-// each person.
-func (c *Client) note(ch, uid string, p person) {
+// note remembers someone seen in a channel by name, under c.mu, within the
+// caps: 2,000 channels, 1,000 people in each and 10,000 in all, and 200
+// channels for each person.
+func (c *Client) note(ch, uid, name string) {
 	people := c.chats[ch]
 	if people == nil && len(c.chats) < maxGroups {
-		people = map[string]person{}
+		people = map[string]string{}
 		c.chats[ch] = people
 	}
-	old, had := people[uid]
+	_, had := people[uid]
 	_, known := c.people[uid]
 	if people == nil || !had && len(people) >= 1000 || !known && len(c.people) >= 10000 {
 		return
 	}
-	if old != p {
-		people[uid], c.dirty = p, true
-	}
-	c.people[uid] = p.name
+	people[uid], c.people[uid] = name, name
 	in := c.seenIn[uid]
 	if in == nil {
 		in = map[string]bool{}
@@ -384,16 +381,32 @@ func (c *Client) addChannel(id string, ch channel) {
 	}
 }
 
-// leave notes that the bot can no longer post in a channel, under c.mu.
+// leave notes that the bot can no longer post in a channel, under c.mu,
+// and forgets the people seen there, but those seen in another channel.
 func (c *Client) leave(id string) {
 	delete(c.channels, id)
-	if _, ok := c.chats[id]; ok {
-		delete(c.chats, id)
-		c.dirty = true
+	for uid := range c.chats[id] {
+		delete(c.seenIn[uid], id)
+		if len(c.seenIn[uid]) == 0 && !c.seenElsewhere(uid, id) {
+			delete(c.seenIn, uid)
+			delete(c.people, uid)
+		}
 	}
+	delete(c.chats, id)
 	if len(c.left) < 2*maxGroups {
 		c.left[id] = true
 	}
+}
+
+// seenElsewhere reports whether uid is among the people seen in a channel
+// other than id, under c.mu: seenIn holds at most 200 of a person's.
+func (c *Client) seenElsewhere(uid, id string) bool {
+	for ch, people := range c.chats {
+		if _, ok := people[uid]; ok && ch != id {
+			return true
+		}
+	}
+	return false
 }
 
 // noteAuthor remembers who sent a message, at most the last 5000, under
@@ -599,8 +612,8 @@ func (c *Client) Delivered(ctx context.Context, msg feature.Message) (bot.Ready,
 	c.mu.Lock()
 	msg.Name = cmp.Or(msg.Name, c.people[strings.TrimPrefix(msg.Sender, prefix)])
 	if g, ok := strings.CutPrefix(msg.Chat.GroupID, prefix); ok {
-		for uid, p := range c.chats[g] {
-			r.Members = append(r.Members, bot.Member{Name: p.name, ID: prefix + uid})
+		for uid, n := range c.chats[g] {
+			r.Members = append(r.Members, bot.Member{Name: n, ID: prefix + uid})
 		}
 	}
 	c.mu.Unlock()

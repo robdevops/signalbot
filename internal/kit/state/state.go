@@ -28,26 +28,17 @@ const (
 	Keyboards = "keyboards"
 )
 
-// DiscordPeople and SlackPeople are the networks' saved names of the people
-// seen in each channel, which no feature may open either.
-const (
-	DiscordPeople = "discord-people"
-	SlackPeople   = "slack-people"
-)
-
 // namePattern is what a saved state may be called: it names a file.
 var namePattern = regexp.MustCompile(`^[a-z0-9_-]{1,32}$`)
 
 // CheckName fails unless name is a feature's to open: lowercase letters,
-// digits, - and _, up to 32, and not the core's or a network's.
+// digits, - and _, up to 32, and not the core's.
 func CheckName(name string) error {
 	switch {
 	case !namePattern.MatchString(name):
 		return fmt.Errorf("a saved state can't be called %q: use lowercase letters, digits, - and _, up to 32", txt.Clamp(name, 40))
 	case name == Reserved || name == Keyboards:
 		return fmt.Errorf("a saved state can't be called %q: it is the core's", name)
-	case name == DiscordPeople || name == SlackPeople:
-		return fmt.Errorf("a saved state can't be called %q: it is a network's", name)
 	}
 	return nil
 }
