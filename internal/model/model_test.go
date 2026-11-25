@@ -815,3 +815,33 @@ func TestKeyUsage(t *testing.T) {
 		t.Fatalf("another API: %v %v %q", k, err, path)
 	}
 }
+
+// Ask, its tools and Call log on ctx's log (logx.Ctx), the chat's: every
+// line starts with its network's name, once.
+func TestLogsAsTheChat(t *testing.T) {
+	c, _, logs := start(t, calls("echo", "broken", "nope"), text("done"), text("called"))
+	ctx := logx.With(context.Background(), logx.For("signal"))
+	echo := feature.Tool{Name: "echo", Run: func(context.Context, string) (string, []feature.Picture, error) { return "x", nil, nil }}
+	broken := feature.Tool{Name: "broken", Run: func(context.Context, string) (string, []feature.Picture, error) {
+		return "", nil, errors.New("down")
+	}}
+	if _, err := c.Ask(ctx, Request{Tools: []feature.Tool{echo, broken}}); err != nil {
+		t.Fatal(err)
+	}
+	metered, _ := Meter(ctx)
+	if _, err := c.Call(metered, "/chat/completions", map[string]any{}); err != nil {
+		t.Fatal(err)
+	}
+	l := logs.String()
+	for _, want := range []string{"Signal: request 1: ", "Signal: tool echo ", "Signal: tool broken failed after ", "Signal: tool broken arguments were ",
+		"Signal: model called a tool it wasn't offered\n", "Signal: reply ", "Signal: api /chat/completions "} {
+		if !strings.Contains(l, want) {
+			t.Errorf("no %q in the log:\n%s", want, l)
+		}
+	}
+	for _, line := range strings.Split(strings.TrimSuffix(l, "\n"), "\n") {
+		if !strings.HasPrefix(line, "Signal: ") || strings.HasPrefix(line, "Signal: Signal: ") {
+			t.Errorf("line %q", line)
+		}
+	}
+}

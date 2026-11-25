@@ -362,7 +362,7 @@ func TestFourWaitDuringABatch(t *testing.T) {
 		h.receive(dm(s))
 	}
 	h.eventually("the full mailbox", func() bool {
-		return strings.Contains(h.logs.String(), "dropped a message: 4 messages are already waiting in this chat")
+		return strings.Contains(h.logs.String(), "<4>Fake: dropped a message: 4 messages are already waiting in this chat\n")
 	})
 	first.open()
 	h.eventually("the batch's request", func() bool { return len(h.requests()) == 2 })
@@ -409,7 +409,7 @@ func TestPanicInABatch(t *testing.T) {
 	h.nextSend()
 	h.settle()
 	rs := h.requests()
-	if len(rs) != 2 || !strings.Contains(h.logs.String(), "internal error while handling a message") {
+	if len(rs) != 2 || !strings.Contains(h.logs.String(), "<3>Fake: internal error while handling a message; dropped\n") {
 		t.Fatalf("%d requests; logs:\n%s", len(rs), h.logs)
 	}
 	if got := contents(rs[1]); got[len(got)-1] != "user: b\nd" {

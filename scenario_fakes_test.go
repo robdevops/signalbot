@@ -1125,13 +1125,27 @@ func containsAll(s string, parts []string) bool {
 	return true
 }
 
+// A network's name before a line, and the core's lines about a chat that
+// must start with one.
+var (
+	netPrefix   = `(Signal|Telegram|Discord|Slack): `
+	twoPrefixes = regexp.MustCompile(`^` + netPrefix + netPrefix)
+	chatLine    = regexp.MustCompile(`received (dm|group chat)|^(\S+: )?reply [0-9.]+s, tokens`)
+	chatLineOK  = regexp.MustCompile(`^` + netPrefix + `(received (dm|group chat)( \(edit\))?|reply [0-9.]+s, tokens .*)$`)
+)
+
 // checkNoSecretsLogged fails if any message or reply text reached the log,
 // or anyone's name or ID but the bot's, except the ID in a line about a DM
-// from someone SIGNAL_DM_USERS doesn't allow.
+// from someone SIGNAL_DM_USERS doesn't allow. It also fails if a line
+// starts with a network's name twice, or a "received" or "reply" line
+// doesn't start with one.
 func (h *harness) checkNoSecretsLogged() {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	for _, l := range h.logs {
+		if twoPrefixes.MatchString(l.Text) || chatLine.MatchString(l.Text) && !chatLineOK.MatchString(l.Text) {
+			h.t.Errorf("a line not prefixed exactly once with its network: %q", l.Text)
+		}
 		for _, s := range h.secrets {
 			if strings.Contains(l.Text, s) {
 				h.t.Errorf("message text %q reached the log: %q", s, l.Text)
