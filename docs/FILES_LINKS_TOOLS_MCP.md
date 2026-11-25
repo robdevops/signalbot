@@ -120,7 +120,7 @@ On Telegram, an answer that fits in one message (text, or one picture with a cap
 
 A server can answer the model and people differently with MCP's `audience` annotation: when a result has text marked for the user (`"annotations": {"audience": ["user"]}`), that is all the text posted, and a part marked for the assistant alone, text or image, never is. So a tool can return JSON for the model and a sentence for the chat.
 
-The call carries nothing about the chat or who asked: the server sees only the arguments.
+The call carries nothing about the chat or who asked: the server sees only the arguments. At most 2 run at once per server; a third is told the server is busy. A failure is answered with a short line naming the server (its `name`), never the server's own error text, and the log records the command, the tool, the outcome, the time and the size, never the text or the result.
 
 A server can also offer a [feed](FEEDS.md) of items, such as alerts, that the bot posts to the chats that subscribe with `/alerts`.
 
@@ -138,7 +138,7 @@ A server can also offer a [feed](FEEDS.md) of items, such as alerts, that the bo
   "feed": {"resource": "weather://feed"},
   "keyboard": [["Status", "/status"], ["Rain", "/rain"], ["Alerts", "/alerts"]]
 }
-``` At most 2 run at once per server; a third is told the server is busy. A failure is answered with a short line naming the server (its `name`), never the server's own error text, and the log records the command, the tool, the outcome, the time and the size, never the text or the result.
+```
 
 A server that can't be reached at startup is logged and left out. A config error stops the bot with the file's path and the server's name: a setting it doesn't know (such as `allowedTools` for `allowed_tools`), with the settings it could be; both `allowed_tools` and `blocked_tools`; or a tool named in either list that the server doesn't have, with the list it was in and the server's tools, so a typo can't leave a blocked tool offered. Keys other MCP clients write and the bot has no use for (`type`, `transport`, `timeout`, `alwaysAllow`, `autoApprove`, `description`) are ignored, so an entry pasted from another client starts. A tool call that takes over 30 seconds tells the model it didn't answer in time, so it can try a narrower request. Local servers get only `PATH`, `HOME` and their `env`, never the bot's own environment.
 
