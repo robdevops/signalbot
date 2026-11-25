@@ -282,7 +282,7 @@ func (c *Client) Run(ctx context.Context, handle func(bot.Received)) {
 }
 
 // hello asks getMe who the bot is, and drops any webhook, which would make
-// getUpdates fail.
+// getUpdates fail. While anyone may add the bot to a group, it warns so.
 func (c *Client) hello(ctx context.Context) error {
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
@@ -290,6 +290,7 @@ func (c *Client) hello(ctx context.Context) error {
 		ID        int64  `json:"id"`
 		FirstName string `json:"first_name"`
 		Username  string `json:"username"`
+		CanJoin   bool   `json:"can_join_groups"`
 	}
 	if err := c.call(ctx, "getMe", struct{}{}, &me); err != nil {
 		return err
@@ -302,6 +303,9 @@ func (c *Client) hello(ctx context.Context) error {
 	c.self.Store(strconv.FormatInt(me.ID, 10))
 	c.once.Do(func() { close(c.known) })
 	logx.Noticef("connected to Telegram as @%s", me.Username)
+	if me.CanJoin {
+		logx.Warnf("telegram: anyone can add the bot to a group, where they become an admin and so may DM it and schedule posts there; turn off Allow Groups with BotFather's /setjoingroups (switch it on briefly to add the bot to a group yourself)")
+	}
 	c.publishCommands(ctx)
 	return nil
 }

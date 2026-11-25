@@ -693,9 +693,10 @@ func (c *Client) Delivered(ctx context.Context, msg feature.Message) (bot.Ready,
 	return r, true
 }
 
-// Reachable reports whether the bot may still post in chat on its own: a
-// DM, or a channel it hasn't been removed from. (A user who blocked the
-// bot refuses the send itself.)
+// Reachable reports whether the bot may still post in chat on its own: the
+// DM of a user DISCORD_DM_USERS still allows (looking up their roles if
+// need be; a failed lookup refuses), or a channel it hasn't been removed
+// from. (A user who blocked the bot refuses the send itself.)
 func (c *Client) Reachable(ctx context.Context, chat feature.Chat) bool {
 	wait, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
@@ -704,7 +705,7 @@ func (c *Client) Reachable(ctx context.Context, chat feature.Chat) bool {
 		return false
 	}
 	if chat.GroupID == "" {
-		return true
+		return c.mayDM(wait, strings.TrimPrefix(chat.User, prefix))
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()

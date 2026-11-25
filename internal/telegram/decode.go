@@ -726,9 +726,11 @@ func (c *Client) Delivered(ctx context.Context, msg feature.Message) (bot.Ready,
 	return r, true
 }
 
-// Reachable reports whether the bot may still post in chat on its own: a
-// DM, or a group it hasn't been removed from. (A user who blocked the bot,
-// or a group that is gone, refuses the send itself.)
+// Reachable reports whether the bot may still post in chat on its own: the
+// DM of a user TELEGRAM_DM_USERS still allows (asking Telegram whether
+// they are an admin if need be; a failed lookup refuses), or a group it
+// hasn't been removed from. (A user who blocked the bot, or a group that
+// is gone, refuses the send itself.)
 func (c *Client) Reachable(ctx context.Context, chat feature.Chat) bool {
 	wait, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
@@ -737,7 +739,7 @@ func (c *Client) Reachable(ctx context.Context, chat feature.Chat) bool {
 		return false
 	}
 	if chat.GroupID == "" {
-		return true
+		return c.dmAllowed(wait, chat.User)
 	}
 	g := c.dest(chat).chat
 	c.mu.Lock()

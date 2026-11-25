@@ -21,7 +21,7 @@ The bot reads the feed every 30 seconds, so an item reaches the chats at most ab
 
 ## In chat
 
-Alerts are on by default in a DM: every kind, silently, from the chat's first message to the bot (or its first `/alerts`), until someone there turns them off, which is remembered. A group starts with them off, so the bot never posts into a group unasked.
+Alerts are on by default in a DM: every kind, silently, from the chat's first message to the bot (or its first `/alerts`), until someone there turns them off, which is remembered. A group starts with them off, so the bot never posts into a group unasked. An alert to a DM goes only while its person may DM the bot (`<NETWORK>_DM_USERS`, see [Who may use the bot](CONFIGURATION.md#who-may-use-the-bot)); one that may not is dropped.
 
 - `/alerts` shows which kinds are on and off in this chat, and which make a sound, and how to change them.
 - `/alerts on` and `/alerts off` subscribe the chat to every kind, or stop it.

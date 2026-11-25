@@ -28,6 +28,7 @@ import (
 
 	"github.com/robdevops/signalbot/internal/bot"
 	"github.com/robdevops/signalbot/internal/config"
+	"github.com/robdevops/signalbot/internal/feature"
 	"github.com/robdevops/signalbot/internal/kit/logx"
 )
 
@@ -58,6 +59,7 @@ type tgHarness struct {
 	admins  string    // getChatAdministrators' result for every group; "[]" if unset
 	reqs    []tgModel // every chat completions request
 	logs    bytes.Buffer
+	bot     *bot.Bot // the host features post through
 }
 
 // tgModel is one chat completions request: each message's role and text,
@@ -101,6 +103,7 @@ func startTelegram(t *testing.T, env map[string]string) *tgHarness {
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	b := bot.New(ctx, cfg, net)
+	h.bot = b
 	for _, register := range enabled() {
 		if err := register(b); err != nil {
 			t.Fatal(err)
@@ -521,5 +524,35 @@ func TestTelegramDMScheduleDropped(t *testing.T) {
 	}
 	if out := h.logText(); strings.Contains(out, "hello me") || strings.Contains(out, tgAlice) {
 		t.Fatalf("logs:\n%s", out)
+	}
+}
+
+// An alert, a feature's post, goes to a DM only while its user may DM the
+// bot: the owner of a group the bot is in gets one, and once the bot is
+// removed from that group, the next is dropped, logged naming no one.
+func TestTelegramDMAlertDropped(t *testing.T) {
+	h := tgAliceOwns(t, map[string]string{"TELEGRAM_DM_USERS": ""})
+	h.send("message", tgFromAlice+","+tgInDM+`,"text":"hello"`)
+	h.waitCalls("sendMessage", 1) // the group seen, and Alice its owner
+	h.bot.Post(feature.Post{Chat: feature.Chat{User: tgAlice}, Text: "rain alert"})
+	if s := h.waitCalls("sendMessage", 2)[1].Params; s["chat_id"] != tgAlice || s["text"] != "rain alert" {
+		t.Fatalf("sent %v", s)
+	}
+	h.send("my_chat_member", tgInGroup+","+tgFromBob+`,"old_chat_member":{"status":"member"},"new_chat_member":{"status":"kicked","user":{"id":777000}}`)
+	h.send("message", tgFromAlice+","+tgInDM+`,"text":"hello again"`)
+	h.waitFor("Alice's DM refused", func() bool {
+		return strings.Contains(h.logText(), tgAlice+" ignored because not allowed by TELEGRAM_DM_USERS")
+	})
+	h.bot.Post(feature.Post{Chat: feature.Chat{User: tgAlice}, Text: "hail alert"})
+	h.waitFor("the alert dropped", func() bool {
+		return strings.Contains(h.logText(), "dropped a post: its chat isn't reachable")
+	})
+	if n := len(h.callsTo("sendMessage")); n != 2 {
+		t.Fatalf("%d sends", n)
+	}
+	for _, l := range strings.Split(h.logText(), "\n") {
+		if strings.Contains(l, "alert") || strings.Contains(l, "dropped") && strings.Contains(l, tgAlice) {
+			t.Fatalf("log %q", l)
+		}
 	}
 }

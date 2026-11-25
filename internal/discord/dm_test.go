@@ -291,3 +291,47 @@ func TestDMRefusedNotKept(t *testing.T) {
 		t.Fatal("kept something of Alice's refused DM")
 	}
 }
+
+// The bot may post on its own in a DM only while DISCORD_DM_USERS allows
+// its user: listed, or "all", with no lookup; else an admin or mod, looked
+// up and kept. A failed lookup refuses, with a warning naming no one.
+func TestReachableDM(t *testing.T) {
+	logs := captureLogs(t)
+	ctx := context.Background()
+	f := newFake(t)
+	c := groupsClient(f)
+	for _, v := range []string{alice, "all"} {
+		c.dm = allow.Parse(v)
+		if !c.Reachable(ctx, feature.Chat{User: prefix + alice}) {
+			t.Fatalf("%q: Alice's DM", v)
+		}
+	}
+	if r := f.routes(); len(r) != 0 {
+		t.Fatalf("looked up %v", r)
+	}
+	c.dm = allow.Parse("none")
+	if c.Reachable(ctx, feature.Chat{User: prefix + alice}) {
+		t.Fatal("none: Alice's DM")
+	}
+
+	c.dm = allow.Parse("")
+	setRole(c, "8192") // Bob is a mod
+	if !c.Reachable(ctx, feature.Chat{User: prefix + bob}) || c.Reachable(ctx, feature.Chat{User: prefix + alice}) {
+		t.Fatal("by default, a mod's DM only")
+	}
+	setRole(c, "0")
+	if c.Reachable(ctx, feature.Chat{User: prefix + bob}) {
+		t.Fatal("Bob's DM once he is no longer a mod")
+	}
+
+	c = groupsClient(f)
+	c.dm = allow.Parse("")
+	setRole(c, "8192")
+	f.errs[bobGet] = []int{500}
+	if c.Reachable(ctx, feature.Chat{User: prefix + bob}) {
+		t.Fatal("reachable when the lookup failed")
+	}
+	if l := logs.String(); !strings.Contains(l, "so the DM is refused") || strings.Contains(l, bob) || strings.Contains(l, alice) {
+		t.Fatalf("log %q", l)
+	}
+}

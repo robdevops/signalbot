@@ -163,7 +163,7 @@ func TestDMFailsClosed(t *testing.T) {
 			t.Fatalf("the warning names someone: %q", l)
 		}
 	}
-	if !strings.Contains(logs.String(), "checking whether its sender is an admin failed") {
+	if !strings.Contains(logs.String(), "checking whether its user is an admin failed") {
 		t.Fatalf("logs %q", logs)
 	}
 	if _, answered := dm(t, c, fromA, inDM); !answered {
@@ -290,5 +290,45 @@ func TestDMForgetsDuringLookup(t *testing.T) {
 	c.base = f.srv.URL
 	if _, answered := dm(t, c, fromA, inDM); answered {
 		t.Fatal("answered by what a lookup begun before her demotion said")
+	}
+}
+
+// The bot may post on its own in a DM only while TELEGRAM_DM_USERS allows
+// its user: listed, or "all", with no lookup; else an admin of a group it
+// has seen, asked and kept. A failed lookup refuses, with a warning naming
+// no one.
+func TestReachableDM(t *testing.T) {
+	logs := captureLogs(t)
+	ctx := context.Background()
+	for _, v := range []string{"2222222", "telegram:2222222", "all"} {
+		f, c := gated(t, v)
+		if !c.Reachable(ctx, feature.Chat{User: "2222222"}) {
+			t.Fatalf("%q: Bob's DM", v)
+		}
+		if n := len(f.callsTo("getChatAdministrators")); n != 0 {
+			t.Fatalf("%q: %d admin lookups", v, n)
+		}
+	}
+	if _, c := gated(t, "none"); c.Reachable(ctx, feature.Chat{User: "1111111"}) {
+		t.Fatal("none: Alice's DM")
+	}
+
+	f, c := gated(t, "")
+	if !c.Reachable(ctx, feature.Chat{User: "1111111"}) || c.Reachable(ctx, feature.Chat{User: "2222222"}) {
+		t.Fatal("by default, the owner's DM only")
+	}
+	f.set("getChatAdministrators", `[]`)
+	c.event(parse(t, `{"update_id":6,"chat_member":{`+inGroup+`,`+fromB+`,"old_chat_member":{"status":"creator"},"new_chat_member":{"status":"member","user":{"id":1111111,"first_name":"Alice"}}}}`))
+	if c.Reachable(ctx, feature.Chat{User: "1111111"}) {
+		t.Fatal("Alice's DM once she is no longer the owner")
+	}
+
+	f, c = gated(t, "")
+	f.fail("getChatAdministrators", `{"ok":false,"error_code":500,"description":"Internal Server Error"}`)
+	if c.Reachable(ctx, feature.Chat{User: "1111111"}) {
+		t.Fatal("reachable when the lookup failed")
+	}
+	if l := logs.String(); !strings.Contains(l, "checking whether its user is an admin failed") || strings.Contains(l, "1111111") || strings.Contains(l, "Alice") {
+		t.Fatalf("logs %q", l)
 	}
 }
