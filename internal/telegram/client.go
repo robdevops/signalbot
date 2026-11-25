@@ -15,7 +15,6 @@ import (
 	"io"
 	"mime/multipart"
 	"net/http"
-	"os"
 	"regexp"
 	"strconv"
 	"strings"
@@ -25,6 +24,7 @@ import (
 
 	"github.com/robdevops/signalbot/internal/bot"
 	"github.com/robdevops/signalbot/internal/config"
+	"github.com/robdevops/signalbot/internal/kit/allow"
 	"github.com/robdevops/signalbot/internal/kit/httpx"
 	"github.com/robdevops/signalbot/internal/kit/logx"
 )
@@ -34,8 +34,9 @@ const pollWait = 50 * time.Second
 
 // Client is a Telegram Bot API client, by long polling.
 type Client struct {
-	base    string // the API's base URL, without the token
-	token   string // never logged: scrub every error
+	base    string       // the API's base URL, without the token
+	token   string       // never logged: scrub every error
+	dm      allow.Policy // who may DM the bot: TELEGRAM_DM_USER_IDS
 	http    *http.Client
 	backoff time.Duration // the first wait after a failed poll; a test's shorter
 	typing  time.Duration // how often Typing is renewed; Telegram's lasts 5s
@@ -58,26 +59,36 @@ type Client struct {
 	left   map[string]bool              // groups the bot was removed from, so it no longer posts there
 	sent   map[string]bool              // "chat/message" for messages the bot sent lately
 	sentQ  []string                     // sent's keys, oldest first
+	admins map[string]adminList         // group ID to its owner and administrators, kept 10 minutes
+	dmOK   map[string]verdict           // user ID to whether they may DM the bot, kept 10 minutes
 
 	test *config.Test // nil in production
 }
 
 // New makes the client its settings say: TELEGRAM_BOT_TOKEN, the bot's
-// token from BotFather, and TELEGRAM_API_URL, a local Bot API server, by
-// default Telegram's. The bot answers anyone who DMs it and any group it is
-// in: BotFather's settings decide who can reach it.
+// token from BotFather; TELEGRAM_DM_USER_IDS, who may DM it, by default
+// the owners and administrators of the groups it is in; and
+// TELEGRAM_API_URL, a local Bot API server, by default Telegram's. In a
+// group the bot answers anyone.
 func New(test *config.Test) *Client {
-	if os.Getenv("TELEGRAM_DM_USER_IDS") != "" { // read only to say so: not a setting any more
-		logx.Noticef("TELEGRAM_DM_USER_IDS is no longer read: the bot answers anyone who messages it, and any group it is in; BotFather's settings decide who can reach it")
+	dm := allow.Parse(config.Env("TELEGRAM_DM_USER_IDS", ""))
+	switch {
+	case dm.None():
+		logx.Warnf("Telegram DMs are off: TELEGRAM_DM_USER_IDS is none; the bot answers only in groups")
+	case !dm.All && !dm.Admins && len(dm.IDs) == 0:
+		logx.Warnf("Telegram DMs are off: TELEGRAM_DM_USER_IDS allows only mods, and Telegram has none; the bot answers only in groups")
+	default:
+		logx.Noticef("Telegram DMs: allowed from %s (TELEGRAM_DM_USER_IDS)", dm)
 	}
-	return newClient(config.Env("TELEGRAM_API_URL", "https://api.telegram.org"), config.Env("TELEGRAM_BOT_TOKEN", ""), test)
+	return newClient(config.Env("TELEGRAM_API_URL", "https://api.telegram.org"), config.Env("TELEGRAM_BOT_TOKEN", ""), dm, test)
 }
 
-func newClient(base, token string, test *config.Test) *Client {
-	return &Client{base: strings.TrimRight(base, "/"), token: token, http: httpx.Client(8),
+func newClient(base, token string, dm allow.Policy, test *config.Test) *Client {
+	return &Client{base: strings.TrimRight(base, "/"), token: token, dm: dm, http: httpx.Client(8),
 		backoff: time.Second, typing: 4 * time.Second, known: make(chan struct{}),
 		people: map[string]string{}, chats: map[string]map[string]string{}, groups: map[string]string{},
-		timers: map[string]time.Duration{}, moved: map[string]string{}, topics: map[string]map[string]bool{}, left: map[string]bool{}, sent: map[string]bool{}, test: test}
+		timers: map[string]time.Duration{}, moved: map[string]string{}, topics: map[string]map[string]bool{}, left: map[string]bool{}, sent: map[string]bool{},
+		admins: map[string]adminList{}, dmOK: map[string]verdict{}, test: test}
 }
 
 // scrub is err with the token taken out of its text: Go's URL errors
