@@ -18,17 +18,18 @@ import (
 // Host records what a feature registers and lets a test drive it. Set its
 // exported fields before the feature registers.
 type Host struct {
-	Settings map[string]string                                                                    // what Env reads
-	Bot      feature.Info                                                                         // what Info returns
-	Fetch    func(m feature.Message, i int) ([]byte, error)                                       // what Media returns; nil fails
-	API      func(ctx context.Context, path string, body map[string]any) (json.RawMessage, error) // what CallAPI returns; nil fails
-	Use      feature.Usage                                                                        // what Usage returns
-	Shared   []feature.Group                                                                      // what Groups returns
-	TimerErr error                                                                                // if set, At fails with it, as the core does at its cap
-	Redactor func(string) string                                                                  // what Redact does; nil leaves text as it is
-	StoreErr error                                                                                // if set, Store fails with it, as the core does with no usable state directory
-	Unusable bool                                                                                 // if set, OfferTools drops a group with tools, as the core does when the API can run none
-	Nets     func(feature.Chat) feature.Net                                                       // what Net returns; nil: Bot's network, name and caps, for every chat
+	Settings  map[string]string                                                                    // what Env reads
+	Bot       feature.Info                                                                         // what Info returns
+	Fetch     func(m feature.Message, i int) ([]byte, error)                                       // what Media returns; nil fails
+	API       func(ctx context.Context, path string, body map[string]any) (json.RawMessage, error) // what CallAPI returns; nil fails
+	Use       feature.Usage                                                                        // what Usage returns
+	Shared    []feature.Group                                                                      // what Groups returns
+	GroupsErr error                                                                                // if set, Groups fails with it
+	TimerErr  error                                                                                // if set, At fails with it, as the core does at its cap
+	Redactor  func(string) string                                                                  // what Redact does; nil leaves text as it is
+	StoreErr  error                                                                                // if set, Store fails with it, as the core does with no usable state directory
+	Unusable  bool                                                                                 // if set, OfferTools drops a group with tools, as the core does when the API can run none
+	Nets      func(feature.Chat) feature.Net                                                       // what Net returns; nil: Bot's network, name and caps, for every chat
 
 	mu        sync.Mutex
 	read      []string
@@ -44,6 +45,7 @@ type Host struct {
 	reactions []Reaction
 	stores    []string
 	charged   []feature.Chat
+	asked     int // Groups calls
 	commands  feature.Commands
 	life      context.Context // what Go passes; ended by Stop
 	end       context.CancelFunc
@@ -288,7 +290,23 @@ func (h *Host) Reactions() []Reaction {
 	return slices.Clone(h.reactions)
 }
 
-func (h *Host) Groups(context.Context, string) ([]feature.Group, error) { return h.Shared, nil }
+// Groups is Shared, or fails with GroupsErr, and counts the call.
+func (h *Host) Groups(context.Context, string) ([]feature.Group, error) {
+	h.mu.Lock()
+	h.asked++
+	h.mu.Unlock()
+	if h.GroupsErr != nil {
+		return nil, h.GroupsErr
+	}
+	return h.Shared, nil
+}
+
+// GroupsAsked is how many times Groups has been called.
+func (h *Host) GroupsAsked() int {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.asked
+}
 
 // Redact runs Redactor, if set.
 func (h *Host) Redact(text string) string {

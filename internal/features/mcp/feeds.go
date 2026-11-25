@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/robdevops/signalbot/internal/feature"
+	"github.com/robdevops/signalbot/internal/kit/allow"
 	"github.com/robdevops/signalbot/internal/kit/logx"
 	"github.com/robdevops/signalbot/internal/kit/txt"
 )
@@ -91,10 +92,11 @@ func (it feedItem) expiry() time.Time {
 // feeds are the servers' feeds, and the chats subscribed to each, kept in
 // one store.
 type feeds struct {
-	h     feature.Host
-	store feature.Store
-	now   func() time.Time
-	again *reruns // with buttons: where a chart's post is kept for them
+	h      feature.Host
+	store  feature.Store
+	now    func() time.Time
+	again  *reruns      // with buttons: where a chart's post is kept for them
+	admins allow.Policy // who may change a group's alerts: GROUP_ADMINS
 
 	mu    sync.Mutex
 	doc   map[string]*feedState // by server
@@ -145,7 +147,7 @@ type feed struct {
 }
 
 func newFeeds(h feature.Host, store feature.Store) *feeds {
-	fs := &feeds{h: h, store: store, now: time.Now, doc: map[string]*feedState{}, byCmd: map[string]*feed{}}
+	fs := &feeds{h: h, store: store, now: time.Now, doc: map[string]*feedState{}, byCmd: map[string]*feed{}, admins: allow.Parse(h.Env("GROUP_ADMINS", ""))}
 	if _, err := store.Load(&fs.doc); err != nil || fs.doc == nil {
 		if err != nil {
 			logx.Warnf("MCP: the feeds' state can't be read, so they start afresh: %v", err)
@@ -182,8 +184,8 @@ func (fs *feeds) state(server string) *feedState {
 // command, returned as "/name", or "" if it can't be.
 func (fs *feeds) add(server, title string, cfg feedConfig, c conn, has map[string]bool) string {
 	f := &feed{server: server, title: title, command: strings.ToLower(commandName(cfg.Command, "alerts")), resource: cfg.Resource, conn: c, has: has}
-	err := fs.h.Command(f.command, func(_ context.Context, m feature.Message, args string) feature.Action {
-		return fs.chat(f, m.Chat, args)
+	err := fs.h.Command(f.command, func(ctx context.Context, m feature.Message, args string) feature.Action {
+		return fs.chat(ctx, f, m, args)
 	})
 	if err != nil {
 		logx.Warnf("MCP server %s: the feed's command skipped: %v", server, err)
@@ -379,13 +381,20 @@ func (fs *feeds) chart(ctx context.Context, f *feed, tool string, args map[strin
 	return r.action(f.server).Pictures
 }
 
-// chat answers /alerts with args in chat: on, off, sound on or off, or a
-// kind to turn off or on; the menu either way.
-func (fs *feeds) chat(f *feed, chat feature.Chat, args string) feature.Action {
+// chat answers /alerts with args in m's chat: on, off, sound on or off,
+// or a kind to turn off or on; the menu either way. In a group, only
+// those GROUP_ADMINS allows may change anything.
+func (fs *feeds) chat(ctx context.Context, f *feed, m feature.Message, args string) feature.Action {
+	chat := m.Chat
+	words := strings.Fields(strings.ToLower(args))
+	if len(words) > 0 {
+		if no := fs.refusal(ctx, chat, m.Sender); no != "" {
+			return feature.Action{Answer: no}
+		}
+	}
 	fs.mu.Lock()
 	defer fs.mu.Unlock()
 	fs.adopt(f, chat)
-	words := strings.Fields(strings.ToLower(args))
 	reply := ""
 	switch {
 	case len(words) == 0:
@@ -410,6 +419,40 @@ func (fs *feeds) chat(f *feed, chat feature.Chat, args string) feature.Action {
 	}
 	text, buttons := fs.menu(f, chat, "")
 	return feature.Action{Answer: reply + text, Markup: feature.Markup{Buttons: buttons}}
+}
+
+// refusal is why user may not change chat's alerts; "" if they may. A
+// DM's owner manages their own; in a group, GROUP_ADMINS says who may: as
+// listed, or as one of that group's admins or mods, asked of the network
+// only then. Not under mu: the network may be slow to answer.
+func (fs *feeds) refusal(ctx context.Context, chat feature.Chat, user string) string {
+	if chat.GroupID == "" {
+		return ""
+	}
+	name := ""
+	if fs.admins.Allows(func() (bool, bool) {
+		gs, err := fs.h.Groups(ctx, user)
+		if err != nil {
+			logx.Warnf("MCP: listing groups failed: %v", err)
+			return false, false
+		}
+		// A forum topic's chat is its group's ID, "/" and the topic.
+		i := slices.IndexFunc(gs, func(g feature.Group) bool {
+			return g.ID == chat.GroupID || strings.HasPrefix(chat.GroupID, g.ID+"/")
+		})
+		if i < 0 {
+			return false, false
+		}
+		name = gs[i].Name
+		return gs[i].Admin, gs[i].Mod
+	}, user) {
+		return ""
+	}
+	who := fs.admins.Who()
+	if who == "" {
+		return "Changing this group's alerts isn't open to you."
+	}
+	return "Only " + cmp.Or(name, "this group") + "'s " + who + " can change its alerts."
 }
 
 // adopt subscribes chat to f, every kind, silently, if it is a DM that
@@ -633,8 +676,9 @@ func kindLabel(k feedKind) string {
 }
 
 // press changes a chat's subscription by a menu's button, and redraws the
-// menu in place.
-func (fs *feeds) press(_ context.Context, p feature.Press) (string, bool) {
+// menu in place; in a group, a change by someone GROUP_ADMINS doesn't
+// allow is refused, the presser told why, and nothing redrawn.
+func (fs *feeds) press(ctx context.Context, p feature.Press) (string, bool) {
 	rest, ok := strings.CutPrefix(p.Data, pressFeed)
 	parts := strings.Split(rest, "/")
 	if !ok || len(parts) < 2 || len(parts) > 3 {
@@ -643,6 +687,11 @@ func (fs *feeds) press(_ context.Context, p feature.Press) (string, bool) {
 	cmd, what := parts[0], parts[1]
 	if len(parts) == 3 && p.Chat.GroupID != "" && !strings.Contains(p.Chat.GroupID, "/") {
 		p.Chat.GroupID += "/" + parts[2] // the topic the menu was posted in
+	}
+	if !strings.HasPrefix(what, "open:") && what != "close" { // a change: opening or closing a menu changes nothing
+		if no := fs.refusal(ctx, p.Chat, p.By.ID); no != "" {
+			return no, true
+		}
 	}
 	fs.mu.Lock()
 	defer fs.mu.Unlock()
