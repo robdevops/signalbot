@@ -188,6 +188,7 @@ type options struct {
 	buttons  bool // the network shows markup
 	features func(*Bot)
 	cfg      func(*config.Config)
+	wrap     func(*fakeNet) Network // if set, the bot's network is this, around the fake
 }
 
 // start runs a bot on the fakes. Everything it started has stopped by the
@@ -212,7 +213,11 @@ func start(t *testing.T, o options) *harness {
 		o.cfg(cfg)
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	h.b = New(ctx, cfg, h.net)
+	var net Network = h.net
+	if o.wrap != nil {
+		net = o.wrap(h.net)
+	}
+	h.b = New(ctx, cfg, net)
 	if o.features != nil {
 		o.features(h.b)
 	}

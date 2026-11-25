@@ -2,6 +2,7 @@ package bot
 
 import (
 	"context"
+	"fmt"
 	"slices"
 	"strings"
 	"sync"
@@ -143,5 +144,41 @@ func TestJoinWaitsForTheChatsNetwork(t *testing.T) {
 	b := &stubNet{name: "b", prefix: "b", known: make(chan struct{})}
 	if _, ok := Join(b, z).Delivered(ctx, feature.Message{Chat: feature.Chat{User: "b1"}}); ok {
 		t.Error("delivered while stopping")
+	}
+}
+
+// answerNet is a network that records which message the bot answers.
+type answerNet struct {
+	*fakeNet
+	mu    sync.Mutex
+	calls []string
+}
+
+func (n *answerNet) Answering(chat feature.Chat, msg int64) {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	n.calls = append(n.calls, fmt.Sprintf("answering %d", msg))
+}
+
+func (n *answerNet) Answered(feature.Chat) {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	n.calls = append(n.calls, "answered")
+}
+
+// A network that asks is told which message the bot answers, before its
+// reply goes out, and when it is done.
+func TestAnswering(t *testing.T) {
+	var an *answerNet
+	h := start(t, options{wrap: func(n *fakeNet) Network { an = &answerNet{fakeNet: n}; return an }})
+	m := dm("hello")
+	m.Timestamp = 42
+	h.receive(m)
+	h.nextSend()
+	h.b.Shutdown(5 * time.Second)
+	an.mu.Lock()
+	defer an.mu.Unlock()
+	if len(an.calls) != 2 || an.calls[0] != fmt.Sprintf("answering %d", m.Timestamp) || an.calls[1] != "answered" {
+		t.Fatalf("calls %q", an.calls)
 	}
 }

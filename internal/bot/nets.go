@@ -15,6 +15,17 @@ type Owner interface {
 	Owns(chat feature.Chat) bool
 }
 
+// Answerer is a Network that wants to know which message the bot is
+// answering in a chat, so the reply goes where that message expects one,
+// such as a Discord slash command's "thinking…". In the chat's slot,
+// Answering comes before anything is sent for the message (msg its
+// Timestamp; 0 for a scheduled post) and Answered after, whether or not
+// anything was.
+type Answerer interface {
+	Answering(chat feature.Chat, msg int64)
+	Answered(chat feature.Chat)
+}
+
 // joined is several networks as one: each chat's calls go to the network
 // that owns it, and Run, Watch and WaitID go to all of them. Its Name,
 // BotName and Prompt are the first network's, and Caps what any of them

@@ -67,6 +67,10 @@ const (
 // are offered by msg.Text alone, what was typed, never a sender's name or a
 // quote. refs names the messages answered, for history (see Forget).
 func (b *Bot) respond(msg feature.Message, act feature.Action, text string, refs []chats.Ref) {
+	if a, ok := b.on(msg.Chat).(Answerer); ok {
+		a.Answering(msg.Chat, msg.Timestamp)
+		defer a.Answered(msg.Chat) // also if nothing is sent, or something below panics
+	}
 	if act.OnSent != nil { // made once by hooked
 		defer act.OnSent(nil, true) // if nothing is sent, also if something below panics
 	}
