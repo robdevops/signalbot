@@ -47,6 +47,8 @@ type Client struct {
 	self   atomic.Value // string: the bot's user ID, without the prefix
 	handle atomic.Value // string: its @name
 	name   atomic.Value // string: its display name
+	named  atomic.Bool  // users.info gave the display name, not auth.test's @name
+	naming atomic.Bool  // a users.info call for it is under way
 	known  chan struct{}
 	once   sync.Once
 	hellos atomic.Int64 // Socket Mode connections made
@@ -54,17 +56,19 @@ type Client struct {
 	watch    atomic.Bool                   // the core has an event hook
 	commands atomic.Pointer[[]bot.Command] // the commands features registered, for the app manifest
 
-	mu     sync.Mutex
-	people map[string]string          // user ID to display name, as last seen
-	asking map[string]bool            // user IDs whose names are being fetched
-	ims    map[string]string          // user ID to the DM channel with the bot
-	imUser map[string]string          // a DM channel to its user
-	chans  map[string]map[string]bool // channel ID to the user IDs seen there
-	left   map[string]bool            // channels the bot was removed from, so it no longer posts there
-	sent   map[string]bool            // "channel/ts" for messages the bot sent lately
-	sentQ  []string                   // sent's keys, oldest first
-	blocks map[string][]any           // "channel/ts" to the blocks the bot last put in it, but buttons
-	blockQ []string                   // blocks' keys, oldest first
+	mu      sync.Mutex
+	people  map[string]string          // user ID to display name, as last seen
+	asking  map[string]bool            // user IDs whose names are being fetched
+	ims     map[string]string          // user ID to the DM channel with the bot
+	imUser  map[string]string          // a DM channel to its user
+	chans   map[string]map[string]bool // channel ID to the user IDs seen there
+	left    map[string]bool            // channels the bot was removed from, so it no longer posts there
+	sent    map[string]bool            // "channel/ts" for messages the bot sent lately
+	sentQ   []string                   // sent's keys, oldest first
+	thread  map[string]string          // "channel/ts" to its thread's ts, for messages in threads the bot sent or read lately
+	threadQ []string                   // thread's keys, oldest first
+	blocks  map[string][]any           // "channel/ts" to the blocks the bot last put in it, but buttons
+	blockQ  []string                   // blocks' keys, oldest first
 
 	test *config.Test // nil in production
 }
@@ -96,7 +100,7 @@ func newClient(base, token, appToken, stateDir string, test *config.Test) *Clien
 	return &Client{base: strings.TrimRight(base, "/"), token: token, appToken: appToken, stateDir: stateDir, http: httpx.Client(8),
 		backoff: time.Second, slow: 10 * time.Minute, settle: 2 * time.Second, known: make(chan struct{}),
 		people: map[string]string{}, asking: map[string]bool{}, ims: map[string]string{}, imUser: map[string]string{},
-		chans: map[string]map[string]bool{}, left: map[string]bool{}, sent: map[string]bool{}, blocks: map[string][]any{}, test: test}
+		chans: map[string]map[string]bool{}, left: map[string]bool{}, sent: map[string]bool{}, thread: map[string]string{}, blocks: map[string][]any{}, test: test}
 }
 
 // scrub is err with the tokens taken out of its text.
@@ -323,7 +327,8 @@ func (c *Client) Run(ctx context.Context, handle func(bot.Received)) {
 }
 
 // hello asks auth.test who the bot is, and users.info for its display
-// name.
+// name; if that fails, its @name stands in until a later Socket Mode hello
+// asks again.
 func (c *Client) hello(ctx context.Context) error {
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
@@ -338,14 +343,39 @@ func (c *Client) hello(ctx context.Context) error {
 		return errors.New("slack: auth.test: no user ID: is SLACK_BOT_TOKEN a bot token?")
 	}
 	name := me.User
-	if u, err := c.userInfo(ctx, me.UserID); err == nil && u != "" {
+	u, err := c.userInfo(ctx, me.UserID)
+	if err != nil {
+		logx.Debugf("slack users.info for the bot failed: %v", err)
+	} else if u != "" {
 		name = u
 	}
 	c.handle.Store(me.User)
 	c.name.Store(name)
+	c.named.Store(err == nil)
 	c.self.Store(me.UserID)
 	c.once.Do(func() { close(c.known) })
 	return nil
+}
+
+// rename asks users.info again for the bot's display name, after it failed
+// at the start, and writes the app manifest with it. One runs at a time.
+func (c *Client) rename(ctx context.Context) {
+	if c.named.Load() || !c.naming.CompareAndSwap(false, true) {
+		return
+	}
+	defer c.naming.Store(false)
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	u, err := c.userInfo(ctx, c.selfID())
+	if err != nil {
+		logx.Debugf("slack users.info for the bot failed: %v", err)
+		return
+	}
+	if u != "" {
+		c.name.Store(u)
+	}
+	c.named.Store(true)
+	c.writeManifest()
 }
 
 // envelope is one Socket Mode message.
@@ -373,10 +403,20 @@ func (c *Client) connect(ctx context.Context, handle func(bot.Received)) (hello,
 			defer conn.Close(1000, "")
 			return c.read(ctx, conn, handle)
 		}
-		err = c.scrub(err) // the URL holds a ticket
+		err = c.scrub(dialError(err))
 	}
 	cancel()
 	return false, false, err
+}
+
+// dialError is a failed dial's err without the URL, which holds a ticket
+// for the connection.
+func dialError(err error) error {
+	var ue *url.Error
+	if errors.As(err, &ue) {
+		return fmt.Errorf("slack: socket: %s: %w", ue.Op, ue.Err)
+	}
+	return err
 }
 
 // read reads conn until it fails or Slack asks to close it.
@@ -403,6 +443,9 @@ func (c *Client) read(ctx context.Context, conn *ws.Conn, handle func(bot.Receiv
 				logx.Noticef("connected to Slack as @%s", c.handleOf())
 			} else {
 				logx.Debugf("slack: connected again")
+			}
+			if !c.named.Load() {
+				go c.rename(ctx)
 			}
 		case "disconnect":
 			return hello, true, nil

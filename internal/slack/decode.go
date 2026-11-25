@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"net/url"
 	"regexp"
@@ -35,6 +36,7 @@ type event struct {
 	TS          string    `json:"ts"`
 	ThreadTS    string    `json:"thread_ts"`
 	Files       []file    `json:"files"`
+	Hidden      bool      `json:"hidden"`
 	Message     *event    `json:"message"`          // message_changed's new version
 	Previous    *event    `json:"previous_message"` // message_changed's and message_deleted's old one
 	DeletedTS   string    `json:"deleted_ts"`
@@ -181,6 +183,9 @@ func (c *Client) event(e *event) []bot.Received {
 		case "", "file_share", "thread_broadcast", "me_message":
 			return one(c.received(e, e, 0))
 		case "message_changed":
+			if m := e.Message; m != nil && (m.Subtype == "tombstone" || m.Hidden) {
+				return one(c.tombstone(e))
+			}
 			if m, p := e.Message, e.Previous; m != nil && (p == nil || m.Text != p.Text || len(m.Files) != len(p.Files)) { // not an unfurl
 				return one(c.received(e, m, tsInt(e.TS)))
 			}
@@ -210,6 +215,9 @@ func (c *Client) received(e, m *event, edited int64) (bot.Received, bool) {
 	}
 	if ch.GroupID != "" {
 		c.seen(e.Channel, m.User)
+		if m.ThreadTS != "" && m.ThreadTS != m.TS {
+			c.noteThread(e.Channel, m.TS, m.ThreadTS)
+		}
 	}
 	if m.Profile != nil {
 		c.learnName(m.User, cmp.Or(m.Profile.DisplayName, m.Profile.RealName))
@@ -327,6 +335,22 @@ func (c *Client) deleted(e *event) (bot.Received, bool) {
 	return bot.Deleted{Chat: ch, Sender: prefix + p.User, Bot: byBot, Sent: tsInt(e.DeletedTS), At: tsInt(e.TS)}, true
 }
 
+// tombstone is a deleted thread parent, which Slack sends as an edit that
+// leaves a placeholder by USLACKBOT in its place: a delete of the message
+// it replaced, of every version.
+func (c *Client) tombstone(e *event) (bot.Received, bool) {
+	p := e.Previous
+	if p == nil || p.User == "" || p.TS == "" {
+		return nil, false
+	}
+	self := c.selfID()
+	ch := c.chatIn(e.Channel, e.ChannelType, p.ThreadTS, p.TS, p.User)
+	if ch == (feature.Chat{}) {
+		return nil, false
+	}
+	return bot.Deleted{Chat: ch, Sender: prefix + p.User, Bot: self != "" && p.User == self, Sent: tsInt(p.TS), At: math.MaxInt64}, true
+}
+
 // reacted is a reaction as the core gets it, but the bot's own, and one
 // with an emoji the table doesn't know.
 func (c *Client) reacted(e *event) (bot.Received, bool) {
@@ -334,7 +358,7 @@ func (c *Client) reacted(e *event) (bot.Received, bool) {
 	if e.Item == nil || e.Item.Type != "message" || e.User == "" || e.User == c.selfID() || emoji == "" {
 		return nil, false
 	}
-	ch := c.chatIn(e.Item.Channel, "", "", "", e.User)
+	ch := c.chatIn(e.Item.Channel, "", c.threadOf(e.Item.Channel, e.Item.TS), e.Item.TS, e.User)
 	if ch == (feature.Chat{}) {
 		return nil, false
 	}
@@ -741,6 +765,30 @@ func (c *Client) noteSent(channel, ts string) {
 		delete(c.sent, c.sentQ[0])
 		c.sentQ = c.sentQ[1:]
 	}
+}
+
+// noteThread remembers that the message ts in channel is in thread, at most
+// the last 2000, for reactions, which name only the channel and ts.
+func (c *Client) noteThread(channel, ts, thread string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	k := channel + "/" + ts
+	if _, ok := c.thread[k]; ok {
+		return
+	}
+	c.thread[k] = thread
+	if c.threadQ = append(c.threadQ, k); len(c.threadQ) > 2000 {
+		delete(c.thread, c.threadQ[0])
+		c.threadQ = c.threadQ[1:]
+	}
+}
+
+// threadOf is the thread the message ts in channel is in, if the bot
+// remembers it in one, or "".
+func (c *Client) threadOf(channel, ts string) string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.thread[channel+"/"+ts]
 }
 
 // emojiNames are the reactions the bot reads and makes, by Slack's names;

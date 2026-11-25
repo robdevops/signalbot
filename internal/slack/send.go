@@ -165,6 +165,9 @@ func (c *Client) postBlocks(ctx context.Context, channel, thread string, blocks 
 		return "", err
 	}
 	c.noteSent(channel, r.TS)
+	if thread != "" {
+		c.noteThread(channel, r.TS, thread)
+	}
 	c.keepBlocks(channel, r.TS, blocks)
 	return r.TS, nil
 }
