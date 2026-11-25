@@ -153,7 +153,7 @@ func TestDeliveredToAnAdmin(t *testing.T) {
 func TestVerdictsBounded(t *testing.T) {
 	var v verdicts
 	for i := range verdictMax + 5 {
-		v.put(strings.Repeat("x", i+1), true)
+		v.put(0, strings.Repeat("x", i+1), true)
 	}
 	if len(v.m) > verdictMax {
 		t.Fatalf("%d held", len(v.m))
@@ -161,5 +161,21 @@ func TestVerdictsBounded(t *testing.T) {
 	v.m["old"] = verdict{true, time.Now().Add(-verdictAge - time.Second)}
 	if _, ok := v.get("old"); ok {
 		t.Fatal("a stale verdict believed")
+	}
+}
+
+// An answer asked for before a group update isn't kept after it, as an
+// admin may have gone meanwhile.
+func TestVerdictsForgottenWhileAsking(t *testing.T) {
+	var v verdicts
+	gen := v.generation()
+	v.forget()
+	v.put(gen, aliceID, true)
+	if _, ok := v.get(aliceID); ok {
+		t.Fatal("an answer from before the update kept")
+	}
+	v.put(v.generation(), aliceID, true)
+	if admin, ok := v.get(aliceID); !ok || !admin {
+		t.Fatal("a current answer not kept")
 	}
 }

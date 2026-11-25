@@ -18,10 +18,12 @@ const (
 
 // verdicts holds, by sender ID, whether each was lately found an admin of a
 // group the bot is a member of, only in memory. A group update forgets them
-// all, since an admin may have come or gone.
+// all, since an admin may have come or gone; gen counts those, so an answer
+// asked for before one isn't kept after it.
 type verdicts struct {
-	mu sync.Mutex
-	m  map[string]verdict
+	mu  sync.Mutex
+	m   map[string]verdict
+	gen uint64
 }
 
 type verdict struct {
@@ -40,11 +42,22 @@ func (v *verdicts) get(id string) (admin, ok bool) {
 	return e.admin, true
 }
 
-// put keeps id's verdict, making room by dropping stale ones, or all if
-// none is stale.
-func (v *verdicts) put(id string, admin bool) {
+// generation is how many times the verdicts were forgotten, for put.
+func (v *verdicts) generation() uint64 {
 	v.mu.Lock()
 	defer v.mu.Unlock()
+	return v.gen
+}
+
+// put keeps id's verdict, asked for at generation gen, unless they were
+// forgotten since; it makes room by dropping stale ones, or all if none is
+// stale.
+func (v *verdicts) put(gen uint64, id string, admin bool) {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	if gen != v.gen {
+		return
+	}
 	if v.m == nil {
 		v.m = map[string]verdict{}
 	}
@@ -66,6 +79,7 @@ func (v *verdicts) forget() {
 	v.mu.Lock()
 	defer v.mu.Unlock()
 	clear(v.m)
+	v.gen++
 }
 
 // dmQuick reports, without calling the network, whether the sender with
@@ -93,6 +107,7 @@ func (c *Client) dmAllowed(ctx context.Context, ids ...string) bool {
 	}
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
+	gen := c.verdicts.generation()
 	var gs []group
 	if err := c.call(ctx, "listGroups", nil, &gs); err != nil {
 		logx.Warnf("listGroups failed, so a DM's sender is taken for no admin: %v", err)
@@ -103,7 +118,7 @@ func (c *Client) dmAllowed(ctx context.Context, ids ...string) bool {
 			return slices.ContainsFunc(ids, func(id string) bool { return is(id, m.UUID, m.Number) })
 		})
 	})
-	c.verdicts.put(firstID(ids), admin)
+	c.verdicts.put(gen, firstID(ids), admin)
 	return admin
 }
 
