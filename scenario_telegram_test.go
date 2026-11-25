@@ -79,7 +79,8 @@ func startTelegram(t *testing.T, env map[string]string) *tgHarness {
 		"INTRO", "MAX_CONCURRENCY", "HISTORY_MAX", "TOOL_LINGER_ROUNDS", "MCP_CONFIG", "GROUP_CONTEXT", "FILES", "CHARTS", "JOURNAL_STREAM", "DAILY_BUDGET"} {
 		t.Setenv(k, "")
 	}
-	settings := map[string]string{"TELEGRAM_BOT_TOKEN": tgToken, "TELEGRAM_API_URL": api.URL, "TELEGRAM_DM_USER_IDS": tgAlice,
+	t.Setenv("TELEGRAM_DM_USER_IDS", "") // no longer read
+	settings := map[string]string{"TELEGRAM_BOT_TOKEN": tgToken, "TELEGRAM_API_URL": api.URL,
 		"MODEL_API_URL": model.URL, "MODEL": "test/test-model", "STATE_DIRECTORY": t.TempDir()}
 	for k, v := range env {
 		settings[k] = v
@@ -369,20 +370,21 @@ func TestTelegramGroupMention(t *testing.T) {
 	}
 }
 
-// A DM from a listed user is answered, an edit of it is answered again, and
-// a DM from anyone else is not answered.
+// Anyone's DM is answered, and an edit of one is answered again.
 func TestTelegramDMs(t *testing.T) {
 	h := startTelegram(t, nil)
 	h.send("message", tgFromBob+`,"chat":{"id":2222222,"type":"private","first_name":"Bob"},"text":"let me in"`)
-	h.waitFor("the refusal logged", func() bool { return strings.Contains(h.logText(), "not in TELEGRAM_DM_USER_IDS") })
+	if s := h.waitCalls("sendMessage", 1)[0].Params; s["chat_id"] != tgBob || s["text"] != "ok" {
+		t.Fatalf("sent to Bob %v", s)
+	}
 	id := h.send("message", tgFromAlice+","+tgInDM+`,"text":"hello"`)
-	if s := h.waitCalls("sendMessage", 1)[0].Params; s["chat_id"] != tgAlice || s["text"] != "ok" {
+	if s := h.waitCalls("sendMessage", 2)[1].Params; s["chat_id"] != tgAlice || s["text"] != "ok" {
 		t.Fatalf("sent %v", s)
 	}
 	h.updates <- fmt.Sprintf(`{"update_id":999,"edited_message":{"message_id":%d,"date":1,"edit_date":2,%s,%s,"text":"hello there"}}`, id, tgFromAlice, tgInDM)
-	h.waitCalls("sendMessage", 2)
+	h.waitCalls("sendMessage", 3)
 	r := h.requests()
-	if len(r) != 2 || !strings.Contains(r[1].Contents[len(r[1].Contents)-1], "hello there") {
+	if len(r) != 3 || !strings.Contains(r[2].Contents[len(r[2].Contents)-1], "hello there") {
 		t.Fatalf("model saw %+v", r)
 	}
 }

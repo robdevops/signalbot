@@ -27,9 +27,8 @@ func (c *Client) Caps() feature.Caps {
 	return feature.Caps{Buttons: true, Keyboard: true, Silent: true, EditMedia: true, Caption: maxCaption}
 }
 
-// pressed is a press as the core gets it: in a DM, only from someone the bot
-// answers, and in a group, only while it answers there. A press it drops is
-// answered at once, so the button stops spinning.
+// pressed is a press as the core gets it. A press it drops is answered at
+// once, so the button stops spinning.
 func (c *Client) pressed(q *callbackQuery) (bot.Received, bool) {
 	answer := func(text string) { go c.answerPress(q.ID, text) }
 	if q.From == nil || q.Message == nil || q.Data == "" || id(q.From.ID) == c.selfID() {
@@ -37,10 +36,6 @@ func (c *Client) pressed(q *callbackQuery) (bot.Received, bool) {
 		return nil, false
 	}
 	ch := chatOf(q.Message)
-	if ch.GroupID == "" && !c.allowed[id(q.From.ID)] || ch.GroupID != "" && !c.answers(id(q.Message.Chat.ID)) {
-		answer("")
-		return nil, false
-	}
 	return bot.Pressed{Press: feature.Press{Chat: ch, By: c.person(q.From), Sent: q.Message.MessageID, Data: q.Data}, Answer: answer}, true
 }
 

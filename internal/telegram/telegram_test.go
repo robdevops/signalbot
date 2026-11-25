@@ -146,12 +146,8 @@ func (f *fakeAPI) callsTo(method string) []call {
 	return out
 }
 
-func (f *fakeAPI) client(allowed ...string) *Client {
-	a := map[string]bool{}
-	for _, id := range allowed {
-		a[id] = true
-	}
-	c := newClient(f.srv.URL, token, a, nil)
+func (f *fakeAPI) client() *Client {
+	c := newClient(f.srv.URL, token, nil)
 	c.backoff, c.typing = 10*time.Millisecond, 20*time.Millisecond
 	return c
 }
@@ -181,11 +177,10 @@ const (
 )
 
 // Who the bot answers: in a group, a mention of its @username or a text
-// mention of it, a reply to it, or a command for it; in a DM, a listed
-// sender. Its own mention and a command's @username are taken out.
+// mention of it, a reply to it, or a command for it; in a DM, anyone. Its own mention and a command's @username are taken out.
 func TestAddressing(t *testing.T) {
 	logs := captureLogs(t)
-	c := connected(newFake(t).client("1111111"))
+	c := connected(newFake(t).client())
 	for _, tc := range []struct {
 		name, msg, text string
 		kind            string // Incoming, Chatter or none
@@ -198,8 +193,8 @@ func TestAddressing(t *testing.T) {
 		{"another bot's command", `{"message_id":10,` + fromA + `,` + inGroup + `,"text":"/hello@other_bot","entities":[{"type":"bot_command","offset":0,"length":16}]}`, "/hello@other_bot", "Chatter"},
 		{"reply to it", `{"message_id":10,` + fromA + `,` + inGroup + `,"text":"and?","reply_to_message":{"message_id":9,"from":{"id":777000,"is_bot":true,"first_name":"Botty"},` + inGroup + `,"text":"earlier"}}`, "and?", "Incoming"},
 		{"chatter", `{"message_id":10,` + fromA + `,` + inGroup + `,"text":"the moon is cheese"}`, "the moon is cheese", "Chatter"},
-		{"listed DM", `{"message_id":10,` + fromA + `,` + inDM + `,"text":"hi"}`, "hi", "Incoming"},
-		{"unlisted DM", `{"message_id":10,"from":{"id":2222222,"first_name":"Bob"},"chat":{"id":2222222,"type":"private"},"text":"hi"}`, "", "none"},
+		{"a DM", `{"message_id":10,` + fromA + `,` + inDM + `,"text":"hi"}`, "hi", "Incoming"},
+		{"a stranger's DM", `{"message_id":10,"from":{"id":2222222,"first_name":"Bob"},"chat":{"id":2222222,"type":"private"},"text":"hi"}`, "hi", "Incoming"},
 		{"its own", `{"message_id":10,"from":{"id":777000,"is_bot":true,"first_name":"Botty"},` + inGroup + `,"text":"hi"}`, "", "none"},
 	} {
 		r, ok := c.event(parse(t, `{"update_id":1,"message":`+tc.msg+`}`))
@@ -217,15 +212,13 @@ func TestAddressing(t *testing.T) {
 			t.Errorf("%s: %s %q", tc.name, kind, text)
 		}
 	}
-	if !strings.Contains(logs.String(), "2222222 ignored because not in TELEGRAM_DM_USER_IDS") {
-		t.Errorf("logs %q", logs)
-	}
+	_ = logs
 }
 
 // A message as the core sees it: sender, name, other people's text
 // mentions as @Name (learned), the quote, photos, files and a sticker.
 func TestMessage(t *testing.T) {
-	c := connected(newFake(t).client("1111111"))
+	c := connected(newFake(t).client())
 	u := parse(t, `{"update_id":1,"message":{"message_id":42,`+fromA+`,`+inGroup+`,"caption":"@botty_bot ask Bob 🎉 about this","caption_entities":[`+
 		`{"type":"mention","offset":0,"length":10},{"type":"text_mention","offset":15,"length":3,"user":{"id":2222222,"first_name":"Bob"}}],`+
 		`"photo":[{"file_id":"small","file_size":1000},{"file_id":"big","file_size":90000},{"file_id":"huge","file_size":99999999}],`+
@@ -250,7 +243,7 @@ func TestMessage(t *testing.T) {
 // A location or venue is a Google Maps link, as Signal sends one, ahead of
 // any caption; a live location, where its sender is now, is dropped.
 func TestLocation(t *testing.T) {
-	c := connected(newFake(t).client("1111111"))
+	c := connected(newFake(t).client())
 	for _, tc := range []struct{ name, msg, text string }{
 		{"location", `"location":{"latitude":-37.8136,"longitude":144.9631}`, "https://maps.google.com/maps?q=-37.8136,144.9631"},
 		{"captioned", `"location":{"latitude":48.8584,"longitude":2.2945},"caption":"my guess"`, "https://maps.google.com/maps?q=48.8584,2.2945\nmy guess"},
@@ -275,19 +268,19 @@ func TestLocation(t *testing.T) {
 	}
 }
 
-// An edit is the message as it now reads, named by its message ID; in the
-// DM of someone the bot doesn't answer it forgets the original.
+// An edit is the message as it now reads, named by its message ID, from
+// anyone.
 func TestEdits(t *testing.T) {
 	captureLogs(t)
-	c := connected(newFake(t).client("1111111"))
+	c := connected(newFake(t).client())
 	r, _ := c.event(parse(t, `{"update_id":1,"edited_message":{"message_id":42,`+fromA+`,`+inDM+`,"date":100,"edit_date":200,"text":"new words"}}`))
 	m, _ := r.(bot.Incoming).Load(context.Background(), func(string, string) {})
 	if m.Text != "new words" || m.Timestamp != 42 || m.Edited != 200 {
 		t.Fatalf("edit %+v", m)
 	}
-	r, ok := c.event(parse(t, `{"update_id":2,"edited_message":{"message_id":7,"from":{"id":2222222,"first_name":"Bob"},"chat":{"id":2222222,"type":"private"},"date":100,"edit_date":300,"text":"x"}}`))
-	if d, isDel := r.(bot.Deleted); !ok || !isDel || d != (bot.Deleted{Chat: feature.Chat{User: "2222222"}, Sender: "2222222", Sent: 7, At: 300}) {
-		t.Fatalf("unlisted edit %+v", r)
+	r, _ = c.event(parse(t, `{"update_id":2,"edited_message":{"message_id":7,"from":{"id":2222222,"first_name":"Bob"},"chat":{"id":2222222,"type":"private"},"date":100,"edit_date":300,"text":"x"}}`))
+	if m, _ := r.(bot.Incoming).Load(context.Background(), func(string, string) {}); m.Edited != 300 || m.Chat.User != "2222222" {
+		t.Fatalf("a stranger's edit %+v", m)
 	}
 }
 
@@ -432,7 +425,7 @@ func TestRun(t *testing.T) {
 	f.batches = [][]any{{
 		map[string]any{"update_id": 5, "message": json.RawMessage(`{"message_id":1,` + fromA + `,` + inDM + `,"text":"hi"}`)},
 	}}
-	c := f.client("1111111")
+	c := f.client()
 	got := make(chan bot.Received, 4)
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
@@ -492,13 +485,13 @@ func TestRedact(t *testing.T) {
 
 // A delivered message in a group needs its sender still there; its members
 // are the admins and the people seen posting; the bot's @name is taken
-// out. In a DM, only a listed sender's.
+// out. In a DM, anyone's.
 func TestDelivered(t *testing.T) {
 	captureLogs(t)
 	f := newFake(t)
 	f.results["getChatMember"] = `{"status":"member","user":{"id":1111111}}`
 	f.results["getChatAdministrators"] = `[{"status":"creator","user":{"id":3333333,"first_name":"Carol"}},{"status":"administrator","user":{"id":777000,"is_bot":true,"first_name":"Botty"}}]`
-	c := connected(f.client("1111111"))
+	c := connected(f.client())
 	c.event(parse(t, `{"update_id":1,"message":{"message_id":1,`+fromA+`,`+inGroup+`,"text":"hi"}}`))
 	r, ok := c.Delivered(context.Background(), feature.Message{Chat: feature.Chat{GroupID: groupS}, Sender: "1111111", Text: "@Botty remind us"})
 	if !ok || !r.Mentioned || r.Message.Text != "remind us" || r.Message.Name != "Alice Ames" {
@@ -511,28 +504,37 @@ func TestDelivered(t *testing.T) {
 	if _, ok := c.Delivered(context.Background(), feature.Message{Chat: feature.Chat{GroupID: groupS}, Sender: "1111111", Text: "x"}); ok {
 		t.Error("delivered for someone who left")
 	}
-	if _, ok := c.Delivered(context.Background(), feature.Message{Chat: feature.Chat{User: "2222222"}, Sender: "2222222", Text: "x"}); ok {
-		t.Error("delivered in an unlisted DM")
+	if _, ok := c.Delivered(context.Background(), feature.Message{Chat: feature.Chat{User: "2222222"}, Sender: "2222222", Text: "x"}); !ok {
+		t.Error("not delivered in a DM")
 	}
 }
 
-// The bot may post on its own in a listed user's DM, and in a group while
-// someone listed is a member.
+// The bot may post on its own in any DM, and in a group until it is
+// removed from it, with no member lookups.
 func TestReachable(t *testing.T) {
 	captureLogs(t)
 	f := newFake(t)
-	c := connected(f.client("1111111"))
+	c := connected(f.client())
 	ctx := context.Background()
-	if !c.Reachable(ctx, feature.Chat{User: "1111111"}) || c.Reachable(ctx, feature.Chat{User: "2222222"}) {
+	if !c.Reachable(ctx, feature.Chat{User: "1111111"}) || !c.Reachable(ctx, feature.Chat{User: "2222222"}) {
 		t.Fatal("DMs")
 	}
 	if !c.Reachable(ctx, feature.Chat{GroupID: groupS}) {
-		t.Fatal("a group with Alice in it")
+		t.Fatal("a group")
 	}
-	c.gate = map[string]gateState{}
-	f.results["getChatMember"] = `{"status":"left"}`
-	if c.Reachable(ctx, feature.Chat{GroupID: groupS}) {
-		t.Fatal("a group no one listed is in")
+	member := func(status string) {
+		c.event(parse(t, `{"update_id":1,"my_chat_member":{`+inGroup+`,"from":{"id":2222222,"first_name":"Bob"},"old_chat_member":{"status":"member"},"new_chat_member":{"status":"`+status+`","user":{"id":777000}}}}`))
+	}
+	member("kicked")
+	if c.Reachable(ctx, feature.Chat{GroupID: groupS}) || c.Reachable(ctx, feature.Chat{GroupID: groupS + "/5"}) {
+		t.Fatal("a group the bot was removed from")
+	}
+	member("member")
+	if !c.Reachable(ctx, feature.Chat{GroupID: groupS}) {
+		t.Fatal("added again")
+	}
+	if n := len(f.callsTo("getChatMember")); n != 0 {
+		t.Fatalf("%d member lookups", n)
 	}
 }
 
@@ -560,12 +562,11 @@ func TestGroups(t *testing.T) {
 // to the bot's own message says so; the bot added to a group is BotAdded.
 func TestEvents(t *testing.T) {
 	f := newFake(t)
-	c := connected(f.client("1111111"))
+	c := connected(f.client())
 	if _, ok := c.event(parse(t, `{"update_id":1,"message_reaction":{`+inGroup+`,"message_id":500,"user":{"id":1111111,"first_name":"Alice"},"old_reaction":[],"new_reaction":[{"type":"emoji","emoji":"👍"}]}}`)); ok {
 		t.Fatal("an event with no hook")
 	}
 	c.Watch(bot.Watch{Events: true})
-	c.groupAllowed(context.Background(), groupS)                                       // Alice is in it
 	c.Send(feature.Chat{GroupID: groupS}, "hello", nil, nil, 0, nil, feature.Markup{}) // message 500, the bot's
 	r, _ := c.event(parse(t, `{"update_id":2,"message_reaction":{`+inGroup+`,"message_id":500,"user":{"id":1111111,"first_name":"Alice"},"old_reaction":[{"type":"emoji","emoji":"👍"}],"new_reaction":[]}}`))
 	e := r.(bot.Happened).Event
@@ -579,52 +580,6 @@ func TestEvents(t *testing.T) {
 	r, _ = c.event(parse(t, `{"update_id":4,"chat_member":{`+inGroup+`,"from":{"id":2222222,"first_name":"Bob"},"old_chat_member":{"status":"left"},"new_chat_member":{"status":"member","user":{"id":2222222,"first_name":"Bob"}}}}`))
 	if e := r.(bot.Happened).Event; e.Members == nil || len(e.Members.Joined) != 1 || e.Members.Joined[0].Name != "Bob" || e.By.ID != "" {
 		t.Fatalf("joined %+v", e)
-	}
-}
-
-// Anyone can add a bot to a group of their own, so the bot answers in a
-// group only while someone listed is a member, and leaves one where no one
-// is: when it is added there, or a message arrives, however it got in.
-func TestStrangersGroup(t *testing.T) {
-	captureLogs(t)
-	f := newFake(t)
-	f.results["getChatMember"] = `{"status":"left"}`
-	c := connected(f.client("1111111"))
-	if _, ok := c.event(parse(t, `{"update_id":1,"my_chat_member":{`+inGroup+`,"from":{"id":2222222,"first_name":"Bob"},"old_chat_member":{"status":"left"},"new_chat_member":{"status":"member","user":{"id":777000}}}}`)); ok {
-		t.Fatal("handed on")
-	}
-	waitCalls(t, f, "leaveChat", 1)
-	if l := f.callsTo("leaveChat"); l[0].Params["chat_id"] != groupS {
-		t.Fatalf("leaveChat %v", l)
-	}
-	// Still there, as the leave failed: an addressed message isn't
-	// answered, and chatter isn't kept.
-	r, ok := c.event(parse(t, `{"update_id":2,"message":{"message_id":3,"from":{"id":2222222,"first_name":"Bob"},`+inGroup+`,"text":"@botty_bot hi","entities":[{"type":"mention","offset":0,"length":10}]}}`))
-	if !ok {
-		t.Fatal("not handed on: checked in its slot")
-	}
-	if _, ok := r.(bot.Incoming).Load(context.Background(), func(string, string) {}); ok {
-		t.Fatal("answered in a stranger's group")
-	}
-	if _, ok := c.event(parse(t, `{"update_id":3,"message":{"message_id":4,"from":{"id":2222222,"first_name":"Bob"},`+inGroup+`,"text":"chatter"}}`)); ok {
-		t.Fatal("chatter kept")
-	}
-	if n := len(f.callsTo("leaveChat")); n != 1 {
-		t.Fatalf("%d leaves within ten minutes", n)
-	}
-	// A restriction outlasts leaving: restricted and not a member is out.
-	c.gate = map[string]gateState{}
-	f.results["getChatMember"] = `{"status":"restricted","is_member":false}`
-	if c.groupAllowed(context.Background(), groupS) {
-		t.Fatal("a restricted non-member counted")
-	}
-	// Added by a listed user: answered at once, with no check.
-	r, ok = c.event(parse(t, `{"update_id":4,"my_chat_member":{`+inGroup+`,"from":{"id":1111111,"first_name":"Alice"},"old_chat_member":{"status":"restricted","is_member":false},"new_chat_member":{"status":"member","user":{"id":777000}}}}`))
-	if _, isGC := r.(bot.GroupChanged); !ok || !isGC {
-		t.Fatalf("added by a listed user: %T %v", r, ok)
-	}
-	if allowed, known := c.gated(groupS); !allowed || !known {
-		t.Fatal("not answered after a listed user added it")
 	}
 }
 
@@ -704,7 +659,7 @@ func TestReactRefused(t *testing.T) {
 // reply goes to the topic.
 func TestTopics(t *testing.T) {
 	f := newFake(t)
-	c := connected(f.client("1111111"))
+	c := connected(f.client())
 	r, _ := c.event(parse(t, `{"update_id":1,"message":{"message_id":20,"message_thread_id":7,"is_topic_message":true,`+fromA+`,`+inGroup+
 		`,"text":"@botty_bot hi","entities":[{"type":"mention","offset":0,"length":10}],"reply_to_message":{"message_id":7,"from":{"id":3333333,"first_name":"Carol"},`+inGroup+`,"forum_topic_created":{"name":"Support"}}}}`))
 	in, ok := r.(bot.Incoming)
@@ -758,7 +713,7 @@ func TestRunConfirmsOnStop(t *testing.T) {
 	f.batches = [][]any{{
 		map[string]any{"update_id": 5, "message": json.RawMessage(`{"message_id":1,` + fromA + `,` + inDM + `,"text":"hi"}`)},
 	}}
-	c := f.client("1111111")
+	c := f.client()
 	ctx, cancel := context.WithCancel(context.Background())
 	c.Run(ctx, func(bot.Received) { cancel() }) // stops while handling
 	polls := f.callsTo("getUpdates")
@@ -780,56 +735,11 @@ func TestTopicsGroupChanged(t *testing.T) {
 	}
 }
 
-// When someone leaves, the bot asks again whether a listed user is still
-// there, rather than answering on what it knew.
-func TestLeaverRechecks(t *testing.T) {
-	captureLogs(t)
-	f := newFake(t)
-	c := connected(f.client("1111111"))
-	c.event(parse(t, `{"update_id":1,"my_chat_member":{`+inGroup+`,"from":{"id":1111111,"first_name":"Alice"},"old_chat_member":{"status":"left"},"new_chat_member":{"status":"member","user":{"id":777000}}}}`))
-	f.mu.Lock()
-	f.results["getChatMember"] = `{"status":"kicked"}`
-	f.mu.Unlock()
-	c.event(parse(t, `{"update_id":2,"message":{"message_id":5,"from":{"id":2222222,"first_name":"Bob"},`+inGroup+`,"left_chat_member":{"id":1111111,"first_name":"Alice"}}}`))
-	waitCalls(t, f, "leaveChat", 1)
-	r, _ := c.event(parse(t, `{"update_id":3,"message":{"message_id":6,"from":{"id":2222222,"first_name":"Bob"},`+inGroup+`,"text":"@botty_bot hi","entities":[{"type":"mention","offset":0,"length":10}]}}`))
-	if _, ok := r.(bot.Incoming).Load(context.Background(), func(string, string) {}); ok {
-		t.Fatal("answered after the listed user left")
-	}
-}
-
-// With no one listed, every group is a no: the bot leaves, and keeps no
-// chatter once it knows.
-func TestNoOneListed(t *testing.T) {
-	captureLogs(t)
-	f := newFake(t)
-	c := connected(f.client())
-	c.event(parse(t, `{"update_id":1,"message":{"message_id":5,`+fromA+`,`+inGroup+`,"text":"hi"}}`))
-	waitCalls(t, f, "leaveChat", 1)
-	if _, ok := c.event(parse(t, `{"update_id":2,"message":{"message_id":6,`+fromA+`,`+inGroup+`,"text":"more"}}`)); ok {
-		t.Fatal("chatter kept")
-	}
-}
-
-// An event in a group the bot answers in still arrives after what it knew
-// is out of date, and the group is checked again.
-func TestEventsAfterExpiry(t *testing.T) {
-	f := newFake(t)
-	c := connected(f.client("1111111"))
-	c.Watch(bot.Watch{Events: true})
-	c.gate[groupS] = gateState{ok: true, until: time.Now().Add(-time.Minute)}
-	r, ok := c.event(parse(t, `{"update_id":1,"message_reaction":{`+inGroup+`,"message_id":9,"user":{"id":1111111,"first_name":"Alice"},"old_reaction":[],"new_reaction":[{"type":"emoji","emoji":"👍"}]}}`))
-	if _, isH := r.(bot.Happened); !ok || !isH {
-		t.Fatalf("got %T %v", r, ok)
-	}
-	waitCalls(t, f, "getChatMember", 1)
-}
-
 // A GIF arrives as an animation, usually an MP4 with a still thumbnail:
 // the model sees the thumbnail, not an unreadable file, and the same GIF
 // in document isn't added again. A GIF kept as a GIF is shown itself.
 func TestAnimation(t *testing.T) {
-	c := connected(newFake(t).client("1111111"))
+	c := connected(newFake(t).client())
 	for _, tc := range []struct {
 		anim, want string
 	}{
@@ -879,7 +789,7 @@ func TestSendVoice(t *testing.T) {
 func TestCommandMenu(t *testing.T) {
 	captureLogs(t)
 	f := newFake(t)
-	c := f.client("1111111")
+	c := f.client()
 	c.Watch(bot.Watch{Commands: []bot.Command{{Name: "intro"}, {Name: "schedule", About: "schedules and reminders"}, {Name: "my-cmd"}}})
 	if err := c.hello(context.Background()); err != nil {
 		t.Fatal(err)
@@ -891,5 +801,34 @@ func TestCommandMenu(t *testing.T) {
 	got, _ := json.Marshal(m[0].Params["commands"])
 	if string(got) != `[{"command":"intro","description":"intro"},{"command":"schedule","description":"schedules and reminders"}]` {
 		t.Fatalf("menu %s", got)
+	}
+}
+
+// Anyone can add the bot to a group and talk to it there: it answers, keeps
+// the chatter, and never looks up members or leaves. A set
+// TELEGRAM_DM_USER_IDS is only logged as no longer read.
+func TestAnyoneAnswered(t *testing.T) {
+	logs := captureLogs(t)
+	f := newFake(t)
+	c := connected(f.client())
+	r, ok := c.event(parse(t, `{"update_id":1,"my_chat_member":{`+inGroup+`,"from":{"id":2222222,"first_name":"Bob"},"old_chat_member":{"status":"left"},"new_chat_member":{"status":"member","user":{"id":777000}}}}`))
+	if _, isGC := r.(bot.GroupChanged); !ok || !isGC {
+		t.Fatalf("added by a stranger: %T %v", r, ok)
+	}
+	r, ok = c.event(parse(t, `{"update_id":2,"message":{"message_id":3,"from":{"id":2222222,"first_name":"Bob"},`+inGroup+`,"text":"@botty_bot hi","entities":[{"type":"mention","offset":0,"length":10}]}}`))
+	if _, loaded := r.(bot.Incoming).Load(context.Background(), func(string, string) {}); !ok || !loaded {
+		t.Fatal("a stranger's mention not answered")
+	}
+	if _, ok := c.event(parse(t, `{"update_id":3,"message":{"message_id":4,"from":{"id":2222222,"first_name":"Bob"},`+inGroup+`,"text":"chatter"}}`)); !ok {
+		t.Fatal("chatter dropped")
+	}
+	if n, m := len(f.callsTo("getChatMember")), len(f.callsTo("leaveChat")); n+m != 0 {
+		t.Fatalf("%d member lookups, %d leaves", n, m)
+	}
+	t.Setenv("TELEGRAM_DM_USER_IDS", "1111111")
+	t.Setenv("TELEGRAM_BOT_TOKEN", token)
+	New(nil)
+	if !strings.Contains(logs.String(), "TELEGRAM_DM_USER_IDS is no longer read") {
+		t.Errorf("logs %q", logs)
 	}
 }

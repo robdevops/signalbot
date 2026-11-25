@@ -15,7 +15,7 @@ A small, [privacy-conscious](PRIVACY.md) chat bot for Signal, through a running 
 
 ## Features
 
-- LLM responds to @mentions, replies to its messages, and DMs from whitelisted contacts
+- LLM responds to @mentions, replies to its messages, and DMs (on Signal from whitelisted contacts)
 - Tools: web search, line charts (by day, or by the hour within a day) and pie charts, [pictures](docs/FILES_LINKS_TOOLS_MCP.md#images) (drawings, art, diagrams) with GPT Image 2, and your own [MCP connectors](docs/FILES_LINKS_TOOLS_MCP.md#mcp-connectors)
 - [Reminders](docs/SCHEDULING.md), and [alerts](docs/FEEDS.md) from your MCP servers
 - Game plugins: [geoguesser](https://github.com/robdevops/GeoGuess) | [song guesser](https://github.com/robdevops/SongGuess) | [trivia](https://github.com/robdevops/TriviaQuiz), or [write your own](docs/FILES_LINKS_TOOLS_MCP.md#addons)
@@ -148,15 +148,15 @@ A block is Signal's own, as on a phone: signal-cli drops everything from that pe
 The same bot can answer on Telegram instead, or as well, talking to Telegram's Bot API directly (long polling, so it needs no public address).
 
 1. In Telegram, message [@BotFather](https://t.me/BotFather), send `/newbot`, and copy the token it gives you.
-2. In `/etc/signalbot.env`, set `TELEGRAM_BOT_TOKEN` to the token, and `TELEGRAM_DM_USER_IDS` to the user IDs allowed to DM the bot (a user can find theirs by messaging a bot such as [@userinfobot](https://t.me/userinfobot)). Leave `SIGNALCLI_SOCKET` unset for Telegram alone. The token is a password: anyone with it controls the bot.
+2. In `/etc/signalbot.env`, set `TELEGRAM_BOT_TOKEN` to the token. Leave `SIGNALCLI_SOCKET` unset for Telegram alone. The token is a password: anyone with it controls the bot.
 3. Install as above, skipping signal-cli and its socket.
 4. Add the bot to a group and @mention it, or reply to one of its messages.
 
-Anyone on Telegram can find a bot by its username and add it to a group of their own, so the bot answers in a group only while someone in `TELEGRAM_DM_USER_IDS` is a member, and leaves a group where no one is. To stop it being added at all, send BotFather `/setjoingroups` and choose Disable once it is in your groups. In a group with topics, each topic is its own conversation, with its own history, and the bot answers in the topic it was asked in.
+The bot answers anyone who DMs it, and any group it is in: BotFather's settings decide who can reach it. To stop it being added to groups, send BotFather `/setjoingroups` and choose Disable once it is in yours. Each chat has its own `DAILY_BUDGET`, so keep one set: the more people find the bot, the more it can spend in all. In a group with topics, each topic is its own conversation, with its own history, and the bot answers in the topic it was asked in.
 
 **Privacy mode.** By default Telegram sends a bot in a group only the messages addressed to it, so the bot has no group context. To give it the conversation, send BotFather `/setprivacy` and choose Disable, then remove the bot from the group and add it again; or make it a group admin. As admin it also sees reactions and members joining and leaving.
 
-**On Signal and Telegram at once.** Set both `SIGNALCLI_SOCKET` (even to its default, `127.0.0.1:7583`) and `TELEGRAM_BOT_TOKEN`, with `SIGNAL_DM_USER_IDS` and `TELEGRAM_DM_USER_IDS`: one bot then answers on both, each chat on its own network, with one model, one set of features and MCP servers, and one state directory. Each chat keeps its own history and budget, as before; buttons and the keyboard appear only on Telegram, and Signal chats get the same in words. An addon is told both networks, and each call which one its chat is on.
+**On Signal and Telegram at once.** Set both `SIGNALCLI_SOCKET` (even to its default, `127.0.0.1:7583`) and `TELEGRAM_BOT_TOKEN`, with `SIGNAL_DM_USER_IDS`: one bot then answers on both, each chat on its own network, with one model, one set of features and MCP servers, and one state directory. Each chat keeps its own history and budget, as before; buttons and the keyboard appear only on Telegram, and Signal chats get the same in words. An addon is told both networks, and each call which one its chat is on.
 
 To move from two bots, one for each network, to one, stop both, then fold the Telegram bot's state into the Signal one's (the IDs of the two networks never collide, so each file is a union), and start one bot with both settings:
 

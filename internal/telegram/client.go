@@ -15,13 +15,13 @@ import (
 	"io"
 	"mime/multipart"
 	"net/http"
+	"os"
 	"regexp"
 	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
-	"unicode"
 
 	"github.com/robdevops/signalbot/internal/bot"
 	"github.com/robdevops/signalbot/internal/config"
@@ -36,7 +36,6 @@ const pollWait = 50 * time.Second
 type Client struct {
 	base    string // the API's base URL, without the token
 	token   string // never logged: scrub every error
-	allowed map[string]bool
 	http    *http.Client
 	backoff time.Duration // the first wait after a failed poll; a test's shorter
 	typing  time.Duration // how often Typing is renewed; Telegram's lasts 5s
@@ -49,44 +48,36 @@ type Client struct {
 	watch    atomic.Bool                   // the core has an event hook
 	commands atomic.Pointer[[]bot.Command] // the commands features registered, for Telegram's "/" menu
 
-	mu       sync.Mutex
-	people   map[string]string            // user ID to name, as last seen
-	chats    map[string]map[string]string // group ID to the IDs and names seen there
-	groups   map[string]string            // group ID to title, for the groups the bot is in
-	timers   map[string]time.Duration     // chat ID to its auto-delete timer
-	moved    map[string]string            // a group's old chat ID to its new one, after it became a supergroup
-	topics   map[string]map[string]bool   // group ID to the topic chats seen in it
-	gate     map[string]gateState         // group ID to whether the bot answers there, until when
-	checking map[string]bool              // groups being checked in the background
-	sent     map[string]bool              // "chat/message" for messages the bot sent lately
-	sentQ    []string                     // sent's keys, oldest first
+	mu     sync.Mutex
+	people map[string]string            // user ID to name, as last seen
+	chats  map[string]map[string]string // group ID to the IDs and names seen there
+	groups map[string]string            // group ID to title, for the groups the bot is in
+	timers map[string]time.Duration     // chat ID to its auto-delete timer
+	moved  map[string]string            // a group's old chat ID to its new one, after it became a supergroup
+	topics map[string]map[string]bool   // group ID to the topic chats seen in it
+	left   map[string]bool              // groups the bot was removed from, so it no longer posts there
+	sent   map[string]bool              // "chat/message" for messages the bot sent lately
+	sentQ  []string                     // sent's keys, oldest first
 
 	test *config.Test // nil in production
 }
 
 // New makes the client its settings say: TELEGRAM_BOT_TOKEN, the bot's
-// token from BotFather; TELEGRAM_DM_USER_IDS, the user IDs that may DM it;
-// and TELEGRAM_API_URL, a local Bot API server, by default Telegram's.
+// token from BotFather, and TELEGRAM_API_URL, a local Bot API server, by
+// default Telegram's. The bot answers anyone who DMs it and any group it is
+// in: BotFather's settings decide who can reach it.
 func New(test *config.Test) *Client {
-	allowed := map[string]bool{}
-	for _, id := range strings.FieldsFunc(config.Env("TELEGRAM_DM_USER_IDS", ""), func(r rune) bool {
-		return r == ',' || r == ';' || unicode.IsSpace(r)
-	}) {
-		allowed[id] = true
+	if os.Getenv("TELEGRAM_DM_USER_IDS") != "" { // read only to say so: not a setting any more
+		logx.Noticef("TELEGRAM_DM_USER_IDS is no longer read: the bot answers anyone who messages it, and any group it is in; BotFather's settings decide who can reach it")
 	}
-	if len(allowed) == 0 {
-		logx.Warnf("the bot answers no one: TELEGRAM_DM_USER_IDS is empty, so DMs are off, and it answers in a group only while someone listed is a member, so it leaves every group")
-	} else {
-		logx.Noticef("DMs: allowed from %d IDs (TELEGRAM_DM_USER_IDS); groups: answered while one of them is a member", len(allowed))
-	}
-	return newClient(config.Env("TELEGRAM_API_URL", "https://api.telegram.org"), config.Env("TELEGRAM_BOT_TOKEN", ""), allowed, test)
+	return newClient(config.Env("TELEGRAM_API_URL", "https://api.telegram.org"), config.Env("TELEGRAM_BOT_TOKEN", ""), test)
 }
 
-func newClient(base, token string, allowed map[string]bool, test *config.Test) *Client {
-	return &Client{base: strings.TrimRight(base, "/"), token: token, allowed: allowed, http: httpx.Client(8),
+func newClient(base, token string, test *config.Test) *Client {
+	return &Client{base: strings.TrimRight(base, "/"), token: token, http: httpx.Client(8),
 		backoff: time.Second, typing: 4 * time.Second, known: make(chan struct{}),
 		people: map[string]string{}, chats: map[string]map[string]string{}, groups: map[string]string{},
-		timers: map[string]time.Duration{}, moved: map[string]string{}, topics: map[string]map[string]bool{}, gate: map[string]gateState{}, checking: map[string]bool{}, sent: map[string]bool{}, test: test}
+		timers: map[string]time.Duration{}, moved: map[string]string{}, topics: map[string]map[string]bool{}, left: map[string]bool{}, sent: map[string]bool{}, test: test}
 }
 
 // scrub is err with the token taken out of its text: Go's URL errors

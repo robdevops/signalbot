@@ -24,13 +24,11 @@ func TestPollsPresses(t *testing.T) {
 	}
 }
 
-// A press is the core's from someone it answers, with the message's ID and
-// the button's data, and its Answer shows a toast; any other press is
-// answered at once, with nothing.
+// A press is the core's, with the message's ID and the button's data, and
+// its Answer shows a toast.
 func TestPressed(t *testing.T) {
 	f := newFake(t)
-	c := connected(f.client("1111111"))
-	c.groupAllowed(context.Background(), groupS) // Alice is in it
+	c := connected(f.client())
 	press := func(from, chat string) (bot.Received, bool) {
 		return c.event(parse(t, `{"update_id":1,"callback_query":{"id":"q1",`+from+`,"message":{"message_id":500,`+chat+`,"date":1},"data":"rain 7d"}}`))
 	}
@@ -48,13 +46,9 @@ func TestPressed(t *testing.T) {
 	if r, ok := press(fromA, inGroup); !ok || r.(bot.Pressed).Press.Chat.GroupID != groupS {
 		t.Fatalf("in a group %+v", r)
 	}
-	// Bob may not DM the bot, so his press is answered and dropped.
-	if _, ok := press(`"from":{"id":2222222,"first_name":"Bob"}`, `"chat":{"id":2222222,"type":"private"}`); ok {
-		t.Fatal("a stranger's press")
-	}
-	waitCalls(t, f, "answerCallbackQuery", 2)
-	if a := f.callsTo("answerCallbackQuery")[1].Params; a["text"] != nil {
-		t.Fatalf("a stranger's press answered %v", a)
+	// Anyone's press is the core's, Bob's in his own DM too.
+	if r, ok := press(`"from":{"id":2222222,"first_name":"Bob"}`, `"chat":{"id":2222222,"type":"private"}`); !ok || r.(bot.Pressed).Press.Chat.User != "2222222" {
+		t.Fatalf("a stranger's press %+v", r)
 	}
 }
 
