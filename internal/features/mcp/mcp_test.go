@@ -92,7 +92,8 @@ type fakeMCP struct {
 	version  string // the bot's, as initialize sent it
 	network  string // the chat network, as initialize offered it
 	inits    int
-	badCalls int // requests that carried the wrong session id
+	badCalls int    // requests that carried the wrong session id
+	feed     string // the text of resource feed://items
 }
 
 func (f *fakeMCP) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -142,6 +143,15 @@ func (f *fakeMCP) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			result = `{"tools":[{"name":"fail","inputSchema":{"type":"object"}},{"name":"pic"}]}`
 		}
 	case "resources/read":
+		var p struct {
+			URI string `json:"uri"`
+		}
+		json.Unmarshal(req.Params, &p)
+		if p.URI == "feed://items" { // under mu
+			text, _ := json.Marshal(f.feed)
+			result = `{"contents":[{"uri":"feed://items","mimeType":"application/json","text":` + string(text) + `}]}`
+			break
+		}
 		result = `{"contents":[{"uri":"status://now","mimeType":"text/plain","text":"All good"},{"uri":"status://now","mimeType":"image/png","blob":"` + tinyPNG() + `"}]}`
 	case "tools/call":
 		var p struct {
@@ -259,7 +269,9 @@ func TestLoad(t *testing.T) {
 	// settings it could be, and both lists at once too; keys other clients
 	// write are ignored, so a pasted entry starts.
 	for bad, want := range map[string]string{
-		`{"mcpServers":{"w":{"url":"u","allowedTools":["t"]}}}`:                                                              `: MCP server "w": unknown setting "allowedTools" (settings are url, headers, command, args, env, allowed_tools, blocked_tools, instructions, keywords, chat_commands, disabled, addon, name)`,
+		`{"mcpServers":{"w":{"url":"u","feed":{"command":"a"}}}}`:                                                            `: MCP server "w": feed needs a resource`,
+		`{"mcpServers":{"w":{"url":"u","feed":{"uri":"a"}}}}`:                                                                `: MCP server "w": feed: unknown setting "uri" (settings are resource, command)`,
+		`{"mcpServers":{"w":{"url":"u","allowedTools":["t"]}}}`:                                                              `: MCP server "w": unknown setting "allowedTools" (settings are url, headers, command, args, env, allowed_tools, blocked_tools, instructions, keywords, chat_commands, disabled, addon, name, feed)`,
 		`{"mcpServers":{"w":{"url":"u","chat_commands":{"x":{"tool":"t","requireArg":true}}}}}`:                              `: MCP server "w": chat command "x": unknown setting "requireArg" (settings are tool, require_arg, example, direct, timeout, args, arg, values, resource)`,
 		`{"mcpServers":{"w":{"url":"u","chat_commands":{"x":{"tool":"t","timeout":"30s"}}}}}`:                                `: MCP server "w": chat command "x" has a timeout, which only a direct command takes`,
 		`{"mcpServers":{"w":{"command":"c","addon":{},"chat_commands":{"x":{"tool":"t","direct":true,"timeout":"3m"}}}}}`:    `: MCP server "w": chat command "x": timeout "3m" isn't a time from 1s to 2m, such as 15s or 1m`,
@@ -833,5 +845,138 @@ func TestRerun(t *testing.T) {
 	}
 	if got := h.Message(ctx, feature.Message{Chat: alice, Sender: "alice", Text: "/rain 7d", Addressed: true}); got.Markup.Buttons != nil || got.Answer != `echo {"period":"7d"}` {
 		t.Errorf("without buttons: %+v", got)
+	}
+}
+
+// A feed's new items go to the chats subscribed, silently unless they
+// turned the sound on, without the kinds they turned off, with a chart;
+// none twice, across a restart; old ones never.
+func TestFeed(t *testing.T) {
+	old := feedEvery
+	feedEvery = 20 * time.Millisecond
+	t.Cleanup(func() { feedEvery = old })
+	fake := &fakeMCP{}
+	now := time.Now().UTC()
+	item := func(id, kind, text string, at time.Time, chart bool) string {
+		s := fmt.Sprintf(`{"id":%q,"kind":%q,"time":%q,"text":%q`, id, kind, at.Format(time.RFC3339), text)
+		if chart {
+			s += `,"chart":{"tool":"pic","arguments":{"period":"1d"}}`
+		}
+		return s + "}"
+	}
+	setFeed := func(identity string, items ...string) {
+		fake.mu.Lock()
+		defer fake.mu.Unlock()
+		fake.feed = `{"identity":"` + identity + `","kinds":[{"kind":"rain","label":"Rain","words":["showers"]},{"kind":"wind","label":"Wind"}],"items":[` + strings.Join(items, ",") + `]}`
+	}
+	setFeed("a", item("1", "rain", "Old rain", now.Add(-2*time.Hour), false), item("2", "rain", "Rain now", now, true))
+	config := `{"mcpServers":{"eco":{"url":"` + serve(t, fake) + `","name":"Weather","feed":{"resource":"feed://items"}}}}`
+	dir := t.TempDir()
+	state := func(h *featuretest.Host) { h.Settings["STATE_DIRECTORY"] = dir }
+	h, _, err := register(t, config, state)
+	if err != nil {
+		t.Fatal(err)
+	}
+	alice, group := feature.Chat{User: "alice"}, feature.Chat{GroupID: "g1"}
+	ctx := context.Background()
+	ask := func(h *featuretest.Host, chat feature.Chat, text string) string {
+		return h.Message(ctx, feature.Message{Chat: chat, Sender: "alice", Text: text, Addressed: true}).Answer
+	}
+	wait := func(h *featuretest.Host, n int) []feature.Post {
+		t.Helper()
+		for range 200 {
+			if p := h.Posts(); len(p) >= n {
+				return p
+			}
+			time.Sleep(5 * time.Millisecond)
+		}
+		t.Fatalf("posts %+v, want %d", h.Posts(), n)
+		return nil
+	}
+	a := ""
+	for range 200 { // the first read, for the kinds
+		if a = ask(h, alice, "/alerts"); strings.Contains(a, "a kind") {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	if !strings.Contains(a, "Weather alerts are off here.") || !strings.Contains(a, "/alerts and a kind to turn it off or on: rain, wind.") {
+		t.Errorf("menu %q", a)
+	}
+	ask(h, alice, "/alerts on")
+	ask(h, group, "/alerts on")
+	ask(h, group, "/alerts sound on")
+	if a := ask(h, group, "/alerts showers"); !strings.Contains(a, "On: Wind. Off: Rain.") || !strings.Contains(a, "with sound") {
+		t.Errorf("group menu %q", a)
+	}
+	if a := ask(h, alice, "/alerts hail"); !strings.HasPrefix(a, "I don't know that one.") {
+		t.Errorf("unknown kind %q", a)
+	}
+	time.Sleep(3 * feedEvery) // read already: what it had is old news to them
+	if p := h.Posts(); len(p) != 0 {
+		t.Fatalf("posted the items there before subscribing: %+v", p)
+	}
+	setFeed("a", item("2", "rain", "Rain now", now, true), item("3", "rain", "More rain", now, true), item("4", "wind", "Windy", now, false))
+	p := wait(h, 3)
+	time.Sleep(3 * feedEvery)
+	if p = h.Posts(); len(p) != 3 {
+		t.Fatalf("posts %+v", p)
+	}
+	byChat := map[string][]string{}
+	for _, x := range p {
+		byChat[x.Chat.Key()] = append(byChat[x.Chat.Key()], fmt.Sprintf("%s silent=%v pics=%d", x.Text, x.Markup.Silent, len(x.Pictures)))
+	}
+	if got := byChat["u:alice"]; !slices.Equal(got, []string{"More rain silent=true pics=1", "Windy silent=true pics=0"}) {
+		t.Errorf("alice %q", got)
+	}
+	if got := byChat["g:g1"]; !slices.Equal(got, []string{"Windy silent=false pics=0"}) {
+		t.Errorf("group %q", got)
+	}
+	h.Stop()
+
+	h, _, err = register(t, config, state) // restarted: nothing again
+	if err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(5 * feedEvery)
+	if p := h.Posts(); len(p) != 0 {
+		t.Fatalf("after a restart %+v", p)
+	}
+	setFeed("b", item("1", "wind", "New log", now, false)) // started over: ID 1 is new
+	if p := wait(h, 2); len(p) != 2 || p[0].Text != "New log" || p[1].Text != "New log" {
+		t.Fatalf("after a new identity %+v", p)
+	}
+	ask(h, alice, "/alerts off")
+	if a := ask(h, alice, "/alerts"); !strings.Contains(a, "off here") {
+		t.Errorf("off: %q", a)
+	}
+}
+
+// On a network with buttons, the menu has them, and a press changes the
+// chat's subscription and redraws the menu in place.
+func TestFeedButtons(t *testing.T) {
+	fake := &fakeMCP{feed: `{"kinds":[{"kind":"rain","label":"Rain"}],"items":[]}`}
+	config := `{"mcpServers":{"eco":{"url":"` + serve(t, fake) + `","feed":{"resource":"feed://items","command":"/eco"}}}}`
+	h, _, err := register(t, config, func(h *featuretest.Host) { h.Bot.Caps.Buttons, h.Settings["STATE_DIRECTORY"] = true, t.TempDir() })
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	alice := feature.Chat{User: "alice"}
+	for range 200 { // the first read, for the kinds
+		if a := h.Message(ctx, feature.Message{Chat: alice, Sender: "alice", Text: "/eco on", Addressed: true}); strings.Contains(a.Answer, "Rain") {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	if a, ok := h.Press(ctx, feature.Press{Chat: alice, Sent: 7, Data: "feed=eco/k:rain"}); !ok || a != "" {
+		t.Fatalf("press %q %v", a, ok)
+	}
+	p := h.Posts()
+	if len(p) != 1 || p[0].Edit != 7 || !strings.Contains(p[0].Text, "Off: Rain.") || p[0].Markup.Buttons[1][0].Label != "▫️ Rain" {
+		t.Fatalf("posts %+v", p)
+	}
+	if a, ok := h.Press(ctx, feature.Press{Chat: alice, Sent: 7, Data: "feed=eco/k:hail"}); !ok || a != "That choice no longer works." {
+		t.Errorf("unknown kind: %q %v", a, ok)
 	}
 }

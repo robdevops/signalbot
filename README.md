@@ -17,7 +17,7 @@ A small, [privacy-conscious](PRIVACY.md) chat bot for Signal, through a running 
 
 - LLM responds to @mentions, replies to its messages, and DMs from whitelisted contacts
 - Tools: web search, line charts (by day, or by the hour within a day) and pie charts, [pictures](docs/FILES_LINKS_TOOLS_MCP.md#images) (drawings, art, diagrams) with GPT Image 2, and your own [MCP connectors](docs/FILES_LINKS_TOOLS_MCP.md#mcp-connectors)
-- [Reminders](docs/SCHEDULING.md)
+- [Reminders](docs/SCHEDULING.md), and [alerts](docs/FEEDS.md) from your MCP servers
 - Game plugins: [geoguesser](https://github.com/robdevops/GeoGuess) | [song guesser](https://github.com/robdevops/SongGuess) | [trivia](https://github.com/robdevops/TriviaQuiz), or [write your own](docs/FILES_LINKS_TOOLS_MCP.md#addons)
 - Understands [files](docs/FILES_LINKS_TOOLS_MCP.md#files) (PDFs, text and code, Word, Excel and PowerPoint) and the [pages you link to](docs/FILES_LINKS_TOOLS_MCP.md#links), and if the model supports it, images, stickers, voice notes and other audio
 - Typing indicators, reactions, stickers, @mentions and replies
@@ -169,4 +169,5 @@ Add the bot's account to a group and @mention it, reply to one of its messages, 
 - [Files, Links, Images, Tools, and MCP connectors](docs/FILES_LINKS_TOOLS_MCP.md)
 - [Language models](docs/MODELS.md)
 - [Scheduling](docs/SCHEDULING.md)
+- [Feeds](docs/FEEDS.md)
 - [Troubleshooting](docs/TROUBLESHOOTING.md)

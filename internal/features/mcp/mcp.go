@@ -53,6 +53,7 @@ type server struct {
 	Keywords     []string               `json:"keywords"`     // if set, its tools are offered only when a message has one of these words
 	Addon        *addonConfig           `json:"addon"`        // set for an addon
 	Name         string                 `json:"name"`         // its name for people, in messages and lists; unset: the server's title, else its key
+	Feed         *feedConfig            `json:"feed"`         // a resource of items it posts to the chats that subscribe
 }
 
 // chatCommand makes "/name ..." a turn in which the model must call tool,
@@ -82,7 +83,8 @@ type chatCommand struct {
 // MCP clients write that the bot has no use for, so a pasted entry starts.
 var (
 	settings = []string{"url", "headers", "command", "args", "env", "allowed_tools", "blocked_tools",
-		"instructions", "keywords", "chat_commands", "disabled", "addon", "name"}
+		"instructions", "keywords", "chat_commands", "disabled", "addon", "name", "feed"}
+	feedSettings    = []string{"resource", "command"}
 	commandSettings = []string{"tool", "require_arg", "example", "direct", "timeout", "args", "arg", "values", "resource"}
 	ignored         = []string{"type", "transport", "timeout", "alwaysAllow", "autoApprove", "description"}
 )
@@ -111,7 +113,7 @@ func Register(h feature.Host) error {
 	}
 	if h.Info().Model == "" {
 		logx.Warnf("MCP_CONFIG is set but no model is configured, so only addon servers and those with direct commands were started")
-		maps.DeleteFunc(servers, func(_ string, s server) bool { return s.Addon == nil && !plainDirects(s) })
+		maps.DeleteFunc(servers, func(_ string, s server) bool { return s.Addon == nil && s.Feed == nil && !plainDirects(s) })
 	}
 	addons := false
 	for _, s := range servers {
@@ -141,7 +143,16 @@ func Register(h feature.Host) error {
 		again = newReruns(h, store)
 		h.OnPress(again.press)
 	}
-	if err := start(ctx, h, path, servers, k, again); err != nil {
+	var fd *feeds // the servers' feeds, and the chats subscribed
+	if slices.ContainsFunc(slices.Collect(maps.Values(servers)), func(s server) bool { return s.Feed != nil }) {
+		store, err := h.Store("mcp-feeds")
+		if err != nil {
+			return err
+		}
+		fd = newFeeds(h, store)
+		h.OnPress(fd.press)
+	}
+	if err := start(ctx, h, path, servers, k, again, fd); err != nil {
 		return err
 	}
 	if k != nil && len(k.addons) > 0 {
@@ -247,6 +258,16 @@ func load(path string) (map[string]server, error) {
 				}
 				cc.timeout = d
 				s.ChatCommands[n] = cc
+			}
+		}
+		if s.Feed != nil {
+			var entry map[string]json.RawMessage
+			json.Unmarshal(raw.Servers[name]["feed"], &entry)
+			if err := unknown(entry, feedSettings); err != nil {
+				return nil, bad("feed: %v", err)
+			}
+			if s.Feed.Resource == "" {
+				return nil, bad("feed needs a resource")
 			}
 		}
 		switch {
@@ -418,7 +439,7 @@ func modelName(server, tool string) string {
 // While the model can't call tools, only direct commands are registered;
 // with no model, no tools are offered. k keeps the addons' state, nil to
 // run addons as plain servers; each addon started joins it.
-func start(ctx context.Context, h feature.Host, path string, servers map[string]server, k *keeper, again *reruns) error {
+func start(ctx context.Context, h feature.Host, path string, servers map[string]server, k *keeper, again *reruns, fd *feeds) error {
 	info := h.Info()
 	base := botInfo{version: cmp.Or(info.Version, "dev"), network: info.Network, buttons: info.Caps.Buttons}
 	type owner struct{ server, tool string }
@@ -549,6 +570,11 @@ func start(ctx context.Context, h feature.Host, path string, servers map[string]
 				continue // a command would force a tool the model can't call
 			}
 			if cmd := command(h, name, n, cc, models, a, plain, has); cmd != "" {
+				own = append(own, cmd)
+			}
+		}
+		if cfg.Feed != nil {
+			if cmd := fd.add(name, cmp.Or(cfg.Name, hs.title, name), *cfg.Feed, c, has); cmd != "" {
 				own = append(own, cmd)
 			}
 		}
