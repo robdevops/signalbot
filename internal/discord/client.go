@@ -31,16 +31,18 @@ type Client struct {
 	typing   time.Duration // how often Typing is renewed; Discord's lasts 10s
 	pending  time.Duration // how long a slash command's "thinking…" waits for a reply
 
-	self     atomic.Value // string: the bot's user ID
-	username atomic.Value // string: its username
-	name     atomic.Value // string: its display name
-	app      atomic.Value // string: its application's ID
-	known    chan struct{}
-	once     sync.Once
-	watch    atomic.Bool                   // the core has an event hook
-	commands atomic.Pointer[[]bot.Command] // the commands features registered, for Discord's slash commands
-	checked  atomic.Bool                   // the application's settings were checked
-	listed   atomic.Bool                   // the slash commands were sent
+	self       atomic.Value // string: the bot's user ID
+	username   atomic.Value // string: its username
+	name       atomic.Value // string: its display name
+	app        atomic.Value // string: its application's ID
+	known      chan struct{}
+	once       sync.Once
+	watch      atomic.Bool                   // the core has an event hook
+	commands   atomic.Pointer[[]bot.Command] // the commands features registered, for Discord's slash commands
+	checked    atomic.Bool                   // the application's settings were checked
+	listed     atomic.Bool                   // the slash commands were sent
+	membersOff atomic.Bool                   // Discord refused the Server Members intent: not asked for again
+	listWarned atomic.Bool                   // a member list's read failed, which is warned of once
 
 	session   string // the gateway session to resume, and where; the reader goroutine's
 	resumeURL string
@@ -51,6 +53,9 @@ type Client struct {
 	chats     map[string]map[string]string      // channel ID to the IDs and names seen there
 	seenIn    map[string]map[string]bool        // user ID to the channels they were seen in
 	channels  map[string]channel                // the guild channels the bot is in
+	guilds    map[string]*guildInfo             // the guilds the bot is in, by ID: their owner and roles
+	members   map[string]memberInfo             // a guild member's roles, by guild and user ID, for Groups
+	lists     map[string]*memberList            // a guild's member list, by its ID, for Delivered
 	left      map[string]bool                   // channels the bot can no longer post in
 	dms       map[string]string                 // user ID to their DM channel's ID
 	dmUsers   map[string]string                 // a DM channel's ID to its user's ID
@@ -60,14 +65,36 @@ type Client struct {
 	answering map[string]int64                  // the message the core is answering, by chat key
 	botRoles  map[string]string                 // a guild's ID to the bot's own role there
 	hooks     map[int64]*interaction            // a slash command's reply, by its message ID, for an edit
-	guilds    map[string]bool                   // the guilds the bot is in, from READY's list on; nil before READY
+	joined    map[string]bool                   // the guilds the bot is in, from READY's list on; nil before READY
 
 	test *config.Test // nil in production
 }
 
-// channel is a guild channel or thread the bot can see.
+// channel is a guild channel or thread the bot can see, with what decides
+// who else can see it.
 type channel struct {
 	guild, name, guildName string
+	kind                   int    // Discord's channel type, or unknown for one only seen in a message
+	parent                 string // a thread's channel, or a channel's category
+	overwrites             []overwrite
+}
+
+// unknown is the kind of a channel known only from a message in it.
+const unknown = -1
+
+// overwrite is a channel's permission overwrite for a role, or with member
+// for one member.
+type overwrite struct {
+	id          string
+	member      bool
+	allow, deny uint64
+}
+
+// guildInfo is what Groups needs of a guild: its name, its owner, and each
+// role's permissions, by role ID; the @everyone role's ID is the guild's.
+type guildInfo struct {
+	name, owner string
+	roles       map[string]uint64
 }
 
 // New makes the client its settings say: DISCORD_BOT_TOKEN, the bot's token
@@ -82,7 +109,7 @@ func newClient(base, token string, test *config.Test) *Client {
 	return &Client{base: strings.TrimRight(base, "/"), stickers: "https://media.discordapp.net/stickers", token: token, http: httpx.Client(8),
 		backoff: time.Second, fatal: 10 * time.Minute, typing: 8 * time.Second, pending: time.Minute, known: make(chan struct{}),
 		people: map[string]string{}, chats: map[string]map[string]string{}, seenIn: map[string]map[string]bool{},
-		channels: map[string]channel{}, left: map[string]bool{}, dms: map[string]string{}, dmUsers: map[string]string{},
+		channels: map[string]channel{}, guilds: map[string]*guildInfo{}, members: map[string]memberInfo{}, lists: map[string]*memberList{}, left: map[string]bool{}, dms: map[string]string{}, dmUsers: map[string]string{},
 		authors: map[int64]string{}, asked: map[string]map[int64]*interaction{},
 		answering: map[string]int64{}, botRoles: map[string]string{}, hooks: map[int64]*interaction{},
 		test: test}
