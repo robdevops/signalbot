@@ -363,8 +363,8 @@ func TestReactions(t *testing.T) {
 	if r := f.callsTo("reactions.add"); len(r) != 1 || r[0].Params["name"] != "heart" || r[0].Params["timestamp"] != "1700000000.000200" || r[0].Params["channel"] != channel {
 		t.Fatalf("reactions.add %v", r)
 	}
-	c.React(ch, feature.Message{Timestamp: 1700000000000200}, "🦜")
-	if p := f.callsTo("chat.postMessage"); len(p) != 1 || p[0].Params["text"] != "🦜" {
+	c.React(ch, feature.Message{Timestamp: 1700000000000200}, ":party_parrot:") // another network's own emoji, as it names it
+	if p := f.callsTo("chat.postMessage"); len(p) != 1 || p[0].Params["text"] != ":party_parrot:" {
 		t.Fatalf("an unknown emoji was not sent as a message: %v", p)
 	}
 }
