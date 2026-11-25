@@ -10,6 +10,9 @@ import (
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -147,6 +150,9 @@ func (f *fake) serve(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprintf(w, `{"url":"ws://%s/gw"}`, r.Host)
 	case route == "GET /applications/@me":
 		fmt.Fprintf(w, `{"id":"app1","bot_public":%v}`, public)
+	case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/guilds/"): // a member lookup the test didn't set
+		w.WriteHeader(http.StatusNotFound)
+		w.Write([]byte(`{"message":"Unknown Member","code":10007}`))
 	case route == "POST /users/@me/channels":
 		fmt.Fprintf(w, `{"id":"%s"}`, dmChan)
 	case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/messages"), strings.HasSuffix(r.URL.Path, "/@original"):
@@ -253,8 +259,11 @@ func (f *fake) routes() []string {
 	return out
 }
 
-func (f *fake) client() *Client {
-	c := newClient(f.srv.URL, token, nil)
+func (f *fake) client() *Client { return f.clientIn(f.t.TempDir()) }
+
+// clientIn is a client whose state directory is dir.
+func (f *fake) clientIn(dir string) *Client {
+	c := newClient(f.srv.URL, token, dir, nil)
 	c.stickers = f.srv.URL + "/cdn/stickers"
 	c.backoff, c.fatal, c.typing, c.pending = 10*time.Millisecond, time.Hour, 20*time.Millisecond, 200*time.Millisecond
 	return c
@@ -416,7 +425,7 @@ func TestRefused(t *testing.T) {
 	// A token the REST API refuses, too.
 	logs := captureLogs(t)
 	f := newFake(t)
-	c := newClient(f.srv.URL, "wrong", nil)
+	c := newClient(f.srv.URL, "wrong", t.TempDir(), nil)
 	c.backoff, c.fatal = 10*time.Millisecond, time.Hour
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
@@ -985,5 +994,232 @@ func TestMarkdown(t *testing.T) {
 		if len(ps) != 1 || ps[0].text != want {
 			t.Errorf("%q: got %+v, want %q", in, ps, want)
 		}
+	}
+}
+
+// The channels and roles of TestGroups: #general, which everyone sees;
+// #secret, which only the role sees, and a thread in it; a private thread
+// in #general; a voice channel; and a second server.
+const (
+	roleID   = "600000000000000001"
+	secret   = "400000000000000002"
+	thread   = "400000000000000003"
+	private  = "400000000000000004"
+	voice    = "400000000000000005"
+	guild2   = "300000000000000002"
+	chanID2  = "400000000000000006"
+	aliceGet = "GET /guilds/" + guild + "/members/" + alice
+	bobGet   = "GET /guilds/" + guild + "/members/" + bob
+)
+
+// groupsClient is a client in TestGroups' servers, with Alice's and Bob's
+// roles set on f: Bob has the role, Alice none.
+func groupsClient(f *fake) *Client {
+	f.results[aliceGet] = `{"roles":[]}`
+	f.results[bobGet] = `{"roles":["` + roleID + `"]}`
+	c := connected(f.client())
+	c.events("GUILD_CREATE", json.RawMessage(`{"id":"`+guild+`","name":"Test server","owner_id":"700000000000000001",
+		"roles":[{"id":"`+guild+`","permissions":"1024"},{"id":"`+roleID+`","permissions":"0"}],
+		"channels":[{"id":"`+chanID+`","name":"general","type":0},
+			{"id":"`+secret+`","name":"secret","type":0,"permission_overwrites":[{"id":"`+guild+`","type":0,"allow":"0","deny":"1024"},{"id":"`+roleID+`","type":0,"allow":"1024","deny":"0"}]},
+			{"id":"`+voice+`","name":"voice","type":2}],
+		"threads":[{"id":"`+thread+`","name":"plans","type":11,"parent_id":"`+secret+`"},{"id":"`+private+`","name":"quiet","type":12,"parent_id":"`+chanID+`"}]}`))
+	c.events("GUILD_CREATE", json.RawMessage(`{"id":"`+guild2+`","name":"Other server","owner_id":"700000000000000001",
+		"roles":[{"id":"`+guild2+`","permissions":"1024"}],"channels":[{"id":"`+chanID2+`","name":"lobby","type":0}]}`))
+	return c
+}
+
+func groupNames(t *testing.T, c *Client, user string) []string {
+	t.Helper()
+	gs, err := c.Groups(context.Background(), prefix+user)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out []string
+	for _, g := range gs {
+		out = append(out, g.Name)
+	}
+	return out
+}
+
+// Groups lists the channels a member can see by the server's roles and
+// the channels' overwrites, a thread as its channel, a private thread only
+// where they were seen, and none of a server they aren't in; each member
+// is looked up once.
+func TestGroups(t *testing.T) {
+	f := newFake(t)
+	c := groupsClient(f)
+	c.events("MESSAGE_CREATE", json.RawMessage(`{"id":"1200000000000000001","guild_id":"`+guild+`","channel_id":"`+private+`",`+fromBob+`,"content":"hi"}`))
+	c.events("MESSAGE_CREATE", json.RawMessage(`{"id":"1200000000000000002","guild_id":"`+guild2+`","channel_id":"`+chanID2+`",`+fromA+`,"content":"hi"}`))
+	if got := groupNames(t, c, alice); !slices.Equal(got, []string{"#general (Test server)"}) {
+		t.Fatalf("Alice's %q", got)
+	}
+	if got := groupNames(t, c, bob); !slices.Equal(got, []string{"#general (Test server)", "#plans (Test server)", "#quiet (Test server)", "#secret (Test server)"}) {
+		t.Fatalf("Bob's %q", got)
+	}
+	groupNames(t, c, alice)
+	if n, m := len(f.callsTo(aliceGet)), len(f.callsTo(bobGet)); n != 1 || m != 1 {
+		t.Fatalf("looked up Alice %d times and Bob %d", n, m)
+	}
+	if n := len(f.callsTo("GET /guilds/" + guild2 + "/members/" + alice)); n != 1 {
+		t.Fatalf("looked up Alice in the other server %d times", n)
+	}
+
+	// The owner sees every channel, as does an administrator.
+	c.events("GUILD_UPDATE", json.RawMessage(`{"id":"`+guild+`","name":"Test server","owner_id":"`+alice+`"}`))
+	if got := groupNames(t, c, alice); !slices.Equal(got, []string{"#general (Test server)", "#plans (Test server)", "#secret (Test server)"}) {
+		t.Fatalf("the owner's %q", got)
+	}
+	c.events("GUILD_UPDATE", json.RawMessage(`{"id":"`+guild+`","owner_id":"700000000000000001"}`))
+	c.events("GUILD_ROLE_UPDATE", json.RawMessage(`{"guild_id":"`+guild+`","role":{"id":"`+guild+`","permissions":"8"}}`))
+	if got := groupNames(t, c, alice); len(got) != 3 {
+		t.Fatalf("an administrator's %q", got)
+	}
+
+	// A member's own overwrite comes last.
+	c.events("GUILD_ROLE_UPDATE", json.RawMessage(`{"guild_id":"`+guild+`","role":{"id":"`+guild+`","permissions":"1024"}}`))
+	c.events("CHANNEL_UPDATE", json.RawMessage(`{"id":"`+secret+`","guild_id":"`+guild+`","name":"secret","type":0,"permission_overwrites":[
+		{"id":"`+guild+`","type":0,"allow":"0","deny":"1024"},{"id":"`+roleID+`","type":0,"allow":"1024","deny":"0"},{"id":"`+bob+`","type":1,"allow":"0","deny":"1024"}]}`))
+	if got := groupNames(t, c, bob); !slices.Equal(got, []string{"#general (Test server)", "#quiet (Test server)"}) {
+		t.Fatalf("Bob's, denied his own %q", got)
+	}
+}
+
+// When a member can't be looked up, Groups lists the channels they were
+// seen in, and logs no one's ID.
+func TestGroupsFallBack(t *testing.T) {
+	logs := captureLogs(t)
+	f := newFake(t)
+	c := groupsClient(f)
+	f.errs[aliceGet] = []int{500}
+	c.events("MESSAGE_CREATE", json.RawMessage(`{"id":"1200000000000000001","guild_id":"`+guild+`","channel_id":"`+private+`",`+fromA+`,"content":"hi"}`))
+	if got := groupNames(t, c, alice); !slices.Equal(got, []string{"#quiet (Test server)"}) {
+		t.Fatalf("Alice's %q", got)
+	}
+	if !strings.Contains(logs.String(), "only the channels they were seen in") || strings.Contains(logs.String(), alice) || strings.Contains(logs.String(), guild) {
+		t.Fatalf("log %q", logs.String())
+	}
+	if got := groupNames(t, c, alice); !slices.Equal(got, []string{"#general (Test server)", "#quiet (Test server)"}) {
+		t.Fatalf("Alice's once she can be looked up %q", got)
+	}
+	if got := groupNames(t, c, "not-an-id"); got != nil {
+		t.Fatalf("a bad ID's %q", got)
+	}
+}
+
+// The people seen in each channel are saved as they change and when Run
+// ends, and a new client links them as members.
+func TestNamesSaved(t *testing.T) {
+	f := newFake(t)
+	dir := t.TempDir()
+	c := connected(f.clientIn(dir))
+	c.saveEvery = 10 * time.Millisecond
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() { defer close(done); c.Run(ctx, func(bot.Received) {}) }()
+	c.events("MESSAGE_CREATE", json.RawMessage(`{"id":"1200000000000000001",`+inGuild+`,`+fromBob+`,"content":"chatter"}`))
+	path := filepath.Join(dir, "discord-people.json")
+	waitFor(t, "the names saved", func() bool { data, _ := os.ReadFile(path); return strings.Contains(string(data), `"Bob"`) })
+	c.events("MESSAGE_CREATE", json.RawMessage(`{"id":"1200000000000000002",`+inGuild+`,`+fromA+`,"content":"chatter"}`))
+	cancel()
+	<-done
+	if data, _ := os.ReadFile(path); !strings.Contains(string(data), `"Alice"`) || !strings.Contains(string(data), `"seen": "`+time.Now().UTC().Format(time.DateOnly)+`"`) {
+		t.Fatalf("not saved at the end: %s", data)
+	}
+
+	c = connected(f.clientIn(dir))
+	r, ok := c.Delivered(context.Background(), feature.Message{Chat: feature.Chat{GroupID: group}, Sender: prefix + bob, Text: "hello @Alice"})
+	if !ok || r.Message.Name != "Bob" || len(r.Members) != 2 || r.Members[1] != (bot.Member{Name: "Bob", ID: prefix + bob}) {
+		t.Fatalf("Delivered %+v", r)
+	}
+	if got := c.Redact("Bob"); got != "redacted" {
+		t.Fatalf("Redact %q", got)
+	}
+}
+
+// writeNames saves Alice in the channel on day aliceSeen, and Bob today.
+func writeNames(t *testing.T, dir, aliceSeen string) {
+	t.Helper()
+	data := `{"channels":{"` + chanID + `":{"` + alice + `":{"name":"Alice","seen":"` + aliceSeen + `"},"` +
+		bob + `":{"name":"Bob","seen":"` + time.Now().UTC().Format(time.DateOnly) + `"}}}}`
+	if err := os.WriteFile(filepath.Join(dir, "discord-people.json"), []byte(data), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func members(t *testing.T, c *Client) []bot.Member {
+	t.Helper()
+	r, ok := c.Delivered(context.Background(), feature.Message{Chat: feature.Chat{GroupID: group}, Text: "hello"})
+	if !ok {
+		t.Fatal("not delivered")
+	}
+	return r.Members
+}
+
+// Someone not seen in a channel for 180 days is forgotten there, when the
+// names are read and once a day while the bot runs.
+func TestNamesExpire(t *testing.T) {
+	f := newFake(t)
+	dir := t.TempDir()
+	writeNames(t, dir, time.Now().UTC().AddDate(0, 0, -181).Format(time.DateOnly))
+	c := connected(f.clientIn(dir))
+	if got := members(t, c); len(got) != 1 || got[0].Name != "Bob" {
+		t.Fatalf("members %+v", got)
+	}
+	c.saveNames()
+	if data, _ := os.ReadFile(filepath.Join(dir, "discord-people.json")); strings.Contains(string(data), "Alice") {
+		t.Fatalf("Alice still saved: %s", data)
+	}
+
+	c.mu.Lock()
+	c.chats[chanID][bob] = person{name: "Bob", day: "2000-01-01"}
+	c.pruned = ""
+	c.mu.Unlock()
+	c.saveNames()
+	if got := members(t, c); len(got) != 0 || c.Redact("Bob") != "Bob" {
+		t.Fatalf("Bob not forgotten: %+v", got)
+	}
+	if data, _ := os.ReadFile(filepath.Join(dir, "discord-people.json")); strings.Contains(string(data), "Bob") {
+		t.Fatalf("Bob still saved: %s", data)
+	}
+}
+
+// A deleted channel's people are forgotten at the next save.
+func TestNamesOfDeletedChannel(t *testing.T) {
+	f := newFake(t)
+	dir := t.TempDir()
+	c := connected(f.clientIn(dir))
+	c.events("MESSAGE_CREATE", json.RawMessage(`{"id":"1200000000000000001",`+inGuild+`,`+fromBob+`,"content":"chatter"}`))
+	c.saveNames()
+	path := filepath.Join(dir, "discord-people.json")
+	if data, _ := os.ReadFile(path); !strings.Contains(string(data), chanID) {
+		t.Fatalf("not saved: %s", data)
+	}
+	c.events("CHANNEL_DELETE", json.RawMessage(`{"id":"`+chanID+`"}`))
+	c.saveNames()
+	if data, _ := os.ReadFile(path); strings.Contains(string(data), chanID) || strings.Contains(string(data), "Bob") {
+		t.Fatalf("the channel still saved: %s", data)
+	}
+}
+
+// A file that can't be read is logged, without what it holds, and
+// ignored, then replaced.
+func TestNamesUnreadable(t *testing.T) {
+	logs := captureLogs(t)
+	f := newFake(t)
+	dir := t.TempDir()
+	path := filepath.Join(dir, "discord-people.json")
+	os.WriteFile(path, []byte(`{"channels":{"`+chanID+`":Bob`), 0o600)
+	c := connected(f.clientIn(dir))
+	if got := members(t, c); len(got) != 0 {
+		t.Fatalf("members %+v", got)
+	}
+	if !strings.Contains(logs.String(), "can't be read") || strings.Contains(logs.String(), "Bob") || strings.Contains(logs.String(), chanID) {
+		t.Fatalf("log %q", logs.String())
+	}
+	c.events("MESSAGE_CREATE", json.RawMessage(`{"id":"1200000000000000001",`+inGuild+`,`+fromA+`,"content":"chatter"}`))
+	c.saveNames()
+	if data, _ := os.ReadFile(path); !strings.Contains(string(data), "Alice") {
+		t.Fatalf("not replaced: %s", data)
 	}
 }

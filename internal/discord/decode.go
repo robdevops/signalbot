@@ -28,8 +28,9 @@ type user struct {
 }
 
 type member struct {
-	Nick string `json:"nick"`
-	User *user  `json:"user"`
+	Nick  string   `json:"nick"`
+	User  *user    `json:"user"`
+	Roles []string `json:"roles"` // a guild member's, from the REST API
 }
 
 type attachment struct {
@@ -104,17 +105,15 @@ func (c *Client) events(t string, d json.RawMessage) []bot.Received {
 		}
 	case "GUILD_CREATE", "GUILD_DELETE":
 		return c.guild(d, t == "GUILD_DELETE")
+	case "GUILD_UPDATE":
+		c.guildUpdated(d)
 	case "GUILD_ROLE_CREATE", "GUILD_ROLE_UPDATE", "GUILD_ROLE_DELETE":
 		c.roleChanged(d, t == "GUILD_ROLE_DELETE")
-	case "CHANNEL_CREATE", "THREAD_CREATE":
-		var ch struct {
-			ID      string `json:"id"`
-			GuildID string `json:"guild_id"`
-			Name    string `json:"name"`
-		}
-		if json.Unmarshal(d, &ch) == nil && ch.GuildID != "" {
+	case "CHANNEL_CREATE", "THREAD_CREATE", "CHANNEL_UPDATE", "THREAD_UPDATE":
+		var ch wireChannel
+		if json.Unmarshal(d, &ch) == nil && ch.GuildID != "" && ch.ID != "" {
 			c.mu.Lock()
-			c.addChannel(ch.ID, channel{guild: ch.GuildID, name: txt.SafeName(ch.Name)})
+			c.addChannel(ch.ID, ch.channel(ch.GuildID, ""))
 			c.mu.Unlock()
 		}
 	case "CHANNEL_DELETE", "THREAD_DELETE":
@@ -298,24 +297,39 @@ func (c *Client) seen(m *message) {
 		return
 	}
 	if _, ok := c.channels[m.ChannelID]; !ok {
-		c.addChannel(m.ChannelID, channel{guild: m.GuildID})
+		c.addChannel(m.ChannelID, channel{guild: m.GuildID, kind: unknown})
 	}
-	people := c.chats[m.ChannelID]
-	if people == nil && len(c.chats) < maxGroups {
-		people = map[string]string{}
-		c.chats[m.ChannelID] = people
-	}
-	if name == "" || people == nil || len(people) >= 1000 || len(c.people) >= 10000 {
+	if name == "" {
 		return
 	}
-	people[uid], c.people[uid] = name, name
+	c.note(m.ChannelID, uid, person{name: name, day: today()})
+}
+
+// note remembers p seen in a channel, under c.mu, within the caps: 2,000
+// channels, 1,000 people in each and 10,000 in all, and 200 channels for
+// each person.
+func (c *Client) note(ch, uid string, p person) {
+	people := c.chats[ch]
+	if people == nil && len(c.chats) < maxGroups {
+		people = map[string]person{}
+		c.chats[ch] = people
+	}
+	old, had := people[uid]
+	_, known := c.people[uid]
+	if people == nil || !had && len(people) >= 1000 || !known && len(c.people) >= 10000 {
+		return
+	}
+	if old != p {
+		people[uid], c.dirty = p, true
+	}
+	c.people[uid] = p.name
 	in := c.seenIn[uid]
 	if in == nil {
 		in = map[string]bool{}
 		c.seenIn[uid] = in
 	}
 	if len(in) < 200 {
-		in[m.ChannelID] = true
+		in[ch] = true
 	}
 }
 
@@ -323,6 +337,9 @@ func (c *Client) seen(m *message) {
 func (c *Client) addChannel(id string, ch channel) {
 	if old, ok := c.channels[id]; ok || len(c.channels) < maxGroups {
 		ch.name, ch.guildName = cmp.Or(ch.name, old.name), cmp.Or(ch.guildName, old.guildName)
+		if ch.kind == unknown && ok {
+			ch.kind, ch.parent, ch.overwrites = old.kind, old.parent, old.overwrites
+		}
 		c.channels[id] = ch
 		delete(c.left, id)
 	}
@@ -331,7 +348,10 @@ func (c *Client) addChannel(id string, ch channel) {
 // leave notes that the bot can no longer post in a channel, under c.mu.
 func (c *Client) leave(id string) {
 	delete(c.channels, id)
-	delete(c.chats, id)
+	if _, ok := c.chats[id]; ok {
+		delete(c.chats, id)
+		c.dirty = true
+	}
 	if len(c.left) < 2*maxGroups {
 		c.left[id] = true
 	}
@@ -423,18 +443,13 @@ func (c *Client) reacted(d json.RawMessage, removed bool) []bot.Received {
 // A guild that is only unavailable for a while is left as it was.
 func (c *Client) guild(d json.RawMessage, gone bool) []bot.Received {
 	var g struct {
-		ID          string `json:"id"`
-		Name        string `json:"name"`
-		Unavailable bool   `json:"unavailable"`
-		Channels    []struct {
-			ID   string `json:"id"`
-			Name string `json:"name"`
-		} `json:"channels"`
-		Threads []struct {
-			ID   string `json:"id"`
-			Name string `json:"name"`
-		} `json:"threads"`
-		Roles []role `json:"roles"`
+		ID          string        `json:"id"`
+		Name        string        `json:"name"`
+		Owner       string        `json:"owner_id"`
+		Unavailable bool          `json:"unavailable"`
+		Channels    []wireChannel `json:"channels"`
+		Threads     []wireChannel `json:"threads"`
+		Roles       []role        `json:"roles"`
 	}
 	if json.Unmarshal(d, &g) != nil || g.Unavailable {
 		return nil
@@ -444,6 +459,7 @@ func (c *Client) guild(d json.RawMessage, gone bool) []bot.Received {
 	defer c.mu.Unlock()
 	if gone {
 		delete(c.botRoles, g.ID)
+		delete(c.guilds, g.ID)
 		for id, ch := range c.channels {
 			if ch.guild == g.ID {
 				c.leave(id)
@@ -452,20 +468,20 @@ func (c *Client) guild(d json.RawMessage, gone bool) []bot.Received {
 		}
 		return out
 	}
-	for _, r := range g.Roles {
-		c.noteRole(g.ID, r)
-	}
+	c.noteGuild(g.ID, g.Name, g.Owner, g.Roles)
 	for _, ch := range slices.Concat(g.Channels, g.Threads) {
-		c.addChannel(ch.ID, channel{guild: g.ID, name: txt.SafeName(ch.Name), guildName: txt.SafeName(g.Name)})
+		c.addChannel(ch.ID, ch.channel(g.ID, g.Name))
 		out = append(out, bot.GroupChanged{Chat: feature.Chat{GroupID: prefix + ch.ID}})
 	}
 	return out
 }
 
-// role is a guild's role; one Discord made for a bot names it in its tags.
+// role is a guild's role, with its permissions, a number written as a
+// string; one Discord made for a bot names it in its tags.
 type role struct {
-	ID   string `json:"id"`
-	Tags *struct {
+	ID          string `json:"id"`
+	Permissions string `json:"permissions"`
+	Tags        *struct {
 		BotID string `json:"bot_id"`
 	} `json:"tags"`
 }
@@ -493,13 +509,20 @@ func (c *Client) roleChanged(d json.RawMessage, deleted bool) {
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	g := c.guilds[e.GuildID]
 	if deleted {
 		if c.botRoles[e.GuildID] == e.RoleID {
 			delete(c.botRoles, e.GuildID)
 		}
+		if g != nil {
+			delete(g.roles, e.RoleID)
+		}
 		return
 	}
 	c.noteRole(e.GuildID, e.Role)
+	if g != nil {
+		g.setRole(e.Role)
+	}
 }
 
 // Delivered readies a message a feature delivers as its sender, in its
@@ -516,8 +539,8 @@ func (c *Client) Delivered(ctx context.Context, msg feature.Message) (bot.Ready,
 	c.mu.Lock()
 	msg.Name = cmp.Or(msg.Name, c.people[strings.TrimPrefix(msg.Sender, prefix)])
 	if g, ok := strings.CutPrefix(msg.Chat.GroupID, prefix); ok {
-		for uid, n := range c.chats[g] {
-			r.Members = append(r.Members, bot.Member{Name: n, ID: prefix + uid})
+		for uid, p := range c.chats[g] {
+			r.Members = append(r.Members, bot.Member{Name: p.name, ID: prefix + uid})
 		}
 	}
 	c.mu.Unlock()
@@ -553,25 +576,6 @@ func (c *Client) Reachable(ctx context.Context, chat feature.Chat) bool {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return !c.left[strings.TrimPrefix(chat.GroupID, prefix)]
-}
-
-// Groups lists the channels where the bot has seen user post since it
-// started, by name.
-func (c *Client) Groups(ctx context.Context, user string) ([]feature.Group, error) {
-	c.mu.Lock()
-	var out []feature.Group
-	for ch := range c.seenIn[strings.TrimPrefix(user, prefix)] {
-		if info, ok := c.channels[ch]; ok {
-			name := "#" + cmp.Or(info.name, ch)
-			if info.guildName != "" {
-				name += " (" + info.guildName + ")"
-			}
-			out = append(out, feature.Group{ID: prefix + ch, Name: name})
-		}
-	}
-	c.mu.Unlock()
-	slices.SortFunc(out, func(a, b feature.Group) int { return strings.Compare(a.Name, b.Name) })
-	return out, nil
 }
 
 // discordID is a Discord ID: a number of 17 digits or more.

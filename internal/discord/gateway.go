@@ -62,8 +62,15 @@ var errToken = &refusal{"Discord refused DISCORD_BOT_TOKEN: copy the token again
 // handle, on this goroutine, until ctx ends. A dropped session is resumed,
 // after a wait that doubles from 1s to 32s while it keeps failing; a token
 // or intents Discord refuses are logged as such, and tried again only
-// after a long wait.
+// after a long wait. Meanwhile the names seen are saved as they change,
+// and once more before it returns.
 func (c *Client) Run(ctx context.Context, handle func(bot.Received)) {
+	saved := make(chan struct{})
+	go func() {
+		defer close(saved)
+		c.keepNames(ctx)
+	}()
+	defer func() { <-saved }()
 	backoff := c.backoff
 	for ctx.Err() == nil {
 		up, err := c.connect(ctx, handle)

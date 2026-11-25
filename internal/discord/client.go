@@ -14,6 +14,7 @@ import (
 	"github.com/robdevops/signalbot/internal/bot"
 	"github.com/robdevops/signalbot/internal/config"
 	"github.com/robdevops/signalbot/internal/kit/httpx"
+	"github.com/robdevops/signalbot/internal/kit/state"
 )
 
 // prefix starts every chat and user ID the client hands the core, so a bot
@@ -48,9 +49,13 @@ type Client struct {
 
 	mu        sync.Mutex
 	people    map[string]string                 // user ID to name, as last seen
-	chats     map[string]map[string]string      // channel ID to the IDs and names seen there
+	chats     map[string]map[string]person      // channel ID to the people seen there, by ID; saved
 	seenIn    map[string]map[string]bool        // user ID to the channels they were seen in
 	channels  map[string]channel                // the guild channels the bot is in
+	guilds    map[string]*guildInfo             // the guilds the bot is in, by ID: their owner and roles
+	members   map[string]memberInfo             // a guild member's roles, by guild and user ID, for Groups
+	dirty     bool                              // chats changed since they were last saved
+	pruned    string                            // the day chats were last pruned of people not seen for long
 	left      map[string]bool                   // channels the bot can no longer post in
 	dms       map[string]string                 // user ID to their DM channel's ID
 	dmUsers   map[string]string                 // a DM channel's ID to its user's ID
@@ -61,28 +66,58 @@ type Client struct {
 	botRoles  map[string]string                 // a guild's ID to the bot's own role there
 	hooks     map[int64]*interaction            // a slash command's reply, by its message ID, for an edit
 
+	names     *state.Doc    // discord-people.json, where chats are saved
+	saveEvery time.Duration // how often chats are saved while changed; a test's shorter
+
 	test *config.Test // nil in production
 }
 
-// channel is a guild channel or thread the bot can see.
+// channel is a guild channel or thread the bot can see, with what decides
+// who else can see it.
 type channel struct {
 	guild, name, guildName string
+	kind                   int    // Discord's channel type, or unknown for one only seen in a message
+	parent                 string // a thread's channel, or a channel's category
+	overwrites             []overwrite
+}
+
+// unknown is the kind of a channel known only from a message in it.
+const unknown = -1
+
+// overwrite is a channel's permission overwrite for a role, or with member
+// for one member.
+type overwrite struct {
+	id          string
+	member      bool
+	allow, deny uint64
+}
+
+// guildInfo is what Groups needs of a guild: its name, its owner, and each
+// role's permissions, by role ID; the @everyone role's ID is the guild's.
+type guildInfo struct {
+	name, owner string
+	roles       map[string]uint64
 }
 
 // New makes the client its settings say: DISCORD_BOT_TOKEN, the bot's token
 // from Discord's developer portal, and DISCORD_API_URL, by default
 // Discord's. The bot answers anyone who DMs it and every channel it is in:
 // Discord's own settings decide who can reach it.
+//
+// The names of the people seen in each channel are saved in the state
+// directory, as discord-people.json, and read back here.
 func New(test *config.Test) *Client {
-	return newClient(config.Env("DISCORD_API_URL", "https://discord.com/api/v10"), config.Env("DISCORD_BOT_TOKEN", ""), test)
+	return newClient(config.Env("DISCORD_API_URL", "https://discord.com/api/v10"), config.Env("DISCORD_BOT_TOKEN", ""), config.StateDir(), test)
 }
 
-func newClient(base, token string, test *config.Test) *Client {
-	return &Client{base: strings.TrimRight(base, "/"), stickers: "https://media.discordapp.net/stickers", token: token, http: httpx.Client(8),
+func newClient(base, token, stateDir string, test *config.Test) *Client {
+	c := &Client{base: strings.TrimRight(base, "/"), stickers: "https://media.discordapp.net/stickers", token: token, http: httpx.Client(8),
 		backoff: time.Second, fatal: 10 * time.Minute, typing: 8 * time.Second, pending: time.Minute, known: make(chan struct{}),
-		people: map[string]string{}, chats: map[string]map[string]string{}, seenIn: map[string]map[string]bool{},
-		channels: map[string]channel{}, left: map[string]bool{}, dms: map[string]string{}, dmUsers: map[string]string{},
+		people: map[string]string{}, chats: map[string]map[string]person{}, seenIn: map[string]map[string]bool{},
+		channels: map[string]channel{}, guilds: map[string]*guildInfo{}, members: map[string]memberInfo{}, left: map[string]bool{}, dms: map[string]string{}, dmUsers: map[string]string{},
 		authors: map[int64]string{}, asked: map[string]map[int64]*interaction{},
 		answering: map[string]int64{}, botRoles: map[string]string{}, hooks: map[int64]*interaction{},
-		test: test}
+		names: state.Open(state.Dir(stateDir), state.DiscordPeople), saveEvery: time.Minute, test: test}
+	c.loadNames()
+	return c
 }
