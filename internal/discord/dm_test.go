@@ -252,3 +252,42 @@ func TestGroupsAdminMod(t *testing.T) {
 		t.Fatalf("the owner's %v", a)
 	}
 }
+
+// A verdict looked up while a server's roles change isn't kept: it may
+// be from before the change.
+func TestDMVerdictForgottenMidLookup(t *testing.T) {
+	f := newFake(t)
+	c := groupsClient(f)
+	c.dm = allow.Parse("")
+	c.mu.Lock()
+	gen := c.forgets
+	c.mu.Unlock()
+	setRole(c, "8192") // while Bob's lookup was out
+	c.keepVerdict(bob, verdict{at: time.Now()}, gen)
+	if _, known := c.dmDecided(bob); known {
+		t.Fatal("a verdict from before the change kept")
+	}
+	if !tryLoad(t, one(t, c.events("MESSAGE_CREATE", dmFrom(bob, "hi")))) {
+		t.Fatal("Bob, a mod now, refused")
+	}
+	if ok, known := c.dmDecided(bob); !ok || !known {
+		t.Fatalf("Bob's verdict after the change: %v %v", ok, known)
+	}
+}
+
+// A DM refused on the reader leaves nothing behind: not its channel, nor
+// its sender as the author of its message.
+func TestDMRefusedNotKept(t *testing.T) {
+	f := newFake(t)
+	c := groupsClient(f)
+	c.dm = allow.Parse(bob)
+	if rs := c.events("MESSAGE_CREATE", dmFrom(alice, "hi")); len(rs) != 0 {
+		t.Fatalf("Alice, not listed: %+v", rs)
+	}
+	c.mu.Lock()
+	_, dm := c.dms[alice]
+	c.mu.Unlock()
+	if dm || c.authorOf(1200000000000000101) != "" {
+		t.Fatal("kept something of Alice's refused DM")
+	}
+}

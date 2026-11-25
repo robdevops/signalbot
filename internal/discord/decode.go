@@ -171,20 +171,20 @@ func (c *Client) received(m *message, edited int64) bot.Received {
 	if m.Author == nil || m.Author.Bot || m.WebhookID != "" || m.Type != 0 && m.Type != 19 || self == "" || m.Author.ID == self {
 		return nil
 	}
+	uid, known := m.Author.ID, true
+	if m.GuildID == "" { // a DM: one refused now isn't kept, not even its channel
+		var ok bool
+		if ok, known = c.dmDecided(uid); known && !ok {
+			refuseDM(uid)
+			return nil
+		}
+	}
 	c.seen(m)
 	msg := c.message(m, edited)
 	switch {
 	case msg.Text == "" && len(msg.Media) == 0:
 		return nil
 	case msg.Addressed:
-		uid := m.Author.ID
-		dmOK, known := true, true
-		if msg.Chat.GroupID == "" {
-			if dmOK, known = c.dmDecided(uid); known && !dmOK {
-				refuseDM(uid)
-				return nil
-			}
-		}
 		return bot.Incoming{Chat: msg.Chat, Load: func(ctx context.Context, learn func(name, id string)) (feature.Message, bool) {
 			if !known && !c.mayDM(ctx, uid) { // a lookup, so in the slot
 				refuseDM(uid)

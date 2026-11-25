@@ -69,6 +69,7 @@ type Client struct {
 	botRoles  map[string]string                 // a guild's ID to the bot's own role there
 	hooks     map[int64]*interaction            // a slash command's reply, by its message ID, for an edit
 	verdicts  map[string]verdict                // whether a user is an admin or a mod, by user ID, for DMs
+	forgets   uint64                            // how many times the verdicts were forgotten
 
 	test *config.Test // nil in production
 }

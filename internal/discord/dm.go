@@ -70,11 +70,14 @@ func (c *Client) mayDM(ctx context.Context, uid string) bool {
 	if ok, known := c.dmDecided(uid); known {
 		return ok
 	}
+	c.mu.Lock()
+	gen := c.forgets
+	c.mu.Unlock()
 	admin, mod, err := c.serverRoles(ctx, uid)
 	ok := c.dm.Allows(func() (bool, bool) { return admin, mod })
 	switch {
 	case err == nil:
-		c.keepVerdict(uid, verdict{admin: admin, mod: mod, at: time.Now()})
+		c.keepVerdict(uid, verdict{admin: admin, mod: mod, at: time.Now()}, gen)
 	case !ok:
 		logx.Warnf("discord: reading a DM sender's roles failed, so the DM is refused: %v", err)
 	}
@@ -130,10 +133,14 @@ func (c *Client) serverRoles(ctx context.Context, uid string) (admin, mod bool, 
 }
 
 // keepVerdict keeps v for uid, within maxVerdicts: those expired go first,
-// then any.
-func (c *Client) keepVerdict(uid string, v verdict) {
+// then any. A verdict looked up from before gen, when the verdicts were
+// last forgotten, may already be out of date, so it isn't kept.
+func (c *Client) keepVerdict(uid string, v verdict, gen uint64) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	if gen != c.forgets {
+		return
+	}
 	if _, ok := c.verdicts[uid]; !ok && len(c.verdicts) >= maxVerdicts {
 		for k, old := range c.verdicts {
 			if time.Since(old.at) >= verdictTTL {
@@ -155,4 +162,5 @@ func (c *Client) keepVerdict(uid string, v verdict) {
 // hold.
 func (c *Client) forgetVerdicts() {
 	clear(c.verdicts)
+	c.forgets++
 }
