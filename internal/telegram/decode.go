@@ -80,6 +80,16 @@ type sticker struct {
 	Thumbnail  *photoSize `json:"thumbnail"`
 }
 
+// video is a video, or a video note, a round one with no name or type;
+// its thumbnail is a still the model can see.
+type video struct {
+	FileID    string     `json:"file_id"`
+	FileName  string     `json:"file_name"`
+	MimeType  string     `json:"mime_type"`
+	FileSize  int        `json:"file_size"`
+	Thumbnail *photoSize `json:"thumbnail"`
+}
+
 // location is a point on a map; LivePeriod is set on a live location, one
 // that follows its sender as they move.
 type location struct {
@@ -112,6 +122,8 @@ type message struct {
 	Photo           []photoSize            `json:"photo"`
 	Document        *file                  `json:"document"`
 	Animation       *animation             `json:"animation"` // a GIF; Document holds it too, for old clients
+	Video           *video                 `json:"video"`
+	VideoNote       *video                 `json:"video_note"`
 	Audio           *file                  `json:"audio"`
 	Voice           *file                  `json:"voice"`
 	Sticker         *sticker               `json:"sticker"`
@@ -342,7 +354,17 @@ func (c *Client) message(m *message, edited int64) feature.Message {
 				images = append(images, feature.Media{ID: still.FileID, Quoted: quoted})
 			}
 		}
-		for _, f := range []*file{doc, m.Audio, m.Voice} {
+		fs := []*file{doc}
+		for _, v := range []*video{m.Video, m.VideoNote} {
+			if v == nil {
+				continue
+			}
+			if t := v.Thumbnail; t != nil && t.FileSize <= img.MaxReceived && len(images) < feature.MaxPictures {
+				images = append(images, feature.Media{ID: t.FileID, Quoted: quoted})
+			}
+			fs = append(fs, &file{FileID: v.FileID, FileName: v.FileName, MimeType: cmp.Or(v.MimeType, "video/mp4"), FileSize: v.FileSize})
+		}
+		for _, f := range append(fs, m.Audio, m.Voice) {
 			switch {
 			case f == nil:
 			case img.Supported(f.MimeType) && f.FileSize <= img.MaxReceived && len(images) < feature.MaxPictures:

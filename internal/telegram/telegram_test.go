@@ -764,6 +764,40 @@ func TestAnimation(t *testing.T) {
 	}
 }
 
+// A video, or a round video note, with no caption is not dropped: the model
+// sees its thumbnail, and the video is a file, noted but not fetched when
+// it is too big. A quoted one is marked quoted.
+func TestVideo(t *testing.T) {
+	c := connected(newFake(t).client())
+	load := func(js string) []feature.Media {
+		t.Helper()
+		r, ok := c.event(parse(t, js))
+		if !ok {
+			t.Fatalf("dropped: %s", js)
+		}
+		m, _ := r.(bot.Incoming).Load(context.Background(), func(string, string) {})
+		return m.Media
+	}
+	got := load(`{"update_id":1,"message":{"message_id":7,` + fromA + `,` + inDM +
+		`,"video":{"file_id":"vid","file_name":"beach.mp4","mime_type":"video/mp4","file_size":90000,"thumbnail":{"file_id":"still","file_size":4000}}}}`)
+	want := []feature.Media{{ID: "still"}, {ID: "vid", File: true, Name: "beach.mp4", MIME: "video/mp4", Size: 90000}}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("video %+v", got)
+	}
+	got = load(`{"update_id":2,"message":{"message_id":8,` + fromA + `,` + inDM +
+		`,"video_note":{"file_id":"round","length":240,"duration":5,"file_size":20000000,"thumbnail":{"file_id":"still","file_size":4000}}}}`)
+	want = []feature.Media{{ID: "still"}, {File: true, MIME: "video/mp4", Size: 20000000}}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("video note %+v", got)
+	}
+	got = load(`{"update_id":3,"message":{"message_id":9,` + fromA + `,` + inDM + `,"text":"what is this?","reply_to_message":{"message_id":7,` + fromA + `,` + inDM +
+		`,"video_note":{"file_id":"round","file_size":20000,"thumbnail":{"file_id":"still","file_size":4000}}}}}`)
+	want = []feature.Media{{ID: "still", Quoted: true}, {ID: "round", Quoted: true, File: true, MIME: "video/mp4", Size: 20000}}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("quoted %+v", got)
+	}
+}
+
 // An audio clip goes as a voice message, which shows no title, before the
 // text, and it is the one that replies.
 func TestSendVoice(t *testing.T) {

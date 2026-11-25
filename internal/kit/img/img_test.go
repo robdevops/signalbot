@@ -35,6 +35,24 @@ func TestSendable(t *testing.T) {
 	}
 }
 
+// Type names a JPEG .jpg, and data that isn't an image PNG, as before.
+func TestType(t *testing.T) {
+	for _, c := range []struct {
+		data      []byte
+		mime, ext string
+	}{
+		{pngBytes(t), "image/png", "png"},
+		{[]byte("\xff\xd8\xff\xe0\x00\x10JFIF\x00"), "image/jpeg", "jpg"},
+		{[]byte("GIF89a\x01\x00\x01\x00"), "image/gif", "gif"},
+		{[]byte("RIFF\x00\x00\x00\x00WEBPVP8 \x00\x00\x00\x00"), "image/webp", "webp"},
+		{[]byte("hello"), "image/png", "png"},
+	} {
+		if mime, ext := Type(c.data); mime != c.mime || ext != c.ext {
+			t.Errorf("Type(%.12q) = %s, %s", c.data, mime, ext)
+		}
+	}
+}
+
 // noise is a w by h image of noise, which barely compresses.
 func noise(w, h int) *image.RGBA {
 	m := image.NewRGBA(image.Rect(0, 0, w, h))

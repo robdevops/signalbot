@@ -2,6 +2,7 @@ package discord
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -9,6 +10,7 @@ import (
 	"io"
 	"mime/multipart"
 	"net/http"
+	"net/textproto"
 	"net/url"
 	"strconv"
 	"strings"
@@ -57,11 +59,16 @@ func (c *Client) call(ctx context.Context, method, path string, body, out any) e
 	return c.do(ctx, method, path, "application/json", data, out)
 }
 
-// upload is a file sent with a message.
+// upload is a file sent with a message, of type mime, or
+// application/octet-stream if that is "".
 type upload struct {
-	name string
-	data []byte
+	name, mime string
+	data       []byte
 }
+
+// quoteEscaper escapes a file name in a quoted string, as multipart's
+// CreateFormFile does.
+var quoteEscaper = strings.NewReplacer(`\`, `\\`, `"`, `\"`)
 
 // send sends payload, a message's JSON, with files, if any, as a multipart
 // form: Discord's payload_json and files[n].
@@ -77,7 +84,10 @@ func (c *Client) send(ctx context.Context, method, path string, payload map[stri
 	w := multipart.NewWriter(&b)
 	w.WriteField("payload_json", string(pj))
 	for i, f := range files {
-		fw, err := w.CreateFormFile("files["+strconv.Itoa(i)+"]", f.name)
+		h := textproto.MIMEHeader{}
+		h.Set("Content-Disposition", fmt.Sprintf(`form-data; name="files[%d]"; filename="%s"`, i, quoteEscaper.Replace(f.name)))
+		h.Set("Content-Type", cmp.Or(f.mime, "application/octet-stream"))
+		fw, err := w.CreatePart(h)
 		if err != nil {
 			return err
 		}

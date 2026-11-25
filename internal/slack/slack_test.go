@@ -96,7 +96,7 @@ func (f *fakeSlack) serve(w http.ResponseWriter, r *http.Request) {
 		}
 	case "/upload":
 		b, _ := io.ReadAll(r.Body)
-		f.record(call{Method: "upload", Params: map[string]any{"bytes": float64(len(b)), "auth": r.Header.Get("Authorization")}})
+		f.record(call{Method: "upload", Params: map[string]any{"bytes": float64(len(b)), "auth": r.Header.Get("Authorization"), "type": r.Header.Get("Content-Type")}})
 		return
 	case "/files/x.png":
 		if r.Header.Get("Authorization") != "Bearer "+token {
@@ -474,6 +474,19 @@ func TestSend(t *testing.T) {
 	c.Send(feature.Chat{User: "slack:" + alice}, "again", nil, nil, 0, nil, feature.Markup{})
 	if o := f.callsTo("conversations.open"); len(o) != 1 {
 		t.Fatal("the DM's channel was not kept")
+	}
+}
+
+// A picture is named and typed as what its data is: a JPEG goes as .jpg.
+func TestSendJPEG(t *testing.T) {
+	f := newFake(t)
+	c := connected(f.client(t))
+	c.Send(feature.Chat{GroupID: "slack:" + channel}, "a photo", []feature.Picture{{Data: []byte("\xff\xd8\xff\xe0\x00\x10JFIF\x00"), Name: "sky"}}, nil, 0, nil, feature.Markup{})
+	if g := f.callsTo("files.getUploadURLExternal"); len(g) != 1 || g[0].Params["filename"] != "sky.jpg" {
+		t.Fatalf("getUploadURLExternal %v", g)
+	}
+	if u := f.callsTo("upload"); len(u) != 1 || u[0].Params["type"] != "image/jpeg" {
+		t.Fatalf("upload %v", u)
 	}
 }
 

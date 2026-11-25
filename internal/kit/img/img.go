@@ -51,6 +51,18 @@ func Supported(mime string) bool {
 	return false
 }
 
+// Type is data's image type, and the extension a file of it is named
+// with: image/png and png for data that isn't a supported image.
+func Type(data []byte) (mime, ext string) {
+	switch mime = http.DetectContentType(data); mime {
+	case "image/jpeg":
+		return mime, "jpg"
+	case "image/gif", "image/webp":
+		return mime, mime[len("image/"):]
+	}
+	return "image/png", "png"
+}
+
 // Sendable reports whether data is an image chat apps show and models
 // take, small enough to send.
 func Sendable(data []byte) bool {
