@@ -809,9 +809,9 @@ func TestRerun(t *testing.T) {
 	if l := labels(got.Markup.Buttons); !slices.Equal(l, []string{"• 1d=rerun=1d", "7d=rerun=7d", "🔄=rerun"}) || got.OnSent == nil {
 		t.Fatalf("buttons %q", l)
 	}
-	got.OnSent([]int64{10, 11}, false)
+	got.OnSent([]int64{11}, false)
 	if _, ok := h.Press(ctx, feature.Press{Chat: alice, Sent: 10, Data: "rerun=7d"}); ok {
-		t.Error("a press under a message without the buttons was taken")
+		t.Error("a press under another message was taken")
 	}
 	if a, ok := h.Press(ctx, feature.Press{Chat: alice, Sent: 11, Data: "rerun=7d"}); !ok || a != "" {
 		t.Fatalf("press: %q %v", a, ok)
@@ -1128,5 +1128,63 @@ func TestKeyboardDownAndNoState(t *testing.T) {
 	}
 	if !strings.Contains(log.String(), "feeds are off") || !strings.Contains(log.String(), "direct commands have no buttons") {
 		t.Errorf("log %q", log.String())
+	}
+}
+
+// Only an answer that goes out as one message gets buttons: not two
+// pictures, nor a picture with more text than a caption takes. A free
+// text argument is made again by refresh; a result that turns from text
+// into a picture is a new post, leaving the old one and its buttons.
+func TestRerunShapes(t *testing.T) {
+	config := `{"mcpServers":{"fake":{"url":"` + serve(t, &fakeMCP{}) + `","allowed_tools":["echo","pic"],"chat_commands":{
+		"say":{"tool":"echo","direct":true,"arg":"what"},
+		"photo":{"tool":"pic","direct":true}}}}}`
+	h, _, err := register(t, config, func(h *featuretest.Host) {
+		h.Bot.Caps.Buttons, h.Bot.Caps.Caption, h.Settings["STATE_DIRECTORY"] = true, 1024, t.TempDir()
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	alice := feature.Chat{User: "alice"}
+	say := h.Message(ctx, feature.Message{Chat: alice, Sender: "a", Text: "/say Sydney", Addressed: true})
+	say.OnSent([]int64{5}, false)
+	if _, ok := h.Press(ctx, feature.Press{Chat: alice, Sent: 5, Data: "rerun"}); !ok {
+		t.Fatal("refresh not taken")
+	}
+	if p := h.Posts(); len(p) != 1 || p[0].Text != `echo {"what":"Sydney"}` || p[0].Edit != 5 {
+		t.Fatalf("refresh of free text %+v", p)
+	}
+	photo := h.Message(ctx, feature.Message{Chat: alice, Sender: "a", Text: "/photo", Addressed: true})
+	if len(photo.Pictures) != 1 || photo.Markup.Buttons == nil {
+		t.Fatalf("one picture with a caption: %+v", photo.Markup)
+	}
+
+	d := &plainDirect{server: "x", again: &reruns{h: h}}
+	for _, c := range []struct {
+		act  feature.Action
+		want bool
+	}{
+		{feature.Action{Answer: "hi"}, true},
+		{feature.Action{Answer: strings.Repeat("é", 1024), Pictures: make([]feature.Picture, 1)}, true},
+		{feature.Action{Answer: strings.Repeat("😀", 513), Pictures: make([]feature.Picture, 1)}, false}, // 1,026 UTF-16 units
+		{feature.Action{Answer: "two", Pictures: make([]feature.Picture, 2)}, false},
+	} {
+		if got := d.again.oneMessage(c.act); got != c.want {
+			t.Errorf("%d runes, %d pictures: %v", len([]rune(c.act.Answer)), len(c.act.Pictures), got)
+		}
+	}
+}
+
+// Every ID a feed still lists stays remembered, however many others pass;
+// of the others, the newest maxSeen.
+func TestTrimSeen(t *testing.T) {
+	seen := []string{"keep"}
+	for i := range maxSeen + 5 {
+		seen = append(seen, fmt.Sprint(i))
+	}
+	got := trimSeen(seen, []feedItem{{ID: "keep"}, {ID: "0"}})
+	if len(got) != maxSeen+2 || got[0] != "keep" || got[1] != "0" || got[2] != "5" || got[len(got)-1] != fmt.Sprint(maxSeen+4) {
+		t.Fatalf("%d kept: %q ... %q", len(got), got[:3], got[len(got)-1])
 	}
 }

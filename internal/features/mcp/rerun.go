@@ -5,6 +5,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"unicode/utf16"
 
 	"github.com/robdevops/signalbot/internal/feature"
 	"github.com/robdevops/signalbot/internal/kit/logx"
@@ -45,7 +46,8 @@ type rerunPost struct {
 	Sent    int64        `json:"sent"` // the message its buttons are under
 	Server  string       `json:"server"`
 	Command string       `json:"command"`
-	Value   string       `json:"value,omitempty"` // its arg's value, if any
+	Value   string       `json:"value,omitempty"`   // its arg's value, if any
+	Picture bool         `json:"picture,omitempty"` // it is a picture, its text the caption
 }
 
 // newReruns are the posts saved in store, if it can be read.
@@ -65,16 +67,33 @@ func (r *reruns) add(d *plainDirect, name string, c chatCommand) {
 
 // offer gives act, the answer to /name with value, buttons, and remembers
 // the post it goes out in.
+// Only an answer that goes out as one message gets them, so the buttons
+// are on it and an edit can replace all of it.
 func (r *reruns) offer(act *feature.Action, chat feature.Chat, d *plainDirect, name, value string) {
-	if act.Answer == "" && len(act.Pictures) == 0 {
+	if act.Answer == "" && len(act.Pictures) == 0 || !r.oneMessage(*act) {
 		return
 	}
 	act.Markup.Buttons = buttons(r.cmds[d.server+"/"+name].c, value)
+	pic := len(act.Pictures) > 0
 	act.OnSent = func(sent []int64, dropped bool) {
-		if !dropped && len(sent) > 0 {
-			r.keep(rerunPost{Chat: chat, Sent: sent[len(sent)-1], Server: d.server, Command: name, Value: value}, 0)
+		if !dropped && len(sent) == 1 {
+			r.keep(rerunPost{Chat: chat, Sent: sent[0], Server: d.server, Command: name, Value: value, Picture: pic}, 0)
 		}
 	}
+}
+
+// oneMessage reports whether act goes out as one message: text alone, or
+// one picture with its text as the caption, where the network limits one.
+// Markdown can only shorten the text, so a fit counted before it is one.
+func (r *reruns) oneMessage(act feature.Action) bool {
+	limit := r.h.Info().Caps.Caption
+	switch len(act.Pictures) {
+	case 0:
+		return true
+	case 1:
+		return limit == 0 || len(utf16.Encode([]rune(act.Answer))) <= limit
+	}
+	return false
 }
 
 // buttons are a post's buttons, for c with value ("" for its default):
@@ -175,14 +194,33 @@ func (r *reruns) press(ctx context.Context, p feature.Press) (answer string, ok 
 		return act.Answer, true // told on the button, leaving the post as it was
 	}
 	next := post
-	next.Value = value
-	r.h.Post(feature.Post{Chat: p.Chat, Text: act.Answer, Pictures: act.Pictures, Edit: p.Sent,
-		Markup: feature.Markup{Buttons: buttons(cmd.c, value)},
-		OnSent: func(sent []int64, dropped bool) {
-			if len(sent) > 0 {
-				next.Sent = sent[len(sent)-1]
-				r.keep(next, p.Sent)
-			}
-		}})
+	next.Value, next.Picture = value, len(act.Pictures) > 0
+	switch {
+	case !r.oneMessage(act):
+		// Too much for one message: sent anew, without buttons, and the
+		// post stays as it was, its buttons working.
+		r.h.Post(feature.Post{Chat: p.Chat, Text: act.Answer, Pictures: act.Pictures})
+	case next.Picture != post.Picture:
+		// A picture where there was none, or none where there was one: a
+		// message can't become the other, so it is a new post, with its own
+		// buttons, and the old one keeps its own.
+		r.h.Post(feature.Post{Chat: p.Chat, Text: act.Answer, Pictures: act.Pictures,
+			Markup: feature.Markup{Buttons: buttons(cmd.c, value)},
+			OnSent: func(sent []int64, dropped bool) {
+				if !dropped && len(sent) == 1 {
+					next.Sent = sent[0]
+					r.keep(next, 0)
+				}
+			}})
+	default:
+		r.h.Post(feature.Post{Chat: p.Chat, Text: act.Answer, Pictures: act.Pictures, Edit: p.Sent,
+			Markup: feature.Markup{Buttons: buttons(cmd.c, value)},
+			OnSent: func(sent []int64, dropped bool) {
+				if len(sent) == 1 {
+					next.Sent = sent[0]
+					r.keep(next, p.Sent)
+				}
+			}})
+	}
 	return "", true
 }

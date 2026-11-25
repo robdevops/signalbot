@@ -19,7 +19,7 @@ var feedEvery = 30 * time.Second
 
 const (
 	// maxSeen is how many item IDs a feed remembers past those it still
-	// offers.
+	// offers, all of which it remembers.
 	maxSeen = 1000
 	// maxNew is how many new items one read sends; the rest are skipped,
 	// so a server that floods can't spam its chats.
@@ -253,16 +253,16 @@ func (fs *feeds) poll(ctx context.Context, f *feed) {
 		fresh = append(fresh, it)
 	}
 	st.Started = true
-	if n := len(st.Seen) - maxSeen; n > 0 {
-		st.Seen = slices.Delete(st.Seen, 0, n)
-	}
+	st.Seen = trimSeen(st.Seen, items)
 	if len(fresh) > maxNew {
 		logx.Warnf("MCP server %s: the feed had %d new items; sent the newest %d", f.server, len(fresh), maxNew)
 		fresh = fresh[len(fresh)-maxNew:]
 	}
 	subs := make([]feedSub, 0, len(st.Chats))
 	for _, s := range st.Chats {
-		subs = append(subs, *s)
+		c := *s
+		c.Off = slices.Clone(s.Off) // set changes it in place, after mu is let go
+		subs = append(subs, c)
 	}
 	if changed {
 		fs.save()
@@ -271,6 +271,30 @@ func (fs *feeds) poll(ctx context.Context, f *feed) {
 	for _, it := range fresh {
 		fs.send(ctx, f, it, subs)
 	}
+}
+
+// trimSeen is seen, oldest first, keeping every ID items still lists, so
+// an item that stays listed for long is never sent again, and maxSeen of
+// the others, the newest.
+func trimSeen(seen []string, items []feedItem) []string {
+	listed := map[string]bool{}
+	for _, it := range items {
+		listed[it.ID] = true
+	}
+	others := 0
+	for _, id := range seen {
+		if !listed[id] {
+			others++
+		}
+	}
+	drop := others - maxSeen
+	return slices.DeleteFunc(seen, func(id string) bool {
+		if drop > 0 && !listed[id] {
+			drop--
+			return true
+		}
+		return false
+	})
 }
 
 // send posts it to the chats among subs that want its kind, with its

@@ -24,7 +24,7 @@ type callbackQuery struct {
 
 // Buttons reports that Telegram shows a post's Markup.
 func (c *Client) Caps() feature.Caps {
-	return feature.Caps{Buttons: true, Keyboard: true, Silent: true, EditMedia: true}
+	return feature.Caps{Buttons: true, Keyboard: true, Silent: true, EditMedia: true, Caption: maxCaption}
 }
 
 // pressed is a press as the core gets it: in a DM, only from someone the bot

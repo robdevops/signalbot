@@ -212,6 +212,7 @@ type Caps struct {
 	EditMedia  bool          // an edit can replace a post's picture in place; otherwise it is sent anew
 	EditLimit  int           // how many times a message may be edited; 0 for no limit
 	EditWindow time.Duration // how long after it is sent a message may be edited; 0 for no limit
+	Caption    int           // the longest text one picture carries in its own message, in UTF-16 units; 0 for no limit
 }
 
 // Info is what the core knows about itself. All but Name and Tools are

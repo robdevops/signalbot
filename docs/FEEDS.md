@@ -49,7 +49,7 @@ The resource's first content is text, a JSON object:
 |---|---|
 | `identity` | anything that changes when the server's IDs start over (a new log, a reset); the bot then treats every item as unseen |
 | `kinds` | the kinds a chat may turn off, in the order the menu shows them (at most 20; a `kind` at most 32 bytes, without `/`, and a `label` cut to 32 characters). List only the kinds this server can send now |
-| `items` | the items it still offers, oldest first. Keep the recent ones: the bot remembers the IDs of the last 1,000 it has had, and reads only the newest 1,000 listed, so an item listed again isn't sent again |
+| `items` | the items it still offers, oldest first. Keep the recent ones: the bot remembers the IDs of all those still listed, and of the last 1,000 others, and reads only the newest 1,000 listed, so an item listed again isn't sent again |
 | `id` | unique within the `identity`, at most 200 bytes; required |
 | `kind` | one of `kinds`; an item of a kind not listed always goes out |
 | `time` | when it happened, RFC 3339 |
