@@ -67,6 +67,7 @@ type call struct {
 	Body  map[string]any // JSON, or a multipart form's payload_json
 	Raw   []byte         // the JSON as sent
 	Files []string       // the files uploaded, by name
+	Types []string       // their Content-Types
 }
 
 // gwConn is one gateway connection: its path, and what the client sent.
@@ -107,6 +108,7 @@ func (f *fake) serve(w http.ResponseWriter, r *http.Request) {
 			data, _ := io.ReadAll(p)
 			if p.FileName() != "" {
 				c.Files = append(c.Files, p.FormName()+"="+p.FileName())
+				c.Types = append(c.Types, p.Header.Get("Content-Type"))
 			} else if p.FormName() == "payload_json" {
 				json.Unmarshal(data, &c.Body)
 			}
@@ -629,6 +631,59 @@ func TestGuilds(t *testing.T) {
 	}
 }
 
+// A GUILD_CREATE for a guild READY didn't list is the bot just added: an
+// event in its system channel, if it has one the bot can see. A guild in
+// READY's list becoming available isn't, nor is one back from an outage;
+// one the bot left and is added to again is.
+func TestBotAdded(t *testing.T) {
+	c := connected(newFake(t).client())
+	c.listed.Store(true) // no slash commands to send
+	c.Watch(bot.Watch{Events: true})
+	guildJSON := func(id, ch, system string) json.RawMessage {
+		return json.RawMessage(`{"id":"` + id + `","name":"Test server","system_channel_id":` + system + `,"channels":[{"id":"` + ch + `","name":"general","type":0}],"threads":[]}`)
+	}
+	added := func(rs []bot.Received) []string {
+		var out []string
+		for _, r := range rs {
+			if h, ok := r.(bot.Happened); ok && h.Event.Members != nil && h.Event.Members.BotAdded {
+				out = append(out, h.Event.Chat.GroupID)
+			}
+		}
+		return out
+	}
+	if added(c.events("GUILD_CREATE", guildJSON(guild, chanID, `"`+chanID+`"`))) != nil {
+		t.Fatal("added before READY")
+	}
+	if !c.ready(json.RawMessage(`{"session_id":"s","user":{"id":"` + botID + `","username":"botty"},"guilds":[{"id":"` + guild + `","unavailable":true}]}`)) {
+		t.Fatal("READY not read")
+	}
+	if a := added(c.events("GUILD_CREATE", guildJSON(guild, chanID, `"`+chanID+`"`))); a != nil {
+		t.Fatalf("a guild in READY's list: %v", a)
+	}
+	rs := c.events("GUILD_CREATE", guildJSON("1400000000000000001", "1400000000000000002", `"1400000000000000002"`))
+	if a := added(rs); len(rs) != 2 || len(a) != 1 || a[0] != prefix+"1400000000000000002" {
+		t.Fatalf("added %v of %+v", a, rs)
+	}
+	c.events("GUILD_DELETE", json.RawMessage(`{"id":"1400000000000000001","unavailable":true}`))
+	if a := added(c.events("GUILD_CREATE", guildJSON("1400000000000000001", "1400000000000000002", `"1400000000000000002"`))); a != nil {
+		t.Fatalf("back from an outage: %v", a)
+	}
+	c.events("GUILD_DELETE", json.RawMessage(`{"id":"1400000000000000001"}`))
+	if a := added(c.events("GUILD_CREATE", guildJSON("1400000000000000001", "1400000000000000002", `"1400000000000000002"`))); len(a) != 1 {
+		t.Fatalf("added again: %v", a)
+	}
+	if a := added(c.events("GUILD_CREATE", guildJSON("1400000000000000003", "1400000000000000004", `null`))); a != nil {
+		t.Fatalf("no system channel: %v", a)
+	}
+	if a := added(c.events("GUILD_CREATE", guildJSON("1400000000000000005", "1400000000000000006", `"1400000000000000007"`))); a != nil {
+		t.Fatalf("a system channel the bot can't see: %v", a)
+	}
+	c.Watch(bot.Watch{})
+	if a := added(c.events("GUILD_CREATE", guildJSON("1400000000000000008", "1400000000000000009", `"1400000000000000009"`))); a != nil {
+		t.Fatalf("without an event hook: %v", a)
+	}
+}
+
 // Send writes Discord's Markdown, mentions a known name, splits at 2000,
 // opens a DM once, and puts pictures in the first message with the text
 // when it fits; buttons go on the last message, highlighted ones primary,
@@ -678,6 +733,27 @@ func TestSend(t *testing.T) {
 	last := calls[len(calls)-1]
 	if len(sent) != 1 || last.Body["content"] != "a picture" || strings.Join(last.Files, " ") != "files[0]=Rain__7_days.png files[1]=clip.mp3" {
 		t.Fatalf("pictures %v: %+v", sent, last)
+	}
+}
+
+// A picture is named and typed as what its data is: a JPEG goes as .jpg.
+func TestSendJPEG(t *testing.T) {
+	f := newFake(t)
+	c := connected(f.client())
+	jpg := []byte("\xff\xd8\xff\xe0\x00\x10JFIF\x00")
+	c.Send(feature.Chat{GroupID: group}, "", []feature.Picture{{Data: jpg, Name: "photo"}, {Data: jpg}}, nil, 0, []byte("mp3"), feature.Markup{})
+	last := f.callsTo("POST /channels/" + chanID + "/messages")[0]
+	if strings.Join(last.Files, " ") != "files[0]=photo.jpg files[1]=picture2.jpg files[2]=clip.mp3" ||
+		strings.Join(last.Types, " ") != "image/jpeg image/jpeg audio/mpeg" {
+		t.Fatalf("files %v, types %v", last.Files, last.Types)
+	}
+	if a, _ := json.Marshal(last.Body["attachments"]); !strings.Contains(string(a), `"filename":"photo.jpg"`) {
+		t.Fatalf("attachments %s", a)
+	}
+	c.Edit(feature.Chat{GroupID: group}, 1200000000000000007, "", []feature.Picture{{Data: jpg}}, nil, feature.Markup{})
+	e := f.callsTo("PATCH /channels/" + chanID + "/messages/1200000000000000007")[0]
+	if strings.Join(e.Files, " ") != "files[0]=picture1.jpg" || strings.Join(e.Types, " ") != "image/jpeg" {
+		t.Fatalf("edit: files %v, types %v", e.Files, e.Types)
 	}
 }
 

@@ -781,7 +781,7 @@ func TestPlainDirectSettings(t *testing.T) {
 		`{"tool":"echo","args":{"a":1}}`:                   "are for a direct command of a server without an addon block",
 		`{"resource":"x://y","tool":"echo","direct":true}`: "a resource takes no tool, arg or args",
 		`{"tool":"echo","direct":true,"values":["a"]}`:     "values without the arg they are for",
-		`{"direct":true}`:                                  "needs a tool",
+		`{"direct":true}`: "needs a tool",
 	} {
 		_, _, err := register(t, `{"mcpServers":{"fake":{"url":"`+url+`","chat_commands":{"c":`+cmd+`}}}}`)
 		if err == nil || !strings.Contains(err.Error(), want) {
