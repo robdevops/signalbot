@@ -83,6 +83,8 @@ func (c *Client) unlisted(group string) bool {
 // (SIGNAL_GROUP_IDS unset or all: New sets suggest), and suggests the setting that lists the
 // groups it is in now, with their names: the one place the bot logs a
 // group's name, so whoever runs it can tell which is which.
+// A name's backslashes are shown as "/", so the line can be pasted into
+// an env file whole.
 func (c *Client) suggestGroups(ctx context.Context) {
 	if !c.suggest.Swap(false) {
 		return
@@ -99,7 +101,10 @@ func (c *Client) suggestGroups(ctx context.Context) {
 	for _, g := range gs {
 		if g.IsMember && g.ID != "" {
 			ids = append(ids, g.ID)
-			names = append(names, cmp.Or(txt.Clamp(txt.SafeName(g.Name), 40), "(no name)"))
+			// A backslash shown as "/": in an env file systemd reads, one
+			// that ends the line would join the next setting to this one.
+			name := strings.ReplaceAll(txt.SafeName(g.Name), `\`, "/")
+			names = append(names, cmp.Or(txt.Clamp(name, 40), "(no name)"))
 		}
 	}
 	if len(ids) == 0 {

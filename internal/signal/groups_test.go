@@ -189,11 +189,13 @@ func TestListedGroupsOnly(t *testing.T) {
 func TestSuggestGroups(t *testing.T) {
 	logs := captureLogs(t)
 	f := newFake(t)
-	f.set("listGroups", strings.Replace(twoGroups, `"name":"Other"`, `"name":"Ot\nher"`, 1)+``)
+	// A newline in a name is collapsed; a backslash, which ending a line
+	// in a systemd env file would join the next line to it, is shown as "/".
+	f.set("listGroups", strings.NewReplacer(`"name":"Other"`, `"name":"Ot\nher"`, `"name":"Family"`, `"name":"Fam\\ily \\"`).Replace(twoGroups))
 	c := newClient(f.sock, allow.Parse("none"), nil)
 	c.suggest.Store(true)
 	_, conn := run(t, c, f)
-	line := "Signal: to answer only in the groups the bot is in now, set: SIGNAL_GROUP_IDS=" + groupID + "," + otherID + "  # Family, Ot her\n"
+	line := "Signal: to answer only in the groups the bot is in now, set: SIGNAL_GROUP_IDS=" + groupID + "," + otherID + "  # Fam/ily /, Ot her\n"
 	eventually(t, "the suggestion", func() bool { return strings.Contains(logs.String(), line) })
 	if !strings.Contains(logs.String(), "Signal: the bot answers in any group anyone adds it to, as SIGNAL_GROUP_IDS is unset or all") {
 		t.Fatalf("logs %q", logs)
