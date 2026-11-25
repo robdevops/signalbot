@@ -738,3 +738,32 @@ func TestEventsAfterExpiry(t *testing.T) {
 	}
 	waitCalls(t, f, "getChatMember", 1)
 }
+
+// A GIF arrives as an animation, usually an MP4 with a still thumbnail:
+// the model sees the thumbnail, not an unreadable file, and the same GIF
+// in document isn't added again. A GIF kept as a GIF is shown itself.
+func TestAnimation(t *testing.T) {
+	c := connected(newFake(t).client("1111111"))
+	for _, tc := range []struct {
+		anim, want string
+	}{
+		{`{"file_id":"mp4","mime_type":"video/mp4","file_size":90000,"thumbnail":{"file_id":"still","file_size":4000}}`, "still"},
+		{`{"file_id":"real","mime_type":"image/gif","file_size":30000,"thumbnail":{"file_id":"still","file_size":4000}}`, "real"},
+	} {
+		u := parse(t, `{"update_id":1,"message":{"message_id":7,`+fromA+`,`+inDM+`,"caption":"this is you",`+
+			`"animation":`+tc.anim+`,"document":{"file_id":"doc","file_name":"idiot.mp4","mime_type":"video/mp4","file_size":90000}}}`)
+		r, _ := c.event(u)
+		m, _ := r.(bot.Incoming).Load(context.Background(), func(string, string) {})
+		if !reflect.DeepEqual(m.Media, []feature.Media{{ID: tc.want}}) {
+			t.Errorf("%s: media %+v", tc.want, m.Media)
+		}
+	}
+	// One quoted: the quote's still, marked quoted.
+	u := parse(t, `{"update_id":2,"message":{"message_id":8,`+fromA+`,`+inDM+`,"text":"what is this?","reply_to_message":{"message_id":7,`+fromA+`,`+inDM+
+		`,"animation":{"file_id":"mp4","mime_type":"video/mp4","file_size":90000,"thumbnail":{"file_id":"still","file_size":4000}}}}}`)
+	r, _ := c.event(u)
+	m, _ := r.(bot.Incoming).Load(context.Background(), func(string, string) {})
+	if !reflect.DeepEqual(m.Media, []feature.Media{{ID: "still", Quoted: true}}) {
+		t.Errorf("quoted media %+v", m.Media)
+	}
+}

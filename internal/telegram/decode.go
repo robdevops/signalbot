@@ -62,6 +62,15 @@ type file struct {
 	FileSize int    `json:"file_size"`
 }
 
+// animation is a GIF, which Telegram usually turns into a silent MP4; its
+// thumbnail is a still the model can see.
+type animation struct {
+	FileID    string     `json:"file_id"`
+	MimeType  string     `json:"mime_type"`
+	FileSize  int        `json:"file_size"`
+	Thumbnail *photoSize `json:"thumbnail"`
+}
+
 type sticker struct {
 	FileID     string     `json:"file_id"`
 	Emoji      string     `json:"emoji"`
@@ -89,6 +98,7 @@ type message struct {
 	Quote           *struct{ Text string } `json:"quote"`
 	Photo           []photoSize            `json:"photo"`
 	Document        *file                  `json:"document"`
+	Animation       *animation             `json:"animation"` // a GIF; Document holds it too, for old clients
 	Audio           *file                  `json:"audio"`
 	Voice           *file                  `json:"voice"`
 	Sticker         *sticker               `json:"sticker"`
@@ -321,7 +331,18 @@ func (c *Client) message(m *message, edited int64) feature.Message {
 		if p := best(m.Photo); p != nil && len(images) < feature.MaxPictures {
 			images = append(images, feature.Media{ID: p.FileID, Quoted: quoted})
 		}
-		for _, f := range []*file{m.Document, m.Audio, m.Voice} {
+		doc := m.Document
+		if a := m.Animation; a != nil {
+			doc = nil // the same GIF, not a file to read
+			still := a.Thumbnail
+			if img.Supported(a.MimeType) && a.FileSize <= img.MaxReceived { // a GIF kept as one: itself
+				still = &photoSize{FileID: a.FileID, FileSize: a.FileSize}
+			}
+			if still != nil && still.FileSize <= img.MaxReceived && len(images) < feature.MaxPictures {
+				images = append(images, feature.Media{ID: still.FileID, Quoted: quoted})
+			}
+		}
+		for _, f := range []*file{doc, m.Audio, m.Voice} {
 			switch {
 			case f == nil:
 			case img.Supported(f.MimeType) && f.FileSize <= img.MaxReceived && len(images) < feature.MaxPictures:
