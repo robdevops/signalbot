@@ -28,8 +28,16 @@ const (
 	maxRosterPg = 50
 )
 
-// userID is a Slack user ID, as a member list gives it.
-var userID = regexp.MustCompile(`^[UW][A-Z0-9]{8,20}$`)
+// userID is a Slack user ID, as a member list gives it; channelID a
+// channel's, public or private, whose members can be listed.
+var (
+	userID    = regexp.MustCompile(`^[UW][A-Z0-9]{8,20}$`)
+	channelID = regexp.MustCompile(`^[CG][A-Z0-9]{8,20}$`)
+)
+
+// namesKey is the roster's key for the workspace's names, which no
+// channelID matches.
+const namesKey = ""
 
 // roster keeps the lists Delivered asks Slack for, each for rosterTTL: by
 // the key "" the workspace's names, by a channel ID that channel's
@@ -59,7 +67,9 @@ func (r *roster) get(ctx context.Context, key string, fetch func(context.Context
 	if e == nil {
 		if len(r.entries) >= maxRoster {
 			for k, old := range r.entries {
-				if time.Since(old.at) >= rosterTTL {
+				// One being fetched (busy) stays, so that a second fetch
+				// of its key can't start alongside it.
+				if time.Since(old.at) >= rosterTTL && len(old.busy) == 0 {
 					delete(r.entries, k)
 				}
 			}
@@ -115,7 +125,10 @@ func (c *Client) members(ctx context.Context, channel string) []bot.Member {
 		}
 	}
 	c.mu.Unlock()
-	if listed, err := c.listed(ctx, channel); err != nil {
+	if !channelID.MatchString(channel) {
+		// Nothing Slack could list, nor to be taken for namesKey: the
+		// people seen alone.
+	} else if listed, err := c.listed(ctx, channel); err != nil {
 		if code(err) == "missing_scope" {
 			c.membersWarn.Do(func() {
 				logx.Warnf("Slack refused to list a channel's members (missing_scope): the app needs the scopes channels:read, groups:read and users:read, so paste the app manifest again at api.slack.com/apps → your app → App Manifest and reinstall the app; until then a delivered message names only the people seen since the bot started")
@@ -147,7 +160,7 @@ func (c *Client) listed(ctx context.Context, channel string) (map[string]string,
 	if err != nil {
 		return nil, err
 	}
-	names, err := c.roster.get(ctx, "", c.workspaceNames)
+	names, err := c.roster.get(ctx, namesKey, c.workspaceNames)
 	if err != nil {
 		return nil, err
 	}

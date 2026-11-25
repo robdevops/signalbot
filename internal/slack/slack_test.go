@@ -888,6 +888,44 @@ func TestDeliveredMembersCached(t *testing.T) {
 	}
 }
 
+// A chat whose channel isn't one Slack could list is never looked up, so
+// the workspace's names, cached under "", are never taken for its members.
+func TestDeliveredMembersNotAChannel(t *testing.T) {
+	f := newFake(t)
+	f.pages = rosterPages()
+	c := connected(f.client(t))
+	if r, ok := c.Delivered(context.Background(), feature.Message{Chat: feature.Chat{GroupID: "slack:" + channel}, Text: "hi"}); !ok || len(r.Members) != 2 {
+		t.Fatalf("ready %+v", r)
+	}
+	for _, g := range []string{"slack:", "slack:/1700000000.000100", "slack:not-a-channel"} {
+		if r, ok := c.Delivered(context.Background(), feature.Message{Chat: feature.Chat{GroupID: g}, Text: "hi"}); !ok || len(r.Members) != 0 {
+			t.Fatalf("%s: ready %+v", g, r)
+		}
+	}
+	if n := len(f.callsTo("conversations.members")); n != 2 {
+		t.Fatalf("members calls %d", n)
+	}
+}
+
+// A full roster prunes expired lists, but not one being fetched, so a
+// second fetch of its key can't start alongside.
+func TestRosterPruneKeepsBusy(t *testing.T) {
+	var r roster
+	r.entries = map[string]*rosterEntry{}
+	for i := range maxRoster {
+		r.entries[fmt.Sprint(i)] = &rosterEntry{busy: make(chan struct{}, 1), at: time.Now().Add(-time.Hour)}
+	}
+	busy := &rosterEntry{busy: make(chan struct{}, 1)}
+	busy.busy <- struct{}{}
+	r.entries["0"] = busy
+	if _, err := r.get(context.Background(), "new", func(context.Context) (map[string]string, error) { return map[string]string{}, nil }); err != nil {
+		t.Fatal(err)
+	}
+	if r.entries["0"] != busy || len(r.entries) != 2 {
+		t.Fatalf("entries %d, busy kept %v", len(r.entries), r.entries["0"] == busy)
+	}
+}
+
 // Without the scopes to list members, a delivered message's members are
 // the people seen, and the scopes to add are logged once, naming no one;
 // the manifest has them all.
