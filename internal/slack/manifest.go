@@ -13,7 +13,6 @@ import (
 	"github.com/robdevops/signalbot/internal/bot"
 	"github.com/robdevops/signalbot/internal/config"
 	"github.com/robdevops/signalbot/internal/kit/fsx"
-	"github.com/robdevops/signalbot/internal/kit/logx"
 	"github.com/robdevops/signalbot/internal/kit/txt"
 )
 
@@ -102,7 +101,7 @@ func (c *Client) writeManifest() {
 	if !c.named.Load() {
 		var m manifest
 		if err != nil || json.Unmarshal(old, &m) != nil || m.Features.BotUser.DisplayName == "" {
-			logx.Debugf("slack: the app manifest waits for the bot's display name")
+			log.Debugf("the app manifest waits for the bot's display name")
 			return
 		}
 		name = m.Features.BotUser.DisplayName
@@ -112,10 +111,10 @@ func (c *Client) writeManifest() {
 		return
 	}
 	if err := fsx.WriteAtomic(path, data); err != nil {
-		logx.Warnf("slack: writing the app manifest failed: %v", err)
+		log.Warnf("writing the app manifest failed: %v", err)
 		return
 	}
-	logx.Noticef("Slack: the commands changed: paste %s at api.slack.com/apps → your app → App Manifest", path)
+	log.Noticef("the commands changed: paste %s at api.slack.com/apps → your app → App Manifest", path)
 }
 
 // manifestDirs are where SavedManifest looks when STATE_DIRECTORY isn't

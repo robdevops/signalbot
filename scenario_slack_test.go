@@ -115,7 +115,7 @@ func startSlackWith(t *testing.T, env map[string]string, extra ...func(feature.H
 			t.Errorf("a token was logged:\n%s", l)
 		}
 	})
-	h.waitFor("the bot to connect", func() bool { return strings.Contains(h.logText(), "connected to Slack as @botty") })
+	h.waitFor("the bot to connect", func() bool { return strings.Contains(h.logText(), "Slack: connected as @botty") })
 	return h
 }
 
@@ -341,13 +341,16 @@ func (h *slHarness) waitLog(s string) {
 }
 
 // By default a workspace admin's DM is answered and a stranger's isn't:
-// not answered or kept, and logged by their ID alone.
+// not answered or kept, and warned of by their ID alone. The default says
+// nothing at startup.
 func TestSlackDMDefault(t *testing.T) {
 	h := startSlack(t)
-	h.waitLog("Slack DMs: allowed from admins and mods (SLACK_DM_USERS)")
+	if l := h.logText(); strings.Contains(l, "SLACK_DM_USERS") {
+		t.Fatalf("logged:\n%s", l)
+	}
 	h.setAdmin(slAlice, true)
 	h.message(slBob, "D0BOBDM001", "a secret question")
-	h.waitLog("slack:" + slBob + " ignored because not allowed by SLACK_DM_USERS")
+	h.waitLog("Slack: a DM from slack:" + slBob + " ignored: SLACK_DM_USERS doesn't allow it")
 	h.message(slAlice, "D0ALICEDM1", "hello")
 	if s := h.waitCalls("chat.postMessage", 1); len(s) != 1 || s[0].Params["channel"] != "D0ALICEDM1" {
 		t.Fatalf("sent %v", s)
@@ -363,10 +366,10 @@ func TestSlackDMDefault(t *testing.T) {
 // With SLACK_DM_USERS=none no one's DM is answered, an admin's either.
 func TestSlackDMNone(t *testing.T) {
 	h := startSlackWith(t, map[string]string{"SLACK_DM_USERS": "none"})
-	h.waitLog("Slack DMs are off: SLACK_DM_USERS is none")
+	h.waitLog("Slack: DMs are off: SLACK_DM_USERS is none")
 	h.setAdmin(slAlice, true)
 	h.message(slAlice, "D0ALICEDM1", "hello")
-	h.waitLog("slack:" + slAlice + " ignored because not allowed by SLACK_DM_USERS")
+	h.waitLog("Slack: a DM from slack:" + slAlice + " ignored: SLACK_DM_USERS doesn't allow it")
 	h.message(slAlice, slChannel, "<@UBOT00001> hello")
 	if s := h.waitCalls("chat.postMessage", 1); len(s) != 1 || s[0].Params["channel"] != slChannel {
 		t.Fatalf("sent %v", s)

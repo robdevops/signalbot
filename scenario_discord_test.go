@@ -125,7 +125,7 @@ func startDiscord(t *testing.T, env map[string]string) *dcHarness {
 			t.Errorf("the token was logged:\n%s", h.logText())
 		}
 	})
-	h.waitFor("the bot to connect", func() bool { return strings.Contains(h.logText(), "connected to Discord as botty") })
+	h.waitFor("the bot to connect", func() bool { return strings.Contains(h.logText(), "Discord: connected as botty") })
 	return h
 }
 
@@ -456,11 +456,12 @@ func (h *dcHarness) dmSent() []string {
 }
 
 // By default only a server's admins and mods may DM the bot: a stranger's
-// DM is refused, logged by their ID alone, while the owner's, and then a
-// mod's, by a role with Manage Messages, are answered.
+// DM is refused, warned of by their ID alone, while the owner's, and then
+// a mod's, by a role with Manage Messages, are answered. The default says
+// nothing at startup.
 func TestDiscordDMAdminsAndMods(t *testing.T) {
 	h := startDiscord(t, nil)
-	if !strings.Contains(h.logText(), "Discord DMs: allowed from admins and mods (DISCORD_DM_USERS)") {
+	if strings.Contains(h.logText(), "DISCORD_DM_USERS") {
 		t.Fatalf("log %s", h.logText())
 	}
 	h.mu.Lock()
@@ -469,7 +470,7 @@ func TestDiscordDMAdminsAndMods(t *testing.T) {
 	h.mu.Unlock()
 	h.send("MESSAGE_CREATE", `{"id":"$ID","type":0,`+dcInDM+`,`+dcFromBob+`,"content":"hello there"}`)
 	h.waitFor("the refusal", func() bool {
-		return strings.Contains(h.logText(), "discord:"+dcBob+" ignored because not allowed by DISCORD_DM_USERS")
+		return strings.Contains(h.logText(), "Discord: a DM from discord:"+dcBob+" ignored: DISCORD_DM_USERS doesn't allow it")
 	})
 	h.send("GUILD_UPDATE", `{"id":"`+dcGuild+`","name":"Test server","owner_id":"`+dcAlice+`"}`)
 	h.send("MESSAGE_CREATE", `{"id":"$ID","type":0,`+dcInDM+`,`+dcFromAlice+`,"content":"hello"}`)
@@ -489,13 +490,13 @@ func TestDiscordDMAdminsAndMods(t *testing.T) {
 // says so at startup.
 func TestDiscordDMNone(t *testing.T) {
 	h := startDiscord(t, map[string]string{"DISCORD_DM_USERS": "none"})
-	if !strings.Contains(h.logText(), "Discord DMs are off") {
+	if !strings.Contains(h.logText(), "Discord: DMs are off: DISCORD_DM_USERS is none") {
 		t.Fatalf("log %s", h.logText())
 	}
 	h.send("GUILD_UPDATE", `{"id":"`+dcGuild+`","name":"Test server","owner_id":"`+dcAlice+`"}`)
 	h.send("MESSAGE_CREATE", `{"id":"$ID","type":0,`+dcInDM+`,`+dcFromAlice+`,"content":"hello"}`)
 	h.waitFor("the refusal", func() bool {
-		return strings.Contains(h.logText(), "discord:"+dcAlice+" ignored because not allowed by DISCORD_DM_USERS")
+		return strings.Contains(h.logText(), "Discord: a DM from discord:"+dcAlice+" ignored: DISCORD_DM_USERS doesn't allow it")
 	})
 	if s := h.dmSent(); len(s) != 0 || len(h.requests()) != 0 {
 		t.Fatalf("sent %q", s)
@@ -552,7 +553,7 @@ func TestDiscordDMAlertDropped(t *testing.T) {
 	h.send("GUILD_UPDATE", `{"id":"`+dcGuild+`","name":"Test server","owner_id":"700000000000000001"}`)
 	h.send("MESSAGE_CREATE", `{"id":"$ID","type":0,`+dcInDM+`,`+dcFromAlice+`,"content":"hello again"}`)
 	h.waitFor("Alice's DM refused", func() bool {
-		return strings.Contains(h.logText(), "discord:"+dcAlice+" ignored because not allowed by DISCORD_DM_USERS")
+		return strings.Contains(h.logText(), "Discord: a DM from discord:"+dcAlice+" ignored: DISCORD_DM_USERS doesn't allow it")
 	})
 	h.bot.Post(feature.Post{Chat: feature.Chat{User: "discord:" + dcAlice}, Text: "hail alert"})
 	h.waitFor("the alert dropped", func() bool {

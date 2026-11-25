@@ -37,7 +37,7 @@ type apiError struct {
 }
 
 func (e *apiError) Error() string {
-	return fmt.Sprintf("discord: %d %s (%d)", e.Status, e.Message, e.Code)
+	return fmt.Sprintf("%d %s (%d)", e.Status, e.Message, e.Code)
 }
 
 // status reports whether err is a refusal with the HTTP status code.
@@ -127,7 +127,7 @@ func (c *Client) attempt(ctx context.Context, method, path, ctype string, body [
 	}
 	req, err := http.NewRequestWithContext(ctx, method, c.base+path, r)
 	if err != nil {
-		return 0, errors.New("discord: bad request")
+		return 0, errors.New("bad request")
 	}
 	req.Header.Set("Authorization", "Bot "+c.token)
 	req.Header.Set("User-Agent", "DiscordBot (https://github.com/robdevops/signalbot, 1)")
@@ -140,12 +140,12 @@ func (c *Client) attempt(ctx context.Context, method, path, ctype string, body [
 		if errors.As(err, &ue) {
 			err = ue.Err
 		}
-		return 0, c.scrub(fmt.Errorf("discord: %s: %w", method, err))
+		return 0, c.scrub(fmt.Errorf("%s: %w", method, err))
 	}
 	defer resp.Body.Close()
 	data, err := io.ReadAll(io.LimitReader(resp.Body, 8<<20))
 	if err != nil {
-		return 0, c.scrub(fmt.Errorf("discord: %s: %w", method, err))
+		return 0, c.scrub(fmt.Errorf("%s: %w", method, err))
 	}
 	if resp.StatusCode == http.StatusTooManyRequests {
 		var rl struct {
@@ -164,7 +164,7 @@ func (c *Client) attempt(ctx context.Context, method, path, ctype string, body [
 	}
 	if out != nil && len(data) > 0 {
 		if err := json.Unmarshal(data, out); err != nil {
-			return 0, fmt.Errorf("discord: %s: malformed answer", method)
+			return 0, fmt.Errorf("%s: malformed answer", method)
 		}
 	}
 	return 0, nil

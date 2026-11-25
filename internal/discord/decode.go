@@ -15,7 +15,6 @@ import (
 	"github.com/robdevops/signalbot/internal/bot"
 	"github.com/robdevops/signalbot/internal/feature"
 	"github.com/robdevops/signalbot/internal/kit/img"
-	"github.com/robdevops/signalbot/internal/kit/logx"
 	"github.com/robdevops/signalbot/internal/kit/mdstyle"
 	"github.com/robdevops/signalbot/internal/kit/txt"
 )
@@ -175,7 +174,7 @@ func (c *Client) received(m *message, edited int64) bot.Received {
 	if m.GuildID == "" { // a DM: one refused now isn't kept, not even its channel
 		var ok bool
 		if ok, known = c.dmDecided(uid); known && !ok {
-			refuseDM(uid)
+			c.refuseDM(uid)
 			return nil
 		}
 	}
@@ -187,7 +186,7 @@ func (c *Client) received(m *message, edited int64) bot.Received {
 	case msg.Addressed:
 		return bot.Incoming{Chat: msg.Chat, Load: func(ctx context.Context, learn func(name, id string)) (feature.Message, bool) {
 			if !known && !c.mayDM(ctx, uid) { // a lookup, so in the slot
-				refuseDM(uid)
+				c.refuseDM(uid)
 				return feature.Message{}, false
 			}
 			if msg.Chat.GroupID != "" {
@@ -627,7 +626,7 @@ func (c *Client) Delivered(ctx context.Context, msg feature.Message) (bot.Ready,
 	wait, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
 	if c.WaitID(wait) == "" {
-		logx.Warnf("delivered message dropped: not connected to Discord after 10s")
+		log.Warnf("delivered message dropped: not connected after 10s")
 		return bot.Ready{}, false
 	}
 	var r bot.Ready
@@ -646,25 +645,25 @@ func (c *Client) Delivered(ctx context.Context, msg feature.Message) (bot.Ready,
 	// still in the server, allowed to send in the channel, and not timed
 	// out; a lookup that fails drops it.
 	if !inGroup && !c.mayDM(wait, strings.TrimPrefix(msg.Chat.User, prefix)) {
-		logx.Infof("delivered message dropped: its sender may no longer DM the bot")
+		log.Infof("delivered message dropped: its sender may no longer DM the bot")
 		return bot.Ready{}, false
 	}
 	if inGroup {
 		uid := strings.TrimPrefix(msg.Sender, prefix)
 		if !known || info == nil || snowflake(uid) <= 0 {
-			logx.Infof("delivered message dropped: the channel or its sender is unknown")
+			log.Infof("delivered message dropped: the channel or its sender is unknown")
 			return bot.Ready{}, false
 		}
 		m, err := c.member(wait, ch.guild, uid)
 		if err != nil {
-			logx.Warnf("delivered message dropped: reading its sender's roles failed: %v", err)
+			log.Warnf("delivered message dropped: reading its sender's roles failed: %v", err)
 			return bot.Ready{}, false
 		}
 		c.mu.Lock()
 		ok := c.canPost(info, ch, uid, m)
 		c.mu.Unlock()
 		if !ok {
-			logx.Infof("delivered message dropped: its sender can no longer post in the channel")
+			log.Infof("delivered message dropped: its sender can no longer post in the channel")
 			return bot.Ready{}, false
 		}
 	}
@@ -705,7 +704,7 @@ func (c *Client) Reachable(ctx context.Context, chat feature.Chat) bool {
 	wait, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
 	if c.WaitID(wait) == "" {
-		logx.Warnf("not connected to Discord after 10s")
+		log.Warnf("not connected after 10s")
 		return false
 	}
 	if chat.GroupID == "" {

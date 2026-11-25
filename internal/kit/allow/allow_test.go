@@ -76,11 +76,11 @@ func TestNorm(t *testing.T) {
 func TestRefused(t *testing.T) {
 	var buf logx.Buffer
 	t.Cleanup(logx.SetOutput(&buf, &buf, false))
-	r := Refused{Setting: "SIGNAL_DM_USERS"}
+	r := Refused{Setting: "SIGNAL_DM_USERS", L: logx.For("signal")}
 	r.Log("bob")
 	r.Log("bob")
 	r.Log("alice")
-	want := "a DM from bob ignored: SIGNAL_DM_USERS doesn't allow it; add the ID to SIGNAL_DM_USERS to allow DMs from them\n"
+	want := "Signal: a DM from bob ignored: SIGNAL_DM_USERS doesn't allow it; add the ID to SIGNAL_DM_USERS to allow DMs from them\n"
 	if got := buf.String(); strings.Count(got, want) != 1 || strings.Count(got, "a DM from") != 2 {
 		t.Fatalf("log %q", got)
 	}

@@ -34,6 +34,7 @@ type Client struct {
 	pending  time.Duration // how long a slash command's "thinking…" waits for a reply
 	settle   time.Duration // how long the startup line of servers waits for READY's guilds
 	dm       allow.Policy  // who may DM the bot: DISCORD_DM_USERS
+	refused  allow.Refused // DMs DISCORD_DM_USERS refuses, warned of once per sender
 
 	self       atomic.Value // string: the bot's user ID
 	username   atomic.Value // string: its username
@@ -114,9 +115,7 @@ func New(test *config.Test) *Client {
 	c := newClient(config.Env("DISCORD_API_URL", "https://discord.com/api/v10"), config.Env("DISCORD_BOT_TOKEN", ""), test)
 	c.dm = allow.Parse(config.Env("DISCORD_DM_USERS", ""))
 	if c.dm.None() {
-		logx.Warnf("Discord DMs are off: DISCORD_DM_USERS is none; the bot answers only in channels")
-	} else {
-		logx.Noticef("Discord DMs: allowed from %s (DISCORD_DM_USERS)", c.dm)
+		log.Warnf("DMs are off: DISCORD_DM_USERS is none; the bot answers only in channels")
 	}
 	return c
 }
@@ -128,5 +127,17 @@ func newClient(base, token string, test *config.Test) *Client {
 		channels: map[string]channel{}, guilds: map[string]*guildInfo{}, members: map[string]memberInfo{}, lists: map[string]*memberList{}, left: map[string]bool{}, dms: map[string]string{}, dmUsers: map[string]string{},
 		authors: map[int64]string{}, asked: map[string]map[int64]*interaction{},
 		answering: map[string]int64{}, botRoles: map[string]string{}, hooks: map[int64]*interaction{},
-		dm: allow.Parse(""), verdicts: map[string]verdict{}, test: test}
+		dm: allow.Parse(""), verdicts: map[string]verdict{}, test: test,
+		refused: allow.Refused{Setting: "DISCORD_DM_USERS", L: log}}
+}
+
+// log is Discord's log: its every line starts "Discord: ".
+var log = logx.For("discord")
+
+// recoverEvent is deferred where an event is read, as logx.Recover is, but
+// logs in the network's log: that reading one failed, never what it held.
+func recoverEvent() {
+	if recover() != nil {
+		log.Errorf("internal error while reading an event; dropped")
+	}
 }

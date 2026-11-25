@@ -4,8 +4,6 @@ import (
 	"context"
 	"slices"
 	"time"
-
-	"github.com/robdevops/signalbot/internal/kit/logx"
 )
 
 // The permissions that make someone a server's admin or mod, as Discord
@@ -79,15 +77,13 @@ func (c *Client) mayDM(ctx context.Context, uid string) bool {
 	case err == nil:
 		c.keepVerdict(uid, verdict{admin: admin, mod: mod, at: time.Now()}, gen)
 	case !ok:
-		logx.Warnf("discord: reading a DM user's roles failed, so the DM is refused: %v", err)
+		log.Warnf("reading a DM user's roles failed, so the DM is refused: %v", err)
 	}
 	return ok
 }
 
-// refuseDM logs a DM refused, by its sender's ID only.
-func refuseDM(uid string) {
-	logx.Infof("%s ignored because not allowed by DISCORD_DM_USERS (add this ID to allow DMs)", prefix+uid)
-}
+// refuseDM logs a DM refused, by its sender's ID only, once per sender.
+func (c *Client) refuseDM(uid string) { c.refused.Log(prefix + uid) }
 
 // serverRoles reports whether uid is an admin or a mod of any server the
 // bot is in, by their server-wide permissions (@everyone's and their

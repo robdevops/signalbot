@@ -55,8 +55,9 @@ type Client struct {
 	hellos atomic.Int64 // Socket Mode connections made
 	team   atomic.Value // [2]string: the bot's workspace and any Enterprise Grid org, as auth.test says
 
-	dm       allow.Policy // SLACK_DM_USERS: who may DM the bot
-	verdicts verdicts     // whether people are workspace admins, as users.info lately said
+	dm       allow.Policy  // SLACK_DM_USERS: who may DM the bot
+	refused  allow.Refused // DMs SLACK_DM_USERS refuses, warned of once per sender
+	verdicts verdicts      // whether people are workspace admins, as users.info lately said
 
 	watch    atomic.Bool                   // the core has an event hook
 	commands atomic.Pointer[[]bot.Command] // the commands features registered, for the app manifest
@@ -105,9 +106,7 @@ func Check() error {
 func New(test *config.Test) *Client {
 	dm := allow.Parse(config.Env("SLACK_DM_USERS", ""))
 	if dm.None() {
-		logx.Warnf("Slack DMs are off: SLACK_DM_USERS is none; the bot answers only in channels")
-	} else {
-		logx.Noticef("Slack DMs: allowed from %s (SLACK_DM_USERS)", dm)
+		log.Warnf("DMs are off: SLACK_DM_USERS is none; the bot answers only in channels")
 	}
 	return newClient(config.Env("SLACK_API_URL", "https://slack.com/api"), config.Env("SLACK_BOT_TOKEN", ""), config.Env("SLACK_APP_TOKEN", ""), config.StateDir(), dm, test)
 }
@@ -116,7 +115,8 @@ func newClient(base, token, appToken, stateDir string, dm allow.Policy, test *co
 	return &Client{base: strings.TrimRight(base, "/"), token: token, appToken: appToken, stateDir: stateDir, dm: dm, http: httpx.Client(8),
 		backoff: time.Second, slow: 10 * time.Minute, settle: 2 * time.Second, known: make(chan struct{}),
 		people: map[string]string{}, asking: map[string]bool{}, ims: map[string]string{}, imUser: map[string]string{},
-		chans: map[string]map[string]bool{}, left: map[string]bool{}, sent: map[string]bool{}, thread: map[string]string{}, blocks: map[string][]any{}, test: test}
+		chans: map[string]map[string]bool{}, left: map[string]bool{}, sent: map[string]bool{}, thread: map[string]string{}, blocks: map[string][]any{}, test: test,
+		refused: allow.Refused{Setting: "SLACK_DM_USERS", L: log}}
 }
 
 // scrub is err with the tokens taken out of its text.
@@ -143,7 +143,7 @@ type apiError struct {
 	RetryAfter int    // seconds, for a 429
 }
 
-func (e *apiError) Error() string { return fmt.Sprintf("slack: %s: %s", e.Method, e.Code) }
+func (e *apiError) Error() string { return fmt.Sprintf("%s: %s", e.Method, e.Code) }
 
 // code is err's Slack error, or "".
 func code(err error) string {
@@ -221,13 +221,13 @@ func (c *Client) postOnce(ctx context.Context, method, token, ctype string, body
 		Error string `json:"error"`
 	}
 	if err := json.Unmarshal(data, &r); err != nil {
-		return fmt.Errorf("slack: %s: bad response (status %d)", method, resp.StatusCode)
+		return fmt.Errorf("%s: bad response (status %d)", method, resp.StatusCode)
 	}
 	if !r.OK {
 		return &apiError{Method: method, Code: txt.Clamp(r.Error, 80)}
 	}
 	if out != nil && json.Unmarshal(data, out) != nil {
-		return fmt.Errorf("slack: %s: malformed result", method)
+		return fmt.Errorf("%s: malformed result", method)
 	}
 	return nil
 }
@@ -314,10 +314,10 @@ func (c *Client) Run(ctx context.Context, handle func(bot.Received)) {
 		wait := backoff
 		if refusedToken(err) {
 			wait = c.slow
-			logx.Errorf("Slack refused SLACK_BOT_TOKEN (%s): set it to the Bot User OAuth Token, xoxb-…, from api.slack.com/apps → your app → OAuth & Permissions; trying again in %s", code(err), wait)
+			log.Errorf("refused SLACK_BOT_TOKEN (%s): set it to the Bot User OAuth Token, xoxb-…, from api.slack.com/apps → your app → OAuth & Permissions; trying again in %s", code(err), wait)
 		} else {
 			backoff = min(2*backoff, 32*time.Second)
-			logx.Warnf("slack auth.test failed: %v; retrying in %s", err, wait)
+			log.Warnf("auth.test failed: %v; retrying in %s", err, wait)
 		}
 		if !sleep(ctx, wait) {
 			return
@@ -338,16 +338,16 @@ func (c *Client) Run(ctx context.Context, handle func(bot.Received)) {
 			backoff = c.backoff
 		}
 		if planned {
-			logx.Debugf("slack: reconnecting, as asked")
+			log.Debugf("reconnecting, as asked")
 			continue
 		}
 		wait := backoff
 		if refusedToken(err) {
 			wait = c.slow
-			logx.Errorf("Slack refused SLACK_APP_TOKEN (%s): set it to an app-level token, xapp-…, with connections:write, from api.slack.com/apps → your app → Basic Information, and turn on Socket Mode; trying again in %s", code(err), wait)
+			log.Errorf("refused SLACK_APP_TOKEN (%s): set it to an app-level token, xapp-…, with connections:write, from api.slack.com/apps → your app → Basic Information, and turn on Socket Mode; trying again in %s", code(err), wait)
 		} else {
 			backoff = min(2*backoff, 32*time.Second)
-			logx.Warnf("slack connection lost: %v; reconnecting in %s", err, wait)
+			log.Warnf("connection lost: %v; reconnecting in %s", err, wait)
 		}
 		if !sleep(ctx, wait) {
 			return
@@ -371,13 +371,13 @@ func (c *Client) hello(ctx context.Context) error {
 		return err
 	}
 	if me.UserID == "" {
-		return errors.New("slack: auth.test: no user ID: is SLACK_BOT_TOKEN a bot token?")
+		return errors.New("auth.test: no user ID: is SLACK_BOT_TOKEN a bot token?")
 	}
 	name := me.User
 	c.team.Store([2]string{me.TeamID, me.EnterpriseID})
 	u, err := c.userInfo(ctx, me.UserID)
 	if err != nil {
-		logx.Debugf("slack users.info for the bot failed: %v", err)
+		log.Debugf("users.info for the bot failed: %v", err)
 	} else if u.name != "" {
 		name = u.name
 	}
@@ -400,7 +400,7 @@ func (c *Client) rename(ctx context.Context) {
 	defer cancel()
 	u, err := c.userInfo(ctx, c.selfID())
 	if err != nil {
-		logx.Debugf("slack users.info for the bot failed: %v", err)
+		log.Debugf("users.info for the bot failed: %v", err)
 		return
 	}
 	if u.name != "" {
@@ -446,7 +446,7 @@ func (c *Client) connect(ctx context.Context, handle func(bot.Received)) (hello,
 func dialError(err error) error {
 	var ue *url.Error
 	if errors.As(err, &ue) {
-		return fmt.Errorf("slack: socket: %s: %w", ue.Op, ue.Err)
+		return fmt.Errorf("socket: %s: %w", ue.Op, ue.Err)
 	}
 	return err
 }
@@ -472,9 +472,9 @@ func (c *Client) read(ctx context.Context, conn *ws.Conn, handle func(bot.Receiv
 		case "hello":
 			hello = true
 			if c.hellos.Add(1) == 1 {
-				logx.Noticef("connected to Slack as @%s", c.handleOf())
+				log.Noticef("connected as @%s", c.handleOf())
 			} else {
-				logx.Debugf("slack: connected again")
+				log.Debugf("connected again")
 			}
 			if !c.named.Load() {
 				go c.rename(ctx)
@@ -483,7 +483,7 @@ func (c *Client) read(ctx context.Context, conn *ws.Conn, handle func(bot.Receiv
 			return hello, true, nil
 		default:
 			func() {
-				defer logx.Recover("reading an event")
+				defer recoverEvent()
 				for _, r := range c.events(env) {
 					handle(r)
 				}
@@ -502,5 +502,16 @@ func sleep(ctx context.Context, d time.Duration) bool {
 		return false
 	case <-time.After(d):
 		return true
+	}
+}
+
+// log is Slack's log: its every line starts "Slack: ".
+var log = logx.For("slack")
+
+// recoverEvent is deferred where an event is read, as logx.Recover is, but
+// logs in the network's log: that reading one failed, never what it held.
+func recoverEvent() {
+	if recover() != nil {
+		log.Errorf("internal error while reading an event; dropped")
 	}
 }

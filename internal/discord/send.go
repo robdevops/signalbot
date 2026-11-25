@@ -18,7 +18,6 @@ import (
 
 	"github.com/robdevops/signalbot/internal/feature"
 	"github.com/robdevops/signalbot/internal/kit/img"
-	"github.com/robdevops/signalbot/internal/kit/logx"
 	"github.com/robdevops/signalbot/internal/kit/mdstyle"
 	"github.com/robdevops/signalbot/internal/kit/txt"
 )
@@ -62,7 +61,7 @@ func (c *Client) post(ch feature.Chat, text string, pics []feature.Picture, know
 		}
 	}()
 	if n := utf8.RuneCountInString(text); n > maxReply {
-		logx.Warnf("reply truncated from %d chars", n)
+		log.Warnf("reply truncated from %d chars", n)
 	}
 	parts := c.parts(text, known, true)
 	files := pictures(pics)
@@ -70,14 +69,14 @@ func (c *Client) post(ch feature.Chat, text string, pics []feature.Picture, know
 		files = append(files, upload{name: "clip.mp3", mime: "audio/mpeg", data: audio})
 	}
 	if len(parts) == 0 && len(files) == 0 {
-		logx.Warnf("empty reply, nothing sent")
+		log.Warnf("empty reply, nothing sent")
 		return nil
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 	defer cancel()
 	chID, err := c.channel(ctx, ch)
 	if err != nil {
-		logx.Errorf("send failed: %v", err)
+		log.Errorf("send failed: %v", err)
 		return nil
 	}
 	type msg struct {
@@ -112,7 +111,7 @@ func (c *Client) post(ch feature.Chat, text string, pics []feature.Picture, know
 			if err == nil {
 				c.noteHook(snowflake(out.ID), ix)
 			} else {
-				logx.Warnf("discord: answering a slash command failed: %v", err)
+				log.Warnf("answering a slash command failed: %v", err)
 				go c.unthink(ix)
 			}
 			ix = nil
@@ -125,7 +124,7 @@ func (c *Client) post(ch feature.Chat, text string, pics []feature.Picture, know
 				payload["flags"] = 4096
 			}
 			if err = c.send(ctx, http.MethodPost, "/channels/"+chID+"/messages", payload, m.files, &out); err != nil {
-				logx.Errorf("send failed: %v", err)
+				log.Errorf("send failed: %v", err)
 				return sent
 			}
 		}
@@ -319,7 +318,7 @@ func components(buttons [][]feature.Button) []map[string]any {
 			all = append(all, row...)
 		}
 		if len(all) > 25 {
-			logx.Warnf("discord: %d buttons, only the first 25 shown", len(all))
+			log.Warnf("%d buttons, only the first 25 shown", len(all))
 			all = all[:25]
 		}
 		buttons = nil
@@ -386,7 +385,7 @@ func (c *Client) Edit(ch feature.Chat, sent int64, text string, pics []feature.P
 	defer cancel()
 	chID, err := c.channel(ctx, ch)
 	if err != nil {
-		logx.Errorf("edit failed: %v", err)
+		log.Errorf("edit failed: %v", err)
 		return nil
 	}
 	payload := map[string]any{"components": components(mk.Buttons)}
@@ -406,7 +405,7 @@ func (c *Client) Edit(ch feature.Chat, sent int64, text string, pics []feature.P
 		path = "/webhooks/" + ix.app + "/" + ix.token + "/messages/" + id(sent)
 	}
 	if err := c.send(ctx, http.MethodPatch, path, payload, files, nil); err != nil {
-		logx.Errorf("edit failed: %v", err)
+		log.Errorf("edit failed: %v", err)
 		return nil
 	}
 	return []int64{sent}
@@ -432,7 +431,7 @@ func (c *Client) React(ch feature.Chat, msg feature.Message, emoji string) {
 	case errors.As(err, &ae) && ae.Code == 10014: // unknown emoji
 		c.Send(ch, emoji, nil, nil, 0, nil, feature.Markup{})
 	default:
-		logx.Errorf("reaction failed: %v", err)
+		log.Errorf("reaction failed: %v", err)
 	}
 }
 
@@ -448,7 +447,7 @@ func (c *Client) Typing(ch feature.Chat) (stop func()) {
 			err = c.call(tctx, http.MethodPost, "/channels/"+chID+"/typing", nil, nil)
 		}
 		if err != nil && ctx.Err() == nil {
-			logx.Debugf("discord typing failed: %v", err)
+			log.Debugf("typing failed: %v", err)
 		}
 	}
 	go func() {
