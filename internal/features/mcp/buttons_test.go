@@ -546,8 +546,8 @@ func TestPressTopic(t *testing.T) {
 func TestKeyCommands(t *testing.T) {
 	a, _, h := buttonsAddon(everything)
 	a.cmds = map[string]bool{}
-	command(h, "game", "/Rain", chatCommand{Tool: "period", Direct: true}, nil, a)
-	command(h, "game", "ask", chatCommand{Tool: "period"}, map[string]string{"period": "game_period"}, a)
+	command(h, "game", "/Rain", chatCommand{Tool: "period", Direct: true}, nil, a, nil, nil)
+	command(h, "game", "ask", chatCommand{Tool: "period"}, map[string]string{"period": "game_period"}, a, nil, nil)
 	if !a.cmds["rain"] || a.cmds["ask"] || len(a.cmds) != 1 {
 		t.Fatalf("commands %v", a.cmds)
 	}

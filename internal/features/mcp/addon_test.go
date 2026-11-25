@@ -289,7 +289,6 @@ func TestAddonLoad(t *testing.T) {
 		`{"mcpServers":{"geo":{"command":"x","env":{"A":"b"},"addon":{}}}}`:                                 `: MCP server "geo": an addon server takes no env block: put its settings in the bot's environment, starting with GEO_, and it gets them`,
 		`{"mcpServers":{"model":{"command":"x","addon":{}}}}`:                                               `: MCP server "model": an addon's settings start with MODEL_, as the bot's own MODEL_API_KEY does; rename the server`,
 		`{"mcpServers":{"Daily":{"command":"x","addon":{}}}}`:                                               `: MCP server "Daily": an addon's settings start with DAILY_, as the bot's own DAILY_BUDGET does; rename the server`,
-		`{"mcpServers":{"geo":{"command":"x","chat_commands":{"geo":{"tool":"geo","direct":true}}}}}`:       `: MCP server "geo": chat command "geo" is direct, which needs an addon block`,
 		`{"mcpServers":{"geo":{"command":"x","addon":{"chat":["all"]}}}}`:                                   `: MCP server "geo": addon: unknown setting "chat" (settings are chats, dms, post, react, watch, watch_max, names, global_ids, rate, model, announce)`,
 		`{"mcpServers":{"geo":{"command":"x","addon":{"rate":{"perMinute":1}}}}}`:                           `: MCP server "geo": addon rate: unknown setting "perMinute" (settings are per_minute, burst)`,
 		`{"mcpServers":{"geo":{"command":"x","addon":{"chats":["Family"]}}}}`:                               `: MCP server "geo": addon chats: "Family" isn't a group ID; copy the group's ID as Signal or Telegram shows it, or use "all"`,
@@ -299,7 +298,7 @@ func TestAddonLoad(t *testing.T) {
 		`{"mcpServers":{"geo":{"command":"x","addon":{"model":{"perHour":1}}}}}`:                            `: MCP server "geo": addon model: unknown setting "perHour" (settings are per_hour, max_tokens)`,
 		`{"mcpServers":{"geo":{"command":"x","addon":{"model":{"per_hour":-1}}}}}`:                          `: MCP server "geo": addon model: per_hour and max_tokens can't be below 0`,
 		`{"mcpServers":{"geo":{"command":"x","addon":{"model":{"max_tokens":40000}}}}}`:                     `: MCP server "geo": addon model: max_tokens can't be over 32000`,
-		`{"mcpServers":{"geo":{"command":"x","chat_commands":{"g":{"tool":"g","drect":true}},"addon":{}}}}`: `: MCP server "geo": chat command "g": unknown setting "drect" (settings are tool, require_arg, example, direct, timeout)`,
+		`{"mcpServers":{"geo":{"command":"x","chat_commands":{"g":{"tool":"g","drect":true}},"addon":{}}}}`: `: MCP server "geo": chat command "g": unknown setting "drect" (settings are tool, require_arg, example, direct, timeout, args, arg, values, resource)`,
 	} {
 		p := writeConfig(t, bad)
 		if _, err := load(p); err == nil || err.Error() != p+want {
@@ -470,7 +469,7 @@ func TestDirectNoModel(t *testing.T) {
 	if got := h.Message(context.Background(), in(inDM, "/play")); got.Answer != "you said \n@Alice plays" {
 		t.Fatalf("play: %+v", got)
 	}
-	if l := log.String(); !strings.HasPrefix(l, "<4>MCP_CONFIG is set but no model is configured, so only addon servers were started\n") || strings.Contains(l, "other") {
+	if l := log.String(); !strings.HasPrefix(l, "<4>MCP_CONFIG is set but no model is configured, so only addon servers and those with direct commands were started\n") || strings.Contains(l, "other") {
 		t.Fatalf("log %q", l)
 	}
 }

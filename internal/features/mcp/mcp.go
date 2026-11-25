@@ -52,19 +52,27 @@ type server struct {
 	Instructions *string                `json:"instructions"` // a system-prompt line while its tools are offered; unset: the server's own, "": none
 	Keywords     []string               `json:"keywords"`     // if set, its tools are offered only when a message has one of these words
 	Addon        *addonConfig           `json:"addon"`        // set for an addon
+	Name         string                 `json:"name"`         // its name for people, in messages and lists; unset: the server's title, else its key
 }
 
 // chatCommand makes "/name ..." a turn in which the model must call tool,
-// or, if direct, an addon's tool the bot calls itself, without the model.
+// or, if direct, a tool the bot calls itself, without the model: an
+// addon's, given the text and the chat's context, or a plain server's,
+// given args, with the text after the command as arg (one of values, if
+// set), or a resource the bot reads.
 // With require_arg, a bare "/name" is answered by the bot, not the model,
 // showing example if set. A direct command's timeout is how long its call
 // may take, from 1s to 2m; unset, directTimeout.
 type chatCommand struct {
-	Tool       string `json:"tool"`
-	RequireArg bool   `json:"require_arg"`
-	Example    string `json:"example"`
-	Direct     bool   `json:"direct"`
-	Timeout    string `json:"timeout"`
+	Tool       string         `json:"tool"`
+	RequireArg bool           `json:"require_arg"`
+	Example    string         `json:"example"`
+	Direct     bool           `json:"direct"`
+	Timeout    string         `json:"timeout"`
+	Args       map[string]any `json:"args"`     // a plain server's direct tool's arguments
+	Arg        string         `json:"arg"`      // the argument the text after the command fills
+	Values     []string       `json:"values"`   // the values arg may take; unset: any text
+	Resource   string         `json:"resource"` // a resource a plain server's direct command reads, in place of a tool
 
 	timeout time.Duration // Timeout, read; 0 if unset
 }
@@ -74,8 +82,8 @@ type chatCommand struct {
 // MCP clients write that the bot has no use for, so a pasted entry starts.
 var (
 	settings = []string{"url", "headers", "command", "args", "env", "allowed_tools", "blocked_tools",
-		"instructions", "keywords", "chat_commands", "disabled", "addon"}
-	commandSettings = []string{"tool", "require_arg", "example", "direct", "timeout"}
+		"instructions", "keywords", "chat_commands", "disabled", "addon", "name"}
+	commandSettings = []string{"tool", "require_arg", "example", "direct", "timeout", "args", "arg", "values", "resource"}
 	ignored         = []string{"type", "transport", "timeout", "alwaysAllow", "autoApprove", "description"}
 )
 
@@ -102,8 +110,10 @@ func Register(h feature.Host) error {
 		return err
 	}
 	if h.Info().Model == "" {
-		logx.Warnf("MCP_CONFIG is set but no model is configured, so only addon servers were started")
-		maps.DeleteFunc(servers, func(_ string, s server) bool { return s.Addon == nil })
+		logx.Warnf("MCP_CONFIG is set but no model is configured, so only addon servers and those with direct commands were started")
+		maps.DeleteFunc(servers, func(_ string, s server) bool {
+			return s.Addon == nil && !slices.ContainsFunc(slices.Collect(maps.Values(s.ChatCommands)), func(c chatCommand) bool { return c.Direct })
+		})
 	}
 	addons := false
 	for _, s := range servers {
@@ -204,8 +214,16 @@ func load(path string) (map[string]server, error) {
 				return nil, bad("chat command %q: %v", txt.Clamp(n, 40), err)
 			}
 			cc := s.ChatCommands[n]
-			if cc.Direct && s.Addon == nil {
-				return nil, bad("chat command %q is direct, which needs an addon block", txt.Clamp(n, 40))
+			plain := cc.Args != nil || cc.Arg != "" || cc.Values != nil || cc.Resource != ""
+			switch {
+			case plain && (!cc.Direct || s.Addon != nil):
+				return nil, bad("chat command %q: args, arg, values and resource are for a direct command of a server without an addon block", txt.Clamp(n, 40))
+			case cc.Resource != "" && (cc.Tool != "" || cc.Arg != "" || cc.Args != nil):
+				return nil, bad("chat command %q: a resource takes no tool, arg or args", txt.Clamp(n, 40))
+			case cc.Values != nil && cc.Arg == "":
+				return nil, bad("chat command %q: values without the arg they are for", txt.Clamp(n, 40))
+			case cc.Tool == "" && cc.Resource == "":
+				return nil, bad("chat command %q needs a tool", txt.Clamp(n, 40))
 			}
 			if _, set := c["timeout"]; set {
 				if !cc.Direct {
@@ -458,7 +476,7 @@ func start(ctx context.Context, h feature.Host, path string, servers map[string]
 					bot[t.Name] = true
 				}
 			}
-			a = newAddon(name, cmp.Or(hs.title, name), *cfg.Addon, k.doc.Secret, c, bot)
+			a = newAddon(name, cmp.Or(cfg.Name, hs.title, name), *cfg.Addon, k.doc.Secret, c, bot)
 			for _, t := range listed {
 				a.only[t.Name] = t.forBot() && !t.forModel()
 			}
@@ -504,13 +522,21 @@ func start(ctx context.Context, h feature.Host, path string, servers map[string]
 		if a != nil {
 			logx.Noticef("%s: an addon, with tools for the bot: %s", label, cmp.Or(strings.Join(slices.Sorted(maps.Keys(a.bot)), ", "), "none"))
 		}
-		var own []string // its chat commands, as "/name"
+		var own []string       // its chat commands, as "/name"
+		var plain *plainDirect // a server without an addon block; one whose addon features are off has no direct commands
+		if cfg.Addon == nil {
+			plain = newPlainDirect(name, cmp.Or(cfg.Name, hs.title, name), c)
+		}
+		has := map[string]bool{}
+		for _, t := range listed {
+			has[t.Name] = true
+		}
 		for _, n := range slices.Sorted(maps.Keys(cfg.ChatCommands)) {
 			cc := cfg.ChatCommands[n]
 			if !cc.Direct && !info.CallsTools {
 				continue // a command would force a tool the model can't call
 			}
-			if cmd := command(h, name, n, cc, models, a); cmd != "" {
+			if cmd := command(h, name, n, cc, models, a, plain, has); cmd != "" {
 				own = append(own, cmd)
 			}
 		}
@@ -595,13 +621,17 @@ func keywords(words []string) *regexp.Regexp {
 // bot may call; any other has the model call a tool it is offered. One that
 // can't be used (such a tool missing, or a bad or taken name) is logged and
 // skipped, returning "".
-func command(h feature.Host, server, n string, c chatCommand, models map[string]string, a *addon) string {
+func command(h feature.Host, server, n string, c chatCommand, models map[string]string, a *addon, plain *plainDirect, has map[string]bool) string {
 	name := strings.ToLower(strings.TrimPrefix(n, "/"))
 	model, offered := models[c.Tool]
 	switch {
-	case c.Direct && a == nil:
+	case c.Direct && a == nil && plain == nil:
 		logx.Warnf("MCP server %s: chat command /%s is direct, but the server's addon features are off; skipped", server, txt.Clamp(name, 40))
 		return ""
+	case c.Direct && a == nil && c.Tool != "" && !has[c.Tool]:
+		logx.Warnf("MCP server %s: chat command /%s names tool %q, which the server doesn't have; skipped", server, txt.Clamp(name, 40), txt.Clamp(c.Tool, 64))
+		return ""
+	case c.Direct && a == nil:
 	case c.Direct && !a.bot[c.Tool]:
 		logx.Warnf("MCP server %s: chat command /%s names tool %q, which the bot may not call; skipped", server, txt.Clamp(name, 40), txt.Clamp(c.Tool, 64))
 		return ""
@@ -620,6 +650,8 @@ func command(h feature.Host, server, n string, c chatCommand, models map[string]
 		switch {
 		case c.RequireArg && args == "":
 			return feature.Action{Answer: bare}
+		case c.Direct && a == nil:
+			return plain.run(ctx, name, c, args)
 		case c.Direct:
 			return a.direct(ctx, m, name, c, args)
 		}
@@ -629,7 +661,7 @@ func command(h feature.Host, server, n string, c chatCommand, models map[string]
 		logx.Warnf("MCP server %s: chat command skipped: %v", server, err)
 		return ""
 	}
-	if c.Direct {
+	if c.Direct && a != nil {
 		a.cmds[name] = true
 	}
 	return "/" + name

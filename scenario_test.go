@@ -1275,7 +1275,7 @@ func TestScenarioNoModel(t *testing.T) {
 	if l, ok := h.logged("no model: set MODEL_API_KEY (or MODEL_API_URL for a provider that needs no key); until then only commands are answered"); !ok || l.Pri != 4 {
 		t.Fatalf("no notice: %v", h.logLines())
 	}
-	if _, ok := h.logged("MCP_CONFIG is set but no model is configured, so only addon servers were started"); !ok {
+	if _, ok := h.logged("MCP_CONFIG is set but no model is configured, so only addon servers and those with direct commands were started"); !ok {
 		t.Fatalf("no MCP line: %v", h.logLines())
 	}
 	if _, ok := h.logged("web search on"); ok {

@@ -82,7 +82,8 @@ The model can call tools from [MCP](https://modelcontextprotocol.io) servers, re
 | `allowed_tools` / `blocked_tools` | offer only these tools, or every tool but these (one or the other, not both) |
 | `instructions` | a line added to the system prompt while the server's tools are offered (see below) |
 | `keywords` | offer the server's tools only when a message has one of these words (see below). A server without them is offered with every message, except one whose page or file the model is shown, so what a document says can't call its tools |
-| `chat_commands` | optional slash-command shortcuts to a tool (you can always just ask): `tool` names it, `require_arg` makes a bare command get a usage reply, and `example` adds one to it; for an addon, `direct` has the bot call the tool itself, without the model, and `timeout` sets how long that call may take (see [Addons](#addons)) |
+| `chat_commands` | optional slash-command shortcuts to a tool (you can always just ask): `tool` names it, `require_arg` makes a bare command get a usage reply, and `example` adds one to it; `direct` has the bot call the tool itself, without the model, and `timeout` sets how long that call may take (see [Direct commands](#direct-commands), and for an addon [Addons](#addons)) |
+| `name` | the server's name for people, in its messages ("Weather couldn't do that just now."); unset, the name the server gives itself, else its key |
 | `addon` | makes a local server an addon, and says where it may act and what it may do (see [Addons](#addons)) |
 | `disabled` | leave the server out without deleting it |
 
@@ -94,6 +95,26 @@ Two optional fields shape how a server's tools are offered:
 - `keywords` offers the server's tools only when a message contains one of the words, ignoring capitals and matching whole words only, and for the `TOOL_LINGER_ROUNDS` replies (default 2) after one that matched or used its tools. Without it, the tools are always offered. A chat command always gets its tool.
 
 `chat_commands` are optional shortcuts on top of asking. `/forecast sydney this weekend` asks the model, which gets that tool on top of whatever else is on and must call it first. With `require_arg`, a bare `/forecast` gets a usage reply from the bot without asking the model: "Put what you want after it, like /forecast <your request>. Try: /forecast Sydney this weekend. Or just ask me in plain words.", the `Try:` from `example`.
+
+### Direct commands
+
+A command can skip the model: `"direct": true` has the bot call the tool itself and send what it returns, its text and up to 4 images, at once. It works with or without a model, so a server with direct commands starts even when no model is configured. On a server without an `addon` block, a direct command takes:
+
+| Key | What it does |
+|---|---|
+| `args` | the tool's arguments, as JSON, such as `{"readings": ["rain"]}` |
+| `arg` | the argument the text after the command fills: `/rain 7d` sets it to `7d`. Without `arg`, any text after the command is ignored |
+| `values` | the values `arg` may take, in any case, such as `["1d", "7d", "1m"]`; another gets a short usage reply |
+| `resource` | a resource to read in place of calling a tool, such as `"ecobot://status"`; its text and images are sent |
+
+```json
+"chat_commands": {
+  "rain": {"tool": "summary", "direct": true, "args": {"readings": ["rain"]}, "arg": "period", "values": ["1d", "7d", "1m", "3m", "1y"]},
+  "status": {"resource": "ecobot://status", "direct": true}
+}
+```
+
+The call carries nothing about the chat or who asked: the server sees only the arguments. At most 2 run at once per server; a third is told the server is busy. A failure is answered with a short line naming the server (its `name`), never the server's own error text, and the log records the command, the tool, the outcome, the time and the size, never the text or the result.
 
 A server that can't be reached at startup is logged and left out. A config error stops the bot with the file's path and the server's name: a setting it doesn't know (such as `allowedTools` for `allowed_tools`), with the settings it could be; both `allowed_tools` and `blocked_tools`; or a tool named in either list that the server doesn't have, with the list it was in and the server's tools, so a typo can't leave a blocked tool offered. Keys other MCP clients write and the bot has no use for (`type`, `transport`, `timeout`, `alwaysAllow`, `autoApprove`, `description`) are ignored, so an entry pasted from another client starts. A tool call that takes over 30 seconds tells the model it didn't answer in time, so it can try a narrower request. Local servers get only `PATH`, `HOME` and their `env`, never the bot's own environment.
 

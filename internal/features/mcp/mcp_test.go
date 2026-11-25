@@ -141,6 +141,8 @@ func (f *fakeMCP) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		} else {
 			result = `{"tools":[{"name":"fail","inputSchema":{"type":"object"}},{"name":"pic"}]}`
 		}
+	case "resources/read":
+		result = `{"contents":[{"uri":"status://now","mimeType":"text/plain","text":"All good"},{"uri":"status://now","mimeType":"image/png","blob":"` + tinyPNG() + `"}]}`
 	case "tools/call":
 		var p struct {
 			Name      string         `json:"name"`
@@ -185,7 +187,8 @@ func TestNoConfig(t *testing.T) {
 	}
 }
 
-// With no model, no server but an addon is started, and the log says so.
+// With no model, no server but an addon or one with direct commands is
+// started, and the log says so.
 func TestNoModel(t *testing.T) {
 	var started atomic.Bool
 	srv := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { started.Store(true) }))
@@ -194,7 +197,7 @@ func TestNoModel(t *testing.T) {
 	if err != nil || len(h.ToolGroups()) != 0 || started.Load() {
 		t.Fatalf("groups %+v, %v, started %v", h.ToolGroups(), err, started.Load())
 	}
-	if l := log.String(); l != "<4>MCP_CONFIG is set but no model is configured, so only addon servers were started\n" {
+	if l := log.String(); l != "<4>MCP_CONFIG is set but no model is configured, so only addon servers and those with direct commands were started\n" {
 		t.Fatalf("log %q", l)
 	}
 }
@@ -256,8 +259,8 @@ func TestLoad(t *testing.T) {
 	// settings it could be, and both lists at once too; keys other clients
 	// write are ignored, so a pasted entry starts.
 	for bad, want := range map[string]string{
-		`{"mcpServers":{"w":{"url":"u","allowedTools":["t"]}}}`:                                                              `: MCP server "w": unknown setting "allowedTools" (settings are url, headers, command, args, env, allowed_tools, blocked_tools, instructions, keywords, chat_commands, disabled, addon)`,
-		`{"mcpServers":{"w":{"url":"u","chat_commands":{"x":{"tool":"t","requireArg":true}}}}}`:                              `: MCP server "w": chat command "x": unknown setting "requireArg" (settings are tool, require_arg, example, direct, timeout)`,
+		`{"mcpServers":{"w":{"url":"u","allowedTools":["t"]}}}`:                                                              `: MCP server "w": unknown setting "allowedTools" (settings are url, headers, command, args, env, allowed_tools, blocked_tools, instructions, keywords, chat_commands, disabled, addon, name)`,
+		`{"mcpServers":{"w":{"url":"u","chat_commands":{"x":{"tool":"t","requireArg":true}}}}}`:                              `: MCP server "w": chat command "x": unknown setting "requireArg" (settings are tool, require_arg, example, direct, timeout, args, arg, values, resource)`,
 		`{"mcpServers":{"w":{"url":"u","chat_commands":{"x":{"tool":"t","timeout":"30s"}}}}}`:                                `: MCP server "w": chat command "x" has a timeout, which only a direct command takes`,
 		`{"mcpServers":{"w":{"command":"c","addon":{},"chat_commands":{"x":{"tool":"t","direct":true,"timeout":"3m"}}}}}`:    `: MCP server "w": chat command "x": timeout "3m" isn't a time from 1s to 2m, such as 15s or 1m`,
 		`{"mcpServers":{"w":{"command":"c","addon":{},"chat_commands":{"x":{"tool":"t","direct":true,"timeout":"500ms"}}}}}`: `: MCP server "w": chat command "x": timeout "500ms" isn't a time from 1s to 2m, such as 15s or 1m`,
@@ -682,5 +685,86 @@ func TestExampleFile(t *testing.T) {
 		s["geo"].Addon == nil || !s["geo"].Addon.Watch || !s["geo"].ChatCommands["geo"].Direct || s["geo"].Addon.Model != nil ||
 		s["quiz"].Addon == nil || s["quiz"].Addon.Model == nil || *s["quiz"].Addon.Model != (modelConfig{30, 4000}) {
 		t.Fatalf("loaded %+v, %v", s, err)
+	}
+}
+
+// A plain server's direct command: the bot calls its tool with the
+// command's args, the text after it as its arg (one of its values), or
+// reads a resource, and sends the result without the model, named by the
+// server's "name" when it fails.
+func TestPlainDirect(t *testing.T) {
+	h, log, err := register(t, `{"mcpServers":{"fake":{"url":"`+serve(t, &fakeMCP{})+`","name":"Weather","allowed_tools":["echo"],
+		"chat_commands":{
+			"rain":{"tool":"echo","direct":true,"args":{"readings":["rain"]},"arg":"period","values":["1d","7d"]},
+			"say":{"tool":"echo","direct":true,"arg":"what"},
+			"status":{"resource":"status://now","direct":true},
+			"photo":{"tool":"pic","direct":true},
+			"broken":{"tool":"fail","direct":true},
+			"ghost":{"tool":"nope","direct":true}}}}}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(log.String(), `MCP server fake: chat command /ghost names tool "nope", which the server doesn't have; skipped`) {
+		t.Errorf("log %q", log.String())
+	}
+	dm := func(text string) feature.Message {
+		return feature.Message{Chat: feature.Chat{User: "alice"}, Sender: "alice", Text: text, Addressed: true}
+	}
+	ctx := context.Background()
+	for text, want := range map[string]string{
+		"/rain":             `echo {"readings":["rain"]}`,
+		"/rain 7D":          `echo {"period":"7d","readings":["rain"]}`,
+		"/rain 2w":          "Use /rain alone, or with one of: 1d, 7d.",
+		"/say  hello there": `echo {"what":"hello there"}`,
+		"/broken":           "Weather couldn't do that just now.",
+		"/ghost":            "",
+	} {
+		if got := h.Message(ctx, dm(text)); got.Answer != want || got.ToolChoice != "" {
+			t.Errorf("%q: %+v, want %q", text, got, want)
+		}
+	}
+	if got := h.Message(ctx, dm("/status")); got.Answer != "All good" || len(got.Pictures) != 1 {
+		t.Errorf("status: %q, %d pictures", got.Answer, len(got.Pictures))
+	}
+	if got := h.Message(ctx, dm("/photo")); got.Answer != "caption" || len(got.Pictures) != 1 {
+		t.Errorf("photo: %q, %d pictures", got.Answer, len(got.Pictures))
+	}
+	if !strings.Contains(log.String(), "MCP server fake: /status read a resource: ok in ") || strings.Contains(log.String(), "status://now") {
+		t.Errorf("log %q", log.String())
+	}
+}
+
+// A server with only direct commands starts with no model, as they need
+// none; one with neither those nor an addon block doesn't.
+func TestPlainDirectNoModel(t *testing.T) {
+	var log logx.Buffer
+	t.Cleanup(logx.SetOutput(&log, &log, true))
+	h := featuretest.New()
+	h.Settings["MCP_CONFIG"] = writeConfig(t, `{"mcpServers":{
+		"weather":{"url":"`+serve(t, &fakeMCP{})+`","chat_commands":{"status":{"resource":"status://now","direct":true}}},
+		"plain":{"url":"`+serve(t, &fakeMCP{})+`"}}}`)
+	t.Cleanup(h.Stop)
+	if err := Register(h); err != nil {
+		t.Fatal(err)
+	}
+	got := h.Message(context.Background(), feature.Message{Chat: feature.Chat{User: "a"}, Sender: "a", Text: "/status", Addressed: true})
+	if got.Answer != "All good" || strings.Contains(log.String(), "plain MCP") {
+		t.Fatalf("got %+v; log %q", got, log.String())
+	}
+}
+
+// A plain direct command's settings are checked at startup.
+func TestPlainDirectSettings(t *testing.T) {
+	url := serve(t, &fakeMCP{})
+	for cmd, want := range map[string]string{
+		`{"tool":"echo","args":{"a":1}}`:                   "are for a direct command of a server without an addon block",
+		`{"resource":"x://y","tool":"echo","direct":true}`: "a resource takes no tool, arg or args",
+		`{"tool":"echo","direct":true,"values":["a"]}`:     "values without the arg they are for",
+		`{"direct":true}`:                                  "needs a tool",
+	} {
+		_, _, err := register(t, `{"mcpServers":{"fake":{"url":"`+url+`","chat_commands":{"c":`+cmd+`}}}}`)
+		if err == nil || !strings.Contains(err.Error(), want) {
+			t.Errorf("%s: %v, want %q", cmd, err, want)
+		}
 	}
 }
