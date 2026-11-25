@@ -205,18 +205,23 @@ func (s *scheduler) run(ctx context.Context, e *entry, dueAt time.Time) {
 }
 
 // mayPost reports whether user may schedule posts in group: by
-// SCHEDULE_USER_IDS, as listed or, if admins may, as one of its admins.
+// SCHEDULE_USER_IDS, as listed or as one of its admins or mods.
 func (s *scheduler) mayPost(ctx context.Context, user, group string) bool {
-	return s.posts.Allows(func() bool {
+	return s.posts.Allows(func() (bool, bool) {
 		gs, err := s.h.Groups(ctx, user)
 		if err != nil {
 			logx.Warnf("listing groups failed: %v", err)
-			return false
+			return false, false
 		}
-		i := slices.IndexFunc(gs, func(g feature.Group) bool { return g.ID == group })
-		return i >= 0 && gs[i].Admin
+		if i := slices.IndexFunc(gs, func(g feature.Group) bool { return g.ID == group }); i >= 0 {
+			return gs[i].Admin, gs[i].Mod
+		}
+		return false, false
 	}, user)
 }
+
+// role is g's Admin and Mod, for Allows.
+func role(g feature.Group) func() (bool, bool) { return func() (bool, bool) { return g.Admin, g.Mod } }
 
 // settle settles e's run that was due at dueAt, and reports whether to
 // deliver it: a one-off is deleted, and dropped if it is an hour late, its
@@ -344,9 +349,9 @@ func (s *scheduler) add(ctx context.Context, m feature.Message, args string) str
 		if problem != "" {
 			return problem
 		}
-		if !s.posts.Allows(func() bool { return g.Admin }, m.Sender) {
-			if s.posts.Admins {
-				return "Only " + g.Name + "'s admins can schedule posts there."
+		if !s.posts.Allows(role(g), m.Sender) {
+			if who := s.posts.Who(); who != "" {
+				return "Only " + g.Name + "'s " + who + " can schedule posts there."
 			}
 			return "Scheduling posts in groups isn't open to you."
 		}
@@ -495,7 +500,7 @@ func (s *scheduler) list(ctx context.Context, user string) string {
 		switch g, ok := current[e.Group]; {
 		case e.Group == "":
 			b.WriteString(", here")
-		case ok && !s.posts.Allows(func() bool { return g.Admin }, user):
+		case ok && !s.posts.Allows(role(g), user):
 			b.WriteString(", in " + cmp.Or(g.Name, e.GroupName) + " (not posting: you may no longer schedule posts there)")
 		case ok || current == nil:
 			b.WriteString(", in " + cmp.Or(g.Name, e.GroupName))

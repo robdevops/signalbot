@@ -309,13 +309,14 @@ func TestPastStartOfARepeat(t *testing.T) {
 }
 
 // SCHEDULE_USER_IDS says who may schedule posts in a group: by default a
-// group's admins; "all" anyone; listed IDs, with "admins" too if named. A
+// group's admins and mods; "all" anyone; listed IDs, with "admins" or
+// "mods" too if named; a mod may with "mods". A
 // run is dropped once its user may no longer post there; a DM's never.
 func TestWhoMayPost(t *testing.T) {
 	w := newWorld(t)
 	w.h.Shared[1].Admin = false // Alice is an admin of Family, not Work
 	w.start()
-	if got := w.dm(`/schedule "hi" 2030-01-15T13:00 work`); got != "Only Work's admins can schedule posts there." {
+	if got := w.dm(`/schedule "hi" 2030-01-15T13:00 work`); got != "Only Work's admins and mods can schedule posts there." {
 		t.Fatalf("got %q", got)
 	}
 	if got := w.dm(`/schedule "hi" 2030-01-15T13:00 family`); !strings.HasPrefix(got, "Scheduled") {
@@ -324,7 +325,7 @@ func TestWhoMayPost(t *testing.T) {
 	if got := w.dm(`/schedule "me" 2030-01-15T13:00`); !strings.HasPrefix(got, "Scheduled") {
 		t.Fatalf("a DM's: got %q", got)
 	}
-	w.h.Shared[0].Admin = false // no longer an admin of Family
+	w.h.Shared[0].Admin = false // no longer an admin of Family, nor a mod
 	if got := w.dm("/schedule list"); !strings.Contains(got, "in 🏡 Family 🎉 (not posting: you may no longer schedule posts there)") {
 		t.Fatalf("list %q", got)
 	}
@@ -338,10 +339,19 @@ func TestWhoMayPost(t *testing.T) {
 		t.Fatalf("log %q", w.logs.String())
 	}
 
+	w = newWorld(t)
+	w.h.Shared[1] = feature.Group{ID: "g-work", Name: "Work", Mod: true}
+	w.h.Settings["SCHEDULE_USER_IDS"] = "mods"
+	w.start()
+	if got := w.dm(`/schedule "hi" 2030-01-15T13:00 work`); !strings.HasPrefix(got, "Scheduled") {
+		t.Fatalf("a mod: got %q", got)
+	}
+
 	for value, want := range map[string]string{
 		"all":           "Scheduled",
 		alice:           "Scheduled",
-		"admins, other": "Only Work's admins",
+		"admins, other": "Only Work's admins can",
+		"mods":          "Only Work's mods can",
 		"none":          "Scheduling posts in groups isn't open to you.",
 	} {
 		w := newWorld(t)

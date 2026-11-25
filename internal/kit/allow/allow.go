@@ -1,32 +1,32 @@
 // Package allow reads a setting that says who may do something: everyone,
-// no one, admins, and listed IDs, such as SIGNAL_DM_USER_IDS or
+// no one, admins, mods and listed IDs, such as SIGNAL_DM_USER_IDS or
 // SCHEDULE_USER_IDS.
 package allow
 
 import (
-	"fmt"
+	"regexp"
+	"strconv"
 	"strings"
 )
 
-// Policy is who may do something. An ID is listed if IDs has it; with All
-// anyone may, and with Admins an admin may too, as the caller decides who
-// is one.
+// Policy is who may do something. With All anyone may; an ID is listed if
+// IDs has it, as Norm writes it; with Admins an admin may, and with Mods a
+// moderator, as the network decides who is which.
 type Policy struct {
-	All    bool
-	Admins bool
-	IDs    map[string]bool
+	All, Admins, Mods bool
+	IDs               map[string]bool
 }
 
 // Parse reads value: words separated by commas, semicolons or whitespace,
-// each "all", "none", "admins" (any case) or an ID. Unset (empty) is
-// "admins". "all" lets anyone, whatever else is listed; "none" adds no one,
-// so "none" alone lets no one and "none, 123" only 123, not the admins.
+// each "all", "none", "admins", "mods" (any case) or an ID. Unset (empty)
+// is "admins, mods". "all" lets anyone, whatever else is listed; "none"
+// adds no one, so "none" alone lets no one and "none, 123" only 123.
 func Parse(value string) Policy {
 	words := strings.FieldsFunc(value, func(r rune) bool {
 		return r == ',' || r == ';' || r == ' ' || r == '\t' || r == '\n' || r == '\r'
 	})
 	if len(words) == 0 {
-		return Policy{Admins: true}
+		return Policy{Admins: true, Mods: true}
 	}
 	p := Policy{IDs: map[string]bool{}}
 	for _, w := range words {
@@ -35,39 +35,92 @@ func Parse(value string) Policy {
 			p.All = true
 		case "admins":
 			p.Admins = true
+		case "mods":
+			p.Mods = true
 		case "none":
 		default:
-			p.IDs[w] = true
+			p.IDs[Norm(w)] = true
 		}
 	}
 	return p
 }
 
+var (
+	snowflake = regexp.MustCompile(`^[0-9]{17,20}$`)       // a Discord ID; Telegram's are shorter
+	slackUser = regexp.MustCompile(`^[UW][A-Z0-9]{8,20}$`) // a Slack member ID
+)
+
+// Norm is id as the bot writes a sender: a Signal UUID or number and a
+// Telegram ID bare, a Discord ID with "discord:", a Slack one with
+// "slack:". An ID may be written with its network's prefix or without:
+// "signal:" and "telegram:" are dropped, and a bare number of 17 digits or
+// more is Discord's, a bare U… or W… member ID Slack's.
+func Norm(id string) string {
+	if rest, ok := strings.CutPrefix(id, "signal:"); ok {
+		return rest
+	}
+	if rest, ok := strings.CutPrefix(id, "telegram:"); ok {
+		return rest
+	}
+	switch {
+	case snowflake.MatchString(id):
+		return "discord:" + id
+	case slackUser.MatchString(id):
+		return "slack:" + id
+	}
+	return id
+}
+
 // Listed reports whether anyone may, or one of ids is listed: the answer
-// needing no admin check.
+// needing no lookup.
 func (p Policy) Listed(ids ...string) bool {
 	if p.All {
 		return true
 	}
 	for _, id := range ids {
-		if id != "" && p.IDs[id] {
+		if id != "" && p.IDs[Norm(id)] {
 			return true
 		}
 	}
 	return false
 }
 
-// Allows reports whether one of ids may: listed, or an admin if admins
-// may, asking admin only then.
-func (p Policy) Allows(admin func() bool, ids ...string) bool {
-	return p.Listed(ids...) || p.Admins && admin != nil && admin()
+// Roles reports whether admins or mods may, so a network need ask whether
+// someone is one.
+func (p Policy) Roles() bool { return !p.All && (p.Admins || p.Mods) }
+
+// Allows reports whether one of ids may: listed, or, if admins or mods
+// may, one by role, asking role only then.
+func (p Policy) Allows(role func() (admin, mod bool), ids ...string) bool {
+	if p.Listed(ids...) {
+		return true
+	}
+	if !p.Roles() || role == nil {
+		return false
+	}
+	admin, mod := role()
+	return p.Admins && admin || p.Mods && mod
 }
 
 // None reports whether no one may.
-func (p Policy) None() bool { return !p.All && !p.Admins && len(p.IDs) == 0 }
+func (p Policy) None() bool { return !p.All && !p.Admins && !p.Mods && len(p.IDs) == 0 }
 
-// String says who may, for the startup log: "anyone", "no one", "admins",
-// "admins and 2 IDs", "1 ID".
+// Who names those who may by role, for a refusal: "admins", "mods" or
+// "admins and mods"; "" for none.
+func (p Policy) Who() string {
+	switch {
+	case p.Admins && p.Mods:
+		return "admins and mods"
+	case p.Admins:
+		return "admins"
+	case p.Mods:
+		return "mods"
+	}
+	return ""
+}
+
+// String says who may, for the startup log: "anyone", "no one", "admins
+// and mods", "admins, mods and 2 IDs", "1 ID".
 func (p Policy) String() string {
 	switch {
 	case p.All:
@@ -79,12 +132,18 @@ func (p Policy) String() string {
 	if p.Admins {
 		parts = append(parts, "admins")
 	}
+	if p.Mods {
+		parts = append(parts, "mods")
+	}
 	switch n := len(p.IDs); n {
 	case 0:
 	case 1:
 		parts = append(parts, "1 ID")
 	default:
-		parts = append(parts, fmt.Sprintf("%d IDs", n))
+		parts = append(parts, strconv.Itoa(n)+" IDs")
 	}
-	return strings.Join(parts, " and ")
+	if len(parts) == 1 {
+		return parts[0]
+	}
+	return strings.Join(parts[:len(parts)-1], ", ") + " and " + parts[len(parts)-1]
 }

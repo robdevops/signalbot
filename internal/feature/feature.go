@@ -307,11 +307,11 @@ type Press struct {
 }
 
 // Group is a group chat, as Groups lists it for a user: Admin if they are
-// one of its admins (on Discord, may manage the server, its channels or
-// that channel's messages; on Slack, a workspace admin or owner).
+// one of its admins, Mod one of its moderators, as each network has them
+// (docs/CONFIGURATION.md, "Who may use the bot").
 type Group struct {
-	ID, Name string
-	Admin    bool
+	ID, Name   string
+	Admin, Mod bool
 }
 
 // Host is the core as features see it. Hooks run in feature order.
