@@ -22,23 +22,25 @@ import (
 const MaxBytes = 4 << 20
 
 // Reserved and Keyboards are the core's own saved states, the daily
-// budget and the DMs' reply keyboards, which no feature may open.
+// budget and the DMs' reply keyboards, and TelegramGroups is the Telegram
+// client's list of the groups it is in: no feature may open them.
 const (
-	Reserved  = "budget"
-	Keyboards = "keyboards"
+	Reserved       = "budget"
+	Keyboards      = "keyboards"
+	TelegramGroups = "telegram-groups"
 )
 
 // namePattern is what a saved state may be called: it names a file.
 var namePattern = regexp.MustCompile(`^[a-z0-9_-]{1,32}$`)
 
 // CheckName fails unless name is a feature's to open: lowercase letters,
-// digits, - and _, up to 32, and not the core's.
+// digits, - and _, up to 32, and not the bot's own.
 func CheckName(name string) error {
 	switch {
 	case !namePattern.MatchString(name):
 		return fmt.Errorf("a saved state can't be called %q: use lowercase letters, digits, - and _, up to 32", txt.Clamp(name, 40))
-	case name == Reserved || name == Keyboards:
-		return fmt.Errorf("a saved state can't be called %q: it is the core's", name)
+	case name == Reserved || name == Keyboards || name == TelegramGroups:
+		return fmt.Errorf("a saved state can't be called %q: it is the bot's own", name)
 	}
 	return nil
 }

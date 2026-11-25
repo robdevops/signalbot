@@ -109,6 +109,7 @@ type message struct {
 	IsTopic         bool                   `json:"is_topic_message"`
 	TopicCreated    *struct{}              `json:"forum_topic_created"`
 	MigrateTo       int64                  `json:"migrate_to_chat_id"`
+	MigrateFrom     int64                  `json:"migrate_from_chat_id"`
 	From            *user                  `json:"from"`
 	Chat            chat                   `json:"chat"`
 	Date            int64                  `json:"date"`
@@ -214,6 +215,7 @@ func (c *Client) events(u update) []bot.Received {
 // event is u as the core gets it, decided without waiting on the network;
 // false if the core has nothing to do with it.
 func (c *Client) event(u update) (bot.Received, bool) {
+	c.learn(u)
 	switch {
 	case u.Message != nil:
 		return c.received(u.Message, 0)
@@ -233,6 +235,40 @@ func (c *Client) event(u update) (bot.Received, bool) {
 		return c.pressed(u.CallbackQuery)
 	}
 	return nil, false
+}
+
+// learn notes, in the roster, the group an update comes from, but for the
+// bot's own membership, which botMembership reads. A message that moves a
+// group to a supergroup moves it, from either side; one saying the bot
+// left drops it, whether it comes before the bot's my_chat_member or after.
+func (c *Client) learn(u update) {
+	var ch *chat
+	switch {
+	case u.Message != nil:
+		m := u.Message
+		switch {
+		case m.MigrateTo != 0: // the old group's last word
+			c.migrated(id(m.Chat.ID), id(m.MigrateTo))
+			return
+		case m.MigrateFrom != 0: // the new supergroup's first
+			c.migrated(id(m.MigrateFrom), id(m.Chat.ID))
+		case m.LeftMember != nil && id(m.LeftMember.ID) == c.selfID():
+			c.dropGroup(id(m.Chat.ID))
+			return
+		}
+		ch = &m.Chat
+	case u.EditedMessage != nil:
+		ch = &u.EditedMessage.Chat
+	case u.CallbackQuery != nil && u.CallbackQuery.Message != nil:
+		ch = &u.CallbackQuery.Message.Chat
+	case u.MessageReaction != nil:
+		ch = &u.MessageReaction.Chat
+	case u.ChatMember != nil:
+		ch = &u.ChatMember.Chat
+	}
+	if ch != nil {
+		c.learnGroup(*ch)
+	}
 }
 
 // received is a message, or with edited an edit of one, as the core gets
@@ -542,7 +578,13 @@ func (c *Client) seen(group, chatGroup string, m *message) {
 // became a supergroup.
 func (c *Client) migrated(from, to string) {
 	c.mu.Lock()
-	defer c.mu.Unlock()
+	changed := c.moveRoster(from, to)
+	defer func() {
+		c.mu.Unlock()
+		if changed {
+			c.saveRoster()
+		}
+	}()
 	c.moved[from] = to
 	delete(c.topics, from) // a basic group has none
 	delete(c.admins, from)
@@ -584,6 +626,11 @@ func (c *Client) botMembership(u *memberUpd) (bot.Received, bool) {
 		delete(c.chats, g)
 	}
 	c.mu.Unlock()
+	if now {
+		c.learnGroup(u.Chat)
+	} else {
+		c.dropGroup(g)
+	}
 	if added && c.watch.Load() {
 		return bot.Happened{Event: feature.Event{Chat: feature.Chat{GroupID: g}, By: c.person(&u.From), Members: &feature.Members{BotAdded: true}}}, true
 	}

@@ -86,9 +86,9 @@ func TestCheck(t *testing.T) {
 	}
 }
 
-// A name is a safe file name, and the core's is refused.
+// A name is a safe file name, and the bot's own are refused.
 func TestCheckName(t *testing.T) {
-	for name, ok := range map[string]bool{"notes": true, "a-b_c9": true, "budget": false, "keyboards": false, "../x": false, "Notes": false, "": false, strings.Repeat("a", 33): false} {
+	for name, ok := range map[string]bool{"notes": true, "a-b_c9": true, "budget": false, "keyboards": false, "telegram-groups": false, "../x": false, "Notes": false, "": false, strings.Repeat("a", 33): false} {
 		if err := CheckName(name); (err == nil) != ok {
 			t.Errorf("%q: %v", name, err)
 		}
