@@ -1469,9 +1469,37 @@ func TestFeedGroupAdmins(t *testing.T) {
 		t.Errorf("a DM's owner, not listed: %q", a)
 	}
 
-	h = start("all", false, false)
+	if n := h.GroupsAsked(); n != 0 {
+		t.Errorf("no role may, yet the network was asked %d times", n)
+	}
+
+	h = start("admins, bob", true, false) // bob listed, alice by role
+	if a := ask(h, group, "bob", "/alerts on"); !strings.Contains(a, "On: Rain") || h.GroupsAsked() != 0 {
+		t.Errorf("listed, with a role named: %q, asked %d", a, h.GroupsAsked())
+	}
+	if a := ask(h, group, "alice", "/alerts"); !strings.Contains(a, "On: Rain") || h.GroupsAsked() != 0 {
+		t.Errorf("the menu asked the network: %q, asked %d", a, h.GroupsAsked())
+	}
+	if _, ok := h.Press(ctx, feature.Press{Chat: group, By: feature.Person{ID: "alice"}, Sent: 4, Data: "feed=alerts/open:alerts"}); !ok || h.GroupsAsked() != 0 {
+		t.Errorf("opening the menu asked the network: %d", h.GroupsAsked())
+	}
+	if a := ask(h, group, "alice", "/alerts off"); !strings.Contains(a, "On: nothing") || h.GroupsAsked() != 1 {
+		t.Errorf("an admin, not listed: %q, asked %d", a, h.GroupsAsked())
+	}
+	h.GroupsErr = errors.New("down") // the network can't say: refused
+	if a := ask(h, group, "alice", "/alerts on"); a != "Only this group's admins can change its alerts." {
+		t.Errorf("the network failing: %q", a)
+	}
+	if a, ok := h.Press(ctx, feature.Press{Chat: group, By: feature.Person{ID: "alice"}, Sent: 4, Data: "feed=alerts/on"}); !ok || a != "Only this group's admins can change its alerts." {
+		t.Errorf("a press, the network failing: %q %v", a, ok)
+	}
 	if a := ask(h, group, "bob", "/alerts on"); !strings.Contains(a, "On: Rain") {
-		t.Errorf("all: %q", a)
+		t.Errorf("listed, the network failing: %q", a)
+	}
+
+	h = start("all", false, false)
+	if a := ask(h, group, "bob", "/alerts on"); !strings.Contains(a, "On: Rain") || h.GroupsAsked() != 0 {
+		t.Errorf("all: %q, asked %d", a, h.GroupsAsked())
 	}
 }
 
