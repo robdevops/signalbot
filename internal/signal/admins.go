@@ -99,8 +99,9 @@ func (c *Client) dmQuick(ids ...string) (ok, known bool) {
 
 // dmAllowed reports whether the sender with ids may DM the bot, asking
 // signal-cli, waiting at most 10s, whether they are an admin of a group
-// the bot is a member of when that decides it, and keeping the answer for
-// verdictAge. A failed lookup refuses, with a warning naming no one.
+// the bot is a member of and answers in (SIGNAL_GROUP_IDS) when that
+// decides it, and keeping the answer for verdictAge. A failed lookup
+// refuses, with a warning naming no one.
 func (c *Client) dmAllowed(ctx context.Context, ids ...string) bool {
 	if ok, known := c.dmQuick(ids...); known {
 		return ok
@@ -114,7 +115,7 @@ func (c *Client) dmAllowed(ctx context.Context, ids ...string) bool {
 		return false
 	}
 	admin := slices.ContainsFunc(gs, func(g group) bool {
-		return g.IsMember && slices.ContainsFunc(g.Admins, func(m member) bool {
+		return g.IsMember && c.groupIDs.has(g.ID) && slices.ContainsFunc(g.Admins, func(m member) bool {
 			return slices.ContainsFunc(ids, func(id string) bool { return is(id, m.UUID, m.Number) })
 		})
 	})

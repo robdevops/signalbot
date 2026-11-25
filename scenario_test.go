@@ -321,6 +321,91 @@ func TestScenarioDMsOff(t *testing.T) {
 	}
 }
 
+// --- SIGNAL_GROUP_IDS ---------------------------------------------------------------
+
+// With SIGNAL_GROUP_IDS listing the test group, the bot neither answers
+// nor keeps anything from another group it is in: a mention, chatter, a
+// command, a reaction or an update there does nothing, and is logged once,
+// by the group's ID only. The listed group is answered, its history
+// holding none of the other's, and /schedule offers only it. Nothing
+// warns that the bot answers in any group.
+func TestScenarioUnlistedGroupIgnored(t *testing.T) {
+	h := startBot(t, world{OtherGroup: true}) // SIGNAL_GROUP_IDS lists the test group
+	h.waitLog("Signal groups: answering in 1 listed in SIGNAL_GROUP_IDS, and ignoring any other")
+	there := func(m incoming) incoming { m.Group = idOther; return m }
+	h.ignored(there(atBot("what is up")))
+	h.ignored(there(inGroup("the moon is out tonight")))
+	h.ignored(there(inGroup("/schedule list")))
+	thumbs := there(inGroup(""))
+	thumbs.Reaction = &reaction{Emoji: "👍", Author: idBot, Sent: 1700}
+	h.ignored(thumbs)
+	update := there(inGroup(""))
+	update.Update = true
+	h.ignored(update)
+	if l := h.waitLog("a message in group " + idOther + " ignored: not in SIGNAL_GROUP_IDS"); l.Pri != 6 {
+		t.Fatalf("logged %+v", l)
+	}
+	n := 0
+	for _, l := range h.logLines() {
+		if strings.Contains(l.Text, idOther) {
+			n++
+		}
+	}
+	if n != 1 {
+		t.Fatalf("the unlisted group logged %d times: %v", n, h.logLines())
+	}
+
+	if s := h.ask(atBot("what is up")); s.GroupID != idGroup || s.Message != "ok" {
+		t.Fatalf("sent %+v", s)
+	}
+	equal(t, "conversation", h.lastRequest().contents(), []string{"user: Alice: what is up"})
+	if s := h.ask(fromAlice(`/schedule "/intro" 2099-01-01T09:00 other group`)); s.Message != "We aren't in a group called other group together. Your groups with me: Test group." {
+		t.Fatalf("sent %q", s.Message)
+	}
+	if n := h.warnings("any group"); n != 0 {
+		t.Fatalf("%d warnings that the bot answers in any group", n)
+	}
+}
+
+// Only an admin of a listed group may DM the bot as an admin: Bob, an
+// admin only of a group SIGNAL_GROUP_IDS leaves out, isn't answered.
+func TestScenarioAdminOfAnUnlistedGroupMayNotDM(t *testing.T) {
+	h := startBot(t, world{Env: map[string]string{"SIGNAL_DM_USERS": ""}, Admins: []string{idAlice},
+		OtherGroup: true, OtherAdmins: []string{idBob}})
+	if s := h.ask(fromAlice("a test direct message")); s.Recipient != idAlice || s.Message != "ok" {
+		t.Fatalf("sent %+v", s)
+	}
+	h.ignored(dmFrom(idBob, "Bob", "hello from an admin elsewhere"))
+	if _, ok := h.logged(idBob, "not in SIGNAL_DM_USERS"); !ok {
+		t.Fatalf("Bob's DM not logged: %v", h.logLines())
+	}
+}
+
+// Unset, SIGNAL_GROUP_IDS lets the bot answer in any group: once connected
+// it warns so, and suggests the line that lists the groups it is in, with
+// their names, the one line that logs a group's name. Both groups are
+// answered.
+func TestScenarioSuggestGroupIDs(t *testing.T) {
+	h := startBot(t, world{Env: map[string]string{"SIGNAL_GROUP_IDS": ""}, OtherGroup: true})
+	if l := h.waitLog("the bot answers in any group anyone adds it to"); l.Pri != 4 {
+		t.Fatalf("logged %+v", l)
+	}
+	if l := h.waitLog("SIGNAL_GROUP_IDS=" + idGroup + "," + idOther + "  # Test group, Other group"); l.Pri != 4 {
+		t.Fatalf("logged %+v", l)
+	}
+	there := atBot("what is up")
+	there.Group = idOther
+	if s := h.ask(there); s.GroupID != idOther {
+		t.Fatalf("sent %+v", s)
+	}
+	if s := h.ask(atBot("what is up")); s.GroupID != idGroup {
+		t.Fatalf("sent %+v", s)
+	}
+	if n := h.warnings("SIGNAL_GROUP_IDS="); n != 1 {
+		t.Fatalf("suggested %d times", n)
+	}
+}
+
 // A DM schedule's run is dropped once its user may no longer DM the bot:
 // Alice, an admin when she made it, is one no longer when it runs. The
 // drop names no one.

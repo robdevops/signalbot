@@ -61,6 +61,9 @@ type rpcMsg struct {
 type Client struct {
 	addr         string
 	dm           allow.Policy // who may DM the bot (SIGNAL_DM_USERS)
+	groupIDs     groupSet     // the groups the bot answers in (SIGNAL_GROUP_IDS)
+	ignored      ignored      // the unlisted groups a message was ignored in, logged once each
+	suggest      atomic.Bool  // SIGNAL_GROUP_IDS is all, and the line to set it is yet to be suggested
 	verdicts     verdicts     // whether a DM's sender is a group admin, lately asked
 	typingEvery  time.Duration
 	writeTimeout time.Duration // writeTimeout; a test's shorter
@@ -83,7 +86,8 @@ type Client struct {
 
 // New makes the client its settings say: SIGNALCLI_SOCKET, host:port
 // (signal-cli's daemon --tcp on this host by default) or a unix socket path,
-// and SIGNAL_DM_USERS, who may DM the bot: by default a group's admins.
+// SIGNAL_DM_USERS, who may DM the bot: by default a group's admins, and
+// SIGNAL_GROUP_IDS, the groups it answers in: by default any.
 func New(test *config.Test) *Client {
 	addr := config.Env("SIGNALCLI_SOCKET", "127.0.0.1:7583")
 	dm := allow.Parse(config.Renamed("SIGNAL_DM_USERS", "SIGNAL_DM_USER_IDS"))
@@ -92,12 +96,22 @@ func New(test *config.Test) *Client {
 	} else {
 		logx.Noticef("Signal DMs: allowed from %s (SIGNAL_DM_USERS)", dm)
 	}
-	return newClient(addr, dm, test)
+	c := newClient(addr, dm, test)
+	c.groupIDs = parseGroups(config.Env("SIGNAL_GROUP_IDS", "all"))
+	switch {
+	case c.groupIDs.all:
+		c.suggest.Store(true) // once connected, with the line to set
+	case len(c.groupIDs.ids) == 0:
+		logx.Warnf("Signal groups are off: SIGNAL_GROUP_IDS is none; the bot answers only in DMs")
+	default:
+		logx.Noticef("Signal groups: answering in %d listed in SIGNAL_GROUP_IDS, and ignoring any other", len(c.groupIDs.ids))
+	}
+	return c
 }
 
 // newClient is New with its settings given.
 func newClient(addr string, dm allow.Policy, test *config.Test) *Client {
-	c := &Client{addr: addr, dm: dm, typingEvery: 10 * time.Second, writeTimeout: writeTimeout, backoff: time.Second, pending: map[string]chan *rpcMsg{},
+	c := &Client{addr: addr, dm: dm, groupIDs: groupSet{all: true}, typingEvery: 10 * time.Second, writeTimeout: writeTimeout, backoff: time.Second, pending: map[string]chan *rpcMsg{},
 		known: make(chan struct{}), test: test}
 	c.members.c = c
 	c.names.byID, c.names.numbers, c.names.minRefresh = map[string]rankedName{}, map[string]string{}, 15*time.Second
@@ -182,6 +196,7 @@ func (c *Client) serve(ctx context.Context, conn net.Conn, handle func(bot.Recei
 		mctx, mcancel := context.WithTimeout(ctx, 15*time.Second)
 		defer mcancel()
 		c.members.start(mctx, handle) // so the first group update can be told apart
+		c.suggestGroups(ctx)
 	}()
 
 	err := readFrames(conn, maxLine, func(line []byte) { c.dispatch(line, handle) }, c.skipped)
@@ -462,19 +477,21 @@ type member struct {
 	Number string `json:"number"`
 }
 
-// groups lists the groups the bot shares with user (an ACI or a number).
+// groups lists the groups the bot shares with user (an ACI or a number),
+// of those it answers in (SIGNAL_GROUP_IDS).
 func (c *Client) groups(ctx context.Context, user string) ([]group, error) {
 	var gs []group
 	if err := c.call(ctx, "listGroups", nil, &gs); err != nil {
 		return nil, err
 	}
 	return slices.DeleteFunc(gs, func(g group) bool {
-		return !g.IsMember || g.ID == "" || !slices.ContainsFunc(g.Members, func(m member) bool { return is(user, m.UUID, m.Number) })
+		return !g.IsMember || g.ID == "" || !c.groupIDs.has(g.ID) || !slices.ContainsFunc(g.Members, func(m member) bool { return is(user, m.UUID, m.Number) })
 	}), nil
 }
 
 // Groups lists the groups the bot shares with user (an ACI or a number),
-// with Admin if user is one of its admins; Signal groups have no mods.
+// of those it answers in (SIGNAL_GROUP_IDS), with Admin if user is one
+// of its admins; Signal groups have no mods.
 func (c *Client) Groups(ctx context.Context, user string) ([]feature.Group, error) {
 	gs, err := c.groups(ctx, user)
 	var out []feature.Group

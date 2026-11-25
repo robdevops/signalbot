@@ -72,6 +72,9 @@ To get the bot working with Signal and a model on OpenRouter, set these:
 | `MODEL_API_KEY` | empty | Your [OpenRouter](https://openrouter.ai) API key (or see [other providers](docs/MODELS.md)) |
 | `MODEL` | `deepseek/deepseek-v4.1-flash-1017` | The model, as OpenRouter's `provider/model` |
 | `SIGNAL_DM_USERS` | `admins, mods` | Who may DM the bot: unset, an admin of a group the bot is in (Signal groups have no mods); `all`, anyone; `none`, no one; or UUIDs or numbers, with or without `signal:`, alone or with `admins`, separated by commas or whitespace. See [Who may use the bot](docs/CONFIGURATION.md#who-may-use-the-bot) |
+| `SIGNAL_GROUP_IDS` | `all` | The groups the bot answers in, by ID, separated by commas; `none` for none. Unset (`all`), it answers in any group anyone adds it to. Recommended: set it, see below |
+
+**Set `SIGNAL_GROUP_IDS`.** Unset, anyone who can add the bot to a group gets it to answer there, at your cost. Once the bot is in your groups, start it: it warns that it answers in any group and logs the line to set, with each group's name after `#` so you can check them (`journalctl -u signalbot | grep SIGNAL_GROUP_IDS=`), such as `SIGNAL_GROUP_IDS=dGVzdC1...=,b3RoZXI...=  # Family, Book club`. Copy it into `/etc/signalbot.env` (anything after `#` is ignored) and restart. To add a group later, add the bot to it, then add its ID, which `go run ./cmd/signalctl call listGroups` lists (see [below](#block-someone-or-other-signal-cli-chores)).
 
 Every other setting (daily budget, chart colours, history length, MCP connectors, time zone, …) is in [Configuration](docs/CONFIGURATION.md). Then install the bot with systemd or with Docker.
 

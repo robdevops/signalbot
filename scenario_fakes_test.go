@@ -44,6 +44,7 @@ const (
 	idAlice = "3b1f6c2e-7a4d-4e58-9c13-0d2a5b8e71f4"
 	idBob   = "99999999-8888-7777-6666-555555555555"
 	idGroup = "dGVzdC1ncm91cC1pZC1maXh0dXJlLTAwMDAwMDAwMDA="
+	idOther = "b3RoZXItZ3JvdXAtaWQtZml4dHVyZS0wMDAwMDAwMDA=" // a second group, which listGroups lists with OtherGroup
 
 	// scenarioModel is the model the bot runs unless a scenario sets MODEL.
 	scenarioModel = "test/test-model"
@@ -58,8 +59,8 @@ const (
 // world is what a scenario starts the bot in.
 type world struct {
 	// Env holds the bot's settings as environment variables. MODEL defaults
-	// to scenarioModel and SIGNAL_DM_USERS to Alice; everything else to
-	// the bot's own defaults.
+	// to scenarioModel, SIGNAL_DM_USERS to Alice and SIGNAL_GROUP_IDS to the
+	// test group; everything else to the bot's own defaults.
 	Env map[string]string
 	// Vision says the model list shows the model accepting images.
 	Vision bool
@@ -112,6 +113,11 @@ type world struct {
 	// Admins are who listGroups lists as the test group's admins at first;
 	// no one if unset.
 	Admins []string
+	// OtherGroup makes listGroups list a second group the bot is in,
+	// idOther, "Other group", with Alice, Bob and the bot, and OtherAdmins
+	// its admins.
+	OtherGroup  bool
+	OtherAdmins []string
 }
 
 // harness is a running bot and its fakes.
@@ -225,7 +231,9 @@ func newHarness(t *testing.T, w world) *harness {
 func (h *harness) env() map[string]string {
 	// SCHEDULE_ALLOWED_USERS is all, so group schedules don't wait on a
 	// network's admins; scenarios of who may schedule set it themselves.
-	e := map[string]string{"MODEL": scenarioModel, "SIGNAL_DM_USERS": idAlice, "SCHEDULE_ALLOWED_USERS": "all"}
+	// SIGNAL_GROUP_IDS lists the test group, as recommended, so startup
+	// logs no suggestion; scenarios of it set it themselves.
+	e := map[string]string{"MODEL": scenarioModel, "SIGNAL_DM_USERS": idAlice, "SCHEDULE_ALLOWED_USERS": "all", "SIGNAL_GROUP_IDS": idGroup}
 	maps.Copy(e, h.w.Env)
 	e["STATE_DIRECTORY"] = h.w.StateDir
 	return e
@@ -305,7 +313,15 @@ func (h *harness) serveSignal(c net.Conn) {
 			for _, id := range h.groupAdmins() {
 				as = append(as, `{"number":null,"uuid":"`+id+`"}`)
 			}
-			result = `[{"id":"` + idGroup + `","name":"Test group","isMember":true,"members":[` + strings.Join(ms, ",") + `],"admins":[` + strings.Join(as, ",") + `]}]`
+			result = `[{"id":"` + idGroup + `","name":"Test group","isMember":true,"members":[` + strings.Join(ms, ",") + `],"admins":[` + strings.Join(as, ",") + `]}`
+			if h.w.OtherGroup {
+				var oas []string
+				for _, id := range h.w.OtherAdmins {
+					oas = append(oas, `{"number":null,"uuid":"`+id+`"}`)
+				}
+				result += `,{"id":"` + idOther + `","name":"Other group","isMember":true,"members":[{"uuid":"` + idAlice + `"},{"uuid":"` + idBob + `"},{"uuid":"` + idBot + `"}],"admins":[` + strings.Join(oas, ",") + `]}`
+			}
+			result += "]"
 		case "send":
 			if fail {
 				h.write(c, fmt.Sprintf(`{"jsonrpc":"2.0","error":{"code":-1,"message":"Failed to send message"},"id":%s}`, req.ID))
