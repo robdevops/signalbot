@@ -66,6 +66,8 @@ For a DM, someone counts if they are one in any group the bot is in with them: o
 
 On Telegram, anyone can add the bot to a group while BotFather's Allow Groups is on (the default), and whoever makes a group is its owner, an admin: so by default they may DM the bot, and schedule posts in their group. Once the bot is in your groups, send BotFather `/setjoingroups`, choose the bot, and Disable; switch it on briefly to add the bot to another group yourself. While it is on, the bot warns so at startup.
 
+On Slack, people from another organisation can talk to the bot in a channel shared with it (Slack Connect). At every startup the bot warns with the name and ID of each such channel it is in (with none, it notes how many channels it is in); remove it from any you don't expect.
+
 ---
 
 [Back to README.md](../README.md)

@@ -687,9 +687,7 @@ func (c *Client) stillIn(ctx context.Context, user, channel string) bool {
 	theirs, err := c.conversations(ctx, user)
 	switch {
 	case code(err) == "missing_scope":
-		c.scopeWarn.Do(func() {
-			logx.Warnf("Slack refused to list channels (missing_scope): the app needs the scopes channels:read and groups:read, so paste the app manifest again at api.slack.com/apps → your app → App Manifest and reinstall the app; until then channels are named by their IDs and scheduled posts in channels are dropped")
-		})
+		c.channelsScope()
 		logx.Warnf("delivered message dropped: Slack won't say whether its sender is still in the channel")
 		return false
 	case err != nil:
@@ -704,7 +702,10 @@ func (c *Client) stillIn(ctx context.Context, user, channel string) bool {
 }
 
 // Reachable reports whether the bot may still post in chat on its own: the
-// DM of someone who may DM it, or a channel it hasn't been removed from.
+// DM of someone SLACK_DM_USERS still allows (listed or all without a call,
+// else a workspace admin by the verdict kept, or users.info's once it is
+// stale; a failed lookup refuses), or a channel it hasn't been removed
+// from.
 func (c *Client) Reachable(ctx context.Context, chat feature.Chat) bool {
 	wait, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
@@ -738,15 +739,13 @@ func (c *Client) Groups(ctx context.Context, user string) ([]feature.Group, erro
 		logx.Warnf("slack users.info failed, so a user is taken for no admin of their channels: %v", err)
 	}
 	mine, err := c.conversations(ctx, "")
-	var theirs map[string]string
+	var theirs map[string]conv
 	if err == nil {
 		theirs, err = c.conversations(ctx, user)
 	}
 	if err != nil {
 		if code(err) == "missing_scope" {
-			c.scopeWarn.Do(func() {
-				logx.Warnf("Slack refused to list channels (missing_scope): the app needs the scopes channels:read and groups:read, so paste the app manifest again at api.slack.com/apps → your app → App Manifest and reinstall the app; until then channels are named by their IDs and scheduled posts in channels are dropped")
-			})
+			c.channelsScope()
 		} else {
 			logx.Warnf("slack users.conversations failed: %v; listing the channels seen instead", err)
 		}
@@ -754,9 +753,9 @@ func (c *Client) Groups(ctx context.Context, user string) ([]feature.Group, erro
 	}
 	var out []feature.Group
 	c.mu.Lock()
-	for id, name := range theirs {
+	for id, ch := range theirs {
 		if _, ok := mine[id]; ok && !c.left[id] {
-			out = append(out, feature.Group{ID: prefix + id, Name: "#" + cmp.Or(txt.SafeName(name), id), Admin: admin})
+			out = append(out, feature.Group{ID: prefix + id, Name: "#" + cmp.Or(txt.SafeName(ch.name), id), Admin: admin})
 		}
 	}
 	c.mu.Unlock()
@@ -766,11 +765,25 @@ func (c *Client) Groups(ctx context.Context, user string) ([]feature.Group, erro
 	return out, nil
 }
 
+// channelsScope logs, once, that Slack won't list channels for want of
+// the app's scopes, and how to give it them.
+func (c *Client) channelsScope() {
+	c.scopeWarn.Do(func() {
+		logx.Warnf("Slack refused to list channels (missing_scope): the app needs the scopes channels:read and groups:read, so paste the app manifest again at api.slack.com/apps → your app → App Manifest and reinstall the app; until then channels are named by their IDs, scheduled posts in channels are dropped, and the channels shared with other organisations aren't listed at startup")
+	})
+}
+
+// conv is a channel as users.conversations lists it.
+type conv struct {
+	name   string
+	shared bool // shared with another organisation, or invited to be (Slack Connect)
+}
+
 // conversations are the channels user is in that the bot can see, or with
-// no user the bot's own, by ID to name: users.conversations, page by page,
-// at most 50 pages.
-func (c *Client) conversations(ctx context.Context, user string) (map[string]string, error) {
-	out := map[string]string{}
+// no user the bot's own, by ID: users.conversations, page by page, at most
+// 50 pages.
+func (c *Client) conversations(ctx context.Context, user string) (map[string]conv, error) {
+	out := map[string]conv{}
 	cursor := ""
 	for range 50 {
 		vals := url.Values{"types": {"public_channel,private_channel"}, "exclude_archived": {"true"}, "limit": {"200"}}
@@ -784,6 +797,11 @@ func (c *Client) conversations(ctx context.Context, user string) (map[string]str
 			Channels []struct {
 				ID   string `json:"id"`
 				Name string `json:"name"`
+				// Slack Connect: shared with another organisation, or
+				// invited to be. is_org_shared alone is the same
+				// Enterprise Grid org's workspaces, so it isn't counted.
+				ExtShared     bool `json:"is_ext_shared"`
+				PendingShared bool `json:"is_pending_ext_shared"`
 			} `json:"channels"`
 			Meta struct {
 				Next string `json:"next_cursor"`
@@ -794,7 +812,7 @@ func (c *Client) conversations(ctx context.Context, user string) (map[string]str
 		}
 		for _, ch := range r.Channels {
 			if ch.ID != "" {
-				out[ch.ID] = ch.Name
+				out[ch.ID] = conv{name: ch.Name, shared: ch.ExtShared || ch.PendingShared}
 			}
 		}
 		if cursor = r.Meta.Next; cursor == "" {
@@ -951,4 +969,45 @@ func (c *Client) threadOf(channel, ts string) string {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return c.thread[channel+"/"+ts]
+}
+
+// auditChannels logs, at startup, the channels the bot is in that are
+// shared with another organisation (Slack Connect), whose people can talk
+// to it, each by name and ID, so whoever runs the bot sees one it was
+// added to unawares; if none is, how many channels it is in. A name is
+// the one a log line may hold, made safe, cut to 40 characters, a
+// backslash shown as "/" (one that ends a line pasted into an env file
+// would join the next line to it).
+func (c *Client) auditChannels(ctx context.Context) {
+	wait, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	mine, err := c.conversations(wait, "")
+	switch {
+	case err != nil && ctx.Err() != nil: // shutting down
+		return
+	case code(err) == "missing_scope":
+		c.channelsScope()
+		return
+	case err != nil:
+		logx.Warnf("slack users.conversations failed, so the channels shared with other organisations aren't listed: %v", err)
+		return
+	}
+	type named struct{ id, name string }
+	var shared []named
+	for id, ch := range mine {
+		if ch.shared {
+			name := strings.ReplaceAll(txt.SafeName(ch.name), `\`, "/")
+			shared = append(shared, named{id, txt.Clamp(name, 40)})
+		}
+	}
+	if len(shared) == 0 {
+		logx.Noticef("Slack: the bot is in %d channel(s), none shared with other organisations", len(mine))
+		return
+	}
+	slices.SortFunc(shared, func(a, b named) int { return cmp.Or(strings.Compare(a.name, b.name), strings.Compare(a.id, b.id)) })
+	list := make([]string, len(shared))
+	for i, ch := range shared {
+		list[i] = "#" + cmp.Or(ch.name, "(no name)") + " (" + ch.id + ")"
+	}
+	logx.Warnf("Slack: the bot is in %d channel(s) shared with other organisations, whose people can talk to it: %s", len(shared), strings.Join(list, ", "))
 }

@@ -247,6 +247,65 @@ func TestDeliveredToDM(t *testing.T) {
 	}
 }
 
+// The bot may post on its own in a DM (a feed's alert) only while
+// SLACK_DM_USERS allows its user: listed, or "all", with no lookup; else a
+// workspace admin, by the verdict kept 10 minutes, asking users.info once
+// it is stale. A failed lookup refuses, with a warning naming no one.
+func TestReachableDM(t *testing.T) {
+	logs := captureLogs(t)
+	ctx := context.Background()
+	aliceDM := feature.Chat{User: "slack:" + alice}
+	for _, v := range []string{alice, "slack:" + alice, "all", "admins, " + alice} {
+		f := newFake(t)
+		c := connected(f.client(t))
+		c.dm = allow.Parse(v)
+		if !c.Reachable(ctx, aliceDM) {
+			t.Fatalf("%q: Alice's DM", v)
+		}
+		if n := len(f.callsTo("users.info")); n != 0 {
+			t.Fatalf("%q: users.info asked %d times", v, n)
+		}
+	}
+	f := newFake(t)
+	f.infos = map[string]string{alice: adminAlice}
+	c := connected(f.client(t))
+	c.dm = allow.Parse("none")
+	if c.Reachable(ctx, aliceDM) {
+		t.Fatal("none: Alice's DM")
+	}
+
+	c.dm = allow.Parse("")
+	if !c.Reachable(ctx, aliceDM) || !c.Reachable(ctx, aliceDM) || c.Reachable(ctx, feature.Chat{User: "slack:" + bob}) {
+		t.Fatal("by default, an admin's DM only")
+	}
+	if n := len(f.callsTo("users.info")); n != 2 {
+		t.Fatalf("users.info asked %d times", n)
+	}
+	f.mu.Lock()
+	f.infos[alice] = `"user":{"name":"alice"}`
+	f.mu.Unlock()
+	stale(c, alice)
+	if c.Reachable(ctx, aliceDM) {
+		t.Fatal("Alice's DM once she is no admin and her verdict is stale")
+	}
+
+	stale(c, alice)
+	f.fail("users.info", "internal_error")
+	if c.Reachable(ctx, aliceDM) {
+		t.Fatal("reachable when the lookup failed")
+	}
+	if l := logs.String(); !strings.Contains(l, "slack users.info failed, so a DM's user is taken for no admin") || strings.Contains(l, alice) || strings.Contains(l, "Alice") {
+		t.Fatalf("logs %q", l)
+	}
+}
+
+// stale makes user's kept verdict an admin's, asked past verdictAge.
+func stale(c *Client, user string) {
+	c.verdicts.mu.Lock()
+	defer c.verdicts.mu.Unlock()
+	c.verdicts.m[user] = verdict{admin: true, at: time.Now().Add(-verdictAge - time.Second)}
+}
+
 // Groups marks every channel Admin for a workspace admin and none for
 // anyone else, Mod never; a failed lookup marks none, naming no one.
 func TestGroupsAdmin(t *testing.T) {
