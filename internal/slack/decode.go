@@ -351,10 +351,14 @@ func (c *Client) tombstone(e *event) (bot.Received, bool) {
 	return bot.Deleted{Chat: ch, Sender: prefix + p.User, Bot: self != "" && p.User == self, Sent: tsInt(p.TS), At: math.MaxInt64}, true
 }
 
-// reacted is a reaction as the core gets it, but the bot's own, and one
-// with an emoji the table doesn't know.
+// reacted is a reaction as the core gets it, but the bot's own. A name
+// the table doesn't know, a workspace's own emoji, is :name:, its name
+// made safe, as on Discord.
 func (c *Client) reacted(e *event) (bot.Received, bool) {
 	emoji := emojiOf(e.Reaction)
+	if base, _, _ := strings.Cut(e.Reaction, "::"); emoji == "" && txt.SafeName(base) != "" {
+		emoji = ":" + txt.Clamp(txt.SafeName(base), 32) + ":"
+	}
 	if e.Item == nil || e.Item.Type != "message" || e.User == "" || e.User == c.selfID() || emoji == "" {
 		return nil, false
 	}

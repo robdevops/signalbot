@@ -341,8 +341,24 @@ func TestReactions(t *testing.T) {
 	if !ok || *h.Event.Reaction != (feature.Reaction{Emoji: "👍", Author: "slack:" + botID, Bot: true, Sent: 1700000000000200}) || h.Event.By.ID != "slack:"+alice {
 		t.Fatalf("reaction %+v", rs)
 	}
-	if rs := c.events(ev(strings.Replace(e, "thumbsup::skin-tone-2", "custom_party", 1))); len(rs) != 0 {
-		t.Fatalf("an unknown emoji: %v", rs)
+	// A workspace's own emoji is :name:, made safe and cut short.
+	for name, want := range map[string]string{
+		"custom_party":              ":custom_party:",
+		"custom_party::skin-tone-3": ":custom_party:",
+		strings.Repeat("long", 10):  ":" + strings.Repeat("long", 8) + "…:",
+		"":                          "",
+		"::skin-tone-2":             "",
+	} {
+		rs := c.events(ev(strings.Replace(e, "thumbsup::skin-tone-2", name, 1)))
+		if want == "" {
+			if len(rs) != 0 {
+				t.Fatalf("%q: %v", name, rs)
+			}
+			continue
+		}
+		if len(rs) != 1 || rs[0].(bot.Happened).Event.Reaction.Emoji != want {
+			t.Fatalf("%q: %+v", name, rs)
+		}
 	}
 	// A reaction names only the channel and ts: one on a message in a
 	// thread, the bot's or one it read there, is in the thread's chat.
@@ -362,6 +378,23 @@ func TestReactions(t *testing.T) {
 	c.React(ch, feature.Message{Timestamp: 1700000000000200}, "❤")
 	if r := f.callsTo("reactions.add"); len(r) != 1 || r[0].Params["name"] != "heart" || r[0].Params["timestamp"] != "1700000000.000200" || r[0].Params["channel"] != channel {
 		t.Fatalf("reactions.add %v", r)
+	}
+	// One skin tone goes by Slack's name for it, or, if Slack refuses that
+	// (an emoji that takes none), without it.
+	f.mu.Lock()
+	f.calls = nil
+	f.mu.Unlock()
+	c.React(ch, feature.Message{Timestamp: 1700000000000200}, "👍🏽")
+	if r := f.callsTo("reactions.add"); len(r) != 1 || r[0].Params["name"] != "+1::skin-tone-4" {
+		t.Fatalf("a skin tone %v", r)
+	}
+	f.mu.Lock()
+	f.calls = nil
+	f.mu.Unlock()
+	f.fail("reactions.add", "invalid_name")
+	c.React(ch, feature.Message{Timestamp: 1700000000000200}, "🦜🏽")
+	if r := f.callsTo("reactions.add"); len(r) != 2 || r[0].Params["name"] != "parrot::skin-tone-4" || r[1].Params["name"] != "parrot" {
+		t.Fatalf("a skin tone refused %v", r)
 	}
 	c.React(ch, feature.Message{Timestamp: 1700000000000200}, ":party_parrot:") // another network's own emoji, as it names it
 	if p := f.callsTo("chat.postMessage"); len(p) != 1 || p[0].Params["text"] != ":party_parrot:" {

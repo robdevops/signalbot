@@ -488,6 +488,10 @@ func (c *Client) React(ch feature.Chat, msg feature.Message, emoji string) {
 	channel, _, err := c.dest(ctx, ch)
 	if err == nil {
 		err = c.call(ctx, "reactions.add", map[string]string{"channel": channel, "timestamp": tsString(msg.Timestamp), "name": name}, nil)
+		if base, _, toned := strings.Cut(name, "::"); toned && code(err) == "invalid_name" {
+			// an emoji that takes no skin tone: put it on without one
+			err = c.call(ctx, "reactions.add", map[string]string{"channel": channel, "timestamp": tsString(msg.Timestamp), "name": base}, nil)
+		}
 	}
 	if err != nil && code(err) != "already_reacted" {
 		logx.Errorf("reaction failed: %v", err)
