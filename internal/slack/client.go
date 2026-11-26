@@ -7,6 +7,7 @@ package slack
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -261,10 +262,8 @@ func (c *Client) Name() string { return "slack" }
 
 // BotName is the bot's display name, or "signalbot" until known.
 func (c *Client) BotName() string {
-	if n, _ := c.name.Load().(string); n != "" {
-		return n
-	}
-	return "signalbot"
+	n, _ := c.name.Load().(string)
+	return cmp.Or(n, "signalbot")
 }
 
 func (c *Client) handleOf() string { h, _ := c.handle.Load().(string); return h }

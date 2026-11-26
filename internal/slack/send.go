@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -145,16 +146,10 @@ func (c *Client) postBlocks(ctx context.Context, channel, thread string, blocks 
 	var r struct {
 		TS string `json:"ts"`
 	}
-	err := c.call(ctx, "chat.postMessage", params, &r)
-	for i := 0; i < 2 && code(err) == "invalid_blocks" && hasImage(blocks); i++ {
-		if !sleep(ctx, c.settle) {
-			break
-		}
-		err = c.call(ctx, "chat.postMessage", params, &r)
-	}
-	if code(err) == "invalid_blocks" && hasImage(blocks) {
+	err := c.callSettled(ctx, "chat.postMessage", params, blocks, &r)
+	if code(err) == "invalid_blocks" && slices.ContainsFunc(blocks, isImage) {
 		log.Errorf("send failed: pictures: Slack refused them") // the text still goes
-		blocks = withoutImages(blocks)
+		blocks = slices.DeleteFunc(slices.Clone(blocks), isImage)
 		if len(blocks) == 0 {
 			return "", err
 		}
@@ -188,24 +183,23 @@ func fallback(blocks []any) string {
 	return txt.Clamp(strings.Join(parts, "\n"), maxSection)
 }
 
-func hasImage(blocks []any) bool {
-	for _, b := range blocks {
-		if m, ok := b.(map[string]any); ok && m["type"] == "image" {
-			return true
+// callSettled calls method, and again after a moment, twice at most, while
+// Slack refuses blocks with a picture it is still processing.
+func (c *Client) callSettled(ctx context.Context, method string, params map[string]any, blocks []any, out any) error {
+	err := c.call(ctx, method, params, out)
+	for i := 0; i < 2 && code(err) == "invalid_blocks" && slices.ContainsFunc(blocks, isImage); i++ {
+		if !sleep(ctx, c.settle) {
+			break
 		}
+		err = c.call(ctx, method, params, out)
 	}
-	return false
+	return err
 }
 
-func withoutImages(blocks []any) []any {
-	var out []any
-	for _, b := range blocks {
-		if m, ok := b.(map[string]any); !ok || m["type"] != "image" {
-			out = append(out, b)
-		}
-	}
-	return out
-}
+// blockType is a block's "type", or nil if it is not a map.
+func blockType(b any) any { m, _ := b.(map[string]any); return m["type"] }
+
+func isImage(b any) bool { return blockType(b) == "image" }
 
 func section(mrkdwn string) map[string]any {
 	return map[string]any{"type": "section", "text": map[string]string{"type": "mrkdwn", "text": mrkdwn}}
@@ -324,15 +318,9 @@ func escapeURL(u string) string {
 // 5 buttons; a highlighted one is in the "primary" style (green).
 func actions(buttons [][]feature.Button) []any {
 	var out []any
-	for i, row := range buttons {
-		if i >= 5 {
-			break
-		}
+	for i, row := range buttons[:min(len(buttons), 5)] {
 		var els []any
-		for j, b := range row {
-			if j >= 5 {
-				break
-			}
+		for j, b := range row[:min(len(row), 5)] {
 			el := map[string]any{"type": "button", "text": map[string]any{"type": "plain_text", "text": txt.Clamp(cmp.Or(b.Label, "·"), 75), "emoji": true},
 				"action_id": "b" + strconv.Itoa(i) + "_" + strconv.Itoa(j), "value": b.Data}
 			if b.Highlight {
@@ -386,10 +374,7 @@ func (c *Client) upload(ctx context.Context, name, title, mime string, data []by
 // logged and left out.
 func (c *Client) uploadPictures(ctx context.Context, pics []feature.Picture) []any {
 	var out []any
-	for i, p := range pics {
-		if i >= 10 {
-			break
-		}
+	for _, p := range pics[:min(len(pics), 10)] {
 		name := cmp.Or(p.Name, "image")
 		mime, ext := img.Type(p.Data)
 		id, err := c.upload(ctx, name+"."+ext, name, mime, p.Data, "", "")
@@ -411,12 +396,7 @@ func (c *Client) shareAudio(ctx context.Context, channel, thread string, audio [
 // keepBlocks remembers what the bot put in a message, but its buttons, so
 // an edit that changes only the buttons can keep the rest; the last 500.
 func (c *Client) keepBlocks(channel, ts string, blocks []any) {
-	var kept []any
-	for _, b := range blocks {
-		if m, ok := b.(map[string]any); !ok || m["type"] != "actions" {
-			kept = append(kept, b)
-		}
-	}
+	kept := slices.DeleteFunc(slices.Clone(blocks), func(b any) bool { return blockType(b) == "actions" })
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	k := channel + "/" + ts
@@ -462,13 +442,7 @@ func (c *Client) Edit(ch feature.Chat, sent int64, text string, pics []feature.P
 	}
 	blocks = append(blocks, actions(mk.Buttons)...)
 	params := map[string]any{"channel": channel, "ts": ts, "text": fallback(blocks), "blocks": blocks}
-	err = c.call(ctx, "chat.update", params, nil)
-	for i := 0; i < 2 && code(err) == "invalid_blocks" && hasImage(blocks); i++ {
-		if !sleep(ctx, c.settle) {
-			break
-		}
-		err = c.call(ctx, "chat.update", params, nil)
-	}
+	err = c.callSettled(ctx, "chat.update", params, blocks, nil)
 	if err != nil {
 		log.Errorf("edit failed: %v", err)
 		return nil

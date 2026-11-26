@@ -176,31 +176,48 @@ func (c *Client) listed(ctx context.Context, channel string) (map[string]string,
 // conversations.members, page by page, at most maxMembers.
 func (c *Client) channelMembers(ctx context.Context, channel string) (map[string]string, error) {
 	out := map[string]string{}
-	cursor := ""
-	for range maxRosterPg {
-		vals := url.Values{"channel": {channel}, "limit": {rosterPage}}
-		if cursor != "" {
-			vals.Set("cursor", cursor)
-		}
-		var r struct {
-			Members []string `json:"members"`
-			Meta    struct {
-				Next string `json:"next_cursor"`
-			} `json:"response_metadata"`
-		}
-		if err := c.form(ctx, "conversations.members", c.token, vals, &r); err != nil {
-			return nil, err
-		}
+	err := paged(ctx, c, "conversations.members", url.Values{"channel": {channel}, "limit": {rosterPage}}, maxRosterPg, func(r *struct {
+		page
+		Members []string `json:"members"`
+	}) bool {
 		for _, u := range r.Members {
 			if userID.MatchString(u) && len(out) < maxMembers {
 				out[u] = ""
 			}
 		}
-		if cursor = r.Meta.Next; cursor == "" || len(out) >= maxMembers {
-			break
-		}
+		return len(out) >= maxMembers
+	})
+	if err != nil {
+		return nil, err
 	}
 	return out, nil
+}
+
+// page is the cursor a paged Web API response carries.
+type page struct {
+	Meta struct {
+		Next string `json:"next_cursor"`
+	} `json:"response_metadata"`
+}
+
+func (p page) next() string { return p.Meta.Next }
+
+// paged calls method with vals, then with each next cursor, at most n
+// times, handing each response to each, until there is no next cursor or
+// each returns true.
+func paged[T interface{ next() string }](ctx context.Context, c *Client, method string, vals url.Values, n int, each func(*T) bool) error {
+	for range n {
+		var r T
+		if err := c.form(ctx, method, c.token, vals, &r); err != nil {
+			return err
+		}
+		cursor := r.next()
+		if each(&r) || cursor == "" {
+			return nil
+		}
+		vals.Set("cursor", cursor)
+	}
+	return nil
 }
 
 // workspaceNames are the workspace's people, by ID to display name, by
@@ -209,31 +226,20 @@ func (c *Client) channelMembers(ctx context.Context, channel string) (map[string
 // among them, are left out.
 func (c *Client) workspaceNames(ctx context.Context) (map[string]string, error) {
 	out := map[string]string{}
-	cursor := ""
-	for range maxRosterPg {
-		vals := url.Values{"limit": {rosterPage}}
-		if cursor != "" {
-			vals.Set("cursor", cursor)
-		}
-		var r struct {
-			Members []struct {
-				ID       string `json:"id"`
-				Name     string `json:"name"`
-				RealName string `json:"real_name"`
-				Deleted  bool   `json:"deleted"`
-				IsBot    bool   `json:"is_bot"`
-				Profile  struct {
-					DisplayName string `json:"display_name"`
-					RealName    string `json:"real_name"`
-				} `json:"profile"`
-			} `json:"members"`
-			Meta struct {
-				Next string `json:"next_cursor"`
-			} `json:"response_metadata"`
-		}
-		if err := c.form(ctx, "users.list", c.token, vals, &r); err != nil {
-			return nil, err
-		}
+	err := paged(ctx, c, "users.list", url.Values{"limit": {rosterPage}}, maxRosterPg, func(r *struct {
+		page
+		Members []struct {
+			ID       string `json:"id"`
+			Name     string `json:"name"`
+			RealName string `json:"real_name"`
+			Deleted  bool   `json:"deleted"`
+			IsBot    bool   `json:"is_bot"`
+			Profile  struct {
+				DisplayName string `json:"display_name"`
+				RealName    string `json:"real_name"`
+			} `json:"profile"`
+		} `json:"members"`
+	}) bool {
 		for _, u := range r.Members {
 			if u.Deleted || u.IsBot || u.ID == "USLACKBOT" || !userID.MatchString(u.ID) || len(out) >= maxNames {
 				continue
@@ -242,9 +248,10 @@ func (c *Client) workspaceNames(ctx context.Context) (map[string]string, error) 
 				out[u.ID] = n
 			}
 		}
-		if cursor = r.Meta.Next; cursor == "" || len(out) >= maxNames {
-			break
-		}
+		return len(out) >= maxNames
+	})
+	if err != nil {
+		return nil, err
 	}
 	return out, nil
 }
