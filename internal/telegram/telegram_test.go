@@ -382,12 +382,14 @@ func TestSendReply(t *testing.T) {
 }
 
 // A reaction names its message by ID, the bot's own too; one Telegram
-// refuses is sent as a message.
+// refuses says so and sends nothing.
 func TestReact(t *testing.T) {
 	f := newFake(t)
 	c := connected(f.client())
 	msg := feature.Message{Chat: feature.Chat{User: "1111111"}, Timestamp: 42}
-	c.React(msg.Chat, msg, "👍")
+	if !c.React(msg.Chat, msg, "👍") {
+		t.Fatal("a reaction that went on said it didn't")
+	}
 	if r := f.callsTo("setMessageReaction"); len(r) != 1 || r[0].Params["message_id"] != float64(42) {
 		t.Fatalf("reactions %v", r)
 	}
@@ -397,9 +399,14 @@ func TestReact(t *testing.T) {
 		t.Fatalf("reactions %v", r)
 	}
 	f.errs["setMessageReaction"] = `{"ok":false,"error_code":400,"description":"Bad Request: REACTION_INVALID"}`
-	c.React(msg.Chat, msg, "🫠")
-	if s := f.callsTo("sendMessage"); len(s) != 1 || s[0].Params["text"] != "🫠" {
-		t.Fatalf("fallback %v", s)
+	if c.React(msg.Chat, msg, "🫠") {
+		t.Fatal("a refused reaction said it went on")
+	}
+	if r := f.callsTo("setMessageReaction"); len(r) != 3 {
+		t.Fatalf("reactions %v", r)
+	}
+	if s := f.callsTo("sendMessage"); len(s) != 0 {
+		t.Fatalf("a refused reaction was sent as a message: %v", s)
 	}
 }
 

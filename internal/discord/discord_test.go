@@ -968,19 +968,24 @@ func TestEdit(t *testing.T) {
 	}
 }
 
-// React puts the emoji on the message; one Discord doesn't know is sent.
+// React puts the emoji on the message; one Discord doesn't know says so and
+// sends nothing.
 func TestReact(t *testing.T) {
 	f := newFake(t)
 	c := connected(f.client())
 	ch := feature.Chat{GroupID: group}
-	c.React(ch, feature.Message{Timestamp: 1200000000000000001}, "👍")
+	if !c.React(ch, feature.Message{Timestamp: 1200000000000000001}, "👍") {
+		t.Fatal("a reaction that went on said it didn't")
+	}
 	f.waitCalls("PUT /channels/"+chanID+"/messages/1200000000000000001/reactions/👍/@me", 1)
 	f.mu.Lock()
 	f.errs["PUT /channels/"+chanID+"/messages/1200000000000000002/reactions/x/@me"] = []int{400}
 	f.mu.Unlock()
-	c.React(ch, feature.Message{Timestamp: 1200000000000000002}, "x")
-	if s := f.waitCalls("POST /channels/"+chanID+"/messages", 1)[0]; s.Body["content"] != "x" {
-		t.Fatalf("sent %+v", s)
+	if c.React(ch, feature.Message{Timestamp: 1200000000000000002}, "x") {
+		t.Fatal("a refused reaction said it went on")
+	}
+	if s := f.callsTo("POST /channels/" + chanID + "/messages"); len(s) != 0 {
+		t.Fatalf("a refused reaction was sent as a message: %+v", s)
 	}
 	stop := c.Typing(ch)
 	f.waitCalls("POST /channels/"+chanID+"/typing", 2)
@@ -1059,7 +1064,9 @@ func TestSlashCommand(t *testing.T) {
 
 	// A reaction to a slash command is its reply.
 	m = load(t, cmd("1250000000000000004"))
-	c.React(m.Chat, m, "👍")
+	if !c.React(m.Chat, m, "👍") {
+		t.Fatal("a slash command's reaction said it didn't go on")
+	}
 	if o := f.waitCalls("PATCH /webhooks/app1/tok1250000000000000004/messages/@original", 1)[0]; o.Body["content"] != "👍" {
 		t.Fatalf("reaction %+v", o)
 	}

@@ -864,7 +864,7 @@ func TestFailedSendDropped(t *testing.T) {
 // The bot's reactions wait at low priority: merged into one item, a later
 // one on the same message replacing the earlier, sent after what waited
 // with them, dropped first to make room, and skipped for a message deleted
-// since, the bot's own too.
+// since, the bot's own too. One the network refuses posts nothing.
 func TestReact(t *testing.T) {
 	h := start(t, options{})
 	group := feature.Chat{GroupID: groupID}
@@ -944,6 +944,19 @@ func TestReact(t *testing.T) {
 	}
 	h.settle()
 	h.noSend()
+
+	// A reaction the network refuses (Telegram's REACTION_INVALID) posts
+	// nothing in its place, and its log line names no emoji.
+	h.refuse("📍")
+	h.b.React(group, msg(11), "📍")
+	h.eventually("the refusal's log line", func() bool {
+		return strings.Contains(h.logs.String(), "Fake: a feature's reaction didn't go on\n")
+	})
+	h.settle()
+	h.noSend()
+	if strings.Contains(h.logs.String(), "📍") {
+		t.Fatalf("logs:\n%s", h.logs)
+	}
 }
 
 // Outside a tool, CallAPI is made only for a ctx charged to a chat: it is

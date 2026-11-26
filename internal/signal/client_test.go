@@ -358,14 +358,18 @@ func TestReact(t *testing.T) {
 	log := captureLogs(t)
 	group := feature.Chat{GroupID: groupID}
 	early := newClient(newFake(t).sock, allow.Policy{}, nil)
-	early.React(group, feature.Message{Timestamp: 1001, Bot: true}, "⏰")
+	if early.React(group, feature.Message{Timestamp: 1001, Bot: true}, "⏰") {
+		t.Fatal("a reaction before the bot's account was known said it went on")
+	}
 	if !strings.Contains(log.String(), "reaction failed: the bot's account isn't known yet") {
 		t.Fatalf("log %q", log.String())
 	}
 	f := newFake(t)
 	c := newClient(f.sock, allow.Policy{}, nil)
 	run(t, c, f)
-	c.React(group, feature.Message{Sender: aliceID, Timestamp: 7}, "👍")
+	if !c.React(group, feature.Message{Sender: aliceID, Timestamp: 7}, "👍") {
+		t.Fatal("a reaction that went on said it didn't")
+	}
 	c.React(group, feature.Message{Timestamp: 1001, Bot: true}, "⏰")
 	eventually(t, "two reactions", func() bool { return len(f.calls("sendReaction")) == 2 })
 	r := f.calls("sendReaction")

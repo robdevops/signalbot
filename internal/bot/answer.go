@@ -101,7 +101,7 @@ func (b *Bot) respond(ctx context.Context, msg feature.Message, act feature.Acti
 				l.Warnf("a chat reached its daily budget; it is answered again at midnight")
 				b.net.Send(msg.Chat, limitNotice(left), nil, b.chats.Names(key), 0, nil, feature.Markup{})
 			} else if msg.Timestamp != 0 { // a scheduled post can't be reacted to
-				b.net.React(msg.Chat, msg, waiting)
+				b.reactOrSend(msg, waiting)
 			}
 			return
 		}
@@ -170,7 +170,7 @@ func (b *Bot) respond(ctx context.Context, msg feature.Message, act feature.Acti
 		b.chats.Add(key, start, msg.Expires, chats.Entry{Role: "user", Content: strings.TrimSpace(t.kept), Refs: refs},
 			chats.Entry{Role: "assistant", Content: "[reacted " + emoji + "]"})
 		l.Infof("reacting instead of replying")
-		b.net.React(msg.Chat, msg, emoji)
+		b.reactOrSend(msg, emoji)
 		return
 	}
 	sent, kept := captioned(reply.Text, reply.Pictures)
@@ -480,3 +480,12 @@ var (
 	lineEnds   = regexp.MustCompile(`[ \t]*\n[ \t]*`) // spaces either side of a line break
 	blankLines = regexp.MustCompile(`\n{3,}`)         // two or more blank lines in a row
 )
+
+// reactOrSend puts the core's own emoji on msg, or, where the network
+// refuses it as a reaction (Telegram allows only some), sends it as a
+// message instead, so it is still seen.
+func (b *Bot) reactOrSend(msg feature.Message, emoji string) {
+	if !b.net.React(msg.Chat, msg, emoji) {
+		b.net.Send(msg.Chat, emoji, nil, nil, 0, nil, feature.Markup{})
+	}
+}

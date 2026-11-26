@@ -59,6 +59,7 @@ type fakeNet struct {
 	fail    atomic.Bool  // while set, Send fails: nothing is sent
 	watch   Watch        // what Watch was told
 	buttons bool         // it shows markup
+	refuses string       // an emoji React refuses: nothing is sent
 }
 
 type sent struct {
@@ -119,13 +120,20 @@ func (n *fakeNet) Caps() feature.Caps {
 }
 
 // React is sent as "react <emoji> to <sender>@<timestamp>", the sender
-// "bot" for the bot's own message.
-func (n *fakeNet) React(chat feature.Chat, msg feature.Message, emoji string) {
+// "bot" for the bot's own message; one it refuses sends nothing.
+func (n *fakeNet) React(chat feature.Chat, msg feature.Message, emoji string) bool {
+	n.mu.Lock()
+	refused := emoji == n.refuses && emoji != ""
+	n.mu.Unlock()
+	if refused {
+		return false
+	}
 	sender := msg.Sender
 	if msg.Bot {
 		sender = "bot"
 	}
 	n.sent <- sent{chat: chat, text: fmt.Sprintf("react %s to %s@%d", emoji, sender, msg.Timestamp)}
+	return true
 }
 
 func (n *fakeNet) Typing(feature.Chat) func() {
@@ -348,6 +356,13 @@ func with(m feature.Message, ids ...string) feature.Message {
 }
 
 // nextSend is the next message the bot sends.
+// refuse has the network refuse emoji as a reaction.
+func (h *harness) refuse(emoji string) {
+	h.net.mu.Lock()
+	defer h.net.mu.Unlock()
+	h.net.refuses = emoji
+}
+
 func (h *harness) nextSend() sent {
 	h.t.Helper()
 	select {

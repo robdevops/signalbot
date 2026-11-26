@@ -202,19 +202,22 @@ var sendTimeout = time.Minute
 
 // React puts emoji on msg, as a reaction from the bot. The bot's own
 // message is its account's, so not until signal-cli says which that is.
-func (c *Client) React(chat feature.Chat, msg feature.Message, emoji string) {
+// It says whether the reaction was sent.
+func (c *Client) React(chat feature.Chat, msg feature.Message, emoji string) bool {
 	author := msg.Sender
 	if msg.Bot {
 		if author = c.self(); author == "" {
 			log.Errorf("reaction failed: the bot's account isn't known yet")
-			return
+			return false
 		}
 	}
 	p := target(chat)
 	p["emoji"], p["targetAuthor"], p["targetTimestamp"] = emoji, author, msg.Timestamp
 	if err := c.write(c.nextID.Add(1), "sendReaction", p); err != nil {
 		log.Errorf("reaction failed: %v", err)
+		return false
 	}
+	return true
 }
 
 func target(chat feature.Chat) map[string]any {

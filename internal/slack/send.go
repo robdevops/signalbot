@@ -452,12 +452,12 @@ func (c *Client) Edit(ch feature.Chat, sent int64, text string, pics []feature.P
 }
 
 // React puts emoji on msg, as a reaction from the bot, by Slack's name for
-// it; an emoji the table doesn't know is sent as a message instead.
-func (c *Client) React(ch feature.Chat, msg feature.Message, emoji string) {
+// it, and says whether it went on; an emoji the table doesn't know sends
+// nothing.
+func (c *Client) React(ch feature.Chat, msg feature.Message, emoji string) bool {
 	name := nameOfEmoji(emoji)
 	if name == "" {
-		c.Send(ch, emoji, nil, nil, 0, nil, feature.Markup{})
-		return
+		return false
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
@@ -471,7 +471,9 @@ func (c *Client) React(ch feature.Chat, msg feature.Message, emoji string) {
 	}
 	if err != nil && code(err) != "already_reacted" {
 		log.Errorf("reaction failed: %v", err)
+		return false
 	}
+	return true
 }
 
 // Typing does nothing: Slack shows no bot typing.

@@ -53,8 +53,10 @@ type Network interface {
 	// Caps is what the network can show and do beyond plain messages; it
 	// never blocks.
 	Caps() feature.Caps
-	// React puts emoji on msg in chat, as a reaction from the bot.
-	React(chat feature.Chat, msg feature.Message, emoji string)
+	// React puts emoji on msg in chat, as a reaction from the bot, and
+	// says whether it went on. A network that refuses the emoji as a
+	// reaction sends nothing in its place; any other failure is logged.
+	React(chat feature.Chat, msg feature.Message, emoji string) bool
 	Typing(chat feature.Chat) (stop func())
 	// Delivered readies a posted message in its slot. ok is false, logged,
 	// if msg is dropped.

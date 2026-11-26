@@ -328,11 +328,15 @@ func mergeReactions(l logx.L, waiting, m Received) Received {
 const maxReactions = 16
 
 // react puts the waiting reactions on their messages in their chat's slot,
-// skipping any message deleted or replaced by an edit since.
+// skipping any message deleted or replaced by an edit since. A reaction the
+// network refuses posts nothing: a feature's is an acknowledgement, not a
+// message.
 func (b *Bot) react(r Reacted) {
 	for _, x := range r.Reactions {
 		if !b.gone(x.Message) {
-			b.net.React(r.Chat, x.Message, x.Emoji)
+			if !b.net.React(r.Chat, x.Message, x.Emoji) {
+				b.log(r.Chat).Debugf("a feature's reaction didn't go on")
+			}
 		}
 	}
 }

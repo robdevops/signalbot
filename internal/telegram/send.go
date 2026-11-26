@@ -375,9 +375,10 @@ func (c *Client) sendVoice(ctx context.Context, ch feature.Chat, audio []byte, r
 }
 
 // React puts emoji on msg, as a reaction from the bot: by its message ID,
-// which the bot's own messages have too. Telegram allows only some emoji as
-// reactions, so one it refuses as such is sent as a message instead.
-func (c *Client) React(ch feature.Chat, msg feature.Message, emoji string) {
+// which the bot's own messages have too, and says whether it went on.
+// Telegram allows only some emoji as reactions; one it refuses
+// (REACTION_INVALID) sends nothing, and the caller decides what to do.
+func (c *Client) React(ch feature.Chat, msg feature.Message, emoji string) bool {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	d := c.dest(ch)
@@ -386,11 +387,13 @@ func (c *Client) React(ch feature.Chat, msg feature.Message, emoji string) {
 	var ae *apiError
 	switch {
 	case err == nil:
+		return true
 	case errors.As(err, &ae) && ae.Code == 400 && strings.Contains(ae.Desc, "REACTION_INVALID"):
-		c.Send(ch, emoji, nil, nil, 0, nil, feature.Markup{})
+		log.Debugf("reaction refused: Telegram doesn't allow that emoji as one")
 	default:
 		log.Errorf("reaction failed: %v", err)
 	}
+	return false
 }
 
 // Typing shows the bot typing in chat until stop is called; Telegram's
