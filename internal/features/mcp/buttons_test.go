@@ -235,7 +235,7 @@ func TestAddonPressTimeout(t *testing.T) {
 	pressTimeout = 50 * time.Millisecond
 	c := &pressConn{result: `{"content":[]}`, wait: time.Second}
 	a, _ := buttonAddon(c, true)
-	a.keepPress(inA, 7, "press")
+	a.keepPress(pressPost{Chat: inA, Sent: 7, Tool: "press"})
 	var log logx.Buffer
 	t.Cleanup(logx.SetOutput(&log, &log, true))
 	ctx := context.Background()
@@ -253,7 +253,7 @@ func TestKeepPress(t *testing.T) {
 	now := time.Now()
 	a.now = func() time.Time { return now }
 	for i := range maxPressPosts + 5 {
-		a.keepPress(inA, int64(i+1), "press")
+		a.keepPress(pressPost{Chat: inA, Sent: int64(i + 1), Tool: "press"})
 	}
 	if len(a.presses) != maxPressPosts || a.presses[0].Sent != 6 {
 		t.Errorf("%d kept, the oldest %d", len(a.presses), a.presses[0].Sent)
@@ -306,5 +306,88 @@ func TestAddonButtonsProcess(t *testing.T) {
 	}
 	if l := log.String(); !strings.Contains(l, "MCP server game: a press called pressed: ok in ") || strings.Contains(l, "Bob") {
 		t.Errorf("log %q", l)
+	}
+}
+
+// lobbyWatch is lobby whose result also starts the watch called id.
+func lobbyWatch(id string, row ...ext.Button) string {
+	r := ext.Text("GeoGuess starts in 60s: react to join.")
+	r.Meta = &ext.ResultMeta{Buttons: [][]ext.Button{row}, OnPress: "press",
+		Watch: &ext.Watch{ID: id, Pattern: `\bgeo \d+`, Until: time.Now().Add(time.Hour).Format(time.RFC3339), Tool: "cmd"}}
+	b, _ := json.Marshal(r)
+	return string(b)
+}
+
+// A buttons op replaces the buttons under the addon's direct answer whose
+// result started its watch, by an edit with the answer's same text, and
+// presses still call its onPress; an unknown watch, or an answer sent
+// where the network shows no buttons, is done with nothing posted, and
+// buttons that break the rules drop the op.
+func TestButtonsOp(t *testing.T) {
+	c := &pressConn{result: lobbyWatch("lobby1", startRow[1:]...)}
+	a, h := buttonAddon(c, true)
+	a.cfg.Watch = true
+	act := a.direct(context.Background(), in(inA, "/geo"), "geo", chatCommand{Tool: "cmd", Direct: true}, "")
+	act.OnSent([]int64{101}, false)
+	chat := a.chatID(inA)
+
+	start := [][]ext.Button{startRow}
+	if why := a.apply(ext.Op{ID: "1", Op: "buttons", Chat: chat, Watch: "lobby1", Buttons: start}); why != "" {
+		t.Fatalf("dropped: %s", why)
+	}
+	posts := h.Posts()
+	if len(posts) != 1 || posts[0].Edit != 101 || posts[0].Chat != inA || posts[0].Text != act.Answer ||
+		len(posts[0].Markup.Buttons) != 1 || len(posts[0].Markup.Buttons[0]) != 3 || posts[0].Markup.Buttons[0][0] != (feature.Button{Label: "▶️ Start", Data: "start:g1"}) {
+		t.Fatalf("posts %+v", posts)
+	}
+	posts[0].OnSent([]int64{101}, false)
+	a.mu.Lock()
+	kept := slices.Clone(a.presses)
+	a.mu.Unlock()
+	if len(kept) != 1 || kept[0].Sent != 101 || kept[0].Tool != "press" || kept[0].Edits != 1 {
+		t.Errorf("kept %+v", kept)
+	}
+	if again := a.apply(ext.Op{ID: "1", Op: "buttons", Chat: chat, Watch: "lobby1", Buttons: start}); again != "" || len(h.Posts()) != 1 {
+		t.Errorf("an op done twice: %q, %d posts", again, len(h.Posts()))
+	}
+
+	// Unknown: another watch, another chat's, an empty watch.
+	for i, o := range []ext.Op{{Watch: "lobby2", Chat: chat}, {Watch: "lobby1", Chat: a.chatID(inB)}, {Chat: chat}} {
+		o.ID, o.Op, o.Buttons = "u"+string(rune('0'+i)), "buttons", start
+		if why := a.apply(o); why != "" || len(h.Posts()) != 1 {
+			t.Errorf("%+v: %q, %d posts", o, why, len(h.Posts()))
+		}
+	}
+	// Bad buttons.
+	for i, b := range [][][]ext.Button{nil, {{}}, slices.Repeat(start, 6), {{{Label: strings.Repeat("x", 33), Data: "a"}}}, {{{Label: "a", Data: strings.Repeat("x", 65)}}}} {
+		if why := a.apply(ext.Op{ID: "b" + string(rune('0'+i)), Op: "buttons", Chat: chat, Watch: "lobby1", Buttons: b}); !strings.HasPrefix(why, "buttons ops with ") || len(h.Posts()) != 1 {
+			t.Errorf("buttons %v: %q, %d posts", b, why, len(h.Posts()))
+		}
+	}
+
+	// Past the network's edit limits: left as it is.
+	h.Bot.Caps.EditLimit = 1
+	if why := a.apply(ext.Op{ID: "l", Op: "buttons", Chat: chat, Watch: "lobby1", Buttons: start}); why != "" || len(h.Posts()) != 1 {
+		t.Errorf("past the limit: %q, %d posts", why, len(h.Posts()))
+	}
+	h.Bot.Caps.EditLimit = 0
+
+	// An answer with pictures: the op is dropped.
+	a.mu.Lock()
+	a.presses[0].Pics = true
+	a.mu.Unlock()
+	if why := a.apply(ext.Op{ID: "p", Op: "buttons", Chat: chat, Watch: "lobby1", Buttons: start}); why != "buttons ops for an answer with pictures" || len(h.Posts()) != 1 {
+		t.Errorf("pictures: %q, %d posts", why, len(h.Posts()))
+	}
+
+	// Where the network shows no buttons (Signal), the answer was never
+	// remembered: nothing to do.
+	c2 := &pressConn{result: lobbyWatch("lobby1", startRow[1:]...)}
+	s, sh := buttonAddon(c2, false)
+	s.cfg.Watch = true
+	sact := s.direct(context.Background(), in(inA, "/geo"), "geo", chatCommand{Tool: "cmd", Direct: true}, "")
+	sact.OnSent([]int64{101}, false)
+	if why := s.apply(ext.Op{ID: "1", Op: "buttons", Chat: s.chatID(inA), Watch: "lobby1", Buttons: start}); why != "" || len(sh.Posts()) != 0 {
+		t.Errorf("signal: %q, posts %+v", why, sh.Posts())
 	}
 }

@@ -249,6 +249,8 @@ func (a *addon) apply(o ext.Op) (why string) {
 		}
 	case "unwatch":
 		a.unwatch(o.Chat, o.Watch)
+	case "buttons":
+		return a.rebutton(o)
 	default:
 		return "of an unknown kind"
 	}

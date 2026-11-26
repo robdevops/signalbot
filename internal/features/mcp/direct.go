@@ -94,6 +94,10 @@ func (a *addon) direct(ctx context.Context, m feature.Message, name string, c ch
 		// the chat's reply watches, and for presses of its buttons, which
 		// are under its last message.
 		pics := w != nil && len(act.Pictures) > 0
+		kept := pressPost{Chat: m.Chat, Tool: tool, Text: act.Answer, Pics: len(act.Pictures) > 0}
+		if r.Meta.Watch != nil {
+			kept.Watch = r.Meta.Watch.ID // the addon's name for it, even if refused
+		}
 		act.OnSent = func(sent []int64, dropped bool) {
 			if pics {
 				a.guarding(w, sent)
@@ -102,7 +106,8 @@ func (a *addon) direct(ctx context.Context, m feature.Message, name string, c ch
 				a.replied(m.Chat, sent)
 			}
 			if !dropped && len(sent) > 0 && tool != "" {
-				a.keepPress(m.Chat, sent[len(sent)-1], tool)
+				kept.Sent, kept.Single = sent[len(sent)-1], len(sent) == 1
+				a.keepPress(kept)
 			}
 		}
 	}

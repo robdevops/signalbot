@@ -28,12 +28,23 @@ var pressTimeout = 5 * time.Second
 const maxToast = 200
 
 // pressPost is a direct answer of the addon's with buttons: the message
-// they are under, and the tool their presses call.
+// they are under, and the tool their presses call; for a buttons op, the
+// watch its result started, in the chat with pseudonym ChatID, the text it
+// was sent with, if it went in one message, whether it had pictures, and
+// when it was sent and how often edited since.
 type pressPost struct {
 	Chat    feature.Chat
 	Sent    int64
 	Tool    string
 	Expires time.Time
+
+	ChatID string
+	Watch  string
+	Text   string
+	Single bool
+	Pics   bool
+	At     time.Time
+	Edits  int
 }
 
 // markup is the buttons r asks for under its answer in chat, and the tool
@@ -53,19 +64,10 @@ func (a *addon) markup(log logx.L, chat feature.Chat, r toolResult) (feature.Mar
 		return refuse("buttons without onPress, or onPress without buttons")
 	case !a.only[tool]:
 		return refuse("an onPress that isn't one of its tools for the bot alone")
-	case len(btns) > maxRows || slices.ContainsFunc(btns, func(row []ext.Button) bool { return len(row) == 0 || len(row) > maxPerRow }):
-		return refuse("more than 5 rows of 5 buttons, or an empty row")
 	}
-	var mk feature.Markup
-	for _, row := range btns {
-		var out []feature.Button
-		for _, b := range row {
-			if !label(b.Label) || b.Data == "" || len(b.Data) > maxData {
-				return refuse("a button's label or data empty or too long")
-			}
-			out = append(out, feature.Button{Label: b.Label, Data: b.Data})
-		}
-		mk.Buttons = append(mk.Buttons, out)
+	mk, why := buttonRows(btns)
+	if why != "" {
+		return refuse(why)
 	}
 	if a.host == nil || !a.host.Net(chat).Caps.Buttons {
 		return feature.Markup{}, ""
@@ -73,18 +75,94 @@ func (a *addon) markup(log logx.L, chat feature.Chat, r toolResult) (feature.Mar
 	return mk, tool
 }
 
-// keepPress remembers that the buttons under sent, in chat, call tool.
-func (a *addon) keepPress(chat feature.Chat, sent int64, tool string) {
+// buttonRows is btns as markup, or why they break the rules.
+func buttonRows(btns [][]ext.Button) (feature.Markup, string) {
+	var mk feature.Markup
+	if len(btns) == 0 || len(btns) > maxRows || slices.ContainsFunc(btns, func(row []ext.Button) bool { return len(row) == 0 || len(row) > maxPerRow }) {
+		return mk, "more than 5 rows of 5 buttons, an empty row, or none"
+	}
+	for _, row := range btns {
+		var out []feature.Button
+		for _, b := range row {
+			if !label(b.Label) || b.Data == "" || len(b.Data) > maxData {
+				return feature.Markup{}, "a button's label or data empty or too long"
+			}
+			out = append(out, feature.Button{Label: b.Label, Data: b.Data})
+		}
+		mk.Buttons = append(mk.Buttons, out)
+	}
+	return mk, ""
+}
+
+// keepPress remembers p, the answer whose buttons are under p.Sent in
+// p.Chat, in place of an earlier one in its chat for the same watch.
+func (a *addon) keepPress(p pressPost) {
 	now := a.now()
+	p.ChatID, p.At, p.Expires = a.chatID(p.Chat), now, now.Add(pressLife)
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	a.presses = slices.DeleteFunc(a.presses, func(x pressPost) bool {
-		return !now.Before(x.Expires) || x.Chat == chat && x.Sent == sent
+		return !now.Before(x.Expires) || x.Chat == p.Chat && x.Sent == p.Sent || p.Watch != "" && x.ChatID == p.ChatID && x.Watch == p.Watch
 	})
-	a.presses = append(a.presses, pressPost{Chat: chat, Sent: sent, Tool: tool, Expires: now.Add(pressLife)})
+	a.presses = append(a.presses, p)
 	if n := len(a.presses) - maxPressPosts; n > 0 {
 		a.presses = slices.Delete(a.presses, 0, n)
 	}
+}
+
+// rebutton does a buttons op: it replaces the buttons under the addon's
+// remembered direct answer whose result started o.Watch in the chat
+// o.Chat names, keeping its text and onPress, by an edit, within the
+// network's edit limits. It returns why the op was dropped, if it was; one
+// for an answer it doesn't remember, or can't edit now, is done with
+// nothing changed.
+func (a *addon) rebutton(o ext.Op) (why string) {
+	mk, why := buttonRows(o.Buttons)
+	if why != "" {
+		return "buttons ops with " + why
+	}
+	now := a.now()
+	a.mu.Lock()
+	i := slices.IndexFunc(a.presses, func(x pressPost) bool {
+		return o.Watch != "" && x.ChatID == o.Chat && x.Watch == o.Watch && now.Before(x.Expires)
+	})
+	var p pressPost
+	if i >= 0 {
+		p = a.presses[i]
+	}
+	a.mu.Unlock()
+	if i < 0 || a.host == nil || !a.allows(p.Chat) {
+		return ""
+	}
+	log, caps := a.logFor(p.Chat), a.host.Net(p.Chat).Caps
+	switch {
+	case p.Pics:
+		return "buttons ops for an answer with pictures"
+	case !caps.Buttons:
+		return ""
+	case !p.Single:
+		log.Debugf("MCP server %s: buttons left as they are: the answer went in several messages", a.server)
+		return ""
+	case caps.EditLimit > 0 && p.Edits >= caps.EditLimit, caps.EditWindow > 0 && now.Sub(p.At) >= caps.EditWindow:
+		log.Debugf("MCP server %s: buttons left as they are: past the network's edit limits", a.server)
+		return ""
+	}
+	a.host.Post(feature.Post{Chat: p.Chat, Text: p.Text, Edit: p.Sent, Markup: mk, OnSent: func(sent []int64, dropped bool) {
+		if dropped || len(sent) == 0 {
+			return
+		}
+		a.mu.Lock()
+		defer a.mu.Unlock()
+		if j := slices.IndexFunc(a.presses, func(x pressPost) bool { return x.Chat == p.Chat && x.Sent == p.Sent }); j >= 0 {
+			x := &a.presses[j]
+			if last := sent[len(sent)-1]; last != x.Sent || len(sent) > 1 { // sent anew
+				x.Sent, x.Single, x.At, x.Edits = last, len(sent) == 1, a.now(), 0
+			} else {
+				x.Edits++
+			}
+		}
+	}})
+	return ""
 }
 
 // press calls the onPress tool of the addon's answer whose buttons p was

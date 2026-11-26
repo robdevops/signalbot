@@ -147,7 +147,7 @@ An addon is a program the bot runs on its own machine, as an [MCP server](docs/F
   | How far the bot has read each addon's outbox, and the last 1,000 outbox entries' IDs | Replaced on each save; dropped once the server is no longer an addon |
   | An addon's last 256 posts, for a later post to reply to or react to: the post's ID, the chat's pseudonym and the time (on Telegram, the ID) of the bot's message, never its text | 24 hours |
 
-  Refs to messages (for reactions, a day), display names (a day), posts waiting to go out, and which of an addon's answers have buttons (the chat, the bot's message and the tool a press calls, its newest 300 for a day) are kept in memory only.
+  Refs to messages (for reactions, a day), display names (a day), posts waiting to go out, and which of an addon's answers have buttons (the chat, the bot's message, its text, the watch its result started and the tool a press calls, its newest 300 for a day, so the addon can change the buttons under it) are kept in memory only.
 
 ## What this does not cover
 

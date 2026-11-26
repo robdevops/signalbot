@@ -162,19 +162,26 @@ func Text(s string) Result { return Result{Content: []Content{{Type: "text", Tex
 // Op is one thing an addon's outbox asks the bot to do.
 type Op struct {
 	ID      string  `json:"id"`
-	Op      string  `json:"op"`                // "post", "react" or "unwatch"
-	Chat    string  `json:"chat,omitempty"`    // a post's, unwatch's or reaction-to-a-post's chat pseudonym
+	Op      string  `json:"op"`                // "post", "react", "unwatch" or "buttons"
+	Chat    string  `json:"chat,omitempty"`    // a post's, unwatch's, buttons op's or reaction-to-a-post's chat pseudonym
 	Text    string  `json:"text,omitempty"`    // a post's, with {u_…} placeholders the bot fills in with names
 	Images  []Image `json:"images,omitempty"`  // a post's: at most 2, 2 MB in all
 	Ref     string  `json:"ref,omitempty"`     // a reaction's message: a context's ref; or else Post
 	Emoji   string  `json:"emoji,omitempty"`   // a reaction's
-	Watch   string  `json:"watch,omitempty"`   // the ID of the watch an unwatch ends
+	Watch   string  `json:"watch,omitempty"`   // the ID of the watch an unwatch ends, or whose answer a buttons op is for
 	ReplyTo string  `json:"replyTo,omitempty"` // a post's: the ID of an earlier post of the addon's in the same chat, which it is sent as a reply to
 	Audio   *Audio  `json:"audio,omitempty"`   // a post's: one clip to play, MP3, at most 2 MB
 	// Post is a reaction's, in place of Ref: the ID of an earlier post of
 	// the addon's in Chat, as ReplyTo names it, so the bot reacts to its
 	// own message, such as ⏰ on a question whose time runs out.
 	Post string `json:"post,omitempty"`
+	// Buttons is a buttons op's: at most 5 rows of 5 that replace the
+	// buttons under the addon's direct answer whose result started Watch
+	// in Chat and had buttons, its text kept and its presses still calling
+	// its OnPress, such as a lobby's Start once enough players have joined.
+	// An answer the bot doesn't remember, such as after a restart or where
+	// its network shows no buttons, is left as it is.
+	Buttons [][]Button `json:"buttons,omitempty"`
 }
 
 // Audio is a clip in a post, sent to play, with no title of its own: on

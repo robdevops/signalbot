@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"reflect"
 	"slices"
 	"strconv"
 	"strings"
@@ -773,5 +774,28 @@ func TestInitializeNetworks(t *testing.T) {
 	}, &r)
 	if s.Network() != "signal" || !slices.Equal(s.Networks(), []string{"signal", "telegram"}) {
 		t.Errorf("network %q, networks %q", s.Network(), s.Networks())
+	}
+}
+
+// A buttons op, such as a lobby's Start once enough have joined, reaches
+// the bot with its watch and rows.
+func TestQueueButtons(t *testing.T) {
+	s := New(Config{Name: "game"})
+	c := start(t, s)
+	initialize(c, "")
+	rows := [][]Button{{{Label: "▶️ Start", Data: "start:g1"}, {Label: "✖️ Cancel", Data: "cancel:g1"}}}
+	if err := s.Queue(Op{Op: "buttons", Chat: "c_one", Watch: "lobby1", Buttons: rows}); err != nil {
+		t.Fatal(err)
+	}
+	var r struct {
+		Contents []resourceContent
+	}
+	c.result("resources/read", uriParams{OutboxURI + "/0"}, &r)
+	var p Page
+	if len(r.Contents) != 1 || json.Unmarshal([]byte(r.Contents[0].Text), &p) != nil || len(p.Ops) != 1 {
+		t.Fatalf("read %+v", r)
+	}
+	if o := p.Ops[0]; o.Op != "buttons" || o.Chat != "c_one" || o.Watch != "lobby1" || !reflect.DeepEqual(o.Buttons, rows) {
+		t.Errorf("op %+v", o)
 	}
 }
