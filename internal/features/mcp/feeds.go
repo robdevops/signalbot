@@ -517,12 +517,13 @@ func (fs *feeds) set(f *feed, chat feature.Chat, what string) {
 	switch kind, ok := strings.CutPrefix(what, "k:"); {
 	case ok:
 		s.Off = flip(s.Off, kind)
+	case what == "on": // all alerts on: the subscription made above is what's kept
 	case what == "soundon", what == "soundoff":
 		s.Sound, s.Quiet, s.Loud = what == "soundon", nil, nil
 	default:
 		kind, ok := strings.CutPrefix(what, "s:")
 		if !ok {
-			return // only a menu opened or closed
+			return // nothing set lets anything else through; keep nothing of it
 		}
 		if s.Sound { // with sound for all, a kind's is an exception, so kinds not listed keep theirs
 			s.Quiet = flip(s.Quiet, kind)

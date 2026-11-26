@@ -1671,6 +1671,31 @@ func TestFeedMenuEdges(t *testing.T) {
 	}
 }
 
+// Turning all alerts on is saved: in a group, and in a DM that had turned
+// them off.
+func TestFeedOnIsSaved(t *testing.T) {
+	f := &feed{server: "x", kinds: []feedKind{{Kind: "rain"}}}
+	for _, chat := range []feature.Chat{{GroupID: "g"}, {User: "a"}} {
+		st := &countStore{}
+		fs := &feeds{doc: map[string]*feedState{}, store: st}
+		fs.set(f, chat, "off")
+		saves := st.n
+		fs.set(f, chat, "on")
+		if st.n != saves+1 {
+			t.Errorf("%+v: on saved %d times", chat, st.n-saves)
+		}
+		if s := fs.state("x"); s.Chats[chat.Key()] == nil || s.Declined[chat.Key()] {
+			t.Errorf("%+v: not on: %+v", chat, s)
+		}
+	}
+}
+
+// countStore keeps nothing, counting saves.
+type countStore struct{ n int }
+
+func (*countStore) Load(any) (bool, error) { return false, nil }
+func (c *countStore) Save(any) error       { c.n++; return nil }
+
 // nopStore keeps nothing.
 type nopStore struct{}
 
