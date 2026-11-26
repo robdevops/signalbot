@@ -809,12 +809,12 @@ func TestRerun(t *testing.T) {
 	labels := func(rows [][]feature.Button) (s []string) {
 		for _, row := range rows {
 			for _, b := range row {
-				s = append(s, b.Label+"="+b.Data)
+				s = append(s, starred(b)+"="+b.Data)
 			}
 		}
 		return s
 	}
-	if l := labels(got.Markup.Buttons); !slices.Equal(l, []string{"• 1d=rerun=1d", "7d=rerun=7d", "🔄=rerun"}) || got.OnSent == nil {
+	if l := labels(got.Markup.Buttons); !slices.Equal(l, []string{"*1d=rerun=1d", "7d=rerun=7d", "🔄=rerun"}) || got.OnSent == nil {
 		t.Fatalf("buttons %q", l)
 	}
 	got.OnSent([]int64{11}, false)
@@ -825,7 +825,7 @@ func TestRerun(t *testing.T) {
 		t.Fatalf("press: %q %v", a, ok)
 	}
 	p := h.Posts()
-	if len(p) != 1 || p[0].Edit != 11 || p[0].Text != `echo {"period":"7d"}` || !slices.Equal(labels(p[0].Markup.Buttons), []string{"1d=rerun=1d", "• 7d=rerun=7d", "🔄=rerun"}) {
+	if len(p) != 1 || p[0].Edit != 11 || p[0].Text != `echo {"period":"7d"}` || !slices.Equal(labels(p[0].Markup.Buttons), []string{"1d=rerun=1d", "*7d=rerun=7d", "🔄=rerun"}) {
 		t.Fatalf("posts %+v", p)
 	}
 	p[0].OnSent([]int64{12}, false) // as a network that sends an edit anew
@@ -1261,10 +1261,10 @@ func TestFeedChartButtons(t *testing.T) {
 	var labels []string
 	for _, row := range alert.Markup.Buttons {
 		for _, b := range row {
-			labels = append(labels, b.Label)
+			labels = append(labels, starred(b))
 		}
 	}
-	if alert.Text != "Heavy rain" || len(alert.Pictures) != 1 || !slices.Equal(labels, []string{"• 1d", "7d", "🔄"}) || alert.OnSent == nil {
+	if alert.Text != "Heavy rain" || len(alert.Pictures) != 1 || !slices.Equal(labels, []string{"*1d", "7d", "🔄"}) || alert.OnSent == nil {
 		t.Fatalf("alert %q, %d pictures, buttons %q", alert.Text, len(alert.Pictures), labels)
 	}
 	alert.OnSent([]int64{77}, false)
@@ -1275,10 +1275,10 @@ func TestFeedChartButtons(t *testing.T) {
 	labels = nil
 	for _, row := range edit.Markup.Buttons {
 		for _, b := range row {
-			labels = append(labels, b.Label)
+			labels = append(labels, starred(b))
 		}
 	}
-	if edit.Edit != 77 || edit.Text != "Heavy rain" || len(edit.Pictures) != 1 || !slices.Equal(labels, []string{"1d", "• 7d", "🔄"}) {
+	if edit.Edit != 77 || edit.Text != "Heavy rain" || len(edit.Pictures) != 1 || !slices.Equal(labels, []string{"1d", "*7d", "🔄"}) {
 		t.Fatalf("edit %+v, buttons %q", edit, labels)
 	}
 }
@@ -1695,6 +1695,14 @@ type countStore struct{ n int }
 
 func (*countStore) Load(any) (bool, error) { return false, nil }
 func (c *countStore) Save(any) error       { c.n++; return nil }
+
+// starred is a button's label, with * first when it is highlighted.
+func starred(b feature.Button) string {
+	if b.Highlight {
+		return "*" + b.Label
+	}
+	return b.Label
+}
 
 // nopStore keeps nothing.
 type nopStore struct{}

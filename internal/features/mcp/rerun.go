@@ -139,18 +139,14 @@ func (r *reruns) chart(p *feature.Post, server, tool string, args map[string]any
 	}
 }
 
-// buttons are a post's buttons: one per value, the current one marked, if
-// they fit, and refresh.
+// buttons are a post's buttons: one per value, the current one
+// highlighted (Telegram: blue), if they fit, and refresh.
 func buttons(values []string, value string) [][]feature.Button {
 	fit := len(values) < maxRows*maxPerRow && !slices.ContainsFunc(values, func(v string) bool { return len(pressValue)+len(v) > maxData })
 	var btns []feature.Button
 	if fit {
 		for _, v := range values {
-			label := v
-			if v == value {
-				label = "• " + v
-			}
-			btns = append(btns, feature.Button{Label: clampLabel(label), Data: pressValue + v})
+			btns = append(btns, feature.Button{Label: clampLabel(v), Data: pressValue + v, Highlight: v == value})
 		}
 	}
 	btns = append(btns, feature.Button{Label: "🔄", Data: pressRefresh})
