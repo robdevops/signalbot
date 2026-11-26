@@ -62,12 +62,17 @@ type Client struct {
 	moved  map[string]string            // a group's old chat ID to its new one, after it became a supergroup
 	topics map[string]map[string]bool   // group ID to the topic chats seen in it
 	left   map[string]bool              // groups the bot was removed from, so it no longer posts there
-	sent   map[string]bool              // "chat/message" for messages the bot sent lately
+	sent   map[string]string            // "chat/message" to its topic chat ("group/topic", or "" outside one), for messages the bot sent lately
 	sentQ  []string                     // sent's keys, oldest first
 	admins map[string]adminList         // group ID to its owner and administrators, kept 10 minutes
 	dmOK   map[string]verdict           // user ID to whether they may DM the bot, kept 10 minutes
 	forgot uint64                       // counts forgetting admins or verdicts, so a lookup begun before isn't kept
 	roster map[string]knownGroup        // group ID to what is saved of it, for every group the bot knows it is in
+	status map[string]time.Time         // group ID to when the bot's own status there may be asked again; zero once asked
+
+	statusSlots chan struct{}                   // the status checks under way, one each
+	statusWG    sync.WaitGroup                  // the status checks under way
+	runCtx      atomic.Pointer[context.Context] // Run's, which ends a status check at shutdown
 
 	rosterDoc    *state.Doc     // telegram-groups.json, the roster
 	rosterMu     sync.Mutex     // held while the roster is saved
@@ -99,8 +104,8 @@ func newClient(base, token, stateDir string, dm allow.Policy, test *config.Test)
 	c := &Client{base: strings.TrimRight(base, "/"), token: token, dm: dm, refused: allow.Refused{Setting: "TELEGRAM_DM_USERS", L: log}, http: httpx.Client(8),
 		backoff: time.Second, typing: 4 * time.Second, known: make(chan struct{}),
 		people: map[string]string{}, chats: map[string]map[string]string{}, groups: map[string]string{},
-		timers: map[string]time.Duration{}, moved: map[string]string{}, topics: map[string]map[string]bool{}, left: map[string]bool{}, sent: map[string]bool{},
-		admins: map[string]adminList{}, dmOK: map[string]verdict{}, roster: map[string]knownGroup{}, rosterDoc: rosterDoc(stateDir), test: test}
+		timers: map[string]time.Duration{}, moved: map[string]string{}, topics: map[string]map[string]bool{}, left: map[string]bool{}, sent: map[string]string{},
+		admins: map[string]adminList{}, dmOK: map[string]verdict{}, roster: map[string]knownGroup{}, status: map[string]time.Time{}, statusSlots: make(chan struct{}, maxStatusChecks), rosterDoc: rosterDoc(stateDir), test: test}
 	c.loadRoster()
 	return c
 }
@@ -236,6 +241,8 @@ func (c *Client) Watch(w bot.Watch) {
 // A failed poll is retried with backoff, a 429 after the wait it names.
 func (c *Client) Run(ctx context.Context, handle func(bot.Received)) {
 	defer c.rosterWG.Wait() // the roster's last change is on disk
+	defer c.statusWG.Wait()
+	c.runCtx.Store(&ctx)
 	backoff := c.backoff
 	for ctx.Err() == nil && c.selfID() == "" {
 		if err := c.hello(ctx); err != nil {

@@ -228,7 +228,11 @@ func (c *Client) event(u update) (bot.Received, bool) {
 			return nil, false
 		}
 		return c.membership(u.ChatMember)
-	case u.MessageReaction != nil && c.watch.Load():
+	case u.MessageReaction != nil:
+		log.Debugf("a reaction received")
+		if !c.watch.Load() {
+			return nil, false
+		}
 		return c.reacted(u.MessageReaction)
 	case u.CallbackQuery != nil:
 		return c.pressed(u.CallbackQuery)
@@ -286,6 +290,7 @@ func (c *Client) received(m *message, edited int64) (bot.Received, bool) {
 			return bot.GroupChanged{Chat: ch}, true
 		}
 		c.seen(id(m.Chat.ID), ch.GroupID, m)
+		c.checkStatus(id(m.Chat.ID))
 	}
 	if len(m.NewMembers) > 0 || m.LeftMember != nil {
 		return bot.GroupChanged{Chat: feature.Chat{GroupID: id(m.Chat.ID)}}, true // forget the names it links to
@@ -609,6 +614,7 @@ func (c *Client) botMembership(u *memberUpd) (bot.Received, bool) {
 	added := now && !in(u.Old.Status, u.Old.IsMember)
 	c.mu.Lock()
 	delete(c.admins, g)
+	delete(c.status, g) // asked again: the bot may have been made an admin, or stopped being one
 	clear(c.dmOK)
 	c.forgot++
 	if now {
@@ -666,7 +672,8 @@ func (c *Client) reacted(u *reactionUpd) (bot.Received, bool) {
 	if u.User == nil || id(u.User.ID) == c.selfID() {
 		return nil, false
 	}
-	ch := feature.Chat{GroupID: id(u.Chat.ID)} // a topic's reaction doesn't say which topic
+	byBot, topic := c.sentByBot(id(u.Chat.ID), u.MessageID)
+	ch := feature.Chat{GroupID: cmp.Or(topic, id(u.Chat.ID))} // a reaction doesn't say which topic: the bot's own message's is known
 	if u.Chat.Type == "private" {
 		if ch = (feature.Chat{User: id(u.Chat.ID)}); !c.dmFresh(id(u.User.ID)) {
 			return nil, false
@@ -688,7 +695,6 @@ func (c *Client) reacted(u *reactionUpd) (bot.Received, bool) {
 	if emoji == "" {
 		return nil, false
 	}
-	byBot := c.sentByBot(id(u.Chat.ID), u.MessageID)
 	author := ""
 	if byBot {
 		author = c.selfID()
@@ -885,19 +891,29 @@ func redactWord(s, w string) string {
 }
 
 // sentByBot reports whether the bot sent the message, among those it sent
-// lately.
-func (c *Client) sentByBot(chat string, msgID int64) bool {
+// lately, and the topic chat it was sent in ("group/topic"), if any.
+func (c *Client) sentByBot(chat string, msgID int64) (ok bool, topic string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	return c.sent[chat+"/"+id(msgID)]
+	topic, ok = c.sent[chat+"/"+id(msgID)]
+	return ok, topic
 }
 
-// noteSent remembers a message the bot sent, at most the last 2000.
-func (c *Client) noteSent(chat string, msgID int64) {
+// noteSent remembers a message the bot sent to ch, at chat, its ID there
+// (a group's new one, if it moved), and ch's topic, at most the last 2000.
+func (c *Client) noteSent(ch feature.Chat, chat string, msgID int64) {
+	topic := ""
+	if strings.Contains(ch.GroupID, "/") {
+		topic = ch.GroupID
+	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	k := chat + "/" + id(msgID)
-	c.sent[k] = true
+	if _, ok := c.sent[k]; ok {
+		c.sent[k] = topic
+		return
+	}
+	c.sent[k] = topic
 	if c.sentQ = append(c.sentQ, k); len(c.sentQ) > 2000 {
 		delete(c.sent, c.sentQ[0])
 		c.sentQ = c.sentQ[1:]
