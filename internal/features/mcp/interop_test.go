@@ -63,7 +63,7 @@ func TestPackageAddon(t *testing.T) {
 	h, log := startAddon(t, `{"mcpServers":{"game":`+strings.Replace(addonServer("pkg", `{"chats":["`+groupA+`"],"post":true,"react":true,"watch":true}`,
 		`,"chat_commands":{"start":{"tool":"start","direct":true}}`), "TestAddonProcess", "TestPackageAddonProcess", 1)+`}}`,
 		func(h *featuretest.Host) { h.Bot.Network = "signal" })
-	if !strings.Contains(log.String(), "<5>game MCP: an addon, with tools for the bot: guess, start\n") {
+	if !strings.Contains(log.String(), "<5>game MCP: an addon, with tools for the bot: guess, start\n") || !strings.Contains(log.String(), "<5>MCP server game: version 1\n") {
 		t.Fatalf("log %q", log.String())
 	}
 	ctx := context.Background()

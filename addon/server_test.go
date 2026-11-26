@@ -204,6 +204,16 @@ func TestInitializeAndTools(t *testing.T) {
 	}
 }
 
+// With no Version, an addon says the one go build stamped, never nothing.
+func TestBuildVersion(t *testing.T) {
+	if v := New(Config{Name: "game"}).cfg.Version; v == "" || v != buildVersion() {
+		t.Errorf("version %q", v)
+	}
+	if v := New(Config{Name: "game", Version: "2"}).cfg.Version; v != "2" {
+		t.Errorf("set version %q", v)
+	}
+}
+
 func TestCall(t *testing.T) {
 	c := start(t, New(Config{Name: "game", Tools: []Tool{echoTool()}}))
 	initialize(c, "")

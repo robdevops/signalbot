@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"runtime/debug"
 	"slices"
 	"strconv"
 	"strings"
@@ -32,7 +33,7 @@ type Tool struct {
 
 // Config is what a Server is made from.
 type Config struct {
-	Name, Title, Version string // serverInfo; Title is the name people see
+	Name, Title, Version string // serverInfo; Title is the name people see; Version, if "", is the one go build stamped (from the git commit)
 	Tools                []Tool
 	Now                  func() time.Time // nil is time.Now; tests set it
 	// Changed, if set, is called when a read of the outbox lets go of ops
@@ -111,11 +112,47 @@ func New(c Config) *Server {
 	if c.Now == nil {
 		c.Now = time.Now
 	}
+	if c.Version == "" {
+		c.Version = buildVersion()
+	}
 	s := &Server{cfg: c, tools: map[string]Tool{}, nonce: randomID(4), dirty: make(chan struct{}, 1), pending: map[string]chan answer{}}
 	for _, t := range c.Tools {
 		s.tools[t.Name] = t
 	}
 	return s
+}
+
+// buildVersion is the version go build stamped into the addon: its
+// module's version, which a build in a git checkout makes from the commit
+// (v0.0.0-20261126094730-66d11bf33610, +dirty with uncommitted changes),
+// else the commit itself, else "dev".
+func buildVersion() string {
+	info, ok := debug.ReadBuildInfo()
+	if !ok {
+		return "dev"
+	}
+	if v := info.Main.Version; v != "" && v != "(devel)" {
+		return v
+	}
+	rev, dirty := "", false
+	for _, s := range info.Settings {
+		switch s.Key {
+		case "vcs.revision":
+			rev = s.Value
+		case "vcs.modified":
+			dirty = s.Value == "true"
+		}
+	}
+	if rev == "" {
+		return "dev"
+	}
+	if len(rev) > 12 {
+		rev = rev[:12]
+	}
+	if dirty {
+		rev += "+dirty"
+	}
+	return rev
 }
 
 // Network is the chat network the bot said it is on ("signal",

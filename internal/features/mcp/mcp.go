@@ -350,6 +350,7 @@ const maxInstructions = 1000
 type handshake struct {
 	instructions string
 	title        string // its name for people, its title or else its name; "" if neither
+	version      string // the version it says it is; "" if none
 	addon        bool   // it speaks signalbot's extension, at the bot's version
 	subscribe    bool   // it takes resource subscriptions
 }
@@ -386,8 +387,9 @@ func initialize(ctx context.Context, c conn, self botInfo) (handshake, error) {
 	var r struct {
 		Instructions string `json:"instructions"`
 		ServerInfo   struct {
-			Name  string `json:"name"`
-			Title string `json:"title"`
+			Name    string `json:"name"`
+			Title   string `json:"title"`
+			Version string `json:"version"`
 		} `json:"serverInfo"`
 		Capabilities struct {
 			Experimental map[string]json.RawMessage `json:"experimental"`
@@ -402,6 +404,7 @@ func initialize(ctx context.Context, c conn, self botInfo) (handshake, error) {
 	return handshake{
 		instructions: strings.TrimSpace(r.Instructions),
 		title:        txt.SafeName(cmp.Or(r.ServerInfo.Title, r.ServerInfo.Name)),
+		version:      txt.Clamp(txt.SafeName(r.ServerInfo.Version), 60),
 		addon:        addon,
 		subscribe:    r.Capabilities.Resources.Subscribe,
 	}, c.notify(ctx, "notifications/initialized", nil)
@@ -502,6 +505,7 @@ func start(ctx context.Context, h feature.Host, path string, servers map[string]
 			delete(servers, name) // so no key of its keyboard sends a command it never registered
 			continue
 		}
+		logx.Noticef("MCP server %s: version %s", name, cmp.Or(hs.version, "unknown"))
 		for list, names := range map[string][]string{"allowed_tools": cfg.AllowedTools, "blocked_tools": cfg.BlockedTools} {
 			for _, want := range names {
 				if !slices.ContainsFunc(listed, func(t tool) bool { return t.Name == want }) {
