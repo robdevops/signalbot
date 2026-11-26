@@ -1697,7 +1697,7 @@ func TestScenarioOneEmojiIsAReaction(t *testing.T) {
 	// Each reaction was logged, without its emoji; the message wasn't.
 	n := 0
 	for _, l := range h.logLines() {
-		if l.Text == "reacting instead of replying" && l.Pri == 6 {
+		if l.Text == "Signal: reacting instead of replying" && l.Pri == 6 {
 			n++
 		}
 		if strings.Contains(l.Text, "🙏") || strings.Contains(l.Text, "👍") {
