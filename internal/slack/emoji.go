@@ -4,6 +4,7 @@ import (
 	_ "embed"
 	"strconv"
 	"strings"
+	"sync"
 )
 
 // emojiTable is emoji.txt: each emoji and Slack's names for it, the first
@@ -15,13 +16,13 @@ import (
 //go:embed emoji.txt
 var emojiTable string
 
-// emojiNames is the emoji each of Slack's names stands for, and emojiByBare
+// emojiMaps gives the emoji each of Slack's names stands for, and
 // the name Slack prefers for each emoji, by the emoji without variation
 // selectors. A reaction not in them is skipped, and an emoji not in them
-// is sent as a message.
-var emojiNames, emojiByBare = emojiMaps()
+// is sent as a message. They are made from the table the first time
+// they're needed, so a bot without Slack never spends the memory.
+var emojiMaps = sync.OnceValues(func() (names, byBare map[string]string) {
 
-func emojiMaps() (names, byBare map[string]string) {
 	names, byBare = map[string]string{}, map[string]string{}
 	for line := range strings.Lines(emojiTable) {
 		f := strings.Fields(line)
@@ -36,7 +37,7 @@ func emojiMaps() (names, byBare map[string]string) {
 		}
 	}
 	return names, byBare
-}
+})
 
 // bare is emoji without its variation selectors.
 func bare(emoji string) string {
@@ -47,7 +48,8 @@ func bare(emoji string) string {
 // ("+1::skin-tone-2" is 👍), or "".
 func emojiOf(name string) string {
 	name, _, _ = strings.Cut(name, "::")
-	return emojiNames[name]
+	names, _ := emojiMaps()
+	return names[name]
 }
 
 // nameOfEmoji is emoji's name, ignoring variation selectors, or "". One
@@ -62,7 +64,8 @@ func nameOfEmoji(emoji string) string {
 		}
 		return r
 	}, bare(emoji))
-	name := emojiByBare[b]
+	_, byBare := emojiMaps()
+	name := byBare[b]
 	if name != "" && tones == 1 {
 		name += "::skin-tone-" + strconv.Itoa(tone)
 	}

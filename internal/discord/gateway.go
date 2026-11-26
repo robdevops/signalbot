@@ -234,7 +234,7 @@ func (c *Client) closed(err error, members bool) error {
 		c.session, c.resumeURL = "", ""
 		c.seq.Store(0)
 	}
-	return fmt.Errorf("closed by Discord (%d)", ce.Code)
+	return fmt.Errorf("closed with code %d", ce.Code)
 }
 
 // write sends one gateway message.

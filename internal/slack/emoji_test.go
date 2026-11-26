@@ -8,7 +8,7 @@ import (
 // The emoji table goes both ways, by any of Slack's names, ignoring
 // variation selectors, with one skin tone named as Slack names it.
 func TestEmojiTable(t *testing.T) {
-	if len(emojiNames) < 1800 || len(emojiByBare) < 1800 {
+	if emojiNames, emojiByBare := emojiMaps(); len(emojiNames) < 1800 || len(emojiByBare) < 1800 {
 		t.Fatalf("%d names, %d emoji", len(emojiNames), len(emojiByBare))
 	}
 	for name, want := range map[string]string{
