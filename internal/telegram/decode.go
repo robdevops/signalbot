@@ -613,14 +613,13 @@ func (c *Client) botMembership(u *memberUpd) (bot.Received, bool) {
 	c.forgot++
 	if now {
 		delete(c.left, g)
-	} else if len(c.left) < 2*maxGroups {
-		c.left[g] = true
-	}
-	if now {
 		if _, ok := c.groups[g]; ok || len(c.groups) < maxGroups {
 			c.groups[g] = txt.SafeName(u.Chat.Title)
 		}
 	} else {
+		if len(c.left) < 2*maxGroups {
+			c.left[g] = true
+		}
 		delete(c.groups, g)
 		delete(c.chats, g)
 	}

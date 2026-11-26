@@ -489,11 +489,7 @@ func (b *Bot) work(rs []Received) {
 // letting it end the rest of the work. Like logx.Recover, but on the chat's
 // network's log.
 func safely(l logx.L, fn func()) {
-	defer func() {
-		if recover() != nil {
-			l.Errorf("internal error while handling a message; dropped")
-		}
-	}()
+	defer l.Recover("handling a message")
 	fn()
 }
 

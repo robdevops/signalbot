@@ -31,6 +31,14 @@ func (l L) Noticef(format string, args ...any) { logf(5, l.prefixed(format), arg
 func (l L) Infof(format string, args ...any)   { logf(6, l.prefixed(format), args...) }
 func (l L) Debugf(format string, args ...any)  { logf(7, l.prefixed(format), args...) }
 
+// Recover is the package's Recover on l: deferred, it logs a panic while
+// doing what, without its value, and the bot carries on.
+func (l L) Recover(what string) {
+	if recover() != nil {
+		l.Errorf("internal error while %s; dropped", what)
+	}
+}
+
 type ctxKey struct{}
 
 // With is ctx carrying l, so whatever runs under it, the core's work for a

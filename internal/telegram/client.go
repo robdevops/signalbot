@@ -33,14 +33,6 @@ import (
 // log is the network's log: its every line starts with "Telegram: ".
 var log = logx.For("telegram")
 
-// recoverLog is logx.Recover on log: a panic while doing what, logged
-// without its value, and dropped.
-func recoverLog(what string) {
-	if recover() != nil {
-		log.Errorf("internal error while %s; dropped", what)
-	}
-}
-
 // pollWait is how long one getUpdates waits for something to arrive.
 const pollWait = 50 * time.Second
 
@@ -291,7 +283,7 @@ func (c *Client) Run(ctx context.Context, handle func(bot.Received)) {
 		for _, u := range ups {
 			offset = max(offset, u.UpdateID+1)
 			func() {
-				defer recoverLog("reading an update")
+				defer log.Recover("reading an update")
 				for _, r := range c.events(u) {
 					handle(r)
 				}

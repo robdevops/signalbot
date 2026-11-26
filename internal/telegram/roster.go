@@ -86,10 +86,7 @@ func (c *Client) learnGroup(ch chat) {
 	c.mu.Lock()
 	g, ok := c.roster[gid]
 	switch {
-	case !ok && c.left[gid]:
-		c.mu.Unlock()
-		return
-	case !ok && len(c.roster) >= maxGroups:
+	case !ok && (c.left[gid] || len(c.roster) >= maxGroups):
 		c.mu.Unlock()
 		return
 	case !ok:
