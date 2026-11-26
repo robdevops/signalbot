@@ -492,7 +492,7 @@ func TestReconnects(t *testing.T) {
 	if m := g.next(t); m["op"] != float64(opIdentify) || g.path != "/gw" {
 		t.Fatalf("after op 9: %v on %s", m, g.path)
 	}
-	for _, want := range []string{"Discord: gateway: asked to reconnect; reconnecting in ", "Discord: no heartbeat ack, so reconnecting", "Discord: gateway: the session ended; reconnecting in "} {
+	for _, want := range []string{"Discord: connection lost: asked to reconnect; reconnecting in ", "Discord: no heartbeat ack, so reconnecting", "Discord: connection lost: the session ended; reconnecting in "} {
 		if !strings.Contains(logs.String(), want) {
 			t.Errorf("no %q in %q", want, logs.String())
 		}

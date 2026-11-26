@@ -99,7 +99,7 @@ func (c *Client) Run(ctx context.Context, handle func(bot.Received)) {
 		default:
 			backoff = min(2*backoff, 32*time.Second)
 		}
-		log.Warnf("gateway: %v; reconnecting in %s", err, wait.Round(time.Millisecond))
+		log.Warnf("connection lost: %v; reconnecting in %s", err, wait.Round(time.Millisecond))
 		if !sleep(ctx, wait) {
 			return
 		}
