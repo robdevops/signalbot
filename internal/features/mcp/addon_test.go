@@ -42,6 +42,8 @@ var (
 // _meta.
 var addonTools = map[string]string{
 	"play":    `{"io.github.robdevops.signalbot/visibility":["bot"]}`,
+	"lobby":   `{"io.github.robdevops.signalbot/visibility":["bot"]}`,
+	"pressed": `{"io.github.robdevops.signalbot/visibility":["bot"]}`,
 	"both":    `{"io.github.robdevops.signalbot/visibility":["model","bot"]}`,
 	"plain":   ``,
 	"app":     `{"ui":{"visibility":["app"]}}`,
@@ -169,6 +171,12 @@ func TestAddonProcess(t *testing.T) {
 					reply(id, text(strings.Join(names, ",")))
 				case "empty":
 					reply(id, `"result":{"content":[]}`)
+				case "lobby":
+					reply(id, `"result":{"content":[{"type":"text","text":"Starts in 60s"}],"_meta":{"io.github.robdevops.signalbot/buttons":[[{"label":"▶️ Start","data":"start:g1"}]],"io.github.robdevops.signalbot/onPress":"pressed"}}`)
+				case "pressed":
+					var meta map[string]ext.Context
+					json.Unmarshal(p.Meta, &meta)
+					reply(id, text(p.Arguments["press"]+" by {"+meta[ext.KeyContext].Sender+"}"))
 				case "round", "guess", "queue", "epoch", "crash":
 					reply(id, box.call(p.Name, p.Arguments, p.Meta))
 				case "spawn":
@@ -415,7 +423,7 @@ func TestDirect(t *testing.T) {
 	}
 	for _, want := range []string{
 		"<5>game MCP: app_too, both, plain\n",
-		"<5>game MCP: an addon, with tools for the bot: app_too, big, both, context, crash, empty, env, epoch, fail, guess, hang, huge, pics, play, queue, round, rpcfail, spawn\n",
+		"<5>game MCP: an addon, with tools for the bot: app_too, big, both, context, crash, empty, env, epoch, fail, guess, hang, huge, lobby, pics, play, pressed, queue, round, rpcfail, spawn\n",
 		`<4>MCP server game: chat command /app names tool "app", which the bot may not call; skipped`,
 		`<4>MCP server game: chat command /plain names tool "plain", which the bot may not call; skipped`,
 	} {

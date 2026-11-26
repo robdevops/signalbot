@@ -88,8 +88,11 @@ func (a *addon) direct(ctx context.Context, m feature.Message, name string, c ch
 		w = a.watch(ctx, m, *r.Meta.Watch)
 	}
 	if !act.IsZero() {
-		// When the answer went out: for the guard, if it has pictures, and
-		// for the chat's reply watches.
+		mk, tool := a.markup(logx.Ctx(ctx), m.Chat, r)
+		act.Markup = mk
+		// When the answer went out: for the guard, if it has pictures, for
+		// the chat's reply watches, and for presses of its buttons, which
+		// are under its last message.
 		pics := w != nil && len(act.Pictures) > 0
 		act.OnSent = func(sent []int64, dropped bool) {
 			if pics {
@@ -97,6 +100,9 @@ func (a *addon) direct(ctx context.Context, m feature.Message, name string, c ch
 			}
 			if !dropped {
 				a.replied(m.Chat, sent)
+			}
+			if !dropped && len(sent) > 0 && tool != "" {
+				a.keepPress(m.Chat, sent[len(sent)-1], tool)
 			}
 		}
 	}

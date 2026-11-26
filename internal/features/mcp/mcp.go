@@ -169,6 +169,16 @@ func Register(h feature.Host) error {
 			}
 			return feature.Action{}
 		})
+		if h.Info().Caps.Buttons {
+			h.OnPress(func(ctx context.Context, p feature.Press) (string, bool) {
+				for _, a := range k.addons {
+					if answer, ok := a.press(ctx, p); ok {
+						return answer, true
+					}
+				}
+				return "", false
+			})
+		}
 		h.OnEvent(func(ctx context.Context, e feature.Event) string {
 			for _, a := range k.addons {
 				if a.reacted(ctx, e) {
@@ -350,6 +360,7 @@ type botInfo struct {
 	network  string   // the chat network, as Info names it, for addons; on several, the first
 	networks []string // every network, when on more than one
 	addon    bool     // the server has an addon block: offer what addons get
+	buttons  bool     // a network of the bot's shows buttons under a post
 	sample   bool     // the addon may ask the bot's model: offer sampling
 }
 
@@ -359,7 +370,7 @@ type botInfo struct {
 // server said of itself.
 func initialize(ctx context.Context, c conn, self botInfo) (handshake, error) {
 	caps := map[string]any{"experimental": map[string]any{
-		ext.KeyAddon: ext.Capability{Version: ext.Version, Network: self.network, Networks: self.networks, WatchReplies: self.addon, WatchReactions: self.addon},
+		ext.KeyAddon: ext.Capability{Version: ext.Version, Network: self.network, Networks: self.networks, WatchReplies: self.addon, WatchReactions: self.addon, Buttons: self.addon && self.buttons},
 	}}
 	if self.sample {
 		caps["sampling"] = map[string]any{}
@@ -439,7 +450,7 @@ func modelName(server, tool string) string {
 // run addons as plain servers; each addon started joins it.
 func start(ctx context.Context, h feature.Host, path string, servers map[string]server, k *keeper, again *reruns, fd *feeds) error {
 	info := h.Info()
-	base := botInfo{version: cmp.Or(info.Version, "dev"), network: info.Network}
+	base := botInfo{version: cmp.Or(info.Version, "dev"), network: info.Network, buttons: info.Caps.Buttons}
 	if len(info.Networks) > 1 {
 		base.networks = info.Networks
 	}
@@ -505,13 +516,15 @@ func start(ctx context.Context, h feature.Host, path string, servers map[string]
 		case !hs.addon:
 			logx.Warnf("MCP server %s has an addon block but doesn't speak signalbot's addon extension (version %d), so it runs as a plain server", name, ext.Version)
 		case k != nil:
-			bot := map[string]bool{}
+			bot, only := map[string]bool{}, map[string]bool{}
 			for _, t := range listed {
 				if t.forBot() {
 					bot[t.Name] = true
+					only[t.Name] = !t.forModel()
 				}
 			}
 			a = newAddon(name, cmp.Or(cfg.Name, hs.title, name), *cfg.Addon, k.doc.Secret, c, bot)
+			a.only = only
 			a.host, a.changed, a.dirty = h, k.changed, c.(*stdioConn).updated
 			a.networks = len(info.Networks) > 1
 			a.restore(k.doc.Addons[name])
@@ -796,8 +809,9 @@ func call(ctx context.Context, c conn, name, arguments string) (string, []featur
 	return out, pics, nil
 }
 
-// toolResult is a tools/call result. An addon's _meta may make a watch,
-// for a direct command, or ask for a reaction, for a watch's call.
+// toolResult is a tools/call result. An addon's _meta may make a watch or
+// put buttons under the answer, for a direct command, or ask for a
+// reaction, for a watch's call.
 type toolResult struct {
 	Content []struct {
 		Type     string `json:"type"`
@@ -807,7 +821,9 @@ type toolResult struct {
 	} `json:"content"`
 	IsError bool `json:"isError"`
 	Meta    struct {
-		Watch *ext.Watch `json:"io.github.robdevops.signalbot/watch"`
-		React string     `json:"io.github.robdevops.signalbot/react"` // an emoji to put on the message
+		Watch   *ext.Watch     `json:"io.github.robdevops.signalbot/watch"`
+		React   string         `json:"io.github.robdevops.signalbot/react"`   // an emoji to put on the message
+		Buttons [][]ext.Button `json:"io.github.robdevops.signalbot/buttons"` // a direct command's, under its answer
+		OnPress string         `json:"io.github.robdevops.signalbot/onPress"` // the tool their presses call
 	} `json:"_meta"`
 }

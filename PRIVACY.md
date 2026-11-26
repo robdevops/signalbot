@@ -130,6 +130,7 @@ An addon is a program the bot runs on its own machine, as an [MCP server](docs/F
   - `names` adds each sender's display name. Without it, the addon writes a pseudonym where a name goes, and the bot puts in the name it last saw that person use in that chat, kept in memory for a day;
   - `global_ids` gives a person the same pseudonym in every chat, so the addon can link them across groups;
   - `post` and `react` send nothing: they let it post and react, only in a chat where it was used in the last day;
+  - a press of a button under one of its answers (where the network shows buttons) sends the button's data and who pressed it, as a pseudonym (with `names`, their display name), as a command does;
   - `model` lets it ask the bot's model, with the bot's key: the addon's prompts, and whatever it put in them from the chat, go to the model provider, as chat with the bot does, and what they cost counts toward that chat's `DAILY_BUDGET`; only for a chat that used the addon in the last day. The bot logs only each request's outcome, time, size and cost, never the prompt or the answer.
 - **What the addon keeps** is its own, outside what this page lists for the bot, in the directory its `…_STATE_DIR` names (GeoGuess: `GEO_STATE_DIR`): by default `addons/<server name>` in the state directory (`/var/lib/private/signalbot/addons/geo`), which the addon creates and writes, never the bot. Read its own documentation.
 - **Deletes and edits are not passed on.** A message an addon took stays with the addon if its sender later deletes it for everyone. An edit of one is passed on, as a new version.
@@ -146,7 +147,7 @@ An addon is a program the bot runs on its own machine, as an [MCP server](docs/F
   | How far the bot has read each addon's outbox, and the last 1,000 outbox entries' IDs | Replaced on each save; dropped once the server is no longer an addon |
   | An addon's last 256 posts, for a later post to reply to or react to: the post's ID, the chat's pseudonym and the time (on Telegram, the ID) of the bot's message, never its text | 24 hours |
 
-  Refs to messages (for reactions, a day), display names (a day) and posts waiting to go out are kept in memory only.
+  Refs to messages (for reactions, a day), display names (a day), posts waiting to go out, and which of an addon's answers have buttons (the chat, the bot's message and the tool a press calls, its newest 300 for a day) are kept in memory only.
 
 ## What this does not cover
 

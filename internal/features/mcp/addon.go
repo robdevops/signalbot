@@ -273,6 +273,7 @@ type addon struct {
 	key      []byte          // HMAC(secret, server): its pseudonyms' key
 	conn     conn            // where to call it
 	bot      map[string]bool // the tools the bot may call itself
+	only     map[string]bool // those for the bot alone, never the model: a press's
 	networks bool            // the bot is on several networks: each context names its chat's
 	busy     chan struct{}   // a place for each direct call in flight
 	now      func() time.Time
@@ -303,6 +304,7 @@ type addon struct {
 	failed  map[string]failure     // post ops dropped before they were sent, by ID
 	waiting map[string][]*outgoing // by chat pseudonym, while a post of its waits in the chat's mailbox: those held to send after it, in turn
 	posted  map[string]posted      // the post ops it sent, by ID, for a later post's replyTo
+	presses []pressPost            // its direct answers with buttons, oldest first; in memory only
 }
 
 // ref is the message a ref stands for: who sent it, where and when.
@@ -385,7 +387,7 @@ func (a *addon) context(m feature.Message, at time.Time) ext.Context {
 			delete(a.names, k)
 		}
 	}
-	a.refs[id] = ref{feature.Message{Chat: m.Chat, Sender: m.Sender, Timestamp: m.Timestamp, Edited: m.Edited}, now.Add(refLife)}
+	a.refs[id] = ref{feature.Message{Chat: m.Chat, Sender: m.Sender, Timestamp: m.Timestamp, Edited: m.Edited, Bot: m.Bot}, now.Add(refLife)}
 	if m.Name != "" {
 		a.names[m.Chat.Key()+"\x00"+user] = seen{m.Name, now.Add(nameLife)}
 	}

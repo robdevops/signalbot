@@ -52,6 +52,8 @@ var wireTypes = map[string]reflect.Type{
 	"Op":         reflect.TypeFor[Op](),
 	"Image":      reflect.TypeFor[Image](),
 	"Audio":      reflect.TypeFor[Audio](),
+	"Button":     reflect.TypeFor[Button](),
+	"Press":      reflect.TypeFor[Press](),
 	"Page":       reflect.TypeFor[Page](),
 	"Held":       reflect.TypeFor[Held](),
 
@@ -137,7 +139,7 @@ func TestSchemaMatchesTypes(t *testing.T) {
 		}
 	}
 	// The _meta keys are the package's.
-	for key, def := range map[string]string{KeyVisibility: "ToolMeta", KeyWatch: "ResultMeta", KeyReact: "ResultMeta", KeyChat: "SampleMeta"} {
+	for key, def := range map[string]string{KeyVisibility: "ToolMeta", KeyWatch: "ResultMeta", KeyReact: "ResultMeta", KeyButtons: "ResultMeta", KeyOnPress: "ResultMeta", KeyChat: "SampleMeta"} {
 		if _, ok := d[def].(map[string]any)["properties"].(map[string]any)[key]; !ok {
 			t.Errorf("$defs/%s lacks %s", def, key)
 		}
@@ -433,6 +435,10 @@ func TestSchemaSamples(t *testing.T) {
 		{"Op", Op{ID: "4", Op: "unwatch", Chat: chatID, Watch: "r1"}},
 		{"Op", Op{ID: "7", Op: "react", Chat: chatID, Post: "a1b2.1", Emoji: "⏰"}},
 		{"Op", Op{ID: "6", Op: "post", Chat: chatID, Text: "It was Paris.", ReplyTo: "a1b2.1"}},
+		{"Result", Result{Content: []Content{{Type: "text", Text: "Starts in 60s"}}, Meta: &ResultMeta{
+			Buttons: [][]Button{{{Label: "▶️ Start", Data: "start:g1"}, {Label: strings.Repeat("é", 32), Data: strings.Repeat("x", 64)}}}, OnPress: "geo_press"}}},
+		{"Capability", Capability{Version: Version, Network: "telegram", Buttons: true}},
+		{"Press", Press{Press: "start:g1"}},
 		{"Page", Page{Cursor: "a1b2.4", Ops: []Op{post}}},
 		{"Page", Page{Cursor: "a1b2.0", More: true, Ops: []Op{}}},
 		{"Held", Held{Op: post, Queued: time.Now()}},
@@ -491,6 +497,17 @@ func TestSchemaSamples(t *testing.T) {
 		{"Op", "a reaction to a post without an emoji", Op{ID: "1", Op: "react", Chat: chatID, Post: "a1b2.1"}},
 		{"Op", "a reaction to an empty post ID", map[string]any{"id": "1", "op": "react", "chat": chatID, "post": "", "emoji": "⏰"}},
 		{"Op", "a post op with a post", Op{ID: "1", Op: "post", Chat: chatID, Text: "hi", Post: "a1b2.1"}},
+		{"Result", "buttons without onPress", Result{Content: []Content{}, Meta: &ResultMeta{Buttons: [][]Button{{{Label: "a", Data: "a"}}}}}},
+		{"Result", "onPress without buttons", Result{Content: []Content{}, Meta: &ResultMeta{OnPress: "p"}}},
+		{"Result", "six rows of buttons", Result{Content: []Content{}, Meta: &ResultMeta{Buttons: slices.Repeat([][]Button{{{Label: "a", Data: "a"}}}, 6), OnPress: "p"}}},
+		{"Result", "six buttons in a row", Result{Content: []Content{}, Meta: &ResultMeta{Buttons: [][]Button{slices.Repeat([]Button{{Label: "a", Data: "a"}}, 6)}, OnPress: "p"}}},
+		{"Result", "an empty row", map[string]any{"content": []any{}, "_meta": map[string]any{KeyButtons: []any{[]any{}}, KeyOnPress: "p"}}},
+		{"Result", "a long label", Result{Content: []Content{}, Meta: &ResultMeta{Buttons: [][]Button{{{Label: strings.Repeat("x", 33), Data: "a"}}}, OnPress: "p"}}},
+		{"Result", "a label with a space after it", Result{Content: []Content{}, Meta: &ResultMeta{Buttons: [][]Button{{{Label: "Start ", Data: "a"}}}, OnPress: "p"}}},
+		{"Result", "long data", Result{Content: []Content{}, Meta: &ResultMeta{Buttons: [][]Button{{{Label: "a", Data: strings.Repeat("x", 65)}}}, OnPress: "p"}}},
+		{"Result", "empty data", map[string]any{"content": []any{}, "_meta": map[string]any{KeyButtons: []any{[]any{map[string]any{"label": "a", "data": ""}}}, KeyOnPress: "p"}}},
+		{"Capability", "buttons not a boolean", map[string]any{"version": 1, "buttons": "yes"}},
+		{"Press", "no press", map[string]any{}},
 		{"Page", "no cursor", map[string]any{"more": false, "ops": []any{}}},
 		{"Page", "a bad op", Page{Cursor: "x.1", Ops: []Op{{ID: "1", Op: "post"}}}},
 		{"Held", "no time", map[string]any{"op": post}},

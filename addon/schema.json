@@ -12,7 +12,8 @@
         "network": {"description": "The bot's chat network, as it names itself; on several, the first.", "type": "string", "examples": ["signal", "telegram"]},
         "networks": {"description": "Every chat network the bot is on, when it is on more than one; each call's context then names its chat's.", "type": "array", "items": {"type": "string"}},
         "watchReplies": {"description": "The bot's: it takes a watch with replies. A bot without it refuses one.", "type": "boolean"},
-        "watchReactions": {"description": "The bot's: it takes a watch with reactions.", "type": "boolean"}
+        "watchReactions": {"description": "The bot's: it takes a watch with reactions.", "type": "boolean"},
+        "buttons": {"description": "The bot's: its network shows buttons under a post (Telegram, Discord, Slack); on several networks, any of them. In a chat whose network has none, a result's buttons are left off.", "type": "boolean"}
       },
       "required": ["version"]
     },
@@ -92,8 +93,32 @@
       "type": "object",
       "properties": {
         "io.github.robdevops.signalbot/watch": {"description": "A direct command's only.", "$ref": "#/$defs/Watch"},
-        "io.github.robdevops.signalbot/react": {"description": "A watch's call's only: one emoji, for the message the watch took. Ignored on any other call; to react to a command, queue a react op with its context's ref.", "type": "string", "minLength": 1}
-      }
+        "io.github.robdevops.signalbot/react": {"description": "A watch's call's only: one emoji, for the message the watch took. Ignored on any other call; to react to a command, queue a react op with its context's ref.", "type": "string", "minLength": 1},
+        "io.github.robdevops.signalbot/buttons": {"description": "A direct command's only: rows of buttons under the answer's last message, where the chat's network shows them (the bot's capability has buttons); elsewhere they are left off, so offer a typed command too. Each press calls onPress. Buttons that break these rules are left off, and the answer goes out without them.", "type": "array", "minItems": 1, "maxItems": 5, "items": {"type": "array", "minItems": 1, "maxItems": 5, "items": {"$ref": "#/$defs/Button"}}},
+        "io.github.robdevops.signalbot/onPress": {"description": "With buttons, and only with them: one of the addon's tools for the bot alone, called with each press, with Press as its arguments and the presser's context in _meta, as a direct command is. Its result's text, if any, is shown to the presser for a moment (at most 200 characters); the call has 5 seconds. The bot remembers the answer's buttons in memory for 24 hours, the newest 300 answers; a press under one it forgot, such as after a restart, calls nothing.", "type": "string", "minLength": 1}
+      },
+      "allOf": [
+        {"if": {"required": ["io.github.robdevops.signalbot/buttons"]}, "then": {"required": ["io.github.robdevops.signalbot/onPress"]}},
+        {"if": {"required": ["io.github.robdevops.signalbot/onPress"]}, "then": {"required": ["io.github.robdevops.signalbot/buttons"]}}
+      ]
+    },
+    "Button": {
+      "description": "A button under a direct command's answer.",
+      "type": "object",
+      "properties": {
+        "label": {"description": "What it shows: at most 32 characters, with no space around them.", "type": "string", "minLength": 1, "maxLength": 32, "pattern": "^\\S([\\s\\S]*\\S)?$"},
+        "data": {"description": "What a press passes back to onPress: 1 to 64 bytes in UTF-8.", "type": "string", "minLength": 1, "maxLength": 64}
+      },
+      "required": ["label", "data"],
+      "additionalProperties": false
+    },
+    "Press": {
+      "description": "The arguments of a result's onPress tool when one of its buttons is pressed. The presser's context is in _meta, as a direct command's: its ref is the message pressed, its sender the presser.",
+      "type": "object",
+      "properties": {
+        "press": {"description": "The button's data.", "type": "string"}
+      },
+      "required": ["press"]
     },
     "Op": {
       "description": "One thing an addon's outbox asks the bot to do: post in a chat, react to a message, or end a watch. The bot does each ID once, so an op read again, such as after a restart, is skipped.",

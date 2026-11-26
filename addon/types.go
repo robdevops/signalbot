@@ -27,14 +27,17 @@ const (
 
 // The extension's keys: the capability both sides offer in initialize, and
 // the _meta keys on a call (the context), a tool (who may call it), a
-// result (a watch to start, a reaction to put on the message) and a
-// sampling request (the chat that pays).
+// result (a watch to start, a reaction to put on the message, buttons
+// under the answer and the tool their presses call) and a sampling request
+// (the chat that pays).
 const (
 	KeyAddon      = Vendor + "addon"
 	KeyContext    = Vendor + "context"
 	KeyVisibility = Vendor + "visibility"
 	KeyWatch      = Vendor + "watch"
 	KeyReact      = Vendor + "react"
+	KeyButtons    = Vendor + "buttons"
+	KeyOnPress    = Vendor + "onPress"
 	KeyChat       = Vendor + "chat"
 )
 
@@ -47,6 +50,10 @@ type Capability struct {
 	Networks       []string `json:"networks,omitempty"`       // every chat network the bot is on, when it is on more than one
 	WatchReplies   bool     `json:"watchReplies,omitempty"`   // the bot's: it takes a watch with Replies
 	WatchReactions bool     `json:"watchReactions,omitempty"` // the bot's: it takes a watch with Reactions
+	// Buttons is the bot's: its network shows buttons under a post
+	// (Telegram, Discord, Slack); on several networks, any of them. The bot
+	// leaves them off in a chat whose network has none.
+	Buttons bool `json:"buttons,omitempty"`
 }
 
 // Context is the message a call the bot makes came from, in the call's
@@ -123,6 +130,30 @@ type Result struct {
 type ResultMeta struct {
 	Watch *Watch `json:"io.github.robdevops.signalbot/watch,omitempty"` // a direct command's only
 	React string `json:"io.github.robdevops.signalbot/react,omitempty"` // a watch's call's only: an emoji for the message it took
+	// Buttons, a direct command's only: at most 5 rows of 5 under the
+	// answer's last message, where the chat's network shows them (the
+	// bot's Capability has Buttons); elsewhere they are left off, so offer
+	// a typed command too.
+	Buttons [][]Button `json:"io.github.robdevops.signalbot/buttons,omitempty"`
+	// OnPress, with Buttons and only with them: one of the addon's tools for
+	// the bot alone, called with each press, with Press as its arguments
+	// and the presser's context in _meta.
+	OnPress string `json:"io.github.robdevops.signalbot/onPress,omitempty"`
+}
+
+// Button is a button under a direct command's answer.
+type Button struct {
+	Label string `json:"label"` // what it shows: 1 to 32 characters, with no space around them
+	Data  string `json:"data"`  // what a press passes to OnPress: 1 to 64 bytes
+}
+
+// Press is the arguments of a result's OnPress tool when one of its
+// buttons is pressed. The presser's context is in the call's _meta under
+// KeyContext, as a direct command's: its Ref is the message pressed. The
+// result's text, if any, is shown to the presser for a moment, at most 200
+// characters; the call has 5 seconds.
+type Press struct {
+	Press string `json:"press"` // the button's Data
 }
 
 // Text is a result of words alone.

@@ -520,6 +520,52 @@ func TestCanSample(t *testing.T) {
 	}
 }
 
+// The bot's initialize says whether its network shows buttons, and a press
+// is a call of the onPress tool with Press as its arguments and the
+// presser's context.
+func TestButtons(t *testing.T) {
+	got := make(chan Press, 1)
+	s := New(Config{Name: "geo", Tools: []Tool{{Name: "geo_press", Visibility: []string{"bot"},
+		Call: func(_ context.Context, c *Context, args json.RawMessage) (Result, error) {
+			var p Press
+			if err := DecodeArgs(args, &p); err != nil || c == nil || c.Sender != "u_one" {
+				return Result{}, errors.New("no press")
+			}
+			got <- p
+			return Text("Starting!"), nil
+		}}}})
+	c := start(t, s)
+	initialize(c, "signal")
+	if s.Buttons() {
+		t.Error("buttons on Signal")
+	}
+	c.result("initialize", map[string]any{"protocolVersion": Protocol, "capabilities": map[string]any{
+		"experimental": map[string]any{KeyAddon: Capability{Version: Version, Network: "telegram", Buttons: true}}}}, nil)
+	if !s.Buttons() {
+		t.Error("no buttons on Telegram")
+	}
+	var r Result
+	c.result("tools/call", map[string]any{"name": "geo_press", "arguments": Press{Press: "start:g1"},
+		"_meta": map[string]any{KeyContext: Context{Chat: "c_one", Sender: "u_one", Ref: "r_one", Addressed: true, Group: true}}}, &r)
+	if p := <-got; p != (Press{Press: "start:g1"}) || len(r.Content) != 1 || r.Content[0].Text != "Starting!" {
+		t.Errorf("press %+v, result %+v", p, r)
+	}
+}
+
+// A result's buttons go on the wire under the extension's keys.
+func TestResultButtonsWire(t *testing.T) {
+	r := Text("hi")
+	r.Meta = &ResultMeta{Buttons: [][]Button{{{Label: "▶️ Start", Data: "start:g1"}}}, OnPress: "geo_press"}
+	b, err := json.Marshal(r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := `{"content":[{"type":"text","text":"hi"}],"_meta":{"io.github.robdevops.signalbot/buttons":[[{"label":"▶️ Start","data":"start:g1"}]],"io.github.robdevops.signalbot/onPress":"geo_press"}}`
+	if string(b) != want {
+		t.Errorf("got %s\nwant %s", b, want)
+	}
+}
+
 // Sample before Run fails at once.
 func TestSampleBeforeRun(t *testing.T) {
 	if _, err := New(Config{Name: "game"}).Sample(context.Background(), "c_one", question); err == nil {
