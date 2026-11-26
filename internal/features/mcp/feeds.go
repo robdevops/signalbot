@@ -183,7 +183,7 @@ func (fs *feeds) state(server string) *feedState {
 // add starts server's feed, read every feedEvery, and registers its
 // command, returned as "/name", or "" if it can't be.
 func (fs *feeds) add(server, title string, cfg feedConfig, c conn, has map[string]bool) string {
-	f := &feed{server: server, title: title, command: strings.ToLower(commandName(cfg.Command, "alerts")), resource: cfg.Resource, conn: c, has: has}
+	f := &feed{server: server, title: title, command: strings.ToLower(cmp.Or(strings.TrimPrefix(strings.TrimSpace(cfg.Command), "/"), "alerts")), resource: cfg.Resource, conn: c, has: has}
 	err := fs.h.Command(f.command, func(ctx context.Context, m feature.Message, args string) feature.Action {
 		return fs.chat(ctx, f, m, args)
 	})
@@ -212,14 +212,6 @@ func (fs *feeds) add(server, title string, cfg feedConfig, c conn, has map[strin
 		}
 	})
 	return "/" + f.command
-}
-
-// commandName is s without its slash, or def if s is empty.
-func commandName(s, def string) string {
-	if s = strings.TrimPrefix(strings.TrimSpace(s), "/"); s != "" {
-		return s
-	}
-	return def
 }
 
 // poll reads f, and sends its new items to the chats that want them.
@@ -402,20 +394,16 @@ func (fs *feeds) chat(ctx context.Context, f *feed, m feature.Message, args stri
 		fs.set(f, chat, words[0])
 	case len(words) == 2 && words[0] == "sound" && (words[1] == "on" || words[1] == "off"):
 		fs.set(f, chat, "sound"+words[1])
-	case len(words) >= 2 && words[0] == "sound":
-		k := f.kind(strings.Join(words[1:], " "))
-		if k == "" {
-			reply = "I don't know that one. "
-			break
-		}
-		fs.set(f, chat, "s:"+k)
 	default:
-		k := f.kind(strings.Join(words, " "))
-		if k == "" {
-			reply = "I don't know that one. "
-			break
+		prefix, rest := "k:", words
+		if len(words) >= 2 && words[0] == "sound" {
+			prefix, rest = "s:", words[1:]
 		}
-		fs.set(f, chat, "k:"+k)
+		if k := f.kind(strings.Join(rest, " ")); k != "" {
+			fs.set(f, chat, prefix+k)
+		} else {
+			reply = "I don't know that one. "
+		}
 	}
 	text, buttons := fs.menu(f, chat, "")
 	return feature.Action{Answer: reply + text, Markup: feature.Markup{Buttons: buttons}}
@@ -623,21 +611,13 @@ func (fs *feeds) menu(f *feed, chat feature.Chat, open string) (string, [][]feat
 		if len(f.kinds) == 0 {
 			return [][]feature.Button{{all}}
 		}
-		var rows [][]feature.Button
-		var row []feature.Button
+		var btns []feature.Button
 		for _, k := range f.kinds {
-			if !show(k.Kind) || len(data(prefix+k.Kind)) > maxData {
-				continue
-			}
-			row = append(row, toggle(kindLabel(k), state(k.Kind), data(prefix+k.Kind)))
-			if len(row) == perRow {
-				rows, row = append(rows, row), nil
+			if show(k.Kind) && len(data(prefix+k.Kind)) <= maxData {
+				btns = append(btns, toggle(kindLabel(k), state(k.Kind), data(prefix+k.Kind)))
 			}
 		}
-		if len(row) > 0 {
-			rows = append(rows, row)
-		}
-		return rows
+		return slices.Collect(slices.Chunk(btns, perRow))
 	}
 	every := func(string) bool { return true }
 	switch {
@@ -669,10 +649,7 @@ func toggle(label string, on bool, data string) feature.Button {
 }
 
 func kindLabel(k feedKind) string {
-	if k.Label != "" {
-		return k.Label
-	}
-	return k.Kind
+	return cmp.Or(k.Label, k.Kind)
 }
 
 // press changes a chat's subscription by a menu's button, and redraws the
