@@ -469,8 +469,19 @@ func (c *Client) Call(ctx context.Context, path string, body map[string]any) (js
 	}
 	if path == "/chat/completions" {
 		body["model"] = c.model // never a dearer one
-		if c.openRouter {
+		// and the bot's own reasoning effort: left unset, a model's default
+		// can spend a small max_tokens on reasoning and answer nothing
+		delete(body, "reasoning")
+		delete(body, "reasoning_effort")
+		effort := c.reasoning != "" && c.reasoning != "none"
+		switch {
+		case c.openRouter:
 			body["usage"] = map[string]bool{"include": true}
+			if effort {
+				body["reasoning"] = map[string]string{"effort": c.reasoning}
+			}
+		case effort:
+			body["reasoning_effort"] = c.reasoning
 		}
 	}
 	if c.openRouter {

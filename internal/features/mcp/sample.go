@@ -179,8 +179,11 @@ func (a *addon) ask(ctx context.Context, params json.RawMessage, log *logx.L) (*
 		} `json:"choices"`
 		Error *apiError `json:"error"`
 		Usage struct {
-			Tokens int      `json:"completion_tokens"`
-			Cost   *float64 `json:"cost"`
+			Tokens  int      `json:"completion_tokens"`
+			Cost    *float64 `json:"cost"`
+			Details struct {
+				Reasoning int `json:"reasoning_tokens"`
+			} `json:"completion_tokens_details"`
 		} `json:"usage"`
 	}
 	if err := json.Unmarshal(data, &r); err != nil || len(r.Choices) == 0 || r.Choices[0].Message.Content == nil {
@@ -194,6 +197,8 @@ func (a *addon) ask(ctx context.Context, params json.RawMessage, log *logx.L) (*
 			why += " (" + r.Error.String() + ")"
 		case len(r.Choices) == 0:
 			why += " (no choices)"
+		case r.Choices[0].FinishReason == "length" && r.Usage.Details.Reasoning > 0:
+			why += fmt.Sprintf(" (finish length: reasoning used %d of the %d tokens)", r.Usage.Details.Reasoning, body["max_tokens"])
 		default:
 			why += " (finish " + txt.Clamp(cmp.Or(r.Choices[0].FinishReason, "none"), 40) + ")"
 		}

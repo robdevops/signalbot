@@ -764,17 +764,18 @@ func TestCallMetered(t *testing.T) {
 		t.Error("the caller's body was changed")
 	}
 	if called["model"] != "x/model" || !reflect.DeepEqual(called["usage"], map[string]any{"include": true}) ||
-		!reflect.DeepEqual(called["provider"], map[string]any{"data_collection": "deny"}) || called["max_tokens"] != 100.0 {
+		!reflect.DeepEqual(called["provider"], map[string]any{"data_collection": "deny"}) || called["max_tokens"] != 100.0 ||
+		!reflect.DeepEqual(called["reasoning"], map[string]any{"effort": "low"}) {
 		t.Errorf("request %v", called)
 	}
 	if l := logs.String(); !strings.Contains(l, "api /chat/completions ") || strings.Contains(l, "secret") {
 		t.Errorf("logged %q", l)
 	}
 	other := client(t, srv.URL, false)
-	if _, err := other.Call(ctx, "/chat/completions", map[string]any{"model": "x/dearer"}); err != nil {
+	if _, err := other.Call(ctx, "/chat/completions", map[string]any{"model": "x/dearer", "reasoning_effort": "high"}); err != nil {
 		t.Fatal(err)
 	}
-	if !reflect.DeepEqual(called, map[string]any{"model": "x/model"}) {
+	if !reflect.DeepEqual(called, map[string]any{"model": "x/model", "reasoning_effort": "low"}) {
 		t.Errorf("another API got %v", called)
 	}
 }

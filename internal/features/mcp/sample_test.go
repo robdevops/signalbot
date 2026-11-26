@@ -667,6 +667,8 @@ func TestSampleNoAnswer(t *testing.T) {
 		{`{"error":{"message":"Provider returned error"}}`, "no answer (error: Provider returned error)"},
 		{`{"choices":[]}`, "no answer (no choices)"},
 		{`{"choices":[{"message":{"content":null},"finish_reason":"length"}]}`, "no answer (finish length)"},
+		{`{"choices":[{"message":{"content":null},"finish_reason":"length"}],"usage":{"completion_tokens":100,"completion_tokens_details":{"reasoning_tokens":100}}}`,
+			"no answer (finish length: reasoning used 100 of the 100 tokens)"},
 		{`not json`, "no answer (unreadable)"},
 	} {
 		var log logx.Buffer
