@@ -313,10 +313,7 @@ func (c *Client) plain(s string) (string, bool) {
 		case strings.HasPrefix(body, "#"):
 			return "#" + cmp.Or(label, "channel")
 		case strings.HasPrefix(body, "!"):
-			if label != "" {
-				return label
-			}
-			return "@" + strings.TrimPrefix(body, "!")
+			return cmp.Or(label, "@"+strings.TrimPrefix(body, "!"))
 		case label == "" || label == body:
 			return body
 		}
@@ -783,40 +780,31 @@ type conv struct {
 // 50 pages.
 func (c *Client) conversations(ctx context.Context, user string) (map[string]conv, error) {
 	out := map[string]conv{}
-	cursor := ""
-	for range 50 {
-		vals := url.Values{"types": {"public_channel,private_channel"}, "exclude_archived": {"true"}, "limit": {"200"}}
-		if user != "" {
-			vals.Set("user", user)
-		}
-		if cursor != "" {
-			vals.Set("cursor", cursor)
-		}
-		var r struct {
-			Channels []struct {
-				ID   string `json:"id"`
-				Name string `json:"name"`
-				// Slack Connect: shared with another organisation, or
-				// invited to be. is_org_shared alone is the same
-				// Enterprise Grid org's workspaces, so it isn't counted.
-				ExtShared     bool `json:"is_ext_shared"`
-				PendingShared bool `json:"is_pending_ext_shared"`
-			} `json:"channels"`
-			Meta struct {
-				Next string `json:"next_cursor"`
-			} `json:"response_metadata"`
-		}
-		if err := c.form(ctx, "users.conversations", c.token, vals, &r); err != nil {
-			return nil, err
-		}
+	vals := url.Values{"types": {"public_channel,private_channel"}, "exclude_archived": {"true"}, "limit": {"200"}}
+	if user != "" {
+		vals.Set("user", user)
+	}
+	err := paged(ctx, c, "users.conversations", vals, 50, func(r *struct {
+		page
+		Channels []struct {
+			ID   string `json:"id"`
+			Name string `json:"name"`
+			// Slack Connect: shared with another organisation, or
+			// invited to be. is_org_shared alone is the same
+			// Enterprise Grid org's workspaces, so it isn't counted.
+			ExtShared     bool `json:"is_ext_shared"`
+			PendingShared bool `json:"is_pending_ext_shared"`
+		} `json:"channels"`
+	}) bool {
 		for _, ch := range r.Channels {
 			if ch.ID != "" {
 				out[ch.ID] = conv{name: ch.Name, shared: ch.ExtShared || ch.PendingShared}
 			}
 		}
-		if cursor = r.Meta.Next; cursor == "" {
-			break
-		}
+		return false
+	})
+	if err != nil {
+		return nil, err
 	}
 	return out, nil
 }
