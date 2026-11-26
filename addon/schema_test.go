@@ -434,6 +434,7 @@ func TestSchemaSamples(t *testing.T) {
 		{"Op", Op{ID: "3", Op: "react", Ref: refID, Emoji: "🎯"}},
 		{"Op", Op{ID: "4", Op: "unwatch", Chat: chatID, Watch: "r1"}},
 		{"Op", Op{ID: "8", Op: "buttons", Chat: chatID, Watch: "lobby1", Buttons: [][]Button{{{Label: "▶️ Start", Data: "start:g1"}, {Label: "✖️ Cancel", Data: "cancel:g1"}}}}},
+		{"Op", Op{ID: "9", Op: "buttons", Chat: chatID, Watch: "lobby1", Text: "GeoGuess, 5 rounds: react to join.", Buttons: [][]Button{{{Label: "▶️ Start", Data: "start:g1"}}}}},
 		{"Op", Op{ID: "7", Op: "react", Chat: chatID, Post: "a1b2.1", Emoji: "⏰"}},
 		{"Op", Op{ID: "6", Op: "post", Chat: chatID, Text: "It was Paris.", ReplyTo: "a1b2.1"}},
 		{"Result", Result{Content: []Content{{Type: "text", Text: "Starts in 60s"}}, Meta: &ResultMeta{

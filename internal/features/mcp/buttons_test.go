@@ -10,6 +10,7 @@ import (
 	"sync"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	ext "github.com/robdevops/signalbot/addon"
 	"github.com/robdevops/signalbot/internal/feature"
@@ -372,11 +373,38 @@ func TestButtonsOp(t *testing.T) {
 	}
 	h.Bot.Caps.EditLimit = 0
 
+	// With text: the answer's text replaced, placeholders filled in, and
+	// kept by a later buttons op without text; too long, clamped.
+	if why := a.apply(ext.Op{ID: "t1", Op: "buttons", Chat: chat, Watch: "lobby1", Buttons: start, Text: " 5 rounds, by {" + a.userID(inA, "x") + "} "}); why != "" {
+		t.Fatalf("with text: dropped: %s", why)
+	}
+	posts = h.Posts()
+	if len(posts) != 2 || posts[1].Edit != 101 || posts[1].Text != "5 rounds, by someone" {
+		t.Fatalf("with text: posts %+v", posts)
+	}
+	posts[1].OnSent([]int64{101}, false)
+	if why := a.apply(ext.Op{ID: "t2", Op: "buttons", Chat: chat, Watch: "lobby1", Buttons: start}); why != "" {
+		t.Fatalf("after text: dropped: %s", why)
+	}
+	posts = h.Posts()
+	if len(posts) != 3 || posts[2].Text != "5 rounds, by someone" {
+		t.Fatalf("after text: posts %+v", posts)
+	}
+	posts[2].OnSent([]int64{101}, false)
+	if why := a.apply(ext.Op{ID: "t3", Op: "buttons", Chat: chat, Watch: "lobby1", Buttons: start, Text: strings.Repeat("x", maxAnswer+50)}); why != "" {
+		t.Fatalf("long text: dropped: %s", why)
+	}
+	posts = h.Posts()
+	if len(posts) != 4 || utf8.RuneCountInString(posts[3].Text) != maxAnswer+1 || !strings.HasSuffix(posts[3].Text, "x…") {
+		t.Fatalf("long text: %d posts, %d runes", len(posts), utf8.RuneCountInString(posts[len(posts)-1].Text))
+	}
+	posts[3].OnSent([]int64{101}, false)
+
 	// An answer with pictures: the op is dropped.
 	a.mu.Lock()
 	a.presses[0].Pics = true
 	a.mu.Unlock()
-	if why := a.apply(ext.Op{ID: "p", Op: "buttons", Chat: chat, Watch: "lobby1", Buttons: start}); why != "buttons ops for an answer with pictures" || len(h.Posts()) != 1 {
+	if why := a.apply(ext.Op{ID: "p", Op: "buttons", Chat: chat, Watch: "lobby1", Buttons: start}); why != "buttons ops for an answer with pictures" || len(h.Posts()) != 4 {
 		t.Errorf("pictures: %q, %d posts", why, len(h.Posts()))
 	}
 

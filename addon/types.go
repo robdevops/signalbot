@@ -164,7 +164,7 @@ type Op struct {
 	ID      string  `json:"id"`
 	Op      string  `json:"op"`                // "post", "react", "unwatch" or "buttons"
 	Chat    string  `json:"chat,omitempty"`    // a post's, unwatch's, buttons op's or reaction-to-a-post's chat pseudonym
-	Text    string  `json:"text,omitempty"`    // a post's, with {u_…} placeholders the bot fills in with names
+	Text    string  `json:"text,omitempty"`    // a post's, with {u_…} placeholders the bot fills in with names; or a buttons op's: its answer's new text
 	Images  []Image `json:"images,omitempty"`  // a post's: at most 2, 2 MB in all
 	Ref     string  `json:"ref,omitempty"`     // a reaction's message: a context's ref; or else Post
 	Emoji   string  `json:"emoji,omitempty"`   // a reaction's
@@ -177,8 +177,9 @@ type Op struct {
 	Post string `json:"post,omitempty"`
 	// Buttons is a buttons op's: at most 5 rows of 5 that replace the
 	// buttons under the addon's direct answer whose result started Watch
-	// in Chat and had buttons, its text kept and its presses still calling
-	// its OnPress, such as a lobby's Start once enough players have joined.
+	// in Chat and had buttons, its presses still calling its OnPress and
+	// its text kept unless the op has Text, which replaces it (filled in
+	// and clamped as a post's, and kept by later buttons ops), such as a lobby's Start once enough players have joined.
 	// An answer the bot doesn't remember, such as after a restart or where
 	// its network shows no buttons, is left as it is.
 	Buttons [][]Button `json:"buttons,omitempty"`

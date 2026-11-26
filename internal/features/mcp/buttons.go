@@ -112,8 +112,9 @@ func (a *addon) keepPress(p pressPost) {
 
 // rebutton does a buttons op: it replaces the buttons under the addon's
 // remembered direct answer whose result started o.Watch in the chat
-// o.Chat names, keeping its text and onPress, by an edit, within the
-// network's edit limits. It returns why the op was dropped, if it was; one
+// o.Chat names, keeping its onPress, by an edit, within the network's edit
+// limits; and its text too if o has text, filled in and clamped as a
+// post's, which later buttons ops then keep. It returns why the op was dropped, if it was; one
 // for an answer it doesn't remember, or can't edit now, is done with
 // nothing changed.
 func (a *addon) rebutton(o ext.Op) (why string) {
@@ -147,7 +148,11 @@ func (a *addon) rebutton(o ext.Op) (why string) {
 		log.Debugf("MCP server %s: buttons left as they are: past the network's edit limits", a.server)
 		return ""
 	}
-	a.host.Post(feature.Post{Chat: p.Chat, Text: p.Text, Edit: p.Sent, Markup: mk, OnSent: func(sent []int64, dropped bool) {
+	text := p.Text
+	if t := strings.TrimSpace(o.Text); t != "" {
+		text = txt.Clamp(a.fill(p.Chat, t), maxAnswer)
+	}
+	a.host.Post(feature.Post{Chat: p.Chat, Text: text, Edit: p.Sent, Markup: mk, OnSent: func(sent []int64, dropped bool) {
 		if dropped || len(sent) == 0 {
 			return
 		}
@@ -155,6 +160,7 @@ func (a *addon) rebutton(o ext.Op) (why string) {
 		defer a.mu.Unlock()
 		if j := slices.IndexFunc(a.presses, func(x pressPost) bool { return x.Chat == p.Chat && x.Sent == p.Sent }); j >= 0 {
 			x := &a.presses[j]
+			x.Text = text
 			if last := sent[len(sent)-1]; last != x.Sent || len(sent) > 1 { // sent anew
 				x.Sent, x.Single, x.At, x.Edits = last, len(sent) == 1, a.now(), 0
 			} else {
