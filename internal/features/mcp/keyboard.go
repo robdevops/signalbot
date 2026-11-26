@@ -66,10 +66,7 @@ func keyboard(h feature.Host, servers map[string]server) {
 	if len(keys) == 0 {
 		return
 	}
-	var rows [][]feature.Key
-	for k := range slices.Chunk(keys, keysPerRow) {
-		rows = append(rows, k)
-	}
+	rows := slices.Collect(slices.Chunk(keys, keysPerRow))
 	err := h.Command("keyboard", func(_ context.Context, m feature.Message, args string) feature.Action {
 		switch a := strings.ToLower(strings.TrimSpace(args)); {
 		case m.Chat.GroupID != "":
