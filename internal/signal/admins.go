@@ -2,6 +2,7 @@ package signal
 
 import (
 	"context"
+	"maps"
 	"slices"
 	"sync"
 	"time"
@@ -60,11 +61,7 @@ func (v *verdicts) put(gen uint64, id string, admin bool) {
 		v.m = map[string]verdict{}
 	}
 	if _, ok := v.m[id]; !ok && len(v.m) >= verdictMax {
-		for k, e := range v.m {
-			if time.Since(e.at) > verdictAge {
-				delete(v.m, k)
-			}
-		}
+		maps.DeleteFunc(v.m, func(_ string, e verdict) bool { return time.Since(e.at) > verdictAge })
 		if len(v.m) >= verdictMax {
 			clear(v.m)
 		}

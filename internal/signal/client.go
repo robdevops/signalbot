@@ -34,14 +34,6 @@ import (
 // log is the network's log: its every line starts with "Signal: ".
 var log = logx.For("signal")
 
-// recoverLog is logx.Recover on log: a panic while doing what, logged
-// without its value, and dropped.
-func recoverLog(what string) {
-	if recover() != nil {
-		log.Errorf("internal error while %s; dropped", what)
-	}
-}
-
 // maxLine caps one JSON-RPC frame from signal-cli, whose bodies, mentions
 // and quotes the sender controls: room for a getAttachment result, the
 // largest image the bot fetches in base64, and more. A longer frame is
@@ -279,7 +271,7 @@ func (c *Client) skipped(tail []byte) {
 }
 
 func (c *Client) dispatch(line []byte, handle func(bot.Received)) {
-	defer recoverLog("reading a message")
+	defer log.Recover("reading a message")
 	var m rpcMsg
 	if err := json.Unmarshal(line, &m); err != nil {
 		log.Warnf("bad JSON from signal-cli (%d bytes), ignored", len(line)) // not err: it can quote the frame

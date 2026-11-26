@@ -249,38 +249,30 @@ func (c *Conn) write(op int, payload []byte) error {
 	if op == opClose {
 		c.closed = true
 	}
-	return writeFrame(c.rwc, op, payload, true)
+	return writeFrame(c.rwc, op, payload)
 }
 
-// writeFrame writes one final frame, masked if mask.
-func writeFrame(w io.Writer, op int, payload []byte, mask bool) error {
+// writeFrame writes one final, masked frame.
+func writeFrame(w io.Writer, op int, payload []byte) error {
 	b := make([]byte, 0, 14+len(payload))
 	b = append(b, 0x80|byte(op))
-	m := byte(0)
-	if mask {
-		m = 0x80
-	}
 	switch n := len(payload); {
 	case n < 126:
-		b = append(b, m|byte(n))
+		b = append(b, 0x80|byte(n))
 	case n <= 0xFFFF:
-		b = append(b, m|126)
+		b = append(b, 0x80|126)
 		b = binary.BigEndian.AppendUint16(b, uint16(n))
 	default:
-		b = append(b, m|127)
+		b = append(b, 0x80|127)
 		b = binary.BigEndian.AppendUint64(b, uint64(n))
 	}
-	if mask {
-		var key [4]byte
-		rand.Read(key[:])
-		b = append(b, key[:]...)
-		start := len(b)
-		b = append(b, payload...)
-		for i := range payload {
-			b[start+i] ^= key[i%4]
-		}
-	} else {
-		b = append(b, payload...)
+	var key [4]byte
+	rand.Read(key[:])
+	b = append(b, key[:]...)
+	start := len(b)
+	b = append(b, payload...)
+	for i := range payload {
+		b[start+i] ^= key[i%4]
 	}
 	_, err := w.Write(b)
 	return err

@@ -3,6 +3,7 @@ package telegram
 import (
 	"context"
 	"errors"
+	"maps"
 	"slices"
 	"time"
 )
@@ -77,11 +78,7 @@ func (c *Client) dmAllowed(ctx context.Context, user string) bool {
 	defer c.mu.Unlock()
 	if len(c.dmOK) >= maxVerdicts {
 		now := time.Now()
-		for k, v := range c.dmOK {
-			if now.After(v.until) {
-				delete(c.dmOK, k)
-			}
-		}
+		maps.DeleteFunc(c.dmOK, func(_ string, v verdict) bool { return now.After(v.until) })
 	}
 	if c.forgot == forgot && len(c.dmOK) < maxVerdicts { // else what it was decided by may be stale
 		c.dmOK[user] = verdict{ok: admin, until: time.Now().Add(keepFor)}
@@ -170,11 +167,7 @@ func (c *Client) groupAdmins(ctx context.Context, group string) ([]user, error) 
 	defer c.mu.Unlock()
 	if len(c.admins) >= maxGroups {
 		now := time.Now()
-		for k, v := range c.admins {
-			if now.After(v.until) {
-				delete(c.admins, k)
-			}
-		}
+		maps.DeleteFunc(c.admins, func(_ string, v adminList) bool { return now.After(v.until) })
 	}
 	if _, ok := c.admins[params["chat_id"]]; c.forgot == forgot && (ok || len(c.admins) < maxGroups) {
 		c.admins[params["chat_id"]] = adminList{users: users, until: time.Now().Add(keepFor)}
@@ -199,9 +192,5 @@ func (c *Client) adminChanged(u *memberUpd) {
 // newly knows may make them an admin. c.mu is held.
 func (c *Client) forgetNoes() {
 	c.forgot++
-	for k, v := range c.dmOK {
-		if !v.ok {
-			delete(c.dmOK, k)
-		}
-	}
+	maps.DeleteFunc(c.dmOK, func(_ string, v verdict) bool { return !v.ok })
 }
