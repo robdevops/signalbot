@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"maps"
 	"math"
 	"net/http"
 	"slices"
@@ -161,26 +162,24 @@ func (c *Client) member(ctx context.Context, guild, user string) (memberInfo, er
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if _, ok := c.members[key]; !ok && len(c.members) >= maxMembers {
-		for k, old := range c.members {
-			if time.Since(old.at) >= memberTTL {
-				delete(c.members, k)
-			}
-		}
-		for k := range c.members { // none expired: any one goes
-			if len(c.members) < maxMembers {
-				break
-			}
-			delete(c.members, k)
-		}
-	}
+	makeRoom(c.members, key, maxMembers, func(m memberInfo) bool { return time.Since(m.at) >= memberTTL })
 	c.members[key] = m
 	return m, nil
 }
 
-// canView reports whether user, with roles, can see ch in g, under c.mu.
-func (c *Client) canView(g *guildInfo, ch channel, user string, roles []string) bool {
-	return c.perms(g, ch, user, roles)&permView != 0
+// makeRoom makes room in m for key, within max entries: those expired go
+// first, then any.
+func makeRoom[K comparable, V any](m map[K]V, key K, max int, expired func(V) bool) {
+	if _, ok := m[key]; ok || len(m) < max {
+		return
+	}
+	maps.DeleteFunc(m, func(_ K, v V) bool { return expired(v) })
+	for k := range m {
+		if len(m) < max {
+			break
+		}
+		delete(m, k)
+	}
 }
 
 // canPost reports whether member m, user, may post in ch in g, under c.mu:
@@ -260,12 +259,8 @@ func (c *Client) Groups(ctx context.Context, user string) ([]feature.Group, erro
 		return nil, nil
 	}
 	c.mu.Lock()
-	var guilds []string
-	for id := range c.guilds {
-		guilds = append(guilds, id)
-	}
+	guilds := slices.Sorted(maps.Keys(c.guilds))
 	c.mu.Unlock()
-	slices.Sort(guilds)
 	type standing struct {
 		memberInfo
 		failed bool

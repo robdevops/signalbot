@@ -2,6 +2,7 @@ package discord
 
 import (
 	"context"
+	"maps"
 	"slices"
 	"time"
 )
@@ -94,12 +95,8 @@ func (c *Client) serverRoles(ctx context.Context, uid string) (admin, mod bool, 
 		return false, false, nil
 	}
 	c.mu.Lock()
-	var guilds []string
-	for id := range c.guilds {
-		guilds = append(guilds, id)
-	}
+	guilds := slices.Sorted(maps.Keys(c.guilds))
 	c.mu.Unlock()
-	slices.Sort(guilds)
 	var failed error
 	for _, g := range guilds {
 		m, err := c.member(ctx, g, uid)
@@ -137,19 +134,7 @@ func (c *Client) keepVerdict(uid string, v verdict, gen uint64) {
 	if gen != c.forgets {
 		return
 	}
-	if _, ok := c.verdicts[uid]; !ok && len(c.verdicts) >= maxVerdicts {
-		for k, old := range c.verdicts {
-			if time.Since(old.at) >= verdictTTL {
-				delete(c.verdicts, k)
-			}
-		}
-		for k := range c.verdicts {
-			if len(c.verdicts) < maxVerdicts {
-				break
-			}
-			delete(c.verdicts, k)
-		}
-	}
+	makeRoom(c.verdicts, uid, maxVerdicts, func(v verdict) bool { return time.Since(v.at) >= verdictTTL })
 	c.verdicts[uid] = v
 }
 

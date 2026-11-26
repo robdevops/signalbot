@@ -673,7 +673,7 @@ func (c *Client) Delivered(ctx context.Context, msg feature.Message) (bot.Ready,
 		if list, ok := c.guildList(wait, ch.guild); ok {
 			c.mu.Lock()
 			for _, m := range list {
-				if !seen[m.id] && c.canView(info, ch, m.id, m.roles) {
+				if !seen[m.id] && c.perms(info, ch, m.id, m.roles)&permView != 0 {
 					r.Members = append(r.Members, bot.Member{Name: m.name, ID: prefix + m.id})
 				}
 			}

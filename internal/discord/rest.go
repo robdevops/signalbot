@@ -109,10 +109,7 @@ func (c *Client) do(ctx context.Context, method, path, ctype string, body []byte
 		if wait, err = c.attempt(ctx, method, path, ctype, body, out); wait == 0 {
 			return err
 		}
-		if d, ok := ctx.Deadline(); ok && time.Until(d) < wait {
-			return err
-		}
-		if !sleep(ctx, wait) {
+		if d, ok := ctx.Deadline(); ok && time.Until(d) < wait || !sleep(ctx, wait) {
 			return err
 		}
 	}
