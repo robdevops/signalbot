@@ -41,6 +41,7 @@
         "edited": {"description": "When the bot got the edit, in Unix seconds; 0 for an original.", "type": "integer", "minimum": 0},
         "name": {"description": "The sender's display name, with the addon block's names permission.", "type": "string"},
         "network": {"description": "The chat's network, when the bot is on more than one (Capability's networks).", "type": "string", "examples": ["signal", "telegram"]},
+        "buttons": {"description": "Whether this chat's network shows buttons under a post; Capability's buttons is whether any of the bot's networks does.", "type": "boolean"},
         "deadline": {"description": "A direct command's: when the bot stops waiting, in Unix seconds.", "type": "integer", "minimum": 0}
       },
       "required": ["chat", "sender", "ref", "addressed", "group", "sent", "edited"]

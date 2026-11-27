@@ -396,6 +396,9 @@ func (a *addon) context(m feature.Message, at time.Time) ext.Context {
 	if a.networks {
 		c.Network = a.host.Net(m.Chat).Name
 	}
+	if a.host != nil {
+		c.Buttons = a.host.Net(m.Chat).Caps.Buttons
+	}
 	if m.Edited != 0 {
 		c.Edited = c.Sent
 	}

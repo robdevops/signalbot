@@ -784,7 +784,8 @@ func TestPseudonymsMatchSchema(t *testing.T) {
 }
 
 // On several networks, an addon is told them all at initialize, and each
-// call's context names its chat's; on one, neither.
+// call's context names its chat's, and whether that chat shows buttons;
+// on one, no network.
 func TestAddonNetworks(t *testing.T) {
 	c := &initConn{}
 	if _, err := initialize(context.Background(), c, botInfo{version: "v", network: "signal", networks: []string{"signal", "telegram"}, addon: true}); err != nil {
@@ -801,6 +802,22 @@ func TestAddonNetworks(t *testing.T) {
 	a.networks = false
 	if got := a.context(feature.Message{Chat: feature.Chat{User: "123"}, Sender: "123"}, time.Now()); got.Network != "" {
 		t.Errorf("one network named: %+v", got)
+	}
+	// Buttons is the chat's own network's: a Signal chat's call says none
+	// even when the bot's Telegram shows them.
+	h := featuretest.New()
+	h.Nets = func(ch feature.Chat) feature.Net {
+		if ch.GroupID == "tg" {
+			return feature.Net{Name: "telegram", Caps: feature.Caps{Buttons: true}}
+		}
+		return feature.Net{Name: "signal"}
+	}
+	a.host, a.networks = h, true
+	if got := a.context(feature.Message{Chat: feature.Chat{GroupID: "tg"}, Sender: "1"}, time.Now()); !got.Buttons {
+		t.Errorf("telegram chat: %+v", got)
+	}
+	if got := a.context(feature.Message{Chat: feature.Chat{GroupID: "sig"}, Sender: "1"}, time.Now()); got.Buttons {
+		t.Errorf("signal chat: %+v", got)
 	}
 }
 

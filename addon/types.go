@@ -71,6 +71,11 @@ type Context struct {
 	Name      string `json:"name,omitempty"`     // the sender's display name, with the names permission
 	Deadline  int64  `json:"deadline,omitempty"` // a direct call's: when the bot stops waiting, in Unix seconds
 	Network   string `json:"network,omitempty"`  // the chat's network, when the bot is on more than one
+	// Buttons is whether this chat's network shows buttons under a post: a
+	// direct command's result may then have ResultMeta.Buttons that people
+	// see. On a bot on several networks, Server.Buttons is any of them;
+	// this is the chat's own.
+	Buttons bool `json:"buttons,omitempty"`
 }
 
 // Watch is what a direct command's result asks for, in its _meta under

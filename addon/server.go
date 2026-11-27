@@ -198,8 +198,9 @@ func (s *Server) WatchReactions() bool {
 
 // Buttons reports whether the bot said in initialize that its network
 // shows buttons under a post: a direct command's result may then have
-// ResultMeta.Buttons. In a chat whose network has none they are left off,
-// so offer a typed command too.
+// ResultMeta.Buttons. On a bot on several networks it is whether any of
+// them does: decide per chat with Context.Buttons. In a chat whose network
+// has none they are left off, so offer a typed command too.
 func (s *Server) Buttons() bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
