@@ -60,6 +60,7 @@ type fakeNet struct {
 	watch   Watch        // what Watch was told
 	buttons bool         // it shows markup
 	refuses string       // an emoji React refuses: nothing is sent
+	fails   string       // an emoji whose reaction fails otherwise: nothing is sent
 }
 
 type sent struct {
@@ -120,20 +121,21 @@ func (n *fakeNet) Caps() feature.Caps {
 }
 
 // React is sent as "react <emoji> to <sender>@<timestamp>", the sender
-// "bot" for the bot's own message; one it refuses sends nothing.
-func (n *fakeNet) React(chat feature.Chat, msg feature.Message, emoji string) bool {
+// "bot" for the bot's own message; one it refuses, or whose reaction
+// fails, sends nothing.
+func (n *fakeNet) React(chat feature.Chat, msg feature.Message, emoji string) (on, refused bool) {
 	n.mu.Lock()
-	refused := emoji == n.refuses && emoji != ""
+	refused, failed := emoji == n.refuses && emoji != "", emoji == n.fails && emoji != ""
 	n.mu.Unlock()
-	if refused {
-		return false
+	if refused || failed {
+		return false, refused
 	}
 	sender := msg.Sender
 	if msg.Bot {
 		sender = "bot"
 	}
 	n.sent <- sent{chat: chat, text: fmt.Sprintf("react %s to %s@%d", emoji, sender, msg.Timestamp)}
-	return true
+	return true, false
 }
 
 func (n *fakeNet) Typing(feature.Chat) func() {
@@ -355,13 +357,22 @@ func with(m feature.Message, ids ...string) feature.Message {
 	return m
 }
 
-// nextSend is the next message the bot sends.
 // refuse has the network refuse emoji as a reaction.
 func (h *harness) refuse(emoji string) {
 	h.net.mu.Lock()
 	defer h.net.mu.Unlock()
 	h.net.refuses = emoji
 }
+
+// failReact has the network's reaction with emoji fail, other than by
+// refusing the emoji.
+func (h *harness) failReact(emoji string) {
+	h.net.mu.Lock()
+	defer h.net.mu.Unlock()
+	h.net.fails = emoji
+}
+
+// nextSend is the next message the bot sends.
 
 func (h *harness) nextSend() sent {
 	h.t.Helper()

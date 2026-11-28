@@ -387,8 +387,8 @@ func TestReact(t *testing.T) {
 	f := newFake(t)
 	c := connected(f.client())
 	msg := feature.Message{Chat: feature.Chat{User: "1111111"}, Timestamp: 42}
-	if !c.React(msg.Chat, msg, "👍") {
-		t.Fatal("a reaction that went on said it didn't")
+	if on, refused := c.React(msg.Chat, msg, "👍"); !on || refused {
+		t.Fatalf("a reaction that went on: %v, %v", on, refused)
 	}
 	if r := f.callsTo("setMessageReaction"); len(r) != 1 || r[0].Params["message_id"] != float64(42) {
 		t.Fatalf("reactions %v", r)
@@ -399,14 +399,46 @@ func TestReact(t *testing.T) {
 		t.Fatalf("reactions %v", r)
 	}
 	f.errs["setMessageReaction"] = `{"ok":false,"error_code":400,"description":"Bad Request: REACTION_INVALID"}`
-	if c.React(msg.Chat, msg, "🫠") {
-		t.Fatal("a refused reaction said it went on")
+	if on, refused := c.React(msg.Chat, msg, "🫠"); on || !refused {
+		t.Fatalf("a refused reaction: %v, %v", on, refused)
 	}
 	if r := f.callsTo("setMessageReaction"); len(r) != 3 {
 		t.Fatalf("reactions %v", r)
 	}
 	if s := f.callsTo("sendMessage"); len(s) != 0 {
 		t.Fatalf("a refused reaction was sent as a message: %v", s)
+	}
+}
+
+// A reaction Telegram rate-limits goes on after the wait it names; one in
+// a group that became a supergroup goes on at its new ID.
+func TestReactRetries(t *testing.T) {
+	captureLogs(t)
+	f := newFake(t)
+	c := connected(f.client())
+	msg := feature.Message{Chat: feature.Chat{GroupID: groupS}, Timestamp: 42}
+	f.errs["setMessageReaction"] = `{"ok":false,"error_code":429,"description":"Too Many Requests","parameters":{"retry_after":1}}`
+	start := time.Now()
+	if on, refused := c.React(msg.Chat, msg, "👍"); !on || refused || time.Since(start) < time.Second {
+		t.Fatalf("a rate-limited reaction: %v, %v after %s", on, refused, time.Since(start))
+	}
+	if r := f.callsTo("setMessageReaction"); len(r) != 2 {
+		t.Fatalf("reactions %v", r)
+	}
+	f.errs["setMessageReaction"] = `{"ok":false,"error_code":400,"description":"Bad Request: group chat was upgraded to a supergroup chat","parameters":{"migrate_to_chat_id":-1009999999999}}`
+	old := feature.Message{Chat: feature.Chat{GroupID: "-4444444"}, Timestamp: 43}
+	if on, _ := c.React(old.Chat, old, "👍"); !on {
+		t.Fatal("a reaction in a migrated group didn't go on")
+	}
+	var to []any
+	for _, r := range f.callsTo("setMessageReaction")[2:] {
+		to = append(to, r.Params["chat_id"])
+	}
+	if !reflect.DeepEqual(to, []any{"-4444444", "-1009999999999"}) {
+		t.Fatalf("reacted in %v", to)
+	}
+	if s := f.callsTo("sendMessage"); len(s) != 0 {
+		t.Fatalf("sent %v", s)
 	}
 }
 
@@ -680,7 +712,9 @@ func TestReactRefused(t *testing.T) {
 	c := connected(f.client())
 	msg := feature.Message{Chat: feature.Chat{User: "1111111"}, Timestamp: 42}
 	f.errs["setMessageReaction"] = `{"ok":false,"error_code":400,"description":"Bad Request: message to react not found"}`
-	c.React(msg.Chat, msg, "👍")
+	if on, refused := c.React(msg.Chat, msg, "👍"); on || refused {
+		t.Fatalf("a failed reaction: %v, %v", on, refused)
+	}
 	if s := f.callsTo("sendMessage"); len(s) != 0 {
 		t.Fatalf("sent %v", s)
 	}

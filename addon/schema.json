@@ -95,7 +95,7 @@
       "properties": {
         "io.github.robdevops.signalbot/watch": {"description": "A direct command's only.", "$ref": "#/$defs/Watch"},
         "io.github.robdevops.signalbot/react": {"description": "A watch's call's only: one emoji, for the message the watch took. Ignored on any other call; to react to a command, queue a react op with its context's ref.", "type": "string", "minLength": 1},
-        "io.github.robdevops.signalbot/buttons": {"description": "A direct command's only: rows of buttons under the answer's last message, where the chat's network shows them (the bot's capability has buttons); elsewhere they are left off, so offer a typed command too. Each press calls onPress. Buttons that break these rules are left off, and the answer goes out without them.", "type": "array", "minItems": 1, "maxItems": 5, "items": {"type": "array", "minItems": 1, "maxItems": 5, "items": {"$ref": "#/$defs/Button"}}},
+        "io.github.robdevops.signalbot/buttons": {"description": "A direct command's only: rows of buttons under the answer's last message, where the chat's network shows them (the bot's capability has buttons); elsewhere they are left off, so offer a typed command too. Each press calls onPress. Each button's data must be unique within the answer. Buttons that break these rules are left off, and the answer goes out without them.", "type": "array", "minItems": 1, "maxItems": 5, "items": {"type": "array", "minItems": 1, "maxItems": 5, "items": {"$ref": "#/$defs/Button"}}},
         "io.github.robdevops.signalbot/onPress": {"description": "With buttons, and only with them: one of the addon's tools for the bot alone, called with each press, with Press as its arguments and the presser's context in _meta, as a direct command is. Its result's text, if any, is shown to the presser for a moment (at most 200 characters); the call has 5 seconds. The bot remembers the answer's buttons in memory for 24 hours, the newest 300 answers; a press under one it forgot, such as after a restart, calls nothing.", "type": "string", "minLength": 1}
       },
       "allOf": [
@@ -108,7 +108,7 @@
       "type": "object",
       "properties": {
         "label": {"description": "What it shows: at most 32 characters, with no space around them.", "type": "string", "minLength": 1, "maxLength": 32, "pattern": "^\\S([\\s\\S]*\\S)?$"},
-        "data": {"description": "What a press passes back to onPress: 1 to 64 bytes in UTF-8.", "type": "string", "minLength": 1, "maxLength": 64}
+        "data": {"description": "What a press passes back to onPress: 1 to 64 bytes in UTF-8: up to 64 ASCII characters, or 16 of any. Unique among the buttons of one answer or buttons op.", "type": "string", "minLength": 1, "anyOf": [{"maxLength": 16}, {"pattern": "^[\\x00-\\x7f]{1,64}$"}]}
       },
       "required": ["label", "data"],
       "additionalProperties": false

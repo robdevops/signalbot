@@ -75,9 +75,12 @@ func (a *addon) markup(log logx.L, chat feature.Chat, r toolResult) (feature.Mar
 	return mk, tool
 }
 
-// buttonRows is btns as markup, or why they break the rules.
+// buttonRows is btns as markup, or why they break the rules. Each
+// button's data must be unique among them: Discord refuses a message
+// whose buttons repeat one.
 func buttonRows(btns [][]ext.Button) (feature.Markup, string) {
 	var mk feature.Markup
+	seen := map[string]bool{}
 	if len(btns) == 0 || len(btns) > maxRows || slices.ContainsFunc(btns, func(row []ext.Button) bool { return len(row) == 0 || len(row) > maxPerRow }) {
 		return mk, "more than 5 rows of 5 buttons, an empty row, or none"
 	}
@@ -87,6 +90,10 @@ func buttonRows(btns [][]ext.Button) (feature.Markup, string) {
 			if !label(b.Label) || b.Data == "" || len(b.Data) > maxData {
 				return feature.Markup{}, "a button's label or data empty or too long"
 			}
+			if seen[b.Data] {
+				return feature.Markup{}, "two buttons with the same data"
+			}
+			seen[b.Data] = true
 			out = append(out, feature.Button{Label: b.Label, Data: b.Data})
 		}
 		mk.Buttons = append(mk.Buttons, out)

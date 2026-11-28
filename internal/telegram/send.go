@@ -375,25 +375,31 @@ func (c *Client) sendVoice(ctx context.Context, ch feature.Chat, audio []byte, r
 }
 
 // React puts emoji on msg, as a reaction from the bot: by its message ID,
-// which the bot's own messages have too, and says whether it went on.
-// Telegram allows only some emoji as reactions; one it refuses
-// (REACTION_INVALID) sends nothing, and the caller decides what to do.
-func (c *Client) React(ch feature.Chat, msg feature.Message, emoji string) bool {
+// which the bot's own messages have too, and says whether it went on, or
+// Telegram refused the emoji. Telegram allows only some emoji as
+// reactions; one it refuses (REACTION_INVALID) sends nothing, and the
+// caller decides what to do. A 429 or a group that became a supergroup is
+// retried as a send is; any other failure is logged.
+func (c *Client) React(ch feature.Chat, msg feature.Message, emoji string) (on, refused bool) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	d := c.dest(ch)
-	err := c.call(ctx, "setMessageReaction", map[string]any{"chat_id": d.chat, "message_id": msg.Timestamp,
-		"reaction": []map[string]string{{"type": "emoji", "emoji": emoji}}}, nil)
+	fields := map[string]any{"chat_id": d.chat, "message_id": msg.Timestamp,
+		"reaction": []map[string]string{{"type": "emoji", "emoji": emoji}}}
+	err := c.retrying(ctx, d.chat, func(to string) { fields["chat_id"] = to }, func() error {
+		return c.call(ctx, "setMessageReaction", fields, nil)
+	})
 	var ae *apiError
 	switch {
 	case err == nil:
-		return true
+		return true, false
 	case errors.As(err, &ae) && ae.Code == 400 && strings.Contains(ae.Desc, "REACTION_INVALID"):
 		log.Debugf("reaction refused: Telegram doesn't allow that emoji as one")
+		return false, true
 	default:
 		log.Errorf("reaction failed: %v", err)
 	}
-	return false
+	return false, false
 }
 
 // Typing shows the bot typing in chat until stop is called; Telegram's

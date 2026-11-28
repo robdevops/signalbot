@@ -616,7 +616,7 @@ func (g *gate) answer(s string) func() (int, string) {
 // does most emoji) is sent as a message instead.
 func TestOneEmojiIsAReaction(t *testing.T) {
 	h := start(t, options{})
-	h.answer(text(" 🙏 "), text("👍 sure"), text("👍"), text("🫠"), text("ok"))
+	h.answer(text(" 🙏 "), text("👍 sure"), text("👍"), text("🫠"), text("🫥"), text("ok"))
 	m := dm("thanks!")
 	m.Timestamp = 1700
 	if _, s := h.ask(m); s.text != "react 🙏 to "+aliceID+"@1700" || s.chat.User != aliceID {
@@ -637,9 +637,17 @@ func TestOneEmojiIsAReaction(t *testing.T) {
 	if _, s := h.ask(m); s.text != "🫠" || s.chat.User != aliceID {
 		t.Fatalf("a refused reaction: sent %+v", s)
 	}
+	// A reaction that fails otherwise, such as at a rate limit or on a
+	// deleted message, posts nothing.
+	h.failReact("🫥")
+	m.Text, m.Timestamp = "gone", 1703
+	n := len(h.requests())
+	h.receive(m)
+	h.eventually("the failed reaction", func() bool { return reacted() == 3 && len(h.requests()) == n+1 })
+	h.noSend()
 	r, _ := h.ask(dm("what did you do?"))
 	equal(t, "history", contents(r)[:2], []string{"user: thanks!", "assistant: [reacted 🙏]"})
-	if reacted() != 2 || strings.Contains(h.logs.String(), "🙏") || strings.Contains(h.logs.String(), "👍") || strings.Contains(h.logs.String(), "🫠") {
+	if reacted() != 3 || strings.Contains(h.logs.String(), "🙏") || strings.Contains(h.logs.String(), "👍") || strings.Contains(h.logs.String(), "🫠") || strings.Contains(h.logs.String(), "🫥") {
 		t.Fatalf("log %q", h.logs.String())
 	}
 }

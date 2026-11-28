@@ -969,20 +969,26 @@ func TestEdit(t *testing.T) {
 }
 
 // React puts the emoji on the message; one Discord doesn't know says so and
-// sends nothing.
+// sends nothing; another failure isn't a refusal.
 func TestReact(t *testing.T) {
 	f := newFake(t)
 	c := connected(f.client())
 	ch := feature.Chat{GroupID: group}
-	if !c.React(ch, feature.Message{Timestamp: 1200000000000000001}, "👍") {
-		t.Fatal("a reaction that went on said it didn't")
+	if on, refused := c.React(ch, feature.Message{Timestamp: 1200000000000000001}, "👍"); !on || refused {
+		t.Fatalf("a reaction that went on: %v, %v", on, refused)
 	}
 	f.waitCalls("PUT /channels/"+chanID+"/messages/1200000000000000001/reactions/👍/@me", 1)
 	f.mu.Lock()
 	f.errs["PUT /channels/"+chanID+"/messages/1200000000000000002/reactions/x/@me"] = []int{400}
 	f.mu.Unlock()
-	if c.React(ch, feature.Message{Timestamp: 1200000000000000002}, "x") {
-		t.Fatal("a refused reaction said it went on")
+	if on, refused := c.React(ch, feature.Message{Timestamp: 1200000000000000002}, "x"); on || !refused {
+		t.Fatalf("a refused reaction: %v, %v", on, refused)
+	}
+	f.mu.Lock()
+	f.errs["PUT /channels/"+chanID+"/messages/1200000000000000003/reactions/👍/@me"] = []int{403}
+	f.mu.Unlock()
+	if on, refused := c.React(ch, feature.Message{Timestamp: 1200000000000000003}, "👍"); on || refused {
+		t.Fatalf("a failed reaction: %v, %v", on, refused)
 	}
 	if s := f.callsTo("POST /channels/" + chanID + "/messages"); len(s) != 0 {
 		t.Fatalf("a refused reaction was sent as a message: %+v", s)
@@ -1064,8 +1070,8 @@ func TestSlashCommand(t *testing.T) {
 
 	// A reaction to a slash command is its reply.
 	m = load(t, cmd("1250000000000000004"))
-	if !c.React(m.Chat, m, "👍") {
-		t.Fatal("a slash command's reaction said it didn't go on")
+	if on, refused := c.React(m.Chat, m, "👍"); !on || refused {
+		t.Fatalf("a slash command's reaction: %v, %v", on, refused)
 	}
 	if o := f.waitCalls("PATCH /webhooks/app1/tok1250000000000000004/messages/@original", 1)[0]; o.Body["content"] != "👍" {
 		t.Fatalf("reaction %+v", o)

@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"slices"
 	"strings"
 	"sync"
@@ -83,7 +84,13 @@ var startRow = []ext.Button{{Label: "▶️ Start", Data: "start:g1"}, {Label: "
 func TestAddonMarkup(t *testing.T) {
 	ok := ext.Button{Label: "a", Data: "a"}
 	rows := func(n, per int) [][]ext.Button {
-		return slices.Repeat([][]ext.Button{slices.Repeat([]ext.Button{ok}, per)}, n)
+		out := make([][]ext.Button, n)
+		for i := range out {
+			for j := range per {
+				out[i] = append(out[i], ext.Button{Label: "a", Data: fmt.Sprint(i, j)})
+			}
+		}
+		return out
 	}
 	for _, c := range []struct {
 		name    string
@@ -106,6 +113,7 @@ func TestAddonMarkup(t *testing.T) {
 		{"a label with space", [][]ext.Button{{{Label: " a", Data: "a"}}}, "press", "label or data"},
 		{"empty data", [][]ext.Button{{{Label: "a", Data: ""}}}, "press", "label or data"},
 		{"long data", [][]ext.Button{{{Label: "a", Data: strings.Repeat("é", 33)}}}, "press", "label or data"},
+		{"the same data twice", [][]ext.Button{{{Label: "a", Data: "noop"}}, {{Label: "b", Data: "noop"}}}, "press", "two buttons with the same data"},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			a, _ := buttonAddon(nil, true)
@@ -360,7 +368,7 @@ func TestButtonsOp(t *testing.T) {
 		}
 	}
 	// Bad buttons.
-	for i, b := range [][][]ext.Button{nil, {{}}, slices.Repeat(start, 6), {{{Label: strings.Repeat("x", 33), Data: "a"}}}, {{{Label: "a", Data: strings.Repeat("x", 65)}}}} {
+	for i, b := range [][][]ext.Button{nil, {{}}, slices.Repeat(start, 6), {{{Label: strings.Repeat("x", 33), Data: "a"}}}, {{{Label: "a", Data: strings.Repeat("x", 65)}}}, {{{Label: "a", Data: "noop"}, {Label: "b", Data: "noop"}}}} {
 		if why := a.apply(ext.Op{ID: "b" + string(rune('0'+i)), Op: "buttons", Chat: chat, Watch: "lobby1", Buttons: b}); !strings.HasPrefix(why, "buttons ops with ") || len(h.Posts()) != 1 {
 			t.Errorf("buttons %v: %q, %d posts", b, why, len(h.Posts()))
 		}

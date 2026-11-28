@@ -412,11 +412,12 @@ func (c *Client) Edit(ch feature.Chat, sent int64, text string, pics []feature.P
 }
 
 // React puts emoji on msg, as a reaction from the bot, and says whether it
-// went on. A slash command, which is no message, gets it as its reply
-// instead (which counts as on); an emoji Discord refuses sends nothing.
-func (c *Client) React(ch feature.Chat, msg feature.Message, emoji string) bool {
+// went on, or Discord refused the emoji (10014). A slash command, which is
+// no message, gets it as its reply instead (which counts as on); a refused
+// emoji sends nothing, and any other failure is logged.
+func (c *Client) React(ch feature.Chat, msg feature.Message, emoji string) (on, refused bool) {
 	if ix, found := c.takeID(ch, msg.Timestamp); found {
-		return len(c.post(ch, emoji, nil, nil, 0, nil, feature.Markup{}, ix)) > 0
+		return len(c.post(ch, emoji, nil, nil, 0, nil, feature.Markup{}, ix)) > 0, false
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
@@ -427,13 +428,14 @@ func (c *Client) React(ch feature.Chat, msg feature.Message, emoji string) bool 
 	var ae *apiError
 	switch {
 	case err == nil:
-		return true
+		return true, false
 	case errors.As(err, &ae) && ae.Code == 10014: // unknown emoji
 		log.Debugf("reaction refused: Discord doesn't know that emoji")
+		return false, true
 	default:
 		log.Errorf("reaction failed: %v", err)
 	}
-	return false
+	return false, false
 }
 
 // Typing shows the bot typing in chat until stop is called; Discord's

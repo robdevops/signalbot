@@ -54,9 +54,10 @@ type Network interface {
 	// never blocks.
 	Caps() feature.Caps
 	// React puts emoji on msg in chat, as a reaction from the bot, and
-	// says whether it went on. A network that refuses the emoji as a
-	// reaction sends nothing in its place; any other failure is logged.
-	React(chat feature.Chat, msg feature.Message, emoji string) bool
+	// says whether it went on, or the network refused it: it won't take
+	// that emoji as a reaction, and sends nothing in its place. Any other
+	// failure is logged, with neither on nor refused.
+	React(chat feature.Chat, msg feature.Message, emoji string) (on, refused bool)
 	Typing(chat feature.Chat) (stop func())
 	// Delivered readies a posted message in its slot. ok is false, logged,
 	// if msg is dropped.

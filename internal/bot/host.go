@@ -334,7 +334,7 @@ const maxReactions = 16
 func (b *Bot) react(r Reacted) {
 	for _, x := range r.Reactions {
 		if !b.gone(x.Message) {
-			if !b.net.React(r.Chat, x.Message, x.Emoji) {
+			if on, _ := b.net.React(r.Chat, x.Message, x.Emoji); !on {
 				b.log(r.Chat).Debugf("a feature's reaction didn't go on")
 			}
 		}

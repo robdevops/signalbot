@@ -407,8 +407,8 @@ func TestReactions(t *testing.T) {
 	f.calls = nil
 	f.mu.Unlock()
 	ch := feature.Chat{GroupID: "slack:" + channel}
-	if !c.React(ch, feature.Message{Timestamp: 1700000000000200}, "❤") {
-		t.Fatal("a reaction that went on said it didn't")
+	if on, refused := c.React(ch, feature.Message{Timestamp: 1700000000000200}, "❤"); !on || refused {
+		t.Fatalf("a reaction that went on: %v, %v", on, refused)
 	}
 	if r := f.callsTo("reactions.add"); len(r) != 1 || r[0].Params["name"] != "heart" || r[0].Params["timestamp"] != "1700000000.000200" || r[0].Params["channel"] != channel {
 		t.Fatalf("reactions.add %v", r)
@@ -430,8 +430,14 @@ func TestReactions(t *testing.T) {
 	if r := f.callsTo("reactions.add"); len(r) != 2 || r[0].Params["name"] != "parrot::skin-tone-4" || r[1].Params["name"] != "parrot" {
 		t.Fatalf("a skin tone refused %v", r)
 	}
-	if c.React(ch, feature.Message{Timestamp: 1700000000000200}, ":party_parrot:") { // another network's own emoji, as it names it
-		t.Fatal("an unknown emoji said it went on")
+	if on, refused := c.React(ch, feature.Message{Timestamp: 1700000000000200}, ":party_parrot:"); on || !refused { // another network's own emoji, as it names it
+		t.Fatalf("an unknown emoji: %v, %v", on, refused)
+	}
+	// A failure other than the emoji, such as of a deleted message, isn't
+	// a refusal.
+	f.fail("reactions.add", "message_not_found")
+	if on, refused := c.React(ch, feature.Message{Timestamp: 1700000000000200}, "❤"); on || refused {
+		t.Fatalf("a failed reaction: %v, %v", on, refused)
 	}
 	if p := f.callsTo("chat.postMessage"); len(p) != 0 {
 		t.Fatalf("an unknown emoji was sent as a message: %v", p)

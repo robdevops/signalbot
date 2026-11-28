@@ -483,9 +483,10 @@ var (
 
 // reactOrSend puts the core's own emoji on msg, or, where the network
 // refuses it as a reaction (Telegram allows only some), sends it as a
-// message instead, so it is still seen.
+// message instead, so it is still seen. A reaction that failed otherwise
+// (logged by the network) posts nothing.
 func (b *Bot) reactOrSend(msg feature.Message, emoji string) {
-	if !b.net.React(msg.Chat, msg, emoji) {
+	if _, refused := b.net.React(msg.Chat, msg, emoji); refused {
 		b.net.Send(msg.Chat, emoji, nil, nil, 0, nil, feature.Markup{})
 	}
 }

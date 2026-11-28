@@ -106,7 +106,7 @@ func (j *joined) Caps() feature.Caps {
 	return c
 }
 
-func (j *joined) React(chat feature.Chat, msg feature.Message, emoji string) bool {
+func (j *joined) React(chat feature.Chat, msg feature.Message, emoji string) (on, refused bool) {
 	return j.on(chat).React(chat, msg, emoji)
 }
 
